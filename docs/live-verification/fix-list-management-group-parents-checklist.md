@@ -165,7 +165,7 @@ function Get-S107ExportSummary {
 
 ### S.1. The module loads from this branch's build, and the 3f19ce4 build is kept
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch; the main clone is on `main`, never switched; the kept `3f19ce4` build carries none of this branch's changes.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch; the main clone is on `main`, never switched; the kept `3f19ce4` build carries none of this branch's changes.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -190,13 +190,28 @@ this branch: 4 of 4`; `3f19ce4 build: ... marks of this branch: 0 of 4`.
 **Failure looks like:** `False` on the first line (`OER_LIVE_REPO` unset), fewer than 4 marks in this
 branch's build (build it first, never while the gate runs), or any mark in the `3f19ce4` build.
 
-Result:
+Result: 2026-10-09 18:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree on this branch at 5a71de6 with 0 tracked changes (the build is of a0bf5e3's source; the commits after it change only this checklist); this branch's build carries all 4 marks of the change, the kept build carries none of them. Both builds show the prerelease label fix0001: the kept one was built on this branch before its first commit, from 3f19ce4's source.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s107] The module loads from a worktree that is not the main clone: True
+[oer-s107] Main clone: branch main
+[oer-s107] Worktree: branch fix/list-management-group-parents; HEAD 5a71de6 docs: keep angle brackets out of the live checklist's code; tracked changes: 0
+[oer-s107] this branch build: version 1.1.4 fix0001; marks of this branch: 4 of 4
+[oer-s107] 3f19ce4 build: version 1.1.4 fix0001; marks of this branch: 0 of 4
+RUNNER: check S.1 exit code 0; started 2026-10-09T18:28:34Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, is app-only, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, is app-only, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -210,13 +225,34 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not
 enabled for this run; never sign in another way.
 
-Result:
+Result: 2026-10-09 18:29 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc; identity check passed; the module is the worktree's build (1.1.4).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s107] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg7\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s107] The module is the worktree's build: True
+RUNNER: check 0.1 exit code 0; started 2026-10-09T18:28:57Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 1. The list and its parents (A)
 
 ### 1.1. The list as oer-live-cc: refused as before, and no parent read follows
 
-- [ ] **1.1** `Get-OERManagementGroup` (no parameters) returns no group and writes the list's own `AuthorizationFailed`, exactly as before; it sends the list request once and never the Entities - List call, and writes no `ManagementGroupParentReadFailed`.
+- [x] **1.1** `Get-OERManagementGroup` (no parameters) returns no group and writes the list's own `AuthorizationFailed`, exactly as before; it sends the list request once and never the Entities - List call, and writes no `ManagementGroupParentReadFailed`.
 
 ```powershell
 Connect-OerLive -Arm
@@ -236,11 +272,36 @@ AuthorizationFailed,Get-OERManagementGroup`; `ManagementGroupParentReadFailed wr
 **Failure looks like:** an Entities - List request after a failed list, a
 `ManagementGroupParentReadFailed`, or a different error id.
 
-Result:
+Result: 2026-10-09 18:29 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Get-OERManagementGroup returned no group and wrote exactly its own AuthorizationFailed, as before; one ARM request (the list), no Entities - List request, no ManagementGroupParentReadFailed, no token request.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s107] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg7\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s107] fences in place (the module resolves both names to the proxies): True
+[oer-s107] groups returned: 0
+[oer-s107] Get-OERManagementGroup own errors: 1 -- AuthorizationFailed,Get-OERManagementGroup
+[oer-s107] ManagementGroupParentReadFailed written: False
+[oer-s107] requests: token 0; ARM 1 (list 1; Entities - List 0, all POST: True; one group 0; other 0)
+RUNNER: check 1.1 exit code 0; started 2026-10-09T18:29:11Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.2. The parent read on the real Entities - List answer
 
-- [ ] **1.2** `Get-OERManagementGroupParent`, in the module's scope, reads the real answer with one `POST` and maps every non-root group it returns to exactly the parent the raw answer names (id, the id's last segment, the last display name of the chain); the root and the subscription are not in the map.
+- [x] **1.2** `Get-OERManagementGroupParent`, in the module's scope, reads the real answer with one `POST` and maps every non-root group it returns to exactly the parent the raw answer names (id, the id's last segment, the last display name of the chain); the root and the subscription are not in the map.
 
 ```powershell
 Connect-OerLive -Arm
@@ -273,11 +334,38 @@ Disconnect-OerLive
 **Failure looks like:** a `False`, fewer matching entries than non-root groups, or the root or a
 subscription in the map.
 
-Result:
+Result: 2026-10-09 18:29 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Get-OERManagementGroupParent sent one POST (Entities - List, GroupsOnly) and returned a hashtable with 1 entry: the one non-root group, whose entry equals the raw answer's parent (id, the id's last segment, the last display name of the chain); its parentNameChain ends in the parent.id segment, so the GroupsOnly answer the module requests carries both chains (R17, R21); the root and the subscription are not in the map. Raw answer as measured in part 1: 3 entities, 2 groups (root 1, other 1), 1 subscription.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2 ===
+[oer-s107] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg7\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s107] fences in place (the module resolves both names to the proxies): True
+[oer-s107] requests: token 0; ARM 1 (list 0; Entities - List 1, all POST: True; one group 0; other 0)
+[oer-s107] raw answer: entities 3; groups 2 (root 1, other 1); subscriptions 1
+[oer-s107] the map is a hashtable: True; entries: 1
+[oer-s107] non-root groups whose map entry equals the raw parent (id, name, display name): 1 of 1
+[oer-s107] non-root groups whose parentNameChain ends in the parent.id segment (the raw answer): 1 of 1; map entries with a non-empty id, name and display name: 1
+[oer-s107] the root is not in the map: True; no subscription is in the map: True
+RUNNER: check 1.2 exit code 0; started 2026-10-09T18:29:23Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.3. The parent read needs no role of its own (oer-live-cc-noperm)
 
-- [ ] **1.3** As `oer-live-cc-noperm`, which holds no Azure role at all, `Get-OERManagementGroupParent` answers with an empty map and no error, and `Get-OERManagementGroup` is refused by the list exactly as in 1.1.
+- [x] **1.3** As `oer-live-cc-noperm`, which holds no Azure role at all, `Get-OERManagementGroupParent` answers with an empty map and no error, and `Get-OERManagementGroup` is refused by the list exactly as in 1.1.
 
 ```powershell
 Connect-OerLive -Arm -NoPerm
@@ -299,11 +387,33 @@ Disconnect-OerLive
 **Failure looks like:** the parent read refused (it would need a role after all), or an Entities -
 List request from `Get-OERManagementGroup` after its list was refused.
 
-Result:
+Result: 2026-10-09 18:29 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. As oer-live-cc-noperm (no Azure role), Get-OERManagementGroupParent did not fail and returned 0 entries; Get-OERManagementGroup returned no group with exactly its own AuthorizationFailed; requests: the helper's one Entities - List POST and the cmdlet's one list request, no Entities - List request after the refused list.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.3 ===
+[oer-s107] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg7\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s107] fences in place (the module resolves both names to the proxies): True
+[oer-s107] the parent read failed: False; entries: 0
+[oer-s107] groups returned: 0
+[oer-s107] Get-OERManagementGroup own errors: 1 -- AuthorizationFailed,Get-OERManagementGroup
+[oer-s107] requests: token 0; ARM 2 (list 1; Entities - List 1, all POST: True; one group 0; other 0)
+RUNNER: check 1.3 exit code 0; started 2026-10-09T18:29:38Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.4. A read with -Name: positional, piped, and with -Recurse, as before
 
-- [ ] **1.4** A group the identity cannot read (the non-root group of the Entities - List answer) is read by `-Name` given by position, and by a piped object carrying `ManagementGroupName` with `-Recurse`: each answers `ManagementGroupNotFound` as before, each sends one group read, and neither sends the Entities - List call.
+- [x] **1.4** A group the identity cannot read (the non-root group of the Entities - List answer) is read by `-Name` given by position, and by a piped object carrying `ManagementGroupName` with `-Recurse`: each answers `ManagementGroupNotFound` as before, each sends one group read, and neither sends the Entities - List call.
 
 ```powershell
 Connect-OerLive -Arm
@@ -326,13 +436,39 @@ twice `Get-OERManagementGroup own errors: 1 -- ManagementGroupNotFound,Get-OERMa
 **Failure looks like:** a binding error (the positional or the pipeline binding broke), a list or
 Entities - List request, or another error id.
 
-Result:
+Result: 2026-10-09 18:30 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The non-root group (noaccess for this identity), read by -Name given by position and by a piped object carrying ManagementGroupName with -Recurse, answered ManagementGroupNotFound each time, as before; both bound (no binding error); two group reads, no list and no Entities - List request.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.4 ===
+[oer-s107] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg7\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s107] a non-root group name was found in the answer: True
+[oer-s107] fences in place (the module resolves both names to the proxies): True
+[oer-s107] objects: positional 0; piped 0
+[oer-s107] Get-OERManagementGroup own errors: 1 -- ManagementGroupNotFound,Get-OERManagementGroup
+[oer-s107] Get-OERManagementGroup own errors: 1 -- ManagementGroupNotFound,Get-OERManagementGroup
+[oer-s107] requests: token 0; ARM 2 (list 0; Entities - List 0, all POST: True; one group 2; other 0)
+RUNNER: check 1.4 exit code 0; started 2026-10-09T18:29:50Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 2. -Expand and -Recurse need -Name (C)
 
 ### 2.1. The binding refusal in the built module
 
-- [ ] **2.1** In a runspace that cannot prompt and holds no session, this branch's built module refuses `-Recurse`, `-Expand`, `-Expand -Recurse` and `-TenantId ... -Recurse` without `-Name` at parameter binding, with `MissingMandatoryParameter`, and `-Name ''` with the empty-string refusal; nothing runs, so no token is requested.
+- [x] **2.1** In a runspace that cannot prompt and holds no session, this branch's built module refuses `-Recurse`, `-Expand`, `-Expand -Recurse` and `-TenantId ... -Recurse` without `-Name` at parameter binding, with `MissingMandatoryParameter`, and `-Name ''` with the empty-string refusal; nothing runs, so no token is requested.
 
 ```powershell
 $M = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psd1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -370,13 +506,29 @@ MissingMandatoryParameter,Get-OERManagementGroup; the fence was reached: False`;
 reached; and `pwsh -NonInteractive, -Recurse without -Name: CHILD ERROR: MissingMandatoryParameter,Get-OERManagementGroup; the fence was reached: False`.
 **Failure looks like:** any other id, an object, or the fence reached (the call bound and began).
 
-Result:
+Result: 2026-10-09 18:30 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. In a runspace that cannot prompt, this branch's built module refused -Recurse, -Expand, -Expand -Recurse and -TenantId with -Recurse without -Name, each with exactly MissingMandatoryParameter, and -Name '' with ParameterArgumentValidationErrorEmptyStringNotAllowed; no object, and the token fence was never reached, so nothing began. A child pwsh started with -NonInteractive, as a script runs, got the same MissingMandatoryParameter for -Recurse without -Name.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s107] -Recurse: objects 0; errors 1 -- MissingMandatoryParameter,Get-OERManagementGroup; the fence was reached: False
+[oer-s107] -Expand: objects 0; errors 1 -- MissingMandatoryParameter,Get-OERManagementGroup; the fence was reached: False
+[oer-s107] -Expand -Recurse: objects 0; errors 1 -- MissingMandatoryParameter,Get-OERManagementGroup; the fence was reached: False
+[oer-s107] -TenantId (test) -Recurse: objects 0; errors 1 -- MissingMandatoryParameter,Get-OERManagementGroup; the fence was reached: False
+[oer-s107] -Name '': objects 0; errors 1 -- ParameterArgumentValidationErrorEmptyStringNotAllowed,Get-OERManagementGroup; the fence was reached: False
+[oer-s107] pwsh -NonInteractive, -Recurse without -Name: CHILD ERROR: MissingMandatoryParameter,Get-OERManagementGroup; the fence was reached: False
+RUNNER: check 2.1 exit code 0; started 2026-10-09T18:30:03Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 3. The export walks the same scopes before and after (B, G8)
 
 ### 3.1. Export with the 3f19ce4 build
 
-- [ ] **3.1** `Export-OERInventory -Include RoleAssignments`, run by the build of `3f19ce4`, writes its bundle under `raw\s107\` and its walk is recorded (counts, skipped levels, scopes) for 3.2.
+- [x] **3.1** `Export-OERInventory -Include RoleAssignments`, run by the build of `3f19ce4`, writes its bundle under `raw\s107\` and its walk is recorded (counts, skipped levels, scopes) for 3.2.
 
 ```powershell
 $env:PSModulePath = (Join-Path $Cfg.Repo 'output\RequiredModules') + [System.IO.Path]::PathSeparator + $env:PSModulePath
@@ -401,11 +553,38 @@ level skipped as `<management groups: the listing failed>`, the subscription wal
 `InventoryPartial` (the export's own coverage signal for the skipped level); `Entities - List 0`.
 **Failure looks like:** the module is not the `3f19ce4` build, or no bundle.
 
-Result:
+Result: 2026-10-09 18:30 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The 3f19ce4 build (no Get-OERManagementGroupList) exported RoleAssignments: 1 scope enumerated and read (the test subscription), the management group level skipped as the listing failed (with its warning), hierarchy 0 groups and 1 subscription, 14 role assignments, one InventoryPartial; one list request, no Entities - List request. Recorded for 3.2.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.1 ===
+[oer-s107] Omnicit.EntraRBAC 1.1.4 loaded from REPO\docs\live-verification\raw\s107\before-3f19ce4\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s107] the module is the 3f19ce4 build: True; it has no Get-OERManagementGroupList: True
+[oer-s107] fences in place (the module resolves both names to the proxies): True
+WARNING: Could not list the management groups, so no management group is walked: AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000002' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s107] scopes enumerated 1; read 1; skipped: <management groups: the listing failed>; hierarchy: groups 0, subscriptions 1; role assignments 14
+[oer-s107] scopes: /subscriptions/00000000-0000-0000-0000-000000000003
+[oer-s107] Export-OERInventory own errors: 1 -- InventoryPartial,Export-OERInventory
+[oer-s107] requests: token 0; ARM 10 (list 1; Entities - List 0, all POST: True; one group 0; other 9)
+RUNNER: check 3.1 exit code 0; started 2026-10-09T18:30:17Z; took 10 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.2. Export with this branch's build, compared with 3.1
 
-- [ ] **3.2** The same export, run by this branch's build, walks exactly the scopes 3.1 walked, skips exactly the same levels, and sends no Entities - List call.
+- [x] **3.2** The same export, run by this branch's build, walks exactly the scopes 3.1 walked, skips exactly the same levels, and sends no Entities - List call.
 
 ```powershell
 Connect-OerLive -Arm
@@ -426,7 +605,34 @@ Disconnect-OerLive
 the same own errors as 3.1; `Entities - List 0`.
 **Failure looks like:** any `False`, or an Entities - List request from the export.
 
-Result:
+Result: 2026-10-09 18:30 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. This branch's build exported exactly what 3.1 exported: the same scope list (1 subscription), the same skipped level (the management group listing failed), the same counts (1 enumerated, 1 read, hierarchy 0 groups and 1 subscription, 14 role assignments), the same one InventoryPartial; no Entities - List request. The export gains no failure mode and walks the same scopes before and after (G8).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.2 ===
+[oer-s107] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg7\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s107] fences in place (the module resolves both names to the proxies): True
+WARNING: Could not list the management groups, so no management group is walked: AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000002' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s107] scopes enumerated 1; read 1; skipped: <management groups: the listing failed>; hierarchy: groups 0, subscriptions 1; role assignments 14
+[oer-s107] scopes: /subscriptions/00000000-0000-0000-0000-000000000003
+[oer-s107] same as 3.1 -- scopes: True; skipped levels: True; counts: True
+[oer-s107] Export-OERInventory own errors: 1 -- InventoryPartial,Export-OERInventory
+[oer-s107] requests: token 0; ARM 10 (list 1; Entities - List 0, all POST: True; one group 0; other 9)
+RUNNER: check 3.2 exit code 0; started 2026-10-09T18:30:35Z; took 9 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## B. Proved offline (class B)
 
@@ -446,6 +652,8 @@ The identity lists no management group, so these are proved in the unit suite on
 Where management groups can be read on several levels. Install the preview that carries this
 change, sign in your own way, and run the block; it prints counts and True/False only, so the result
 can be reported without a name or an id.
+
+### C.1. Every listed group's parent equals a read per group with -Name
 
 - [ ] **C.1** Every listed group shows the parent a read per group with `-Name` shows; only the root group's parent is empty; no `ManagementGroupParentReadFailed`.
 
@@ -473,13 +681,19 @@ paste it into this file -- it holds names).
 **Failure looks like:** a group whose parent differs from its `-Name` read, a non-root group with an
 empty parent, or a `ManagementGroupParentReadFailed`.
 
-Result:
+Result: 2026-10-09 18:31 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: NOT RUN HERE (class C, for Philip after the merge; this run does not execute it).
+
+Not run by this run (class C): the test identity lists no management group (the list answers 403 AuthorizationFailed), so a list with parents on several levels cannot be produced here, and the step creates no management group (ruling R7). Philip runs this block after the merge in an environment of his own where groups can be read on several levels, and reports the counts and True/False lines only.
+```
 
 ## Teardown
 
 ### T.1. Nothing left: no session, nothing with the prefix, raw\s107 deleted
 
-- [ ] **T.1** No module session and no Graph SDK session remain, the sweep finds nothing with the prefix `oer-s107-` and no unread collection, and `raw\s107\` (the kept build and the two bundles) is deleted after the results are written.
+- [x] **T.1** No module session and no Graph SDK session remain, the sweep finds nothing with the prefix `oer-s107-` and no unread collection, and `raw\s107\` (the kept build and the two bundles) is deleted after the results are written.
 
 ```powershell
 Connect-OerLive -Arm
@@ -497,4 +711,28 @@ False`; `raw\s107 deleted: True`.
 **Failure looks like:** an object or an unread collection (STOP: this run creates nothing), a session
 left, or the folder still there.
 
-Result:
+Result: 2026-10-09 18:31 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The sweep found 0 objects with the prefix oer-s107- and 0 unread collections (this run created nothing); the module session is cleared and no Graph SDK session is left; raw\s107 (the kept 3f19ce4 build, the two bundles, export-before.json) is deleted. The runner captured this block outside raw\s107, since the block deletes that folder.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[oer-s107] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg7\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s107] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s107] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s107-' is left.
+[oer-s107] objects with the prefix: 0; unread collections: 0
+[oer-s107] module session cleared: True; Graph SDK session left: False
+[oer-s107] raw\s107 deleted: True
+RUNNER: check T.1 exit code 0; started 2026-10-09T18:31:29Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
