@@ -28,8 +28,8 @@
         cannot be read, so the tag step never tags a commit whose tested build is not the published
         package. That is not hypothetical: when the tag step fails after a publish, no tag moves
         GitVersion's base, the next merge to main computes the same version, finds it published and
-        skips the publish, and the tag step then tagged THAT merge's commit with the previous
-        commit's package. See docs/development/rationale.md#publish-on-merge.
+        skips the publish, and before this comparison existed the tag step then tagged THAT merge's
+        commit with the previous commit's package. See docs/development/rationale.md#publish-on-merge.
 
         -Path is, in every mode, the directory that CONTAINS module/<name>/<version>. That is
         output/ in the build job and the download directory downstream, because
@@ -55,10 +55,12 @@
         Verify the build under -Path against the publish-meta.json sitting beside it.
 
     .PARAMETER Path
-        The directory that contains module/<name>/<version>, and, in -Verify mode, publish-meta.json.
+        The directory that contains module/<name>/<version>, and, in -Verify and -Compare mode,
+        publish-meta.json.
 
     .PARAMETER Sha
-        The commit the build came from. Recorded in -Record mode; required to match in -Verify mode.
+        The commit the build came from. Recorded in -Record mode; required to match in -Verify and
+        -Compare mode.
 
     .PARAMETER ModuleVersion
         NuGetVersionV2 as GitVersion computed it and the build job exported it. -Record only.
@@ -444,6 +446,11 @@ try
     #>
     Save-PSResource -Name $ModuleName -Version ('[{0}]' -f $Version) -Prerelease -Repository $Repository -Path $SaveRoot -SkipDependencyCheck -TrustRepository -ErrorAction 'Stop'
 
+    if (-not (Test-Path -LiteralPath (Join-Path -Path $SaveRoot -ChildPath $ModuleName)))
+    {
+        throw ('Save-PSResource returned without error but saved no {0} folder' -f $ModuleName)
+    }
+
     $PublishedFolder = Get-VersionFolder -Root $DownloadPath
     $PublishedHash = @(Get-ArtefactFileHash -VersionFolder $PublishedFolder.FullName)
 }
@@ -481,7 +488,7 @@ if ($Differences.Count -gt 0)
         ('{0} {1} {2} on {3} is not the build this run tested for {4}: {5}.' -f $Refusal, $ModuleName, $Version, $Repository, $Sha, ($Differences -join '; '))
         ('So it was published from another commit, or from another build of this one, and tagging {0} as v{1} would name a package that does not hold this commit''s build. {2}' -f $Sha, $Version, $Nothing)
         ("To repair: find the run on main that published {0} -- its 'Publish to the PowerShell Gallery' step logged 'Publishing {1} {0}', not 'SKIPPING THE PUBLISH' -- and push the tag onto that run's commit by hand: git tag v{0} <commit>, then git push origin v{0}." -f $Version, $ModuleName)
-        ('Then re-run ALL jobs of this run, not only the failed ones: the new build counts up from that tag and publishes {0} as the next preview. Re-running only the failed jobs reuses this run''s build, which carries {1}, and is refused again.' -f $Sha, $Version)
+        ('Then re-run ALL jobs of this run, not only the failed ones: the new build counts up from that tag and publishes {0} as the next preview. Re-running only the failed jobs reuses this run''s build, which carries {1}, and is refused again. If several runs were refused, re-run all jobs of the newest one only: it carries the older ones'' changes, and an older one re-run after it is refused against the newer package.' -f $Sha, $Version)
         ('If the commit that published {0} is {1} itself, the tag by hand is the whole repair.' -f $Version, $Sha)
     ) -join ' '
 

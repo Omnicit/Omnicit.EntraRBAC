@@ -713,6 +713,7 @@ Describe 'PublishArtefact.ps1 -Compare' {
         $Message | Should -BeLike '*NOTHING has been tagged and no release was created.*'
         $Message | Should -BeLike '*git tag v1.1.4-preview0003 <commit>, then git push origin v1.1.4-preview0003*'
         $Message | Should -BeLike '*re-run ALL jobs of this run, not only the failed ones*'
+        $Message | Should -BeLike '*re-run all jobs of the newest one only*'
         @(Get-FakeLog -World $script:World -Name 'save').Count | Should -Be 1 -Because 'the refusal comes from the comparison, after the read'
     }
 
@@ -751,7 +752,7 @@ Describe 'PublishArtefact.ps1 -Compare' {
         $null = Publish-ToFakeGallery -Build $script:BuildA -World $script:World
         $null = New-Item -ItemType File -Path (Join-Path -Path $script:World -ChildPath 'save-nothing')
 
-        { Invoke-Compare -Build $script:BuildA -Sha $script:ShaA } | Should -Throw -ExpectedMessage '*and could not (No module folder at *'
+        { Invoke-Compare -Build $script:BuildA -Sha $script:ShaA } | Should -Throw -ExpectedMessage '*and could not (Save-PSResource returned without error but saved no Omnicit.EntraRBAC folder)*'
         @(Get-FakeLog -World $script:World -Name 'save').Count | Should -Be 1 -Because 'the read was attempted and returned'
     }
 
