@@ -4634,11 +4634,127 @@ this repository, starting from `main` at `838c55f` with `v1.0.0` reachable:
 Row four is the whole reason the publish job creates a tag. Sampler and DSC Community do the same
 thing for the same reason.
 
-**If the publish succeeds and the tag step then fails**, the next merge to `main` computes the same
-version, the publish job's idempotence check finds it already on the Gallery and skips, and that
-merge publishes nothing. Nothing is broken and no release is lost, but the line stalls until the
-missing tag is pushed by hand onto the commit that was published. The comment on that step says so
-as well.
+**If the publish succeeds and no tag follows it**, the next merge to `main` computes the same
+version and the publish job's idempotence check finds it already on the Gallery and skips. Until
+2026-10-09 this section said the line then stalled until someone pushed the missing tag by hand.
+It did not: the tag step went on to create the tag and the release on that merge's OWN commit,
+over the package built from the previous one. What the tag step does about that now is the next
+section.
+
+### The tag step tags only the build that was published
+
+Decision A16 (Philip, 2026-10-09, BL-114): the tag step never creates a tag or a release on a
+commit whose build is not the published package, and when it cannot show that it is, it refuses
+with a red run and the repair in its message.
+
+**The defect, as it stood in the code at `34c69a4`.** The publish step skipped the upload when
+`Find-PSResource` already found the exact version, and the tag step then ran
+`gh release create v<version> --target $env:GITHUB_SHA`. A publish that no tag followed -- the tag
+step failed, or the publish step failed although its upload had arrived -- left GitVersion's base
+where it was, so the next merge computed the same version, skipped the publish and tagged its own
+commit. The tag and the GitHub release then named a commit whose build was never published under
+that version, the Gallery's release notes and the GitHub release could disagree, and that merge's
+changes reached no package until a later merge published one.
+
+**It was one merge away on 2026-10-08.** The publish of `2226538` (run 37818385476) was answered
+with a 500 by the Gallery although the package arrived, and the tag step was skipped. The
+architect re-ran the failed job in the same run, which found the version, skipped the publish and
+tagged the right commit. Had the next merge come first, `0fc48ac` would have been tagged
+`v1.1.4-preview0003` over the package built from `2226538`.
+
+**The mechanism: the package is read back and compared with the tested artefact.** On every run
+but a `v` tag run, the tag step first runs `PublishArtefact.ps1 -Compare`. It verifies the
+downloaded artefact exactly as `-Verify` does, saves the package the Gallery serves under the
+recorded version with `Save-PSResource` (exact version, `-Prerelease`, `-TrustRepository`,
+`-SkipDependencyCheck`) into an empty directory, and compares the two version folders file by file
+and SHA-256 by SHA-256, in both directions, through the same `Compare-FileHashSet` that `-Verify`
+uses. Same build: the step goes on as before. A package that differs: it throws, naming what
+differs and the repair. (An artefact that fails the `-Verify` half throws `-Verify`'s own
+message.) A read that fails, or saves nothing: it throws as well, and says a re-run of the job
+reads again. The script stays the single owner of the proof, as `-Record` and `-Verify` are.
+
+Measured on 2026-10-09: publishing a build into a local repository with `Publish-PSResource` and
+saving it back with `Save-PSResource` gave exactly the four files `-Record` records, every SHA-256
+equal, with PSResourceGet 1.0.1 and 1.2.0 -- no nuspec, no `_rels`, no `[Content_Types].xml`. A
+module installed from the Gallery on the maintainer's machine holds only its own files plus the
+`PSGetModuleInfo.xml` the installer writes, which `Save-PSResource` does not write without
+`-IncludeXml`. So the whole version folder is compared with no exemption list, and since the
+manifest is one of the files, a package of another version cannot match either.
+
+**What was not chosen, and why.**
+
+- **`GITHUB_RUN_ATTEMPT`.** A re-run of the failed job raises it, and so does the re-run of
+  only the failed jobs after a refusal, which must not tag. It cannot tell the two apart.
+- **Trusting this job's own upload.** "This job published it" is true only in the attempt
+  that uploaded; the 2026-10-08 shape is a re-run that did not upload and must still tag. It
+  would also leave the comparison running only during an incident, so a flaw in it would show
+  up exactly when it is needed. Comparing on every run means every merge exercises it.
+- **Tagging before publishing.** It would put a tag on a commit before anything is published
+  under it, which is the opposite of the decision.
+
+**The comparison runs before the release lookup.** A release that already exists for the tag
+would otherwise make a refused run go green with nothing published -- for example after the tag
+and a release were made by hand on the publishing commit and the refused run's failed jobs were
+re-run.
+
+**The tag must not already name another commit.** `gh release create` ignores `--target` when the
+tag already exists, and attaches the release to the tag where it stands. The repair below asks for
+preview tags pushed by hand, so a tag on the wrong commit is a realistic input: without a check the
+release would have landed on that commit while the log named `GITHUB_SHA`, and the release-exists
+branch would even have turned the run green. So after `-Compare` the step asks
+`git/matching-refs/tags/<tag>` -- a PREFIX match, so the answer is filtered to the exact ref; an
+annotated tag names a tag object, which is peeled once to the commit it names -- and refuses when
+the tag names another commit, or when the lookup itself fails or answers nothing (an empty answer
+refuses like a failed one, since an answer that says nothing is not evidence the tag is absent).
+The message names `git push origin :refs/tags/<tag>` and a re-run. A tag that names `GITHUB_SHA`
+goes on as before. A tag set by that commit's own run, whose build is the same package, needs no
+repair: the message says so, and that run may stay red. When the run's build is not the package,
+the comparison refuses first, and its repair text names a tag in the way as well.
+
+**The shapes, offline.** `tests/Workflow/PublishJob.Tests.ps1` runs the publish job's own step
+text in `pwsh`, wrapped the way `shell: pwsh` wraps it, against a fake Gallery and a fake GitHub:
+
+| Shape | Before (at `34c69a4`) | Now |
+|---|---|---|
+| An ordinary merge | publishes and tags its commit | publishes, compares, tags its commit |
+| Re-run of the failed job in the same run, after a 500 whose upload arrived | skips the publish, tags its commit | skips the publish, matches, tags its commit |
+| The next merge, after a tag step that failed or a 500 nobody re-ran | skips the publish and tags ITS OWN commit over the previous commit's package | refused when its build differs, nothing tagged, the repair in the message |
+| The next merge, byte-identical build | skips the publish, tags that commit too | tags its commit (its build IS the package) |
+| Re-run of only the failed jobs after that | (the tag was already wrong) | refused again, also after the repair tag, also with a release made by hand |
+| Repair tag on the publishing commit, then all jobs re-run | -- | counts up, publishes and tags the refused commit |
+| Re-run after a preview tag was pushed by hand onto another commit | attached the release to that commit | refused, nothing created, the repair in the message |
+| A rebuild of the published commit on a later day | tagged the right commit with another build's package | refused; the tag by hand on that commit is the whole repair |
+| A read of the Gallery that fails | (no read) | refused, then tags on a re-run that can read |
+| A `v` tag run | attaches the release to the existing tag | unchanged: no comparison |
+
+The guard is mutation-proven: with the `-Compare` call removed from the tag step, the refusal
+shapes tag the wrong commit and the suite goes red. `OER_WORKFLOW_ROOT` points the suite at a
+directory that holds a mutated copy of `.github/` for such a run; it is never set in CI.
+
+**Repair.** For a refused run: push the missing tag by hand onto the commit that published the
+version (`git tag v<version> <commit>` and `git push origin v<version>`), then re-run ALL jobs of
+the newest refused run (it carries the older ones' changes; an older one re-run after it is
+refused against the newer package). Its rebuild counts up from that tag and publishes it as the
+next preview. A preview tag carries a hyphen, so the `Stable Version` ruleset does not cover it.
+The run that published can instead be repaired by re-running its own failed job, which matches and
+tags.
+
+**Known limits.**
+
+- **A rebuild of the published commit is another build.** The built manifest's release notes
+  carry the build date, so re-running ALL jobs of the run that published, on a later day,
+  produces different bytes and is refused. Re-run only its failed jobs, which reuse the tested
+  artefact; or, if all were re-run already, the tag by hand on that commit is the whole repair.
+- **A later merge whose build is byte-identical is tagged.** A merge that changes nothing under
+  `source/` or in `CHANGELOG.md`, built the same day, normally produces the published bytes exactly
+  (the build resolves its tools and dependencies afresh, so a change there makes it another build,
+  which is refused), so its commit is tagged. That is what A16 asks: its build IS the package.
+- **The read is a single attempt.** The Confirm step polls until the version is indexed, but a
+  transient failure of the read itself refuses, and a re-run of the job reads again. Left without
+  a retry on purpose, so a refusal is never delayed into a timeout.
+- **The count-up after the repair tag is GitVersion's measured behaviour** (the measured table
+  under "The tag after each publish is the mechanism, not bookkeeping"), not something the offline
+  suite runs: the suite plays the rebuilt artefact.
 
 ### The published version comes from the MANIFEST, not from GitVersion
 
@@ -4657,9 +4773,10 @@ prerelease-bearing string.
 
 ### Provenance: the published bytes are the tested bytes
 
-`.github/scripts/PublishArtefact.ps1` owns both halves of that proof in one file, so a recorder and
-a verifier cannot drift apart -- two that enumerated or hashed differently would fail on honest
-artefacts and agree on tampered ones.
+`.github/scripts/PublishArtefact.ps1` owns both halves of that proof in one file, and the tag
+step's comparison with the Gallery (`-Compare`) as well, so a recorder and a verifier cannot drift
+apart -- two that enumerated or hashed differently would fail on honest artefacts and agree on
+tampered ones.
 
 `-Record` runs on the `ubuntu-latest` leg after its Test step, and only on success. It writes
 `publish-meta.json`: the commit, the GitVersion value, the manifest's version and prerelease, and a
