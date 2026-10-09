@@ -139,7 +139,8 @@ function Get-OERManagementGroup {
         if ($Unread.Count -gt 0) {
             $Names = @($Unread | ForEach-Object { "'$_'" }) -join ', '
             $Reason = if ($ParentReadError) {
-                "the entity listing failed: $($ParentReadError.Exception.Message)"
+                # An ARM message ends with a full stop, and the sentence below adds its own.
+                "the entity listing failed: $($ParentReadError.Exception.Message.TrimEnd('.'))"
             } else {
                 'the entity listing (Entities - List) returned no parent for them'
             }

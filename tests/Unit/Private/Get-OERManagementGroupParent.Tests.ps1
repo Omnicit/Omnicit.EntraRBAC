@@ -179,6 +179,66 @@ Describe 'Get-OERManagementGroupParent' {
         }
     }
 
+    # Without the string test a parent id that is not a string passes the blank check and .Split
+    # throws out of the helper, so EVERY non-root group would be reported unread instead of only the
+    # one entity. A number and an object are proven in separate tests, so each goes red on its own.
+    It 'leaves out an entity whose parent id is a number instead of a string, and keeps the good one' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                [PSCustomObject]@{ value = @(
+                        [PSCustomObject]@{
+                            name       = 'mg-number-parent-id'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{ parent = [PSCustomObject]@{ id = 42 }; parentDisplayNameChain = @('MG A') }
+                        }
+                        [PSCustomObject]@{
+                            name       = 'mg-b'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentDisplayNameChain = @('MG A')
+                            }
+                        }
+                    ) }
+            }
+
+            $Map = Get-OERManagementGroupParent
+
+            @($Map.Keys) | Should -Be @('mg-b')
+            $Map['mg-b'].name | Should -BeExactly 'mg-a'
+        }
+    }
+
+    It 'leaves out an entity whose parent id is an object instead of a string, and keeps the good one' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                [PSCustomObject]@{ value = @(
+                        [PSCustomObject]@{
+                            name       = 'mg-object-parent-id'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = [PSCustomObject]@{ value = '/providers/Microsoft.Management/managementGroups/mg-a' } }
+                                parentDisplayNameChain = @('MG A')
+                            }
+                        }
+                        [PSCustomObject]@{
+                            name       = 'mg-b'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentDisplayNameChain = @('MG A')
+                            }
+                        }
+                    ) }
+            }
+
+            $Map = Get-OERManagementGroupParent
+
+            @($Map.Keys) | Should -Be @('mg-b')
+            $Map['mg-b'].name | Should -BeExactly 'mg-a'
+        }
+    }
+
     It 'leaves out an entity whose display name chain is empty, and one whose last chain element is white space' {
         InModuleScope Omnicit.EntraRBAC {
             Mock Invoke-OERArmRequest {

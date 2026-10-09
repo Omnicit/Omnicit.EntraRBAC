@@ -232,8 +232,10 @@ Describe 'Get-OERManagementGroup' {
         }
 
         It 'still emits every group when Entities - List fails, and writes ONE ManagementGroupParentReadFailed naming the non-root groups' {
+            # A real ARM message ends with a full stop (and may hold others): the published text keeps
+            # the inner ones and has exactly one full stop before ' Their ParentId'.
             $ArmErr = InModuleScope Omnicit.EntraRBAC {
-                Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 403; Content = '{"error":{"code":"AuthorizationFailed","message":"denied"}}' })
+                Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 403; Content = '{"error":{"code":"AuthorizationFailed","message":"The client has no access. If access was recently granted, please refresh your credentials."}}' })
             }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter {
                 $Path -like '*/getEntities?*' -and $Method -eq 'POST' -and $All
@@ -255,11 +257,14 @@ Describe 'Get-OERManagementGroup' {
             $Own[0].TargetObject | Should -BeOfType ([string])
             ($Own[0].TargetObject -is [string[]]) | Should -BeTrue
             @($Own[0].TargetObject) | Should -Be @('mg-a', 'mg-b', 'mg-c')
-            $Own[0].Exception.Message | Should -BeExactly ("Could not read the parent of 3 management group(s): 'mg-a', 'mg-b', 'mg-c' -- the entity listing failed: AuthorizationFailed: denied. $UnreadTail")
+            $Own[0].Exception.Message | Should -BeExactly ("Could not read the parent of 3 management group(s): 'mg-a', 'mg-b', 'mg-c' -- the entity listing failed: AuthorizationFailed: The client has no access. If access was recently granted, please refresh your credentials. $UnreadTail")
+            $Own[0].Exception.Message | Should -Not -BeLike '*.. Their ParentId*'
             [object]::ReferenceEquals($Own[0].Exception.InnerException, $ArmErr.Exception) | Should -BeTrue
+            $Own[0].Exception.InnerException.Message | Should -BeExactly 'AuthorizationFailed: The client has no access. If access was recently granted, please refresh your credentials.'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
             Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
-                $Record.FullyQualifiedErrorId -like 'AuthorizationFailed*' -and $Record.Exception.Message -ceq 'AuthorizationFailed: denied'
+                $Record.FullyQualifiedErrorId -like 'AuthorizationFailed*' -and
+                $Record.Exception.Message -ceq 'AuthorizationFailed: The client has no access. If access was recently granted, please refresh your credentials.'
             }
         }
 
