@@ -75,7 +75,7 @@ function Sync-OERStructureAccessReview {
 
     Recurrence mapping (case-insensitive):
     The document recurrence value is mapped to the ValidateSet values accepted by
-    New-OERAccessReviewDefinition: OneTime, Weekly, Monthly, Quarterly, Annually.
+    New-OERAccessReviewDefinition: OneTime, Weekly, Monthly, Quarterly, SemiAnnually, Annually.
     An unrecognised recurrence value emits a Failed record without calling the cmdlet.
 
     Recurrence range and review settings:

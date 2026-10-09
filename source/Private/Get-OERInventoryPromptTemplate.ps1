@@ -296,9 +296,10 @@ document.
     approved; omit approvalStages entirely to leave the live stages alone.
 - accessReviews[]: { displayName (required), accessPackage (required), assignmentPolicy (required),
   recurrence (OneTime | Weekly | Monthly | Quarterly | SemiAnnually | Annually),
-  startDate (ISO 8601 date), endDate (ISO 8601 date) OR occurrences (>=1) [at most one; both are
-  ignored for OneTime], durationInDays (1-365), reviewers[] ("manager" | "self" | UPN | group
-  name/id), fallbackReviewers[] (UPN | group name/id -- REQUIRED whenever manager is a reviewer),
+  startDate (ISO 8601 date), endDate (ISO 8601 date) OR occurrences (>=1)
+  [at most one; both are ignored for OneTime], durationInDays (1-365),
+  reviewers[] ("manager" | "self" | UPN | group name/id),
+  fallbackReviewers[] (UPN | group name/id -- REQUIRED whenever manager is a reviewer),
   descriptionForAdmins, descriptionForReviewers, mailNotification (bool),
   reminderNotification (bool), requireJustification (bool), recommendationsEnabled (bool),
   autoApplyDecisions (bool), defaultDecision (None | Approve | Deny | Recommendation) }

@@ -32,8 +32,8 @@ function Resolve-OERAccessReviewChange {
     start date does not silently destroy the range.
 
     A third consequence: New-OERAccessReviewRecurrence can only emit weekly interval 1 and
-    absoluteMonthly interval 1/3/12, so a live pattern outside that set (a semi-annual absoluteMonthly
-    interval 6, a bi-weekly weekly interval 2, ...) cannot be reproduced. Rebuilding the recurrence
+    absoluteMonthly interval 1/3/6/12, so a live pattern outside that set (a bi-monthly
+    absoluteMonthly interval 2, a bi-weekly weekly interval 2, ...) cannot be reproduced. Rebuilding the recurrence
     object from the collapsed cadence in that case would silently downgrade the live review to a
     coarser one while reporting Updated. The recurrence/startDate/endDate/occurrences unit is therefore
     suppressed and reported in NotApplied instead whenever the live pattern is not representable, even

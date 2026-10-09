@@ -99,7 +99,7 @@ function Get-OERInventory {
     schema does not model -- and the top-level reviewers collection Graph returns for it is
     empty by construction, which would otherwise be misreported as a configured self review. A
     live recurrence interval outside the module's cadence vocabulary (for example an
-    absoluteMonthly interval other than 1, 3 or 12) is exported as the nearest coarser cadence
+    absoluteMonthly interval other than 1, 3, 6 or 12) is exported as the nearest coarser cadence
     with a warning naming the true pattern, rather than silently. durationInDays is emitted only
     when the live settings.instanceDurationInDays is an integer the apply schema accepts (1-365):
     Graph reports 0 when that field does not drive the review's duration, and exporting the 0 made
