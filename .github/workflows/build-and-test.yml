@@ -464,12 +464,13 @@ jobs:
           # A version that is already there is NOT proof that this commit published it. When no tag
           # follows a publish, nothing moves GitVersion's base, so the NEXT merge to main computes
           # the same version and arrives here as well. Skipping is right either way, since a version
-          # cannot be republished. Whether this commit may then be tagged is the tag step's call:
-          # it compares the package on the Gallery with this run's tested build first.
+          # cannot be republished. Except on a v-tag run, whether this commit may then be tagged is
+          # the tag step's call: it compares the package on the Gallery with this run's tested
+          # build first.
           $Existing = @(Find-PSResource -Name $ModuleName -Repository 'PSGallery' -Version "[$Version]" -Prerelease -ErrorAction SilentlyContinue)
 
           if ($Existing.Count -gt 0) {
-              Write-Host "SKIPPING THE PUBLISH: $ModuleName $Version is already on the PowerShell Gallery, and a version cannot be republished or deleted. The tag step tags $env:GITHUB_SHA only if the package there is this run's tested build."
+              Write-Host "SKIPPING THE PUBLISH: $ModuleName $Version is already on the PowerShell Gallery, and a version cannot be republished or deleted. Except on a v-tag run, the tag step tags $env:GITHUB_SHA only if the package there is this run's tested build."
               return
           }
 
@@ -525,18 +526,23 @@ jobs:
         # So on every run but a v-tag run this step first runs PublishArtefact.ps1 -Compare, which
         # reads the package back from the Gallery and compares it, file by file and SHA-256 by
         # SHA-256, with this run's tested artefact. It tags GITHUB_SHA only when they are the same
-        # build; a package from another commit, or a read that fails, stops the step before
-        # anything is created, with the repair in the message. In practice:
+        # build; a package that is not this run's build, or a read that fails, stops the step
+        # before anything is created, with the repair in the message. In practice:
         #
         #   - a re-run of the failed job in the SAME run reuses the tested artefact, so it matches
         #     and tags, as the re-run after the Gallery's 500 on 2026-10-08 did;
-        #   - a later merge, and a re-run of only the failed jobs after a refusal, carry another
-        #     build and are refused;
+        #   - a later merge whose build differs -- any change to the module or to its release
+        #     notes, or a build on another day -- is refused, and so is a re-run of only its failed
+        #     jobs; a later merge whose build is byte-identical (no change under source/ or in
+        #     CHANGELOG.md, built the same day) IS the package, and is tagged;
         #   - the repair is the tag pushed by hand onto the commit that published the version,
-        #     then a re-run of ALL jobs of the refused run, which counts up and publishes it.
+        #     then a re-run of ALL jobs of the newest refused run, which counts up and publishes it.
         #
         # The comparison runs BEFORE the release lookup, so a run whose build is not the package
-        # stays red even when a release for the tag already exists on another commit.
+        # stays red even when a release for the tag already exists on another commit. So does a
+        # check that the tag, if it already exists, names GITHUB_SHA: gh release create ignores
+        # --target for an existing tag, so a preview tag pushed by hand onto the wrong commit would
+        # otherwise receive the release.
         #
         # On a v-tag run the tag already exists and gh uses it rather than creating one. It must
         # stay that way: the 'Stable Version' ruleset refuses GITHUB_TOKEN any create, move or
@@ -557,6 +563,37 @@ jobs:
           }
           else {
               ./.github/scripts/PublishArtefact.ps1 -Compare -Path 'artefact' -Sha $env:GITHUB_SHA -Repository 'PSGallery' -DownloadPath (Join-Path $env:RUNNER_TEMP 'published-package')
+
+              # The tag must not already name another commit. gh release create ignores --target when
+              # the tag exists, so the release would land where the tag stands while this log names
+              # GITHUB_SHA -- and the repair below asks for preview tags pushed by hand, so a tag on
+              # the wrong commit is a realistic input. matching-refs is a PREFIX match, hence the
+              # exact filter. A lightweight tag names its commit; an annotated one names a tag object,
+              # peeled once here.
+              $Answer = @(gh api "repos/$env:GITHUB_REPOSITORY/git/matching-refs/tags/$Tag" 2>&1)
+              $ExitCode = $LASTEXITCODE
+              if ($ExitCode -ne 0) {
+                  $Detail = (@($Answer | ForEach-Object { "$_".Trim() }) -join ' ').Trim()
+                  throw "REFUSING TO TAG. Expected GitHub to say whether the tag $Tag exists, and gh api exited with $ExitCode instead ($Detail). NOTHING has been tagged and no release was created. If the failure was transient, re-run this job."
+              }
+              $TagRefs = @(@((@($Answer | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n") | ConvertFrom-Json) | Where-Object { $_.ref -ceq "refs/tags/$Tag" })
+
+              if ($TagRefs.Count -gt 0) {
+                  $TagObject = $TagRefs[0].object
+                  if ($TagObject.type -ceq 'tag') {
+                      $Peeled = @(gh api "repos/$env:GITHUB_REPOSITORY/git/tags/$($TagObject.sha)" 2>&1)
+                      $ExitCode = $LASTEXITCODE
+                      if ($ExitCode -ne 0) {
+                          $Detail = (@($Peeled | ForEach-Object { "$_".Trim() }) -join ' ').Trim()
+                          throw "REFUSING TO TAG. The tag $Tag is an annotated tag, and gh api exited with $ExitCode when asked which commit it names ($Detail). NOTHING has been tagged and no release was created. If the failure was transient, re-run this job."
+                      }
+                      $TagObject = ((@($Peeled | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n") | ConvertFrom-Json).object
+                  }
+                  if ($TagObject.type -cne 'commit' -or $TagObject.sha -cne $env:GITHUB_SHA) {
+                      throw "REFUSING TO TAG. The tag $Tag already exists and names $($TagObject.type) $($TagObject.sha), not $env:GITHUB_SHA, whose build IS the package on the Gallery. gh release create would attach the release to the tag where it stands, so NOTHING has been tagged and no release was created. If that tag was pushed by hand onto a commit whose build is not this package, delete it with: git push origin :refs/tags/$Tag -- then re-run this job."
+                  }
+                  Write-Host "The tag $Tag already exists on $env:GITHUB_SHA."
+              }
           }
 
           $null = gh release view $Tag 2>$null

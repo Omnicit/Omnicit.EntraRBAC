@@ -10,8 +10,9 @@
       and gh replaced by stand-ins over the same fake Gallery and a fake GitHub. Each It plays one
       shape of runs on main, or one v-tag run, and asserts what was published and what was tagged.
 
-    OER_WORKFLOW_ROOT points both halves at a mutated copy of the repository's .github/ for a
-    mutation run (docs/development/rationale.md#publish-on-merge). It is never set in CI.
+    OER_WORKFLOW_ROOT points both halves at a directory that holds a mutated copy of the
+    repository's .github/ for a mutation run (docs/development/rationale.md#publish-on-merge). It
+    is never set in CI.
 #>
 
 BeforeAll {
@@ -38,10 +39,12 @@ BeforeAll {
         $env:OER_FAKE_ROOT:
 
           gallery/<version>/   the files of a published version folder
-          github.json          tags (name -> commit) and releases (name -> commit, prerelease)
+          github.json          tags (name -> commit), annotated (tag name -> tag object sha, for an
+                               annotated tag) and releases (name -> commit, prerelease)
           <name>.log           one line per call, for the assertions
           publish-answers-500  the next publish arrives, and the call fails with a 500 (one-shot)
           gh-create-fails      the next gh release create fails (one-shot)
+          gh-api-fails         every gh api call except the compare fails with exit 1 (standing)
           save-fails           every Save-PSResource fails with a 503 (standing)
           save-nothing         every Save-PSResource returns without saving anything (standing)
     #>
@@ -146,9 +149,71 @@ function gh
 
     if ($args[0] -ceq 'api')
     {
-        # The compare call a v-tag run makes: the tagged commit is the main tip.
-        'identical'
-        return
+        $Path = [string]$args[1]
+
+        if ($Path -like '*/compare/*')
+        {
+            # The compare call a v-tag run makes: the tagged commit is the main tip.
+            'identical'
+            return
+        }
+
+        if (Test-Path -LiteralPath (Join-Path -Path $env:OER_FAKE_ROOT -ChildPath 'gh-api-fails'))
+        {
+            # A plain line, as gh prints its error; a Write-Error here would stop the step on its own.
+            'gh: Bad Gateway (HTTP 502)'
+            $global:LASTEXITCODE = 1
+            return
+        }
+
+        $Annotated = @{}
+
+        if ($GitHub.ContainsKey('annotated'))
+        {
+            $Annotated = $GitHub['annotated']
+        }
+
+        if ($Path -match '/git/matching-refs/tags/(.+)$')
+        {
+            # A PREFIX match, as the REST API does.
+            $Prefix = $Matches[1]
+            $Refs = @(
+                foreach ($Name in @($GitHub['tags'].Keys | Sort-Object))
+                {
+                    if ($Name.StartsWith($Prefix, [System.StringComparison]::Ordinal))
+                    {
+                        if ($Annotated.ContainsKey($Name))
+                        {
+                            [ordered]@{ ref = "refs/tags/$Name"; object = [ordered]@{ type = 'tag'; sha = $Annotated[$Name] } }
+                        }
+                        else
+                        {
+                            [ordered]@{ ref = "refs/tags/$Name"; object = [ordered]@{ type = 'commit'; sha = $GitHub['tags'][$Name] } }
+                        }
+                    }
+                }
+            )
+            ConvertTo-Json -InputObject $Refs -Depth 5 -Compress
+            return
+        }
+
+        if ($Path -match '/git/tags/(.+)$')
+        {
+            $TagObjectSha = $Matches[1]
+
+            foreach ($Name in @($Annotated.Keys))
+            {
+                if ($Annotated[$Name] -ceq $TagObjectSha)
+                {
+                    ConvertTo-Json -InputObject ([ordered]@{ object = [ordered]@{ type = 'commit'; sha = $GitHub['tags'][$Name] } }) -Depth 5 -Compress
+                    return
+                }
+            }
+
+            'gh: Not Found (HTTP 404)'
+            $global:LASTEXITCODE = 1
+            return
+        }
     }
 
     if ($args[0] -ceq 'release' -and $args[1] -ceq 'view')
@@ -241,15 +306,47 @@ function gh
             [Parameter(Mandatory = $true)] [string] $World,
             [Parameter(Mandatory = $true)] [string] $Tag,
             [Parameter(Mandatory = $true)] [string] $Sha,
-            [switch] $WithRelease
+            [switch] $WithRelease,
+            [switch] $Annotated
         )
 
         $GitHub = Get-FakeGitHub -World $World
         $GitHub['tags'][$Tag] = $Sha
 
+        if ($Annotated)
+        {
+            # An annotated tag names a tag object, which in turn names the commit.
+            if (-not $GitHub.ContainsKey('annotated'))
+            {
+                $GitHub['annotated'] = @{}
+            }
+
+            $GitHub['annotated'][$Tag] = ('d' * 40)
+        }
+
         if ($WithRelease)
         {
             $GitHub['releases'][$Tag] = @{ Commit = $Sha; Prerelease = $true }
+        }
+
+        [System.IO.File]::WriteAllText((Join-Path -Path $World -ChildPath 'github.json'), (ConvertTo-Json -InputObject $GitHub -Depth 5))
+    }
+
+    function Remove-FakeTag
+    {
+        # What a person does with git push origin :refs/tags/TAG, and by deleting the release.
+        param (
+            [Parameter(Mandatory = $true)] [string] $World,
+            [Parameter(Mandatory = $true)] [string] $Tag
+        )
+
+        $GitHub = Get-FakeGitHub -World $World
+        $GitHub['tags'].Remove($Tag)
+        $GitHub['releases'].Remove($Tag)
+
+        if ($GitHub.ContainsKey('annotated'))
+        {
+            $GitHub['annotated'].Remove($Tag)
         }
 
         [System.IO.File]::WriteAllText((Join-Path -Path $World -ChildPath 'github.json'), (ConvertTo-Json -InputObject $GitHub -Depth 5))
@@ -668,6 +765,15 @@ Describe 'PublishArtefact.ps1 -Compare' {
         @(Get-FakeLog -World $script:World -Name 'save').Count | Should -Be 0 -Because 'nothing is read into a directory that is not empty'
     }
 
+    It 'accepts an existing empty download directory' {
+        $null = Publish-ToFakeGallery -Build $script:BuildA -World $script:World
+        $Download = Join-Path -Path (New-TestRoot -Name 'download') -ChildPath 'published-package'
+        $null = New-Item -ItemType Directory -Path $Download
+
+        { Invoke-Compare -Build $script:BuildA -Sha $script:ShaA -DownloadPath $Download } | Should -Not -Throw
+        @(Get-FakeLog -World $script:World -Name 'save').Count | Should -Be 1 -Because 'an empty directory is read into'
+    }
+
     It 'verifies the artefact before it reads the Gallery: <Case>' -ForEach @(
         @{ Case = 'a changed file'; Sha = 'a' * 40; Expected = 'The SHA-256 of 1 file(s) does not match what was recorded: Omnicit.EntraRBAC.psm1'; Tamper = $true }
         @{ Case = 'another commit'; Sha = 'b' * 40; Expected = "*belongs to a different commit."; Tamper = $false }
@@ -697,6 +803,11 @@ Describe 'The publish job, run step by step against a fake Gallery and a fake Gi
         # that rebuild.
         $script:JobB4 = New-TestBuild -Sha $script:ShaB -Version $script:V4 -Body 'B'
         $script:JobC = New-TestBuild -Sha $script:ShaC -Version '1.1.4' -Body 'C'
+        # The same files as A on another commit: a merge that changes nothing under source/ or in
+        # CHANGELOG.md, built the same day.
+        $script:JobBSame = New-TestBuild -Sha $script:ShaB -Version $script:V3 -Body 'A'
+        # The published commit built again on a later day: the release notes carry the build date.
+        $script:JobARebuilt = New-TestBuild -Sha $script:ShaA -Version $script:V3 -Body 'A, rebuilt on a later day'
 
         function Assert-Refused
         {
@@ -709,6 +820,38 @@ Describe 'The publish job, run step by step against a fake Gallery and a fake Gi
         }
     }
 
+    It 'knows every step of the publish job' {
+        $Lines = $script:WorkflowText -split '\r?\n'
+        $JobStart = @(for ($Index = 0; $Index -lt $Lines.Count; $Index++) { if ($Lines[$Index] -cmatch '^  publish:\s*$') { $Index } })
+        $JobStart.Count | Should -Be 1
+
+        $Names = [System.Collections.Generic.List[string]]::new()
+
+        for ($Index = $JobStart[0] + 1; $Index -lt $Lines.Count; $Index++)
+        {
+            if ($Lines[$Index] -cmatch '^  [A-Za-z0-9_-]+:\s*$')
+            {
+                break
+            }
+
+            if ($Lines[$Index] -cmatch '^      - name: (.+)$')
+            {
+                $Names.Add($Matches[1])
+            }
+        }
+
+        $Names.ToArray() | Should -Be @(
+            'Check out the verification script'
+            'Download the tested module artefact'
+            'Verify the artefact against publish-meta.json'
+            'Refuse a version the triggering ref does not call for'
+            "Install the module's runtime dependencies"
+            'Publish to the PowerShell Gallery'
+            'Confirm the version is on the Gallery'
+            'Tag the published commit and create the release'
+        ) -Because "a new or renamed step of the publish job must be added to Invoke-PublishJob's list, or named here as one that decides nothing about what is published or tagged"
+    }
+
     It 'publishes and tags its own commit on an ordinary merge, as before' {
         $World = New-FakeWorld
 
@@ -717,6 +860,7 @@ Describe 'The publish job, run step by step against a fake Gallery and a fake Gi
         $Job.Failed | Should -BeNullOrEmpty -Because ('the job runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Job.Output)
         @(Get-FakeLog -World $World -Name 'publish') | Should -Be @($script:V3)
         @(Get-FakeLog -World $World -Name 'save').Count | Should -Be 1 -Because 'an ordinary merge is compared too, before it is tagged'
+        @(Get-FakeLog -World $World -Name 'gh' | Where-Object -FilterScript { $_ -ceq "api repos/Omnicit/Omnicit.EntraRBAC/git/matching-refs/tags/v$($script:V3)" }).Count | Should -Be 1 -Because 'an ordinary merge asks whether the tag already names another commit'
         $GitHub = Get-FakeGitHub -World $World
         $GitHub['tags']["v$script:V3"] | Should -Be $script:ShaA
         $GitHub['releases']["v$script:V3"]['Commit'] | Should -Be $script:ShaA
@@ -821,6 +965,123 @@ Describe 'The publish job, run step by step against a fake Gallery and a fake Gi
         (Get-FakeGitHub -World $World)['tags']["v$script:V3"] | Should -Be $script:ShaA
     }
 
+    It 'refuses to put the release on a tag that names another commit, and tags once that tag is gone' {
+        $World = New-FakeWorld
+        $null = New-Item -ItemType File -Path (Join-Path -Path $World -ChildPath 'gh-create-fails')
+        $First = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+        $First.Failed | Should -Be $script:Tag
+
+        # The repair tag, pushed by hand onto the wrong commit.
+        Set-FakeGitHub -World $World -Tag "v$script:V3" -Sha $script:ShaB
+        $Refused = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        Assert-Refused -Job $Refused -World $World -ReleaseCreates 1
+        $Refused.Output | Should -BeLike "*The tag v$($script:V3) already exists and names commit $($script:ShaB), not $($script:ShaA)*"
+        $Refused.Output | Should -BeLike "*git push origin :refs/tags/v$($script:V3)*"
+        (Get-FakeGitHub -World $World)['releases'].Count | Should -Be 0
+
+        # A release made elsewhere by hand never turns the run green.
+        Set-FakeGitHub -World $World -Tag "v$script:V3" -Sha $script:ShaB -WithRelease
+        Assert-Refused -Job (Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World) -World $World -ReleaseCreates 1
+
+        Remove-FakeTag -World $World -Tag "v$script:V3"
+        $Rerun = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        $Rerun.Failed | Should -BeNullOrEmpty -Because ('the re-run after the tag is deleted runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Rerun.Output)
+        $GitHub = Get-FakeGitHub -World $World
+        $GitHub['tags']["v$script:V3"] | Should -Be $script:ShaA
+        $GitHub['releases']["v$script:V3"]['Commit'] | Should -Be $script:ShaA
+    }
+
+    It 'tags its own commit when the tag already names it as an annotated tag' {
+        $World = New-FakeWorld
+        $null = New-Item -ItemType File -Path (Join-Path -Path $World -ChildPath 'gh-create-fails')
+        $First = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+        $First.Failed | Should -Be $script:Tag
+
+        Set-FakeGitHub -World $World -Tag "v$script:V3" -Sha $script:ShaA -Annotated
+        $Rerun = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        $Rerun.Failed | Should -BeNullOrEmpty -Because ('the re-run runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Rerun.Output)
+        $Rerun.Output | Should -BeLike "*The tag v$($script:V3) already exists on $($script:ShaA).*"
+        @(Get-FakeLog -World $World -Name 'gh' | Where-Object -FilterScript { $_ -like 'api *git/tags/*' }).Count | Should -Be 1 -Because 'an annotated tag is peeled once, to the commit it names'
+        (Get-FakeGitHub -World $World)['releases']["v$script:V3"]['Commit'] | Should -Be $script:ShaA
+    }
+
+    It 'refuses to put the release on an annotated tag that names another commit' {
+        $World = New-FakeWorld
+        $null = New-Item -ItemType File -Path (Join-Path -Path $World -ChildPath 'gh-create-fails')
+        $First = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+        $First.Failed | Should -Be $script:Tag
+
+        Set-FakeGitHub -World $World -Tag "v$script:V3" -Sha $script:ShaB -Annotated
+        $Refused = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        Assert-Refused -Job $Refused -World $World -ReleaseCreates 1
+        $Refused.Output | Should -BeLike "*The tag v$($script:V3) already exists and names commit $($script:ShaB), not $($script:ShaA)*"
+    }
+
+    It 'ignores a longer tag that merely starts with the version' {
+        $World = New-FakeWorld
+        $null = New-Item -ItemType File -Path (Join-Path -Path $World -ChildPath 'gh-create-fails')
+        $First = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+        $First.Failed | Should -Be $script:Tag
+
+        Set-FakeGitHub -World $World -Tag "v$($script:V3)1" -Sha $script:ShaB
+        $Rerun = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        $Rerun.Failed | Should -BeNullOrEmpty -Because ('the re-run runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Rerun.Output)
+        $GitHub = Get-FakeGitHub -World $World
+        $GitHub['tags']["v$script:V3"] | Should -Be $script:ShaA
+        $GitHub['tags']["v$($script:V3)1"] | Should -Be $script:ShaB
+    }
+
+    It 'refuses when GitHub cannot say whether the tag exists, and tags once it can' {
+        $World = New-FakeWorld
+        $Fault = Join-Path -Path $World -ChildPath 'gh-api-fails'
+        $null = New-Item -ItemType File -Path $Fault
+
+        $First = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        Assert-Refused -Job $First -World $World -ReleaseCreates 0
+        $First.Output | Should -BeLike "*Expected GitHub to say whether the tag v$($script:V3) exists*"
+        $First.Output | Should -BeLike '*re-run this job*'
+        (Get-FakeGitHub -World $World)['tags'].Count | Should -Be 0
+
+        Remove-Item -LiteralPath $Fault
+        $Rerun = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        $Rerun.Failed | Should -BeNullOrEmpty -Because ('the re-run runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Rerun.Output)
+        (Get-FakeGitHub -World $World)['tags']["v$script:V3"] | Should -Be $script:ShaA
+    }
+
+    It 'tags a later merge whose build is byte-identical to the package, since that build IS the package' {
+        $World = New-FakeWorld
+        $null = New-Item -ItemType File -Path (Join-Path -Path $World -ChildPath 'gh-create-fails')
+        $JobForA = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+        $JobForA.Failed | Should -Be $script:Tag
+
+        $JobForB = Invoke-PublishJob -Build $script:JobBSame -Sha $script:ShaB -World $World
+
+        $JobForB.Failed | Should -BeNullOrEmpty -Because ('the later merge runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $JobForB.Output)
+        $JobForB.Output | Should -BeLike '*SKIPPING THE PUBLISH*'
+        @(Get-FakeLog -World $World -Name 'publish') | Should -Be @($script:V3)
+        (Get-FakeGitHub -World $World)['tags']["v$script:V3"] | Should -Be $script:ShaB
+    }
+
+    It 'refuses a rebuild of the published commit, and says the tag by hand is the whole repair' {
+        $World = New-FakeWorld
+        $null = New-Item -ItemType File -Path (Join-Path -Path $World -ChildPath 'gh-create-fails')
+        $First = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+        $First.Failed | Should -Be $script:Tag
+
+        # All jobs re-run on a later day: the same commit, built again, with another date in its notes.
+        $Rebuilt = Invoke-PublishJob -Build $script:JobARebuilt -Sha $script:ShaA -World $World
+
+        Assert-Refused -Job $Rebuilt -World $World -ReleaseCreates 1
+        $Rebuilt.Output | Should -BeLike "*If the commit that published $($script:V3) is $($script:ShaA) itself, the tag by hand is the whole repair.*"
+    }
+
     It 'leaves a v-tag run as it was: no comparison, and the release goes on the tag that started the run' {
         $World = New-FakeWorld
         Set-FakeGitHub -World $World -Tag 'v1.1.4' -Sha $script:ShaC
@@ -830,6 +1091,7 @@ Describe 'The publish job, run step by step against a fake Gallery and a fake Gi
         $Job.Failed | Should -BeNullOrEmpty -Because ('the job runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Job.Output)
         $Job.Output | Should -BeLike '*A v-tag run: v1.1.4 started this run*'
         @(Get-FakeLog -World $World -Name 'save').Count | Should -Be 0 -Because 'a v-tag run reads nothing back'
+        @(Get-FakeLog -World $World -Name 'gh' | Where-Object -FilterScript { $_ -like 'api *matching-refs*' }).Count | Should -Be 0 -Because 'the tag of a v-tag run names the commit that started it, and is not looked up'
         @(Get-FakeLog -World $World -Name 'publish') | Should -Be @('1.1.4')
         $GitHub = Get-FakeGitHub -World $World
         $GitHub['tags']['v1.1.4'] | Should -Be $script:ShaC
