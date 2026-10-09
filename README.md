@@ -320,21 +320,22 @@ different tenant actually switches depends on the sign-in type:
 | Sign-in type | A later call naming another tenant |
 |---|---|
 | Client secret | Reuses the credential built for the earlier tenant, so the switching sign-in fails by default -- or, with `AZURE_IDENTITY_DISABLE_MULTITENANTAUTH` set, requests its token from the earlier tenant, and the module refuses that token (`TenantMismatch`) -- until you run `Connect-OER ... -Force` |
-| Device code | Does not send the tenant you name; its token may come from the signed-in account's own tenant when that account cannot obtain one in the tenant you name, and the module then refuses it (`TenantMismatch`) -- and the switching call may not return at all: see the known limitation below |
+| Device code | Does not send the tenant you name; its token may come from the signed-in account's own tenant when that account cannot obtain one in the tenant you name, and the module then refuses it (`TenantMismatch`) -- and every device code sign-in asks for a new code: see the known limitation below |
 | Managed identity | Does not send the tenant you name; its token normally comes from the identity's own tenant, and the module refuses it when that is not the tenant you name (`TenantMismatch`) |
 | Interactive | Signs in to the tenant you name |
 | Certificate | Signs in to the tenant you name |
 
-**Known limitation -- a device code tenant switch can stop responding.** In a PowerShell process
-where a device code sign-in has already completed, a further device code sign-in naming a different
-tenant, with no `-Force`, never returns: no device code is printed, no error is raised, and the call
-does not come back. Ctrl+C is the only escape, and it leaves the credential AzAuth keeps for the
-process in an unknown state, so exit the PowerShell session afterwards rather than retrying in it.
-Pass `Connect-OER ... -Force` on the switching call -- measured to cure it every time it was used --
-or start a new PowerShell session, which begins from a fresh credential. Not every device code
-tenant switch is affected: the first device code sign-in in a process is fine, and so is a switch
-made straight after a sign-in with `-IncludeARM`, whose Azure Resource Manager token is acquired
-under a different application and so leaves AzAuth holding a freshly built credential.
+**Known limitation -- every device code sign-in asks for a new code.** The module makes AzAuth build
+a new credential for every device code sign-in, Microsoft Graph and Azure Resource Manager alike, so
+each one prints a new code to enter -- two with `-IncludeARM`, one for each token. That covers the
+first sign-in in a process, one naming another tenant, a new `Connect-OER` after `Disconnect-OER`,
+and every renewal of the token: a command that starts within five minutes of its expiry, a request
+whose token Microsoft Graph or Azure Resource Manager rejects, and a claims challenge. A command that
+finds the session's tokens with more than five minutes left signs in to nothing and asks for no
+code. Before this release such a sign-in could reuse the credential AzAuth keeps for the PowerShell
+process and never return, with no code printed and no error; `Connect-OER -Force` is no longer
+needed to avoid that. Each code has to be entered, so a long device code run needs someone at the
+keyboard.
 
 The module checks each token against the tenant you name, whether you named it by its tenant ID or
 by a domain, and refuses a token issued for another tenant with `TenantMismatch` before it is used.

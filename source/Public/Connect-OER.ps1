@@ -119,13 +119,14 @@ function Connect-OER {
     Use interactive browser sign-in (delegated). This is the default when no credential is supplied.
 
     .PARAMETER DeviceCode
-    Use device-code sign-in, suitable for headless or remote sessions. Known limitation: in a
-    PowerShell process where a device-code sign-in has already completed, a further device-code
-    sign-in naming a different tenant without -Force never returns -- no device code is printed, no
-    error is raised, and Ctrl+C is the only escape, after which the PowerShell session has to be
-    exited. Pass -Force on the switching call, or start a new PowerShell session. A first
-    device-code sign-in in a process is unaffected, and so is a switch made straight after a
-    -IncludeARM sign-in. See about_Omnicit.EntraRBAC, SWITCHING TENANTS.
+    Use device-code sign-in, suitable for headless or remote sessions. Every device code sign-in
+    prints a new code to enter, for the Microsoft Graph and the Azure Resource Manager token alike
+    (two with -IncludeARM), and so does every renewal of the token: the module makes AzAuth build
+    a new credential each time. A later device code sign-in in the same PowerShell process
+    therefore no longer reuses the credential AzAuth keeps for the process, which used to make it
+    never return, with no code printed and no error, and it does not need -Force for that. Each
+    code has to be entered, so a long device code run needs someone at the keyboard. See
+    about_Omnicit.EntraRBAC, SWITCHING TENANTS and LONG RUNS.
 
     .PARAMETER ManagedIdentity
     Use an Azure managed identity. Combine with -ClientId for a user-assigned identity.
@@ -173,11 +174,11 @@ function Connect-OER {
     Signs in again even when a cached session exists, and makes AzAuth discard the credential it
     keeps for the whole PowerShell process and build a new one. Use it to move a client secret
     sign-in for the same application to another tenant in the same session: without it that sign-in
-    keeps the tenant it was first made for. A device-code sign-in that switches tenants in a process
-    where a device-code sign-in has already completed needs it too: without -Force that call never
-    returns -- no device code is printed and no error is raised -- and Ctrl+C is the only escape. It
-    still does not make a device code or managed identity sign-in send the tenant you name; see
-    about_Omnicit.EntraRBAC, SWITCHING TENANTS.
+    keeps the tenant it was first made for. A device code sign-in does not need -Force to make
+    AzAuth build a new credential: the module does that for every device code sign-in itself. On a
+    device code session -Force still signs in again when a cached session exists, which prints new
+    codes. It still does not make a device code or managed identity sign-in send the tenant you
+    name; see about_Omnicit.EntraRBAC, SWITCHING TENANTS.
 
     .EXAMPLE
     Connect-OER -TenantId 'contoso.onmicrosoft.com'
