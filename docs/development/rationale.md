@@ -1186,15 +1186,30 @@ changed, and no new ErrorId or parameter came with `SemiAnnually`, nor any value
 `SemiAnnually` itself (A8).
 
 **The consequence for an older document.** An export made before this change recorded a live
-semi-annual review as `Monthly`, with the warning. Applied now, that document differs from the live
-cadence, so `Invoke-OERStructure` changes the review to monthly (interval 1): a real run reports it
-`Updated`, and a `-WhatIf` run reports a `Skipped` record whose detail says it would update the
-access review with `recurrence=Monthly`. Before this change the same apply left the review's
-recurrence alone, since interval 6 was outside the vocabulary. That is the cost of making the
-cadence expressible, pinned by a test in `Resolve-OERAccessReviewChange.Tests.ps1` so it is a
-decision and not an accident. The release note names the remedy: re-export before applying a
-document that predates this change. Running the apply with `-WhatIf` first shows the change without
-making it.
+semi-annual review as `Monthly`, with the warning. Applied literally, that document would change the
+review to monthly (interval 1): an overwrite in the tenant that the document's author never chose,
+since the `Monthly` was only the old export's nearest approximation of a pattern it had no name for.
+The first version of this change did exactly that (commit `aa1ce38`) and told the operator to
+re-export before applying. Decision A19 (2026-10-09, Sprint 10 step 6 round 1) reverses it:
+`Resolve-OERAccessReviewChange` never changes a live `absoluteMonthly` interval 6 to `Monthly`. It
+leaves the whole recurrence unit -- recurrence, start date, end date and occurrences -- untouched and
+reports it in `NotApplied`, with a reason that names the remedy: declare `SemiAnnually` to keep the
+review, or run `Set-OERAccessReviewDefinition` with `-Recurrence Monthly` and a `-StartDate` to make
+it monthly on purpose. `Sync-OERStructureAccessReview` writes that entry as a warning and a `Skipped`
+record before its `ShouldProcess` gate, as it does for every `NotApplied` entry, so a `-WhatIf` plan
+and a real run report the same and send nothing for the unit. A field outside the unit that differs,
+a description for one, is still written, and the PUT keeps interval 6.
+
+The rule has a cost: a document that really means to make a semi-annual review monthly cannot do it
+by declaring `Monthly`, since the diff cannot tell that document from an old export. That change
+takes the cmdlet. Every other transition is unaffected: a live interval 6 declared `SemiAnnually` is
+`Unchanged`, one declared `Quarterly`, `Annually`, `Weekly` or `OneTime` is an ordinary recurrence
+write, and a live interval 1 or 3 declared `Monthly` is not touched by the rule. Three tests hold it.
+In `Resolve-OERAccessReviewChange.Tests.ps1`: "leaves a live interval 6 declared Monthly (what an
+export before 1.1.4 wrote) untouched and says why (A19)". In
+`Sync-OERStructureAccessReview.Tests.ps1`: "plans and runs a live interval 6 review declared Monthly
+the same way: one Skipped with the A19 reason and no write", and "writes a field outside the
+recurrence unit of a live interval 6 review declared Monthly, and the PUT keeps interval 6".
 
 ## declared-property
 
