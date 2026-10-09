@@ -22,10 +22,10 @@ not sent. `New-`/`Set-OERConfiguration` refuse a white-space `-TenantId`. `SignI
 its actual cause, and the `SignInRefused` after a failed sign-in no longer says the session may be
 the previous tenant's.
 
-`Invoke-OERStructure -WhatIf` now plans what the run does when an Azure role policy entry would
-leave approval required with no approver: both report it `Failed` with `ApproverRequired` and send
-nothing. `Test-OERStructure` refuses a `tenantId` that is not a string or ends in a line break, as
-the schema does. The `NotDirectAssignment` example now runs for a role name with an apostrophe.
+`Invoke-OERStructure -WhatIf` now plans what the run does when an Azure role policy entry's
+approvers would name nobody: both report it `Failed` with `ApproverRequired` and change nothing.
+`Test-OERStructure` refuses a `tenantId` that is not a string or ends in a line break, as the
+schema does. The `NotDirectAssignment` example now runs for a role name with an apostrophe.
 
 ## [1.1.3] - 2026-10-07
 
