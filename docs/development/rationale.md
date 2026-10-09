@@ -1702,6 +1702,14 @@ NOT use the approach from Omnicit.PIM.
    `DocumentTenantMismatch` (BL-88, A14). It never signs in to the document's tenant. See
    [A document names the tenant it was exported from](#a-document-names-the-tenant-it-was-exported-from)
    below.
+10. **Device code `Force`** -- every device code token request, Graph and ARM, carries `Force`, so
+    AzAuth builds a new credential and prints a new code each time; the cached return of step 1 is
+    unchanged (A17, BL-112). See
+    [Every device code sign-in is forced](#every-device-code-sign-in-is-forced) below.
+11. **Renewal** -- a token is renewed when a command starts within five minutes of its expiry (step
+    1) and after a request whose token was rejected, and what a renewal asks of the operator depends
+    on the sign-in type (BL-105). See
+    [How a long run renews its token](#how-a-long-run-renews-its-token) below.
 
 The tenant *and identity* part of step 1 is load-bearing: PR #36 closed the audit's only Critical
 finding, which was an ARM token surviving a tenant switch. PR #37 then removed the
@@ -1950,7 +1958,8 @@ is deliberately NOT the last request ATTEMPTED, and not `$script:_OERAuthState` 
 only when the call is about to make AzAuth build a NEW credential: no record exists yet, the
 credential type differs from the record's, the client id differs from the record's (case-sensitively,
 `-cne` -- see below), or the call carries `-Force` (from `Connect-OER -Force`, or one this module
-adds automatically on a sovereign-cloud switch). MEASURED: a same-application client secret call
+adds automatically on a sovereign-cloud switch or, since A17, on every device code request).
+MEASURED: a same-application client secret call
 with no `-Force` receives the SAME credential instance AzAuth already holds, still built for the
 earlier tenant, whether that call is then silently answered (from the earlier tenant, under
 `AZURE_IDENTITY_DISABLE_MULTITENANTAUTH`) or refused outright (the default) -- so such a call must
@@ -2002,7 +2011,10 @@ sign-in first attempts silent reacquisition for the REQUESTED tenant. CONTRADICT
 the fall-back to a new device code, "only when that needs interaction", does not happen -- live,
 that call never returns at all (further finding 1 below). The reassurance that used to be drawn from
 it -- that such a switch may in fact reach the new tenant, and the check then stays silent by design
--- is therefore withdrawn. Each of these shapes that returns a token from another tenant than the
+-- is therefore withdrawn. Since A17 the module never reuses such a credential: every device code
+request carries `Force` (see
+[Every device code sign-in is forced](#every-device-code-sign-in-is-forced) below). Each of these
+shapes that returns a token from another tenant than the
 one named is now refused by `TenantMismatch`, by GUID or by domain. The same inference is repeated
 in `Initialize-OERAuth.ps1`'s comment above the `TenantMismatch` check; this paragraph is the record
 that governs.
@@ -2084,12 +2096,15 @@ naming the very tenant its token came from: a correct sign-in. The warning and
 `Connect-OER -Force` is the only PUBLIC lever that clears AzAuth's static credential, and in AzAuth
 itself only `Get-AzToken -Force` does (see below) -- `Initialize-OERAuth -ForceRefresh` already puts
 `Force` on the `Get-AzToken` splat it builds. `Connect-OER -Force` forwards `-ForceRefresh` and
-nothing else. Two internal paths put `Force` on the call as well. One is the automatic cloud switch:
-`Initialize-OERAuth` adds `Force` whenever the authority it is about to use differs from the last
-one it attempted. The other is the refresh retry after a rejected token: `Invoke-OERGraphRequest`
+nothing else. Three internal paths put `Force` on the call as well. One is the automatic cloud
+switch: `Initialize-OERAuth` adds `Force` whenever the authority it is about to use differs from the
+last one it attempted. Another is the refresh retry after a rejected token: `Invoke-OERGraphRequest`
 and `Invoke-OERArmRequest` call `Initialize-OERAuth -ForceRefresh`, for a session that is not
 app-only -- a client secret or certificate session raises `AppOnlyTokenRefreshUnsatisfiable` there
-instead of refreshing.
+instead of refreshing. The third, since A17 (BL-112), is every device code request:
+`Initialize-OERAuth` adds `Force` to every device code token request, Graph and ARM, whatever else
+the call carries -- see [Every device code sign-in is forced](#every-device-code-sign-in-is-forced)
+below.
 
 **What does NOT clear AzAuth's credential.** MEASURED: `Clear-AzTokenCache`, with or without
 `-Force`, leaves the credential instance unchanged in every case tried. DECOMPILED: it has zero
@@ -2251,6 +2266,12 @@ rules and the call's parameters.
    no module-level knob a caller could reach for, and nothing in the module's help promises one. The
    module does not carry a guard-shaped-but-inert timeout parameter here; it has no such parameter at
    all.
+
+   Since A17 (BL-112, Sprint 10 step 4b) the module passes `Force` on every device code request, so
+   the reuse instance is no longer reachable through the module: it needs a call without `Force`, and
+   the checklist 3.5 hang above is HISTORY for the module's own path. The network-failure instance
+   remains, and `Force` is INFERRED not to cure it -- see "What remains" under
+   [Every device code sign-in is forced](#every-device-code-sign-in-is-forced).
 2. MEASURED, in the module's own DeviceCode call shape (a Graph acquisition using the Microsoft
    Graph Command Line Tools client, followed by an ARM acquisition with no client id, followed by
    another Graph acquisition for a different tenant with no `-Force`): every one of the three calls
@@ -4033,6 +4054,219 @@ attribute test for it red; the cohort's run-time row for it stays green, since t
 `Set-OERConfiguration` only, inverting the script's test turns its control red. One mutant is
 equivalent, run in `New-OERConfiguration` only: `Trim()` for `IsNullOrWhiteSpace`, which trims every
 Unicode white space as the .NET method does.
+
+### Every device code sign-in is forced
+
+**The decision (A17, BL-112).** Philip decided on 2026-10-09 (P-9) that every device code
+`Get-AzToken` call carries `Force`, for the Microsoft Graph and the Azure Resource Manager token
+alike, on every path that requests one. That is the automatic `-Force` CLAUDE.md required a new
+decision for, approved for device code and for no other sign-in type: an interactive, managed
+identity, client secret or client certificate request gets `Force` exactly as before, only for
+`-ForceRefresh` and for a cloud switch. The same decision closed pull request #37 on GitHub
+(`fix/renew-the-token-silently`) unmerged -- see
+[How a long run renews its token](#how-a-long-run-renews-its-token) below.
+
+**The mechanism (Sprint 10 step 4, Ruling C1).** DECOMPILED, AzAuth 2.10.0: IL read offline from
+`AzAuth.Core.dll`, `AzAuth.PS.dll` and the Azure.Identity code in `Azure.Core.dll` under
+`output/RequiredModules`. Transferred from the closed branch's "What AzAuth does with a renewal",
+its DeviceCode bullet; the renewal design that bullet served is not on this branch.
+
+- AzAuth stores the device code credential it builds, for the whole process, and reuses it for the
+  next device code call only when it is a `DeviceCodeCredential` with the same client id as that call
+  (`previousClientId`). The module requests its Graph token under the Microsoft Graph Command Line
+  Tools client, or the session's own `-ClientId`, and its ARM token with no client id, so
+  Azure.Identity's built-in default public client answers it.
+- `GetAzToken.EndProcessing` in `AzAuth.PS.dll` creates a new message queue for each device code
+  call, starts `TokenManager.GetTokenDeviceCodeAsync` with it, and then waits on that queue with no
+  timeout, writing each message as a warning, until the queue is completed -- and only the device
+  code callback completes it. `GetTokenDeviceCodeAsync` binds this call's queue into new credential
+  options, but builds a new `DeviceCodeCredential` from them only when the stored credential is not
+  one or its client id differs; otherwise it reuses the stored credential, whose callback belongs to
+  the queue of the call that built it.
+- So a device code call without `Force` that reuses the stored credential never leaves the wait,
+  whether its silent acquisition succeeds or fails: it prints no code, `-TimeoutSeconds` does not
+  bound it, and only Ctrl+C ends it.
+- `Force` makes AzAuth clear the stored credential first, so a new one is built whose callback
+  completes this call's queue: a new device code, bounded by AzAuth's own timeout.
+
+MEASURED live, 2026-09-16, for a tenant switch (further finding 1 under
+[Switching tenants in one process](#switching-tenants-in-one-process)): checklists 3.5, through the
+module, and 4.2, against raw `Get-AzToken`, hung; 3.2 and 3.3 returned, since a fresh credential had
+just been built; and `-Force` cured it every time it was used. The mechanism does not need the
+different tenant those runs named.
+
+**The paths on `main` before this change.** A device code request went out without `Force` from
+`Connect-OER -DeviceCode`, the first sign-in or a later one; from a command that starts within five
+minutes of the token's expiry, for the Graph token and for an ARM-only acquisition; from a claims
+challenge (`-ClaimsChallenge`, Graph only); for the ARM token after a Graph token in the same call;
+and from a new `Connect-OER -DeviceCode` after `Disconnect-OER`, which clears the module's state but
+not AzAuth's credential. `-ForceRefresh` -- `Connect-OER -Force`, and the transports' refresh after a
+rejected token -- already carried `Force`. Each of those requests hung whenever the previous device
+code request in the process had used the same client id: for a session that uses only Microsoft
+Graph, its first renewal; with `-IncludeARM`, the second of two consecutive requests for the same
+resource. MEASURED for a tenant switch through `Connect-OER`; INFERRED from the mechanism for the
+other paths, none of which was run live. The ARM token right after a Graph token in the same call
+never met that condition, since the two requests never share a client id (MEASURED offline, further
+finding 2), which is also why 3.2 and 3.3 returned.
+
+**What changes.** `Initialize-OERAuth` decides it once, in
+`[bool]$DeviceCodeForced = $EffectiveMethod -eq 'DeviceCode'`, read in exactly two places: the
+condition that puts `Force` on the shared `Get-AzToken` splat, beside `-ForceRefresh` and the cloud
+switch, and the removal of `Force` after a Graph acquisition, which now keeps it for a device code
+ARM request. Both token requests are built from that splat, so every device code request -- Graph and
+ARM, at `Connect-OER`, at a command's start near expiry, beside a cached Graph token, under
+`-ForceRefresh`, under `-ClaimsChallenge` and after `Disconnect-OER` -- carries `Force`. No new error
+id, parameter or public value (A8).
+
+**What it costs.** Every device code token request prints a code to enter, so a sign-in with
+`-IncludeARM` prints two, and so does a renewal of both tokens. MEASURED for a forced Graph request:
+in checklist 4.2 the raw Graph device code call, repeated with `-Force` after it hung, printed a
+fresh code. INFERRED for the ARM token, as the comment
+above `Invoke-AzTokenCall` in `Initialize-OERAuth.ps1` records: a new credential holds neither the
+earlier sign-in's authentication record nor its in-memory token cache, so it cannot complete
+silently; a second code for the ARM token has not yet been observed live. DECOMPILED, nothing that
+used to work is lost: before A17 a device code request either built a new credential, and printed a
+code as it does now, or reused the stored one and never returned, whether its silent re-acquisition
+succeeded or failed. So no request that used to return without a code now asks for one.
+
+**What does not change.** The cached return: `$DeviceCodeForced` is not a term of `$GraphCached`,
+`$ArmCached` or `$ClearsUncertainty`, so a device code session whose tokens still have more than five
+minutes left answers from the cache with no token request and no code. The session-uncertain marker
+(A10), `TenantMismatch` on both tokens, the sign-in latch, the supersession gate and A13's ARM-token
+carry rule read nothing new. The client secret pre-call warning is unchanged: its record,
+`$script:_OERLastTokenRequest`, moves whenever a call carries `Force`, so it now moves on every device
+code request, and a later client secret prediction ignores a device code record, since it compares
+the credential type first. And `Force` still does not make a device code request carry the tenant
+you name: MEASURED, every device code request goes to `organizations`, with `Force` and without (the
+table under [Switching tenants in one process](#switching-tenants-in-one-process)).
+
+**What remains.** The other instance of further finding 1: in the spike, a device code request that
+failed at the network level before a code was issued never returned, `-TimeoutSeconds` included.
+INFERRED, not measured: `Force` does not cure it, since `Force` decides only that a new credential is
+built, and the wait hangs whenever the callback does not run, which a network failure before a code
+is issued prevents for a new credential as well. And each code has to be entered, so a long device
+code run needs someone at the keyboard (below).
+
+**The proof.** In `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, the Describe
+`Initialize-OERAuth forces every device code sign-in (A17, BL-112)` counts the exact Graph and ARM
+token requests first and then requires `Force` on each, so a missing `Force` can never pass on a
+request that was not made. D1 and D1b run `Connect-OER -DeviceCode` with and without `-IncludeARM`;
+D2 and D2b a command that starts within five minutes of expiry, through `Initialize-OERAuth` and
+through `Get-OERSubscription`; D3 an ARM token beside a cached Graph token; D4 `-ForceRefresh`; D5 a
+claims challenge; D6 a sign-in after `Disconnect-OER`; and D8 a near-expiry renewal with
+`-IncludeARM` under silenced warnings, through a real function stub, with both codes on the
+information stream. D7 holds the cached return: a device code session whose tokens are still valid
+answers with no token request. N1 to N4, each over interactive, managed identity, client secret and
+client certificate, hold `Force` off the first sign-in, the renewal at a command's start, the claims
+challenge and the sign-in after `Disconnect-OER`. End to end through the real wrappers, E1 and E2 in
+`tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` (a claims step-up, a rejected token) and E3 in
+`tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1` (a rejected ARM token) each send the retry once
+and find `Force` on the device code token request. Run against the source before the change, D1,
+D1b, D2, D2b, D3, D5, D6 and D8 were red, and D4, D7 and the sixteen N tests green.
+
+Mutation-proved on copies of `source/`, one edit per mutant in `Initialize-OERAuth.ps1`:
+
+- `$DeviceCodeForced` always `$false` (M1) turns D1, D1b, D2, D2b, D3, D5, D6, D8 and E1 red. D4, E2
+  and E3 stay green, since they go through `-ForceRefresh`, which carried `Force` before A17; M1 with
+  `-ForceRefresh` also dropped from the `Force` condition (M10) turns them red, so they do catch a
+  lost `Force` once `-ForceRefresh` no longer supplies it. D7 asserts the cache only and stays green
+  by design.
+- Dropping `$DeviceCodeForced` from the `Force` condition (M2) turns D1, D1b, D2, D2b, D3, D5, D6 and
+  D8 red.
+- Removing `Force` after a Graph acquisition as before (M3) turns D1, D2, D2b, D6 and D8 red, each on
+  its ARM request.
+- Adding interactive, managed identity, client secret or client certificate to the device code
+  decision (M4 to M7) turns that type's four N tests red -- and, for interactive, four existing tests
+  that hold `Force` off a same-cloud sign-in, and for client secret nine existing pre-call warning
+  tests, since that warning reads the absence of `Force`.
+- `$DeviceCodeForced` always `$true` (M8) turns all sixteen N tests red, with the existing tests of M4
+  and M6.
+- Adding `-not $DeviceCodeForced` to `$GraphCached` (M9) is an equivalent mutant by position:
+  `$GraphCached` is computed before `$DeviceCodeForced` is assigned, so the term reads `$null` and
+  changes nothing. Writing the device code decision into `$GraphCached` itself,
+  `$EffectiveMethod -ne 'DeviceCode'` (M9b), turns D7 and D3 red: the cached return is what D7 holds.
+
+### How a long run renews its token
+
+**The finding (BL-105).** RECORDED OBSERVATION, by Philip on 2026-10-08 in a customer tenant not named
+here: a group export went PARTIAL after almost an hour with `Login timed out after 120 seconds`, and
+the session-uncertain marker then refused the rest, as A10 decides for a sign-in that did not
+succeed. DECOMPILED: that is AzAuth's own message for a sign-in not completed within its
+`-TimeoutSeconds` -- the user strings of `AzAuth.Core.dll` 2.10.0 carry
+`Login timed out after {0} seconds, configured by the TimeoutSeconds parameter.` The module passes
+`-TimeoutSeconds` nowhere (further finding 1 under
+[Switching tenants in one process](#switching-tenants-in-one-process)), so 120 seconds is AzAuth's
+default (INFERRED from the message and that absence). Nothing the operator could read said that a
+run longer than its token renews it by signing in again, or what that asks of them per sign-in type.
+
+**The token lifetime.** INFERRED from Microsoft's documentation ("Access tokens in the Microsoft
+identity platform", Token lifetime), not measured for this module: a default access token lifetime
+is a random value between 60 and 90 minutes, 75 on average, and a client and a resource that both
+support Continuous Access Evaluation can receive longer ones. So a run of more than about an hour
+outlives the token it started with.
+
+**The two renewal points.** Read in the code:
+
+1. A command's start. `Initialize-OERAuth`'s cached return needs a token with more than five minutes
+   left, so a command that starts with less signs in again first, without `-ForceRefresh`.
+2. A rejected token in the middle of a command. A command that runs longer than its token never
+   passes point 1 again; its transports renew only when Microsoft Graph rejects the token
+   (`Invoke-OERGraphRequest`'s token-rejected retry) or Azure Resource Manager answers 401
+   (`Invoke-OERArmRequest`'s 401 retry). Both call `Initialize-OERAuth -ForceRefresh`, which puts
+   `Force` on the call, and send the rejected request once more.
+
+The claims-challenge step-up signs in again as well, for a stronger token rather than an expiring
+one.
+
+**Per sign-in type.**
+
+- **Interactive.** DECOMPILED (Sprint 10 step 4, Ruling R1; transferred from the closed branch's
+  Interactive bullet): `Get-AzToken -Interactive` goes to `TokenManager.GetTokenInteractive`, which
+  with no `-TokenCache` -- the module never passes one (gate 7 of
+  [#static-source-gates](#static-source-gates)) -- builds a NEW `InteractiveBrowserCredential` on
+  every call, with only `ClientId` set and no reuse test. A new instance has no
+  `AuthenticationRecord`, so Azure.Identity skips its silent attempt and opens the browser with
+  `Prompt.SelectAccount` and no login hint, which the operator has to answer. `Force` only clears the
+  stored credential first, so a renewal opens the account picker with or without it. MEASURED by
+  Philip on 2026-10-09, with the published preview and an interactive sign-in: with the Microsoft
+  Graph token's expiry moved into the five-minute window, the next command at once opened a new
+  interactive sign-in -- a renewal without `-Force` opened a new interactive sign-in, which confirms
+  Ruling R1. So a long interactive run asks the operator to sign in about once an hour, and the
+  account picker offers other accounts of the same tenant, as whom the command then carries on.
+  A17 does not change this type.
+- **Device code.** Since A17 every renewal, like every device code request, carries `Force` and
+  prints a new code ([Every device code sign-in is forced](#every-device-code-sign-in-is-forced),
+  above). Before A17 the forced refresh after a rejected token printed a code, and a renewal at a
+  command's start or a claims challenge that reused the stored credential never returned (INFERRED
+  from the mechanism, not run live).
+- **Managed identity.** DECOMPILED (the closed branch's ManagedIdentity bullet), not observed live:
+  the stored credential is reused for the same client id, and a managed identity never prompts, so it
+  renews unattended at both points. A17 does not change this type.
+- **Client secret and certificate (app-only).** Not renewed, read in the code: the module never
+  keeps the secret or the certificate, so it has nothing to sign in with. A command that starts
+  within the window, or later, fails to sign in with `AppOnlySessionCredentialUnavailable`, and a
+  rejected token is refused with `AppOnlyTokenRefreshUnsatisfiable` instead of refreshed, until
+  `Connect-OER` is run with the secret or certificate again.
+
+**The user-facing texts.** README's `### Long runs`, the about topic's `LONG RUNS` and a paragraph
+of `Connect-OER`'s description (Sprint 10 step 4b) say this per sign-in type, with the advice that
+follows from it: `Connect-OER -Force` with the session's own sign-in before a long run, someone at
+the keyboard unless the sign-in is a managed identity, and for an app-only run a `Connect-OER -Force`
+before each command. None of them calls an interactive renewal silent. The device code known
+limitation under `### Switching tenants` and `SWITCHING TENANTS` says that every device code
+sign-in, every renewal included, asks for a new code.
+
+**HISTORY: the renewal before expiry that was not built.** Decision A11 of Sprint 10 designed, and
+step 4 built, a renewal before expiry in the two transports, without `Force`, on the premise that
+AzAuth renews a delegated session silently from its cache when `Force` is absent. Pull request #37
+on GitHub (`fix/renew-the-token-silently`) carried it. The premise does not hold with AzAuth
+2.10.0: an interactive renewal opens the browser with or without `Force` (Ruling R1, decompiled, and
+measured above), and a device code renewal without `Force` that reuses the stored credential never
+returns (Ruling C1). Decision A17 (Philip, 2026-10-09, P-9) closed that pull request unmerged, so
+none of its parts -- a renewal before each request, a private renewal switch on
+`Initialize-OERAuth`, a shared renewal threshold, a split of the 401 path by the token's expiry --
+exists in the module. A delegated renewal that asks nothing of the operator needs a new design
+(BL-115), for example a change in AzAuth itself (PalmEmanuel/AzAuth issue 233). Nothing is promised.
 
 ## profile-path
 
