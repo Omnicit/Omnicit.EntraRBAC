@@ -1040,12 +1040,19 @@ parent (below).
 
 **How the answer is read.** `Get-OERManagementGroupParent`, the single owner of the call, keys its
 map on the entity's `name` (case-insensitive) and takes an entity only when its `type` is
-`Microsoft.Management/managementGroups`, its `parent.id` is a string that is not blank, and its
-`parentDisplayNameChain` ends in an element that is not blank. `ParentId` is `parent.id`,
-`ParentName` the last segment of `parent.id`, and `ParentDisplayName` the last element of
-`parentDisplayNameChain`; taking the name from `parent.id` rather than from `parentNameChain` rests
-on the measured equality above. Any other entity is left out, so a group the answer misses or
-mis-states is reported as unread. `Get-OERManagementGroup` sends the call only when the list holds a
+`Microsoft.Management/managementGroups`, its `parent.id` is a string that is not blank and whose
+last segment is not blank, its `parentNameChain` has at least one element and ends in that same last
+segment (compared case-insensitively), and its `parentDisplayNameChain` ends in an element that is
+not blank. `ParentId` is `parent.id`, `ParentName` the last segment of `parent.id`, and
+`ParentDisplayName` the last element of `parentDisplayNameChain`. The `parentNameChain` condition is
+there because the display name comes from a chain and not from `parent.id`: an answer whose chains
+end in another group than the one `parent.id` names would otherwise put that other group's display
+name beside the right `ParentId` and `ParentName`. Learn's own Entities - List sample is such an
+answer -- its `parent.id` names the tenant root group while both chains end in another group -- and
+the measured equality above is 1 of 1, for a group directly under the root. The condition compares
+the name chain only, so a `parentDisplayNameChain` that disagrees with its own `parentNameChain` is
+not caught. Any other entity is left out, so a group the answer misses or mis-states is reported as
+unread. `Get-OERManagementGroup` sends the call only when the list holds a
 group other than the tenant root group, and only after the list itself succeeded.
 
 **A parent that cannot be read is an error, never an empty parent.** An empty `ParentId` reads as

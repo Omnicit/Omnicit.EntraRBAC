@@ -85,6 +85,7 @@ Describe 'Get-OERManagementGroupParent' {
                             type       = 'Microsoft.Management/managementGroups'
                             properties = [PSCustomObject]@{
                                 parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('mg-a')
                                 parentDisplayNameChain = @('MG A')
                             }
                         }
@@ -107,6 +108,7 @@ Describe 'Get-OERManagementGroupParent' {
                             type       = '/subscriptions'
                             properties = [PSCustomObject]@{
                                 parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('mg-a')
                                 parentDisplayNameChain = @('MG A')
                             }
                         }
@@ -115,6 +117,7 @@ Describe 'Get-OERManagementGroupParent' {
                             type       = 'Microsoft.Management/managementGroups'
                             properties = [PSCustomObject]@{
                                 parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('mg-a')
                                 parentDisplayNameChain = @('MG A')
                             }
                         }
@@ -134,13 +137,14 @@ Describe 'Get-OERManagementGroupParent' {
                         [PSCustomObject]@{
                             name       = 'mg-no-parent'
                             type       = 'Microsoft.Management/managementGroups'
-                            properties = [PSCustomObject]@{ parent = $null; parentDisplayNameChain = @('MG A') }
+                            properties = [PSCustomObject]@{ parent = $null; parentNameChain = @('mg-a'); parentDisplayNameChain = @('MG A') }
                         }
                         [PSCustomObject]@{
                             name       = 'mg-b'
                             type       = 'Microsoft.Management/managementGroups'
                             properties = [PSCustomObject]@{
                                 parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('mg-a')
                                 parentDisplayNameChain = @('MG A')
                             }
                         }
@@ -160,13 +164,14 @@ Describe 'Get-OERManagementGroupParent' {
                         [PSCustomObject]@{
                             name       = 'mg-empty-parent-id'
                             type       = 'Microsoft.Management/managementGroups'
-                            properties = [PSCustomObject]@{ parent = [PSCustomObject]@{ id = '' }; parentDisplayNameChain = @('MG A') }
+                            properties = [PSCustomObject]@{ parent = [PSCustomObject]@{ id = '' }; parentNameChain = @('mg-a'); parentDisplayNameChain = @('MG A') }
                         }
                         [PSCustomObject]@{
                             name       = 'mg-b'
                             type       = 'Microsoft.Management/managementGroups'
                             properties = [PSCustomObject]@{
                                 parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('mg-a')
                                 parentDisplayNameChain = @('MG A')
                             }
                         }
@@ -189,13 +194,14 @@ Describe 'Get-OERManagementGroupParent' {
                         [PSCustomObject]@{
                             name       = 'mg-number-parent-id'
                             type       = 'Microsoft.Management/managementGroups'
-                            properties = [PSCustomObject]@{ parent = [PSCustomObject]@{ id = 42 }; parentDisplayNameChain = @('MG A') }
+                            properties = [PSCustomObject]@{ parent = [PSCustomObject]@{ id = 42 }; parentNameChain = @('42'); parentDisplayNameChain = @('MG A') }
                         }
                         [PSCustomObject]@{
                             name       = 'mg-b'
                             type       = 'Microsoft.Management/managementGroups'
                             properties = [PSCustomObject]@{
                                 parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('mg-a')
                                 parentDisplayNameChain = @('MG A')
                             }
                         }
@@ -218,6 +224,7 @@ Describe 'Get-OERManagementGroupParent' {
                             type       = 'Microsoft.Management/managementGroups'
                             properties = [PSCustomObject]@{
                                 parent                 = [PSCustomObject]@{ id = [PSCustomObject]@{ value = '/providers/Microsoft.Management/managementGroups/mg-a' } }
+                                parentNameChain        = @('mg-a')
                                 parentDisplayNameChain = @('MG A')
                             }
                         }
@@ -226,6 +233,7 @@ Describe 'Get-OERManagementGroupParent' {
                             type       = 'Microsoft.Management/managementGroups'
                             properties = [PSCustomObject]@{
                                 parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('mg-a')
                                 parentDisplayNameChain = @('MG A')
                             }
                         }
@@ -248,6 +256,7 @@ Describe 'Get-OERManagementGroupParent' {
                             type       = 'Microsoft.Management/managementGroups'
                             properties = [PSCustomObject]@{
                                 parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('t', 'mg-a')
                                 parentDisplayNameChain = @()
                             }
                         }
@@ -256,6 +265,7 @@ Describe 'Get-OERManagementGroupParent' {
                             type       = 'Microsoft.Management/managementGroups'
                             properties = [PSCustomObject]@{
                                 parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('t', 'mg-a')
                                 parentDisplayNameChain = @('Tenant Root Group', '  ')
                             }
                         }
@@ -264,6 +274,148 @@ Describe 'Get-OERManagementGroupParent' {
                             type       = 'Microsoft.Management/managementGroups'
                             properties = [PSCustomObject]@{
                                 parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('mg-a')
+                                parentDisplayNameChain = @('MG A')
+                            }
+                        }
+                    ) }
+            }
+
+            $Map = Get-OERManagementGroupParent
+
+            @($Map.Keys) | Should -Be @('mg-b')
+        }
+    }
+
+    # The name chain must end in the group parent.id names (R17). The Entities - List sample on
+    # Microsoft Learn shows chains that end in another group than parent.id names; taking such an
+    # entity would put that other group's display name beside the right ParentId and ParentName.
+    It 'leaves out an entity whose name chain ends in another group than its parent id names, and keeps the good one' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                [PSCustomObject]@{ value = @(
+                        [PSCustomObject]@{
+                            name       = 'mg-chain-disagrees'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/t' }
+                                parentNameChain        = @('t', 'mg-p')
+                                parentDisplayNameChain = @('Tenant Root Group', 'MG P')
+                            }
+                        }
+                        [PSCustomObject]@{
+                            name       = 'mg-b'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('t', 'mg-a')
+                                parentDisplayNameChain = @('Tenant Root Group', 'MG A')
+                            }
+                        }
+                    ) }
+            }
+
+            $Map = Get-OERManagementGroupParent
+
+            @($Map.Keys) | Should -Be @('mg-b')
+            $Map['mg-b'].name | Should -BeExactly 'mg-a'
+            $Map['mg-b'].displayName | Should -BeExactly 'MG A'
+        }
+    }
+
+    It 'leaves out an entity whose name chain is empty, and one that has no name chain, and keeps the good one' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                [PSCustomObject]@{ value = @(
+                        [PSCustomObject]@{
+                            name       = 'mg-empty-name-chain'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @()
+                                parentDisplayNameChain = @('MG A')
+                            }
+                        }
+                        [PSCustomObject]@{
+                            name       = 'mg-no-name-chain'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentDisplayNameChain = @('MG A')
+                            }
+                        }
+                        [PSCustomObject]@{
+                            name       = 'mg-b'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('mg-a')
+                                parentDisplayNameChain = @('MG A')
+                            }
+                        }
+                    ) }
+            }
+
+            $Map = Get-OERManagementGroupParent
+
+            @($Map.Keys) | Should -Be @('mg-b')
+        }
+    }
+
+    It 'takes an entity whose name chain differs from its parent id only in case, with the name from the parent id' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                [PSCustomObject]@{ value = @(
+                        [PSCustomObject]@{
+                            name       = 'mg-b'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('T', 'MG-A')
+                                parentDisplayNameChain = @('Tenant Root Group', 'MG A')
+                            }
+                        }
+                    ) }
+            }
+
+            $Map = Get-OERManagementGroupParent
+
+            @($Map.Keys) | Should -Be @('mg-b')
+            $Map['mg-b'].id | Should -BeExactly '/providers/Microsoft.Management/managementGroups/mg-a'
+            $Map['mg-b'].name | Should -BeExactly 'mg-a'
+            $Map['mg-b'].displayName | Should -BeExactly 'MG A'
+        }
+    }
+
+    # A parent id that ends in a slash has an empty last segment. Without the blank-segment test a
+    # name chain ending in an empty name, or no name chain at all, would match that empty segment.
+    It 'leaves out an entity whose parent id ends in a slash, with a name chain ending in an empty name or without one' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                [PSCustomObject]@{ value = @(
+                        [PSCustomObject]@{
+                            name       = 'mg-slash-empty-name'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/' }
+                                parentNameChain        = @('t', '')
+                                parentDisplayNameChain = @('Tenant Root Group', 'MG A')
+                            }
+                        }
+                        [PSCustomObject]@{
+                            name       = 'mg-slash-no-name-chain'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/' }
+                                parentDisplayNameChain = @('Tenant Root Group', 'MG A')
+                            }
+                        }
+                        [PSCustomObject]@{
+                            name       = 'mg-b'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentNameChain        = @('mg-a')
                                 parentDisplayNameChain = @('MG A')
                             }
                         }

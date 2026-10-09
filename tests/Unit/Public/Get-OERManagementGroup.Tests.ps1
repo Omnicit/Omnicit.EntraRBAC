@@ -29,7 +29,7 @@ Describe 'Get-OERManagementGroup' {
         # mg1 is not the root, so its parent is read from Entities - List.
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter { $Path -like '*/getEntities?*' } {
             [PSCustomObject]@{ value = @(
-                [PSCustomObject]@{ name = 'mg1'; type = 'Microsoft.Management/managementGroups'; properties = [PSCustomObject]@{ parent = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/t' }; parentDisplayNameChain = @('Tenant Root Group') } }
+                [PSCustomObject]@{ name = 'mg1'; type = 'Microsoft.Management/managementGroups'; properties = [PSCustomObject]@{ parent = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/t' }; parentNameChain = @('t'); parentDisplayNameChain = @('Tenant Root Group') } }
             ) }
         }
         $Result = Get-OERManagementGroup -ErrorAction Stop
