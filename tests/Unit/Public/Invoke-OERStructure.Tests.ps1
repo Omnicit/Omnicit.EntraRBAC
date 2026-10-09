@@ -598,8 +598,9 @@ Describe 'Invoke-OERStructure -Prune and a group created into an administrative 
         $Withheld = @($Rows | Where-Object { $_.Section -eq 'administrativeUnits' -and $_.Action -eq 'Skipped' })
         $Withheld.Count | Should -Be 1
         $Withheld[0].Item | Should -BeExactly 'AU-IT'
-        $Withheld[0].Detail | Should -BeExactly ("prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'grp-new', which this run created into this unit, " +
-            'and the run that creates a membership does not remove it (our own guard, not a Graph rejection). ' +
+        $Withheld[0].Detail | Should -BeExactly ("prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'grp-new', " +
+            'which the groups section of this run either created into this unit or, when the group already existed, found in place of creating it; ' +
+            'this run does not remove that membership (our own guard, not a Graph rejection). ' +
             "The next apply with -Prune removes it unless the unit's members name the group.")
         @($Rows | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 1
         @($PruneWarnings | Where-Object { "$_" -match '88888888-8888-8888-8888-888888888888' }).Count | Should -Be 0

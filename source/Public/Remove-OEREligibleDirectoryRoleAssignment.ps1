@@ -153,8 +153,10 @@ function Remove-OEREligibleDirectoryRoleAssignment {
         # Active twin's activation branch has no counterpart here. A Get-OERGroupMember row (tagged
         # Omnicit.EntraRBAC.GroupMember, or MemberType Member or Owner) is no role assignment at all,
         # so its refusal says that instead of calling it inherited, and shows how to remove the
-        # principal's own eligibility on purpose; the role name in that example is quoted with any
-        # single quote doubled, so the example stays valid as typed.
+        # principal's own eligibility on purpose; the role name in that example is quoted with every
+        # single-quote character doubled -- the straight one and the curly ones the PowerShell
+        # tokenizer also reads as quotes (CodeGeneration.EscapeSingleQuotedStringContent) -- so the
+        # example stays valid as typed.
         if ($PSCmdlet.MyInvocation.ExpectingInput) {
             $NotDirectReason = $null
             $NotDirectAdvice = $null
@@ -162,7 +164,7 @@ function Remove-OEREligibleDirectoryRoleAssignment {
             if (($PSItem.PSObject.TypeNames -contains 'Omnicit.EntraRBAC.GroupMember') -or
                 ([string]$PSItem.MemberType -in @('Member', 'Owner'))) {
                 $MemberTypeNote = if ([string]$PSItem.MemberType) { " (MemberType '$($PSItem.MemberType)')" } else { '' }
-                $NotDirectMessage = "The piped object for principal '$($PSItem.PrincipalId)' is a group member row$MemberTypeNote from Get-OERGroupMember, not an eligible assignment of directory role '$Role', so nothing is removed: the request names only the role and the principal, and would remove that principal's own direct eligible assignment, if one exists. To remove that assignment on purpose, name the principal with -PrincipalId, for example: ... | ForEach-Object { Remove-OEREligibleDirectoryRoleAssignment -Role '$($Role.Replace("'", "''"))' -PrincipalId `$_.PrincipalId }"
+                $NotDirectMessage = "The piped object for principal '$($PSItem.PrincipalId)' is a group member row$MemberTypeNote from Get-OERGroupMember, not an eligible assignment of directory role '$Role', so nothing is removed: the request names only the role and the principal, and would remove that principal's own direct eligible assignment, if one exists. To remove that assignment on purpose, name the principal with -PrincipalId, for example: ... | ForEach-Object { Remove-OEREligibleDirectoryRoleAssignment -Role '$([System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($Role))' -PrincipalId `$_.PrincipalId }"
             } elseif ($PSItem.MemberType -and [string]$PSItem.MemberType -ne 'Direct') {
                 $NotDirectReason = "is inherited through a group (MemberType '$($PSItem.MemberType)'), not a direct one"
                 $NotDirectAdvice = " Remove the group's own eligible assignment, or the principal from the group."

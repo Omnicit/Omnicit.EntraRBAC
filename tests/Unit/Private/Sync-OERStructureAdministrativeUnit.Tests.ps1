@@ -1523,8 +1523,9 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                 $Withheld.Count | Should -Be 1
                 $Withheld[0].Section | Should -BeExactly 'administrativeUnits'
                 $Withheld[0].Item | Should -BeExactly 'AU-IT'
-                $Withheld[0].Detail | Should -BeExactly ("prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'grp-new', which this run created into this unit, " +
-                    'and the run that creates a membership does not remove it (our own guard, not a Graph rejection). ' +
+                $Withheld[0].Detail | Should -BeExactly ("prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'grp-new', " +
+                    'which the groups section of this run either created into this unit or, when the group already existed, found in place of creating it; ' +
+                    'this run does not remove that membership (our own guard, not a Graph rejection). ' +
                     "The next apply with -Prune removes it unless the unit's members name the group.")
                 $Streamed.Count | Should -Be 1
                 $Streamed[0] | Should -BeExactly "Sync-OERStructureAdministrativeUnit: removing undeclared member 'u-extra' from unit 'AU-IT'."

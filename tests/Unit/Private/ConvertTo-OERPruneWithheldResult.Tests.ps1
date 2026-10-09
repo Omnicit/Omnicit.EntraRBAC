@@ -273,9 +273,15 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
                 $R[0].Item | Should -BeExactly 'AU-IT'
                 $R[0].Action | Should -BeExactly 'Skipped'
                 $R[0].Error | Should -BeNullOrEmpty
-                $R[0].Detail | Should -BeExactly ("prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'grp-new', which this run created into this unit, " +
-                    'and the run that creates a membership does not remove it (our own guard, not a Graph rejection). ' +
+                # One text, true for a group the run created into the unit AND for one New-OERGroup
+                # found already existing (the handler cannot tell the two apart; BL-100, ruling R2).
+                $R[0].Detail | Should -BeExactly ("prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'grp-new', " +
+                    'which the groups section of this run either created into this unit or, when the group already existed, found in place of creating it; ' +
+                    'this run does not remove that membership (our own guard, not a Graph rejection). ' +
                     "The next apply with -Prune removes it unless the unit's members name the group.")
+                # The earlier text claimed a create in both cases; the assertion above is the proof the
+                # path was reached, this one that the false claim is gone.
+                $R[0].Detail | Should -Not -BeLike '*which this run created into this unit*'
             }
         }
 

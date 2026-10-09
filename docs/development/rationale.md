@@ -5450,7 +5450,10 @@ just made. Now `Sync-OERStructureGroup` records each successful create into a un
 the document names it, the new group's id and its name -- in a list `Invoke-OERStructure` keeps per
 document and passes to the groups and administrative units handlers as a private parameter (ruling
 R8: a run-scoped list through the handlers' extra parameters, as `roleAssignments` already does). A
-group `New-OERGroup` found already existing is recorded too, which can only withhold. The unit's
+group `New-OERGroup` found already existing is recorded too, which can only withhold. Its withheld
+row therefore says the run either created the group into the unit or found it already existing
+(Sprint 10 step 5, BL-100): the handler cannot tell the two apart, and the earlier text claimed a
+create in both. The unit's
 prune pass, straight after the unresolved-entry call, withholds a candidate whose id is a recorded
 group id and whose record names this unit, by its display name or its object id (a reference that
 parses as a GUID, braced and dash-less forms included, is read as the unit's object id and compared

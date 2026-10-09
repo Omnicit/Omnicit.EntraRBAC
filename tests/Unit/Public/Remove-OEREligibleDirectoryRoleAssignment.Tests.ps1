@@ -187,6 +187,54 @@ Describe 'Remove-OEREligibleDirectoryRoleAssignment' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
     }
 
+    It 'writes a group member row example that parses and gives the role name back for a name holding <Label> (BL-100)' -ForEach @(
+        @{ Label = 'a straight apostrophe (U+0027)'; RoleName = "Reader's role" }
+        @{ Label = 'a right single quotation mark (U+2019)'; RoleName = ('Reader' + [char]0x2019 + 's role') }
+        @{ Label = 'a left single quotation mark (U+2018)'; RoleName = ('Reader' + [char]0x2018 + 's role') }
+        @{ Label = 'a single low-9 quotation mark (U+201A)'; RoleName = ('Reader' + [char]0x201A + 's role') }
+        @{ Label = 'a single high-reversed-9 quotation mark (U+201B)'; RoleName = ('Reader' + [char]0x201B + 's role') }
+    ) {
+        # PowerShell's tokenizer reads U+2018, U+2019, U+201A and U+201B as single quotes, like U+0027, so an
+        # example that doubled only the straight one ended the string early for a curly apostrophe and did
+        # not parse. Zero parse errors is not enough on its own -- an unbalanced string can parse into the
+        # wrong tokens -- so the -Role argument must also come back exactly as the role name was typed.
+        $Row = [PSCustomObject]@{
+            PrincipalId = 'cccccccc-0000-0000-0000-000000000003'
+            DisplayName = 'Row Principal'
+            ObjectType  = 'user'
+            MemberType  = 'Member'
+            GroupId     = 'dddddddd-0000-0000-0000-000000000004'
+        }
+        $Row.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupMember')
+        $Err = $null
+        $Row | Remove-OEREligibleDirectoryRoleAssignment -Role $RoleName -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue | Out-Null
+        $Hit = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NotDirectAssignment,Remove-OEREligibleDirectoryRoleAssignment' })
+        $Hit.Count | Should -Be 1
+        $Marker = 'for example: '
+        $At = $Hit[0].Exception.Message.IndexOf($Marker)
+        $At | Should -BeGreaterThan -1
+        $Example = $Hit[0].Exception.Message.Substring($At + $Marker.Length)
+        $Errors = $null
+        $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Example, [ref]$null, [ref]$Errors)
+        @($Errors).Count | Should -Be 0
+        $Command = $Ast.Find({
+                param($Node)
+                $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq 'Remove-OEREligibleDirectoryRoleAssignment'
+            }, $true)
+        $Command | Should -Not -BeNullOrEmpty
+        $Elements = @($Command.CommandElements)
+        $RoleAt = -1
+        for ($I = 0; $I -lt $Elements.Count; $I++) {
+            if ($Elements[$I] -is [System.Management.Automation.Language.CommandParameterAst] -and $Elements[$I].ParameterName -eq 'Role') { $RoleAt = $I }
+        }
+        $RoleAt | Should -BeGreaterThan -1
+        $Argument = $Elements[$RoleAt + 1]
+        $Argument | Should -BeOfType ([System.Management.Automation.Language.StringConstantExpressionAst])
+        $Argument.Value | Should -BeExactly $RoleName
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
     It 'removes a piped Direct row, and only that one when it is piped together with an inherited row' {
         $Inherited = [PSCustomObject]@{
             RoleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
