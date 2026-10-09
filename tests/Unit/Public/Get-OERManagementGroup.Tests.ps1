@@ -135,7 +135,8 @@ Describe 'Get-OERManagementGroup' {
     }
 
     # The Management Groups - List answer carries no parent. The parents come from ONE Entities -
-    # List call per list; a parent that could not be read is reported, never shown as empty.
+    # List call per list; a parent that could not be read is left empty and reported, not left
+    # silently empty.
     Context 'the parent of every listed group (A10)' {
         BeforeAll {
             # Four groups on three levels: the tenant root t (its name equals its tenant id), mg-a

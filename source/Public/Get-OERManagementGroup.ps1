@@ -19,14 +19,17 @@ function Get-OERManagementGroup {
     read per group; none is sent when the list holds no group but the tenant root group, or when
     the list itself fails. Only the tenant root group has no parent: its three parent properties
     are empty and no error is written for it. A parent that cannot be read, because the
-    Entities - List call failed or its answer has no parent for that group, leaves that group's
-    three parent properties empty; after every group has been written, the command writes ONE
-    non-terminating error, ManagementGroupParentReadFailed (category ReadError), whose target
+    Entities - List call failed or its answer has no usable parent for that group, leaves that
+    group's three parent properties empty; after every group has been written, the command writes
+    ONE non-terminating error, ManagementGroupParentReadFailed (category ReadError), whose target
     object is the names of those groups and whose message names them and says why. So an empty
-    parent means "no parent" only for the tenant root group. A caller that can read no management
-    group at all is refused by the list itself (AuthorizationFailed), not answered with an empty
-    list, and no parent is read then. A group read by -Name takes its parent from that read's own
-    answer.
+    parent means "no parent" only for the tenant root group. Every group is written to the
+    pipeline before that error, so a command that consumes the pipeline, such as ForEach-Object,
+    sees every group; under -ErrorAction Stop, or $ErrorActionPreference set to Stop, an
+    assignment of the whole result, such as $Groups = Get-OERManagementGroup, receives none, since
+    the error ends the statement. A caller that can read no management group at all is refused by
+    the list itself (AuthorizationFailed), not answered with an empty list, and no parent is read
+    then. A group read by -Name takes its parent from that read's own answer.
 
     A management group created in the last few minutes can be missing from the management-group
     list, although a -Name read already finds it, and an Export-OERInventory run in that window does
@@ -135,9 +138,9 @@ function Get-OERManagementGroup {
 
         # The Management Groups - List answer carries no parent (Microsoft Learn: a listed item has
         # only id, name, type, displayName and tenantId), so the parents are read separately: ONE
-        # Entities - List call per list, not one GET per group. A parent that could not be read is
-        # reported as an error and never shown as an empty parent, since an empty ParentId otherwise
-        # reads as "this group has no parent".
+        # Entities - List call per list, not one GET per group. A group whose parent could not be read
+        # keeps its three parent properties empty and is named in the error below, so they are not
+        # left silently empty: an empty ParentId otherwise reads as "this group has no parent".
         $ParentByName = @{}
         $ParentReadError = $null
         if ($IsRoot -contains $false) {
@@ -149,8 +152,10 @@ function Get-OERManagementGroup {
             }
         }
 
-        # Every group is emitted, in list order, before the error below is written, so a caller under
-        # -ErrorAction Stop still receives all of them.
+        # Every group is written to the pipeline, in list order, before the error below is written,
+        # so a caller that consumes the pipeline sees every group. Under -ErrorAction Stop (or a
+        # global Stop preference) an assignment of the whole result receives none, since the error
+        # ends the statement.
         $Unread = [System.Collections.Generic.List[string]]::new()
         for ($Index = 0; $Index -lt $Items.Count; $Index++) {
             $Item = $Items[$Index]

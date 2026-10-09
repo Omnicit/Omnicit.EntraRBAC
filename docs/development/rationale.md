@@ -1035,8 +1035,8 @@ one call, and needs no role of its own. The alternatives:
   group.
 
 If a tenant ever shows Entities - List missing or mis-stating a group that the list returns, the
-fallback is that GET per group; until then, such a group is reported, never shown with an empty
-parent (below).
+fallback is that GET per group; until then, such a group keeps an empty parent and is reported
+(below), so it is not left silently empty.
 
 **How the answer is read.** `Get-OERManagementGroupParent`, the single owner of the call, keys its
 map on the entity's `name` (case-insensitive) and takes an entity only when its `type` is
@@ -1052,10 +1052,10 @@ answer -- its `parent.id` names the tenant root group while both chains end in a
 the measured equality above is 1 of 1, for a group directly under the root. The condition compares
 the name chain only, so a `parentDisplayNameChain` that disagrees with its own `parentNameChain` is
 not caught. Any other entity is left out, so a group the answer misses or mis-states is reported as
-unread. `Get-OERManagementGroup` sends the call only when the list holds a
-group other than the tenant root group, and only after the list itself succeeded.
+unread. `Get-OERManagementGroup` sends the call only when the list holds a group other than the
+tenant root group, and only after the list itself succeeded.
 
-**A parent that cannot be read is an error, never an empty parent.** An empty `ParentId` reads as
+**A parent that cannot be read is reported, not left silently empty.** An empty `ParentId` reads as
 "this group has no parent". So a listed group whose parent was not read -- the Entities - List call
 failed, or its answer has no usable parent for that group -- is still written, with its three parent
 properties empty, and after EVERY group has been written the command writes ONE non-terminating
@@ -1069,12 +1069,20 @@ Could not read the parent of 2 management group(s): 'mg-a', 'mg-b' -- the entity
 
 When the call itself failed, the reason reads `the entity listing failed: ` followed by that call's
 own message with its trailing full stops trimmed (the sentence adds its own), and the failed call's
-exception is the record's `InnerException`. Writing every group first means a caller under
-`-ErrorAction Stop` still receives all of them before the error stops it. It is the rule
-`Get-OERGroup` follows with `GroupMemberReadFailed` (see
-[#typed-group-member-read](#typed-group-member-read)): a value that could not be read is reported as
-unread, never shown as an empty one. A failed LIST is reported as before, as its own error
-(`AuthorizationFailed` for a caller that can read no group), and no parent read follows.
+exception is the record's `InnerException`. Every group is written to the pipeline before the
+error, so a caller that consumes the pipeline (`| ForEach-Object { ... }`) sees every group. Under
+`-ErrorAction Stop`, or a global `$ErrorActionPreference = 'Stop'`, an assignment of the whole
+result (`$Groups = Get-OERManagementGroup`, with or without `@(...)`) receives none, since the
+error ends the statement. That is measured on a plain stand-in function that writes three objects
+and then one non-terminating error through `$PSCmdlet.WriteError`, as `Write-CmdletError` does
+(2026-10-09): each of the three assignments leaves the variable as it was, and a `ForEach-Object`
+consumer sees all three objects, under `-ErrorAction Stop` and under the global preference alike.
+It follows the rule behind `Get-OERGroup`'s `GroupMemberReadFailed` (see
+[#typed-group-member-read](#typed-group-member-read)): a value that could not be read is reported
+as unread, not left silently empty. `Get-OERGroup` omits the property; here the three parent
+properties stay on the object, empty, and the error says that they are. A failed LIST is reported
+as before, as its own error (`AuthorizationFailed` for a caller that can read no group), and no
+parent read follows.
 
 **The tenant root group is recognised, not looked up.** A listed item whose `name` equals its
 `properties.tenantId` -- compared case-insensitively, and never for a blank name -- is the tenant
