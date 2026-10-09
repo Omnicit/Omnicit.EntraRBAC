@@ -1046,10 +1046,11 @@ function Invoke-OERGraphRequest {
         # A 401 here means the bearer token is invalid or expired (claims challenges were already
         # handled above). Force a token refresh and retry once instead of surfacing the failure.
         # The refresh signs in again, and what that costs depends on the sign-in type: an interactive
-        # session opens the browser (MEASURED 2026-10-09; DECOMPILED: AzAuth builds a new browser
-        # credential for every interactive token), a device code session prints a new code, and a
-        # managed identity renews with no prompt (DECOMPILED, not observed). An app-only session never
-        # reaches the refresh: it is refused below, since the module keeps no secret or certificate.
+        # session opens the browser (DECOMPILED: AzAuth builds a new browser credential for every
+        # interactive token; MEASURED 2026-10-09 for a renewal at a command's start, not for this
+        # 401 refresh), a device code session prints a new code, and a managed identity renews with
+        # no prompt (DECOMPILED, not observed). An app-only session never reaches the refresh: it is
+        # refused below, since the module keeps no secret or certificate.
         # See about_Omnicit.EntraRBAC, LONG RUNS.
         #
         # STATUS READ: PRIMARY vs SECONDARY, same split as Get-ThrottleDelay above and via the SAME

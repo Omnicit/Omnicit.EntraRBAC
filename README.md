@@ -330,11 +330,11 @@ a new credential for every device code sign-in, Microsoft Graph and Azure Resour
 each one prints a new code to enter -- two with `-IncludeARM`, one for each token. That covers the
 first sign-in in a process, one naming another tenant, a new `Connect-OER` after `Disconnect-OER`,
 and every renewal of the token: a command that starts within five minutes of its expiry, a request
-whose token Microsoft Graph or Azure Resource Manager rejects, and a claims challenge. A command that
-finds the session's tokens with more than five minutes left signs in to nothing and asks for no
-code. Before this release such a sign-in could reuse the credential AzAuth keeps for the PowerShell
-process and never return, with no code printed and no error; `Connect-OER -Force` is no longer
-needed to avoid that. Each code has to be entered, so a long device code run needs someone at the
+whose token Microsoft Graph or Azure Resource Manager rejects, and a claims challenge. Before this
+release such a sign-in could reuse the credential AzAuth keeps for the PowerShell process and never
+return, with no code printed and no error; `Connect-OER -Force` is no longer needed to avoid that. A
+command that needs only tokens the session already holds, each with more than five minutes left,
+asks for no code. Each code has to be entered, so a long device code run needs someone at the
 keyboard.
 
 The module checks each token against the tenant you name, whether you named it by its tenant ID or

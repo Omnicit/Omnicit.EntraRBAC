@@ -31,8 +31,9 @@ function Initialize-OERAuth {
     acquired access token through Invoke-AzRestMethod, so all ARM calls go through Invoke-OERArmRequest
     with the cached token instead.
 
-    Auth configuration (method, tenant, client id, cloud, and credential material) is cached in
-    $script:_OERAuthState so tokens can be silently re-acquired near expiry without re-prompting.
+    The auth configuration -- method, tenant, client id and cloud, never the credential material --
+    is cached in $script:_OERAuthState, and a renewal near expiry signs in again with it. Whether
+    that renewal prompts depends on the sign-in type; see about_Omnicit.EntraRBAC, LONG RUNS.
 
     The tenant each acquired token was actually ISSUED for is recorded beside the requested one, as
     TokenTenantId and ArmTokenTenantId. TenantId keeps naming what the caller asked for, since that
@@ -790,21 +791,21 @@ function Initialize-OERAuth {
     # pipeline neither wraps nor unrolls it), and a terminating Get-AzToken failure still propagates
     # out of the pipeline into the caller's try/catch -- a redirection does not swallow a throw.
     #
-    # BOTH call sites, Graph and ARM. On the device-code path the ARM acquisition is expected to
-    # raise a device code of its own rather than reuse the Graph sign-in: the Graph call passes a
-    # client id (the caller's, or $DefaultGraphClientId) and the ARM call passes none, and AzAuth
-    # reuses its process-wide credential only for the same credential type AND the same client id.
-    # Measured offline, with the network blocked: a device-code Graph call followed by a device-code
-    # ARM call for the same tenant built a NEW credential instance for the ARM call, under
-    # Azure.Identity's default public client. Inferred from the decompiled Azure.Identity, not
-    # executed: that new instance holds neither the Graph sign-in's authentication record nor its
-    # in-memory token cache, so it cannot complete silently. That the operator is then shown a second
-    # device code follows from that inference and has not yet been observed live. The ARM acquisition
-    # is also reached under -ForceRefresh, and on its own by an -IncludeARM call made when only the
-    # Graph token was cached. Since A17 every device code token request carries Force (SEC (A17,
-    # BL-112), where the splat is built below), so each of these shapes, and the Graph call itself,
-    # now makes AzAuth build a new credential and raise a real device code -- and an invisible one
-    # there fails exactly the same way.
+    # BOTH call sites, Graph and ARM. On the device-code path the ARM acquisition raises a device
+    # code of its own rather than reusing the Graph sign-in: the Graph call passes a client id (the
+    # caller's, or $DefaultGraphClientId) and the ARM call passes none, and AzAuth reuses its
+    # process-wide credential only for the same credential type AND the same client id. Measured
+    # offline, with the network blocked: a device-code Graph call followed by a device-code ARM call
+    # for the same tenant built a NEW credential instance for the ARM call, under Azure.Identity's
+    # default public client. The second device code is MEASURED live as well: on 2026-09-16 (AzAuth
+    # 2.9.0) checks 3.1, 3.3a and 6.1a of the fix-tenant-switch-warning live checklist each ran a
+    # device code Connect-OER -IncludeARM, printed two code instructions, recorded
+    # InformationRecords 2 and ended SUCCEEDED. The ARM acquisition is also reached under
+    # -ForceRefresh, and on its own by an -IncludeARM call made when only the Graph token was
+    # cached. Since A17 every device code token request carries Force (SEC (A17, BL-112), where the
+    # splat is built below), so each of these shapes, and the Graph call itself, makes AzAuth build
+    # a new credential and raise a real device code -- and an invisible one there fails exactly the
+    # same way.
     function Invoke-AzTokenCall {
         param(
             [hashtable]$TokenParameter,
@@ -1152,11 +1153,12 @@ function Initialize-OERAuth {
             # client secret: without Force, its ARM call on the standard
             # 'Connect-OER -Environment USGov -IncludeARM' path reuses the credential the Graph call
             # just built. It is NOT what decides whether a second prompt appears. A device code sign-in
-            # keeps Force on the ARM call ($DeviceCodeForced, SEC (A17, BL-112) above): every device code
-            # token request carries it, so the ARM call builds a new credential and prints a code of its
-            # own rather than reaching a stored device code credential, which never returns. On
-            # Interactive every call constructs a new credential (decompiled, not executed). An explicit
-            # -ForceRefresh is the caller's own instruction and survives.
+            # keeps Force on the ARM call ($DeviceCodeForced, SEC (A17, BL-112) above) because A17 has
+            # no exceptions -- every device code token request carries it -- and not because this call
+            # would otherwise hang: after the Graph call the ARM call passes no client id, so AzAuth
+            # builds a new credential for it anyway. On Interactive every call constructs a new
+            # credential (decompiled, not executed). An explicit -ForceRefresh is the caller's own
+            # instruction and survives.
             #
             # Removed HERE, inside the Graph-acquired branch, and nowhere else. When the Graph token
             # was cached and only ARM runs, the tracker can still legitimately name a different

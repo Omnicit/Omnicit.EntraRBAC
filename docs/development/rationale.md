@@ -4102,13 +4102,17 @@ minutes of the token's expiry, for the Graph token and for an ARM-only acquisiti
 challenge (`-ClaimsChallenge`, Graph only); for the ARM token after a Graph token in the same call;
 and from a new `Connect-OER -DeviceCode` after `Disconnect-OER`, which clears the module's state but
 not AzAuth's credential. `-ForceRefresh` -- `Connect-OER -Force`, and the transports' refresh after a
-rejected token -- already carried `Force`. Each of those requests hung whenever the previous device
+rejected token -- already carried `Force`. Each of those requests could hang when the previous device
 code request in the process had used the same client id: for a session that uses only Microsoft
 Graph, its first renewal; with `-IncludeARM`, the second of two consecutive requests for the same
 resource. MEASURED for a tenant switch through `Connect-OER`; INFERRED from the mechanism for the
 other paths, none of which was run live. The ARM token right after a Graph token in the same call
 never met that condition, since the two requests never share a client id (MEASURED offline, further
-finding 2), which is also why 3.2 and 3.3 returned.
+finding 2), which is also why 3.2 and 3.3 returned. Check 3.3a does not fit that condition: in the
+order the checklist records them it ran straight after 3.2's Graph-only device code sign-in,
+with the same client id and no `-Force`, and returned with two codes, while 3.4a, of the same shape,
+hung. That difference is unexplained; the decision (A17) is unaffected, since `Force` cured the hang
+every time it was used.
 
 **What changes.** `Initialize-OERAuth` decides it once, in
 `[bool]$DeviceCodeForced = $EffectiveMethod -eq 'DeviceCode'`, read in exactly two places: the
