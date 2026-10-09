@@ -19,9 +19,10 @@ function Get-OERSignInRefusal {
     command that has finished is on no call stack, so the latch does not refuse the command after it.
 
     The latched command is the one that called Initialize-OERAuth directly. Inside a transport's own
-    refresh (the Graph claims step-up or token-rejected retry, the ARM 401 retry) that is the
-    transport's nested function, Invoke-GraphSingle or Invoke-ArmCallWithRefresh, so the name returned
-    for that retry is an internal function's.
+    sign-in (its renewal before a request, the Graph claims step-up, the token-rejected retry of
+    either transport) that is the transport's nested function, Invoke-GraphSingle or
+    Invoke-ArmCallWithRefresh, so the name returned for the request that follows such a sign-in's
+    failure is an internal function's.
 
     With -OutsideCaller, which only Initialize-OERAuth passes, for its BL-74 check before it latches
     its own caller, the walk starts after the command that called Initialize-OERAuth: frame 0 is this

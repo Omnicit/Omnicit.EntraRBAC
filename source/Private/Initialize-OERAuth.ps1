@@ -189,12 +189,14 @@ function Initialize-OERAuth {
     .PARAMETER Renewal
     Marks the call as a transport's own renewal of the session's token. Invoke-OERGraphRequest and
     Invoke-OERArmRequest pass it, with the session's tenant, method and client id, when a delegated or
-    managed identity session's token expires within the renewal window (Get-OERTokenRenewalThreshold):
-    before a request, and after a 401 for such a token. It does not change which token is requested:
-    without -ForceRefresh, Get-AzToken is called without Force, so AzAuth may answer with the
-    credential it already holds. Like -ForceRefresh and -ClaimsChallenge, it keeps a successful
-    sign-in from clearing the session-uncertain marker, since the tenant is passed on the command's
-    behalf rather than named by it.
+    managed identity session's token has expired or expires within the renewal window
+    (Get-OERTokenRenewalThreshold): before a request, and after a 401 for such a token. It does not
+    change which token is requested: without -ForceRefresh, Get-AzToken is called without Force
+    (Force only for a cloud switch), so AzAuth may answer with the credential it already holds. A 401
+    for a token that is still valid beyond the window is not renewed but forced (-ForceRefresh), as is
+    one whose expiry the state does not record. Like -ForceRefresh and -ClaimsChallenge, it keeps a
+    successful sign-in from clearing the session-uncertain marker, since the tenant is passed on the
+    command's behalf rather than named by it.
 
     .PARAMETER Environment
     The sovereign cloud to authenticate against and request endpoints for: 'Global' (the worldwide

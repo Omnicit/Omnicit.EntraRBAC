@@ -25,13 +25,15 @@ function Invoke-OERArmRequest {
     normalized to a { StatusCode; Content; Headers } object before the status logic runs; the header
     collection stays inside this wrapper and only its Retry-After entry is ever read. The wrapper
     returns the parsed JSON content for 2xx responses ($null when the body is empty, e.g. 204);
-    on 401 for interactive-class sessions calls Initialize-OERAuth -IncludeARM -ForceRefresh and
-    retries exactly once (app-only sessions get a clear AppOnlyTokenRefreshUnsatisfiable error
-    because credential material is never cached); throws the Convert-ArmHttpException ErrorRecord
-    for any other non-2xx status. The same detect/refresh/retry-once logic covers every page fetch
-    under -All, not just the first request, but the refresh budget is shared across the whole call:
-    a token that expires mid-pagination gets exactly one forced refresh for the entire walk, not
-    one per page. With -All, GET results are aggregated across pages following either the nextLink
+    on 401 for interactive-class sessions calls Initialize-OERAuth -IncludeARM and retries exactly
+    once -- with -Renewal and without -ForceRefresh when the ARM token has expired or expires within
+    the renewal window, and with -ForceRefresh when it is still valid or its expiry is not recorded
+    (app-only sessions get a clear AppOnlyTokenRefreshUnsatisfiable error because credential material
+    is never cached); throws the Convert-ArmHttpException ErrorRecord for any other non-2xx status.
+    The same detect/refresh/retry-once logic covers every page fetch under -All, not just the first
+    request, but the refresh budget is shared across the whole call: a token rejected mid-pagination
+    gets exactly one refresh, renewed or forced as above, for the entire walk, not one per page.
+    With -All, GET results are aggregated across pages following either the nextLink
     or the @nextLink property (management group lists use @nextLink); absolute next-page URLs are
     converted back to paths via Uri.PathAndQuery.
 
@@ -39,10 +41,13 @@ function Invoke-OERArmRequest {
     managed identity session's (Interactive, DeviceCode or ManagedIdentity) Azure Resource Manager token
     that expires within the renewal window (Get-OERTokenRenewalThreshold, five minutes) is renewed
     through Initialize-OERAuth -IncludeARM -Renewal, with the session's tenant, method and client id and
-    without -ForceRefresh, so Get-AzToken is called without Force. The renewal does not spend the 401
-    refresh budget. An app-only session (ClientSecret or ClientCertificate) is not renewed within a
-    command, since the module keeps no secret or certificate. A renewal that fails sends no request:
-    inside a try its error is the call's, and otherwise the latch gate refuses the request with
+    without -ForceRefresh, so Get-AzToken is called without Force (Force only for a cloud switch). The
+    renewal does not spend the 401 refresh budget; the renewal after a 401 does, since it is that
+    call's one refresh. An app-only session (ClientSecret or ClientCertificate) is not renewed within
+    a command, since the module keeps no secret or certificate. A renewal that fails sends no request.
+    A terminating error of the renewal is the call's inside a try. A failed ARM token call is reported
+    as ArmTokenAcquisitionFailed, which is non-terminating: its record is written first, and unless
+    the caller's -ErrorAction stops the call there, the latch gate then refuses the request with
     SignInRefused.
 
     A 429, and a 503 that carries a Retry-After header, are retried with a bounded backoff: the
@@ -372,9 +377,10 @@ function Invoke-OERArmRequest {
         return [int][Math]::Floor([Math]::Max($WallClockSecond, [double]$CallBudget.WaitSpent))
     }
 
-    # -- 401: token rejected/expired -> force refresh and retry once --
-    # One forced refresh serves the WHOLE call, pages included. Per-page budgets would turn a long
-    # -All walk against a genuinely broken token into a refresh storm.
+    # -- 401: token rejected/expired -> renew (expired) or force a refresh (still valid), retry once --
+    # One refresh serves the WHOLE call, pages included, whether it is a renewal or a forced refresh.
+    # Per-page budgets would turn a long -All walk against a genuinely broken token into a refresh
+    # storm.
     $RefreshBudget = [ref]$false
     function Invoke-ArmCallWithRefresh ([string]$CallPath, [string]$CallMethod, [hashtable]$CallBody, [string]$BaseUrl, [ref]$RefreshBudget) {
         # A11 (BL-105): renew the session's Azure Resource Manager token before it expires -- before
@@ -386,15 +392,15 @@ function Invoke-OERArmRequest {
         # module never keeps its secret or certificate; a token whose expiry the state does not record
         # is not renewed here either. The window is Get-OERTokenRenewalThreshold's, the one
         # Initialize-OERAuth's cached return reads, so a token due here is never answered from the cache.
-        # No -ForceRefresh, so Get-AzToken is called without Force; -Renewal keeps a success from
-        # clearing the session-uncertain marker (A10). The renewal does not touch $RefreshBudget: the
-        # 401 retry below keeps its one forced refresh for the whole call. ARM's gates live in
-        # Invoke-ArmCall, so here the renewal stands ahead of all of them and never between a gate and
-        # the request (gate 10). A renewal that fails latches this function -- or, refused under a
-        # command whose own sign-in was refused (BL-74), leaves that command latched on the call stack --
-        # so Invoke-ArmCall's latch gate refuses the request with SignInRefused, outside any try too; an
-        # ArmTokenAcquisitionFailed is non-terminating, so its record and the gate's SignInRefused both
-        # appear. Inside a try, a terminating renewal error is the call's.
+        # No -ForceRefresh, so Get-AzToken is called without Force (Force only for a cloud switch);
+        # -Renewal keeps a success from clearing the session-uncertain marker (A10). The renewal does
+        # not touch $RefreshBudget: the 401 retry below keeps its one refresh for the whole call. ARM's
+        # gates live in Invoke-ArmCall, so here the renewal stands ahead of all of them and never
+        # between a gate and the request (gate 10). A renewal that fails latches this function -- or,
+        # refused under a command whose own sign-in was refused (BL-74), leaves that command latched on
+        # the call stack -- so Invoke-ArmCall's latch gate refuses the request with SignInRefused,
+        # outside any try too; an ArmTokenAcquisitionFailed is non-terminating, so its record and the
+        # gate's SignInRefused both appear. Inside a try, a terminating renewal error is the call's.
         [bool]$RenewalDue = ($script:_OERAuthState.AuthMethod -in @('Interactive', 'DeviceCode', 'ManagedIdentity')) -and
             $null -ne $script:_OERAuthState.ArmTokenExpiry -and
             $script:_OERAuthState.ArmTokenExpiry -le (Get-OERTokenRenewalThreshold)
@@ -427,15 +433,31 @@ function Invoke-OERArmRequest {
             # session cannot satisfy, and sent the retry after it.
             return
         }
-        Write-Verbose "[Invoke-OERArmRequest] ARM token rejected (status=401). Forcing re-authentication and retrying once..."
+        # A11 (BL-105): a 401 for a token that has expired, or expires within the renewal window, is
+        # renewed the way a token due before a call is: without -ForceRefresh, so Get-AzToken is called
+        # without Force (Force only for a cloud switch) and AzAuth may answer with the credential it
+        # holds. A 401 for a token that is still valid -- revoked, or a token from another tenant -- is
+        # not an expiry: only a forced refresh makes AzAuth drop the credential that minted it, so that
+        # one is forced, as before. So is a token whose expiry the state does not record. The window is
+        # Get-OERTokenRenewalThreshold's, the one the renewal before a call and Initialize-OERAuth's
+        # cached return read. Either way it is this call's one refresh ($RefreshBudget below), and the
+        # app-only refusal above stays first: an app-only session is never renewed here.
+        [bool]$TokenExpired = $null -ne $script:_OERAuthState.ArmTokenExpiry -and
+            $script:_OERAuthState.ArmTokenExpiry -le (Get-OERTokenRenewalThreshold)
         # Forward the cached ClientId so the SAME principal is re-acquired. Without it a user-assigned
-        # managed-identity session force-refreshes as the system-assigned identity (a different
-        # principal), so the retried call would silently run as the wrong identity or fail outright.
+        # managed-identity session refreshes as the system-assigned identity (a different principal),
+        # so the retried call would silently run as the wrong identity or fail outright.
         $RefreshParams = @{
-            TenantId     = $script:_OERAuthState.TenantId
-            AuthMethod   = $script:_OERAuthState.AuthMethod
-            IncludeARM   = $true
-            ForceRefresh = $true
+            TenantId   = $script:_OERAuthState.TenantId
+            AuthMethod = $script:_OERAuthState.AuthMethod
+            IncludeARM = $true
+        }
+        if ($TokenExpired) {
+            Write-Verbose "[Invoke-OERArmRequest] ARM token rejected (status=401) and expired. Renewing it and retrying once..."
+            $RefreshParams.Renewal = $true
+        } else {
+            Write-Verbose "[Invoke-OERArmRequest] ARM token rejected (status=401). Forcing re-authentication and retrying once..."
+            $RefreshParams.ForceRefresh = $true
         }
         if ($script:_OERAuthState.ClientId) { $RefreshParams.ClientId = $script:_OERAuthState.ClientId }
         Initialize-OERAuth @RefreshParams
