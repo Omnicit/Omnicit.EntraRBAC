@@ -10,9 +10,9 @@ function Initialize-OERAuth {
     It is idempotent: when a valid Graph token is already cached for the requested tenant and
     identity (AuthMethod + ClientId) that expires outside the renewal window, five minutes, which
     Get-OERTokenRenewalThreshold owns (and, when -IncludeARM is set, a cached ARM token outside the
-    same window), it returns immediately without acquiring new tokens. The module's transports renew a
-    delegated or managed identity session's token that expires within that window before a request,
-    through this function with -Renewal.
+    same window), it returns immediately without acquiring new tokens. The module's transports renew an
+    interactive or managed identity session's token that expires within that window before a request,
+    through this function with -Renewal; a device code session's token is not renewed there.
 
     Requests inherit the current session. A caller that omits -TenantId targets the tenant the
     session was established for, and a caller that omits both -AuthMethod and -ClientId reuses the
@@ -188,13 +188,15 @@ function Initialize-OERAuth {
 
     .PARAMETER Renewal
     Marks the call as a transport's own renewal of the session's token. Invoke-OERGraphRequest and
-    Invoke-OERArmRequest pass it, with the session's tenant, method and client id, when a delegated or
-    managed identity session's token has expired or expires within the renewal window
+    Invoke-OERArmRequest pass it, with the session's tenant, method and client id, when an interactive
+    or managed identity session's token has expired or expires within the renewal window
     (Get-OERTokenRenewalThreshold): before a request, and after a 401 for such a token. It does not
     change which token is requested: without -ForceRefresh, Get-AzToken is called without Force
     (Force only for a cloud switch), so AzAuth may answer with the credential it already holds. A 401
     for a token that is still valid beyond the window is not renewed but forced (-ForceRefresh), as is
-    one whose expiry the state does not record. Like -ForceRefresh and -ClaimsChallenge, it keeps a
+    one whose expiry the state does not record and every 401 of a device code session, which the
+    transports never renew: a device-code Get-AzToken without Force that reuses AzAuth's credential
+    never returns (decompiled, AzAuth 2.10.0). Like -ForceRefresh and -ClaimsChallenge, it keeps a
     successful sign-in from clearing the session-uncertain marker, since the tenant is passed on the
     command's behalf rather than named by it.
 

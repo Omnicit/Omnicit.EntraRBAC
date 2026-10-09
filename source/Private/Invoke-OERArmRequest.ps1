@@ -27,9 +27,10 @@ function Invoke-OERArmRequest {
     returns the parsed JSON content for 2xx responses ($null when the body is empty, e.g. 204);
     on 401 for interactive-class sessions calls Initialize-OERAuth -IncludeARM and retries exactly
     once -- with -Renewal and without -ForceRefresh when the ARM token has expired or expires within
-    the renewal window, and with -ForceRefresh when it is still valid or its expiry is not recorded
-    (app-only sessions get a clear AppOnlyTokenRefreshUnsatisfiable error because credential material
-    is never cached); throws the Convert-ArmHttpException ErrorRecord for any other non-2xx status.
+    the renewal window, and with -ForceRefresh when it is still valid, its expiry is not recorded, or
+    the session is a device code session (app-only sessions get a clear
+    AppOnlyTokenRefreshUnsatisfiable error because credential material is never cached); throws the
+    Convert-ArmHttpException ErrorRecord for any other non-2xx status.
     The same detect/refresh/retry-once logic covers every page fetch under -All, not just the first
     request, but the refresh budget is shared across the whole call: a token rejected mid-pagination
     gets exactly one refresh, renewed or forced as above, for the entire walk, not one per page.
@@ -37,14 +38,18 @@ function Invoke-OERArmRequest {
     or the @nextLink property (management group lists use @nextLink); absolute next-page URLs are
     converted back to paths via Uri.PathAndQuery.
 
-    Before every call -- the first, each throttled retry, and so every page under -All -- a delegated or
-    managed identity session's (Interactive, DeviceCode or ManagedIdentity) Azure Resource Manager token
-    that expires within the renewal window (Get-OERTokenRenewalThreshold, five minutes) is renewed
+    Before every call -- the first, each throttled retry, and so every page under -All -- an
+    interactive or managed identity session's (Interactive or ManagedIdentity) Azure Resource Manager
+    token that expires within the renewal window (Get-OERTokenRenewalThreshold, five minutes) is renewed
     through Initialize-OERAuth -IncludeARM -Renewal, with the session's tenant, method and client id and
     without -ForceRefresh, so Get-AzToken is called without Force (Force only for a cloud switch). The
     renewal does not spend the 401 refresh budget; the renewal after a 401 does, since it is that
-    call's one refresh. An app-only session (ClientSecret or ClientCertificate) is not renewed within
-    a command, since the module keeps no secret or certificate. A renewal that fails sends no request.
+    call's one refresh. A device code session (DeviceCode) is not renewed before a call, and every 401
+    of one is forced, as before: decompiled from AzAuth 2.10.0, a device-code Get-AzToken without Force
+    that reuses the credential AzAuth holds never returns (docs/development/rationale.md, "A long run
+    renews its token before it expires"). An app-only session (ClientSecret or ClientCertificate) is
+    not renewed within a command, since the module keeps no secret or certificate. A renewal that fails
+    sends no request.
     A terminating error of the renewal is the call's inside a try. A failed ARM token call is reported
     as ArmTokenAcquisitionFailed, which is non-terminating: its record is written first, and unless
     the caller's -ErrorAction stops the call there, the latch gate then refuses the request with
@@ -377,7 +382,8 @@ function Invoke-OERArmRequest {
         return [int][Math]::Floor([Math]::Max($WallClockSecond, [double]$CallBudget.WaitSpent))
     }
 
-    # -- 401: token rejected/expired -> renew (expired) or force a refresh (still valid), retry once --
+    # -- 401: token rejected/expired -> renew (expired) or force a refresh (still valid, or a device
+    #    code session), retry once --
     # One refresh serves the WHOLE call, pages included, whether it is a renewal or a forced refresh.
     # Per-page budgets would turn a long -All walk against a genuinely broken token into a refresh
     # storm.
@@ -386,11 +392,17 @@ function Invoke-OERArmRequest {
         # A11 (BL-105): renew the session's Azure Resource Manager token before it expires -- before
         # every call (the first and each throttled retry), and so before every page of an -All read.
         # Initialize-OERAuth renews only when a command begins, so a long command used to run into its
-        # token's expiry and refresh only after ARM answered 401, with -ForceRefresh. Only a session
-        # that can be renewed without key material: Interactive, DeviceCode and ManagedIdentity. An
-        # app-only session (ClientSecret, ClientCertificate) is not renewed within a command, since the
-        # module never keeps its secret or certificate; a token whose expiry the state does not record
-        # is not renewed here either. The window is Get-OERTokenRenewalThreshold's, the one
+        # token's expiry and refresh only after ARM answered 401, with -ForceRefresh. Only an
+        # Interactive or ManagedIdentity session. An app-only session (ClientSecret, ClientCertificate)
+        # is not renewed within a command, since the module never keeps its secret or certificate. Nor
+        # is a DeviceCode session (Ruling R12): DECOMPILED, AzAuth 2.10.0, a device-code Get-AzToken
+        # without Force that reuses the credential AzAuth stores (a DeviceCodeCredential for the same
+        # client id) waits on a queue that only the device-code callback of a credential built for this
+        # call completes, so it never returns, prints no code, and -TimeoutSeconds does not bound it --
+        # which fits the hang measured under "Switching tenants in one process", further finding 1, in
+        # docs/development/rationale.md. Its token is sent until ARM rejects it, and the 401 below
+        # forces the refresh, as before A11. A token whose expiry the state does not record is not
+        # renewed here either. The window is Get-OERTokenRenewalThreshold's, the one
         # Initialize-OERAuth's cached return reads, so a token due here is never answered from the cache.
         # No -ForceRefresh, so Get-AzToken is called without Force (Force only for a cloud switch);
         # -Renewal keeps a success from clearing the session-uncertain marker (A10). The renewal does
@@ -401,7 +413,7 @@ function Invoke-OERArmRequest {
         # the call stack -- so Invoke-ArmCall's latch gate refuses the request with SignInRefused,
         # outside any try too; an ArmTokenAcquisitionFailed is non-terminating, so its record and the
         # gate's SignInRefused both appear. Inside a try, a terminating renewal error is the call's.
-        [bool]$RenewalDue = ($script:_OERAuthState.AuthMethod -in @('Interactive', 'DeviceCode', 'ManagedIdentity')) -and
+        [bool]$RenewalDue = ($script:_OERAuthState.AuthMethod -in @('Interactive', 'ManagedIdentity')) -and
             $null -ne $script:_OERAuthState.ArmTokenExpiry -and
             $script:_OERAuthState.ArmTokenExpiry -le (Get-OERTokenRenewalThreshold)
         if ($RenewalDue) {
@@ -438,11 +450,17 @@ function Invoke-OERArmRequest {
         # without Force (Force only for a cloud switch) and AzAuth may answer with the credential it
         # holds. A 401 for a token that is still valid -- revoked, or a token from another tenant -- is
         # not an expiry: only a forced refresh makes AzAuth drop the credential that minted it, so that
-        # one is forced, as before. So is a token whose expiry the state does not record. The window is
-        # Get-OERTokenRenewalThreshold's, the one the renewal before a call and Initialize-OERAuth's
-        # cached return read. Either way it is this call's one refresh ($RefreshBudget below), and the
-        # app-only refusal above stays first: an app-only session is never renewed here.
-        [bool]$TokenExpired = $null -ne $script:_OERAuthState.ArmTokenExpiry -and
+        # one is forced, as before. So is a token whose expiry the state does not record, and so is
+        # every 401 of a DeviceCode session, whatever its expiry (Ruling R12): a device-code Get-AzToken
+        # without Force that reuses the credential AzAuth stores never returns, while Force makes AzAuth
+        # build a new credential, which shows a new device code and is bounded by AzAuth's timeout (both
+        # DECOMPILED, AzAuth 2.10.0; see the renewal before a call above) -- exactly as before A11. The
+        # window is Get-OERTokenRenewalThreshold's, the one the renewal before a call and
+        # Initialize-OERAuth's cached return read. Either way it is this call's one refresh
+        # ($RefreshBudget below), and the app-only refusal above stays first: an app-only session is
+        # never renewed here.
+        [bool]$TokenExpired = $script:_OERAuthState.AuthMethod -ne 'DeviceCode' -and
+            $null -ne $script:_OERAuthState.ArmTokenExpiry -and
             $script:_OERAuthState.ArmTokenExpiry -le (Get-OERTokenRenewalThreshold)
         # Forward the cached ClientId so the SAME principal is re-acquired. Without it a user-assigned
         # managed-identity session refreshes as the system-assigned identity (a different principal),
@@ -471,9 +489,10 @@ function Invoke-OERArmRequest {
     #     refresh branch is not entered at all. A throttled response therefore CANNOT spend the
     #     refresh budget -- structurally, not by a check that could rot.
     #   * $RefreshBudget is one [ref] shared by the whole call, so however many times this loop
-    #     re-enters, at most one forced refresh happens for the entire call, pages included. The two
-    #     retry paths cannot multiply: the throttle side is bounded by the wait budget and the hard
-    #     cap, the refresh side by a budget of one.
+    #     re-enters, at most one refresh after a 401 (a renewal or a forced one) happens for the
+    #     entire call, pages included; the renewal before a call does not spend it. The two retry
+    #     paths cannot multiply: the throttle side is bounded by the wait budget and the hard cap, the
+    #     refresh side by a budget of one.
     #
     # THE NUMBERS mirror Invoke-OERGraphRequest's, name for name and meaning for meaning, so an
     # operator debugging one transport recognises the other (internal constants on purpose -- no

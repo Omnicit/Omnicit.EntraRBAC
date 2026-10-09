@@ -6348,9 +6348,10 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
 }
 
 Describe 'Invoke-OERGraphRequest renews an expiring token before the request (A11, BL-105)' {
-    # A11: a delegated or managed identity session's Microsoft Graph token is renewed BEFORE it expires,
-    # before every attempt and so before every page, through Initialize-OERAuth with -Renewal and
-    # without -ForceRefresh. Initialize-OERAuth is mocked here: the mock records each call's parameters
+    # A11: an interactive or managed identity session's Microsoft Graph token is renewed BEFORE it
+    # expires, before every attempt and so before every page, through Initialize-OERAuth with -Renewal
+    # and without -ForceRefresh; a device code session's is not (Ruling R12, R10). Initialize-OERAuth is
+    # mocked here: the mock records each call's parameters
     # in the order of the requests and moves the state's expiry an hour ahead, as a real renewal leaves
     # it. Invoke-MgGraphRequest records each request. Both write to one module-scope log, so the order
     # of the renewal and the requests is read from it. The tenant is invented: A is 4444....
@@ -6429,11 +6430,8 @@ Describe 'Invoke-OERGraphRequest renews an expiring token before the request (A1
         $Call.ContainsKey('ClientId') | Should -BeFalse
     }
 
-    It 'R2: renews a <Method> session''s token and forwards its client id' -ForEach @(
-        @{ Method = 'DeviceCode'; ClientId = '' }
-        @{ Method = 'ManagedIdentity'; ClientId = 'cccccccc-cccc-cccc-cccc-cccccccccccc' }
-    ) {
-        Set-GraphRenewalState -AuthMethod $Method -ClientId $ClientId -Minutes 2
+    It 'R2: renews a ManagedIdentity session''s token and forwards its client id' {
+        Set-GraphRenewalState -AuthMethod ManagedIdentity -ClientId 'cccccccc-cccc-cccc-cccc-cccccccccccc' -Minutes 2
 
         $R = InModuleScope Omnicit.EntraRBAC {
             $null = Invoke-OERGraphRequest -Uri 'v1.0/groups'
@@ -6444,15 +6442,10 @@ Describe 'Invoke-OERGraphRequest renews an expiring token before the request (A1
         $R.Calls.Count | Should -Be 1
         $Call = $R.Calls[0]
         [bool]$Call['Renewal'] | Should -BeTrue
-        $Call['AuthMethod'] | Should -BeExactly $Method
+        $Call['AuthMethod'] | Should -BeExactly 'ManagedIdentity'
         $Call.ContainsKey('ForceRefresh') | Should -BeFalse
-        if ($ClientId) {
-            # A user-assigned managed identity renews as the same principal, not the system-assigned one.
-            $Call['ClientId'] | Should -BeExactly $ClientId
-        }
-        else {
-            $Call.ContainsKey('ClientId') | Should -BeFalse
-        }
+        # A user-assigned managed identity renews as the same principal, not the system-assigned one.
+        $Call['ClientId'] | Should -BeExactly 'cccccccc-cccc-cccc-cccc-cccccccccccc'
     }
 
     It 'R3: does not renew an app-only <Method> session''s token within a command and sends the request with it' -ForEach @(
@@ -6616,6 +6609,28 @@ Describe 'Invoke-OERGraphRequest renews an expiring token before the request (A1
         $R.Caught.FullyQualifiedErrorId | Should -BeLike 'GraphTokenAcquisitionFailed*'
         $R.Log | Should -Be @('INIT')
     }
+
+    It 'R10: does not renew a DeviceCode session''s token before the request and sends the request with it' {
+        # Ruling R12: a device-code Get-AzToken without Force that reuses the credential AzAuth holds
+        # never returns (DECOMPILED, AzAuth 2.10.0), so a device code session's token is not renewed
+        # before a request, whether it is due or has already expired: it is sent until Microsoft Graph
+        # rejects it, and that 401 forces the refresh (T9).
+        Set-GraphRenewalState -AuthMethod DeviceCode -Minutes 2
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $Due = Invoke-OERGraphRequest -Uri 'v1.0/groups?case=due'
+            $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(-1)
+            $Expired = Invoke-OERGraphRequest -Uri 'v1.0/groups?case=expired'
+            Should -Invoke Initialize-OERAuth -Times 0
+            Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly
+            @{ Due = $Due; Expired = $Expired; Log = $script:A11Log.ToArray() }
+        }
+
+        $R.Due.value | Should -Be 'ok'
+        $R.Expired.value | Should -Be 'ok'
+        # No renewal: each request went out with the token the session holds.
+        $R.Log | Should -Be @('GRAPH v1.0/groups?case=due', 'GRAPH v1.0/groups?case=expired')
+    }
 }
 
 Describe 'Invoke-OERGraphRequest renews a rejected token that has expired without -ForceRefresh (A11, BL-105)' {
@@ -6623,7 +6638,8 @@ Describe 'Invoke-OERGraphRequest renews a rejected token that has expired withou
     # renewed the way a token due before a request is -- through Initialize-OERAuth with -Renewal and
     # without -ForceRefresh, so Get-AzToken is called without Force -- and the request is retried once.
     # A 401 for a token that is still valid (revoked, a Continuous Access Evaluation event, a token from
-    # another tenant), or whose expiry the state does not record, keeps -ForceRefresh. Initialize-OERAuth
+    # another tenant), or whose expiry the state does not record, keeps -ForceRefresh, and so does every
+    # 401 of a device code session (Ruling R12, T9). Initialize-OERAuth
     # is mocked: it records each call's parameters in the order of the requests and moves the state's
     # expiry an hour ahead, as a real renewal leaves it. In every test the REQUEST mock moves the expiry
     # (into the past or into the window) as it answers 401, so the renewal of a token due before a request
@@ -6931,6 +6947,49 @@ Describe 'Invoke-OERGraphRequest renews a rejected token that has expired withou
         [bool]$R.Calls[1]['ForceRefresh'] | Should -BeTrue
         $R.Calls[1].ContainsKey('Renewal') | Should -BeFalse
     }
+
+    It 'T9: a DeviceCode 401 for an expired token forces the refresh, as before' {
+        Set-GraphRejectionState -AuthMethod DeviceCode
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            # Ruling R12: a device-code Get-AzToken without Force that reuses the credential AzAuth holds
+            # never returns (DECOMPILED, AzAuth 2.10.0), so a device code session's 401 is forced whatever
+            # the expiry: an expired token, then one within the window.
+            $script:A11RejectOn = @(1, 3)
+            $script:A11ExpireAt = [DateTime]::UtcNow.AddMinutes(-1)
+            $Streams = @(Invoke-OERGraphRequest -Uri 'v1.0/groups?case=expired' -Verbose 4>&1)
+            $Result = $Streams | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] }
+            $script:A11ExpireAt = [DateTime]::UtcNow.AddMinutes(2)
+            $Due = Invoke-OERGraphRequest -Uri 'v1.0/groups?case=due'
+            Should -Invoke Initialize-OERAuth -Times 2 -Exactly
+            Should -Invoke Initialize-OERAuth -Times 2 -Exactly -ParameterFilter { $ForceRefresh -and -not $Renewal }
+            Should -Invoke Initialize-OERAuth -Times 0 -ParameterFilter { $Renewal }
+            Should -Invoke Invoke-MgGraphRequest -Times 4 -Exactly
+            @{
+                Result  = $Result
+                Due     = $Due
+                Log     = $script:A11Log.ToArray()
+                Calls   = $script:A11Renewals.ToArray()
+                Verbose = @($Streams | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+            }
+        }
+
+        $R.Result.value | Should -Be 'after-refresh'
+        $R.Due.value | Should -Be 'after-refresh'
+        $R.Log | Should -Be @(
+            'GRAPH v1.0/groups?case=expired', 'INIT', 'GRAPH v1.0/groups?case=expired'
+            'GRAPH v1.0/groups?case=due', 'INIT', 'GRAPH v1.0/groups?case=due')
+        $R.Calls.Count | Should -Be 2
+        foreach ($Call in $R.Calls) {
+            [bool]$Call['ForceRefresh'] | Should -BeTrue
+            $Call['AuthMethod'] | Should -BeExactly 'DeviceCode'
+            $Call['TenantId'] | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+            $Call.ContainsKey('Renewal') | Should -BeFalse
+        }
+        # The verbose line names the branch taken.
+        @($R.Verbose | Where-Object { $_ -like '*Forcing re-authentication and retrying once...' }).Count | Should -Be 1
+        @($R.Verbose | Where-Object { $_ -like '*Renewing it and retrying once*' }).Count | Should -Be 0
+    }
 }
 
 Describe 'A long run renews its token with the credential AzAuth holds (A11, BL-105)' {
@@ -6939,7 +6998,8 @@ Describe 'A long run renews its token with the credential AzAuth holds (A11, BL-
     # A command signs in in its begin block, and its token enters the renewal window after that, while
     # it runs: the scenario moves the state's expiry into the window in the module scope, so it is the
     # TRANSPORT's renewal that is tested, not the command's own start. The renewal calls Get-AzToken
-    # without -Force, so AzAuth may answer with the credential it already holds.
+    # without -Force, so AzAuth may answer with the credential it already holds. A device code session is
+    # not renewed before a request, and its 401 is forced as before (Ruling R12; E11, E12).
     #
     # The stand-in has the shape of a public cmdlet: Initialize-OERAuth called directly in its begin
     # block, the requests in its process block, each caught and written as an error. With -NoTry it
@@ -6957,7 +7017,9 @@ Describe 'A long run renews its token with the credential AzAuth holds (A11, BL-
         #     TenantMismatch check refuses it, and records 'TOKEN: <graph|arm> <tenant> force=<True|False>'.
         #     Each token lasts an hour and carries its call's number (NOT-A-REAL-TOKEN-arm-3), never a
         #     real token. The call numbered $global:OERA11FailTokenCall writes a terminating error
-        #     instead, as a refused prompt does.
+        #     instead, as a refused prompt does. It counts the calls made with -DeviceCode, which
+        #     reach it through Initialize-OERAuth's device-code pipeline (-WarningAction Continue 3>&1);
+        #     it never waits, so the device-code hang is never reproduced here.
         #   Connect-MgGraph records a session naming the tenant of the last Graph token, and
         #     Get-MgContext returns it, so after each sign-in the A18 session gate finds the module's
         #     own session.
@@ -6982,6 +7044,7 @@ $global:OERA11GraphTenant = $null
 $global:OERA11ConnectCalls = 0
 $global:OERA11ContextCalls = 0
 $global:OERA11TokenCalls = 0
+$global:OERA11DeviceCodeCalls = 0
 $global:OERA11GraphCalls = 0
 $global:OERA11ArmCalls = 0
 $global:OERA11Log = [System.Collections.Generic.List[string]]::new()
@@ -7002,6 +7065,7 @@ $global:OERA11BeforeRequest = $null
             $ClientCertificate, [string]$ClientCertificatePath)
         $global:OERA11TokenCalls++
         if ($global:OERA11TokenCalls -gt 10) { exit }
+        if ($DeviceCode) { $global:OERA11DeviceCodeCalls++ }
         $Kind = if ($Resource -like '*graph*') { 'graph' } else { 'arm' }
         $global:OERA11Log.Add(('TOKEN: {0} {1} force={2}' -f $Kind, $Tenant, [bool]$Force))
         if ($global:OERA11TokenCalls -eq $global:OERA11FailTokenCall) {
@@ -7143,6 +7207,7 @@ $Restored = foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphR
 'CONTEXT STUB REMOVED: {0}' -f ($null -eq (& (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Get-MgContext -CommandType Function -ErrorAction Ignore }))
 'OUTPUT COUNT: {0}' -f $Output.Count
 'MARKER: {0}' -f $Marker
+'DEVICE CODE TOKEN CALLS: {0}' -f $global:OERA11DeviceCodeCalls
 $global:OERA11Log
 $global:OERA11Results
 $RecordLines
@@ -7415,6 +7480,57 @@ $RecordLines
             'TOKEN: arm 44444444-4444-4444-4444-444444444444 force=True'
             'ARM: https://management.azure.com/subscriptions?api-version=2022-12-01&probe=E10 | token 4')
         Get-RenewalProbeLine -Probe $R -Prefix 'ARM RESULT: ' | Should -Be @('item-2')
+        Get-RenewalProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'MARKER: False'
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'E11: a DeviceCode command whose Microsoft Graph token enters the window makes no token request before the request and sends' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-RenewalProbe -Scenario {
+            # Ruling R12: a device-code Get-AzToken without Force that reuses the credential AzAuth holds
+            # never returns (DECOMPILED, AzAuth 2.10.0), so the transport does not renew this token.
+            $global:OERA11BeforeRequest = { $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2) }
+            'item' | Invoke-LongProbe -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod DeviceCode -GraphUri 'v1.0/groups?probe=E11'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The device-code sign-in, and then the request, sent with the token it left: no token call
+        # between them.
+        Get-RenewalProbeEvent -Probe $R | Should -Be @(
+            'TOKEN: graph 44444444-4444-4444-4444-444444444444 force=False'
+            'GRAPH: v1.0/groups?probe=E11')
+        $R.Output | Should -Contain 'DEVICE CODE TOKEN CALLS: 1'
+        Get-RenewalProbeLine -Probe $R -Prefix 'GRAPH RESULT: ' | Should -Be @('item-1')
+        Get-RenewalProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'MARKER: False'
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'E12: a DeviceCode Microsoft Graph 401 for an expired token forces the refresh with Get-AzToken -Force, as before' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-RenewalProbe -Scenario {
+            # After the sign-in the token has expired. Not renewed before the request (E11), it goes out
+            # and is rejected, and the 401 forces the refresh, as it did before A11 (Ruling R12).
+            $global:OERA11BeforeRequest = { $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(-1) }
+            $global:OERA11GraphRejections = 1
+            'item' | Invoke-LongProbe -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod DeviceCode -GraphUri 'v1.0/groups?probe=E12'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The sign-in, the rejected request, the forced refresh -- with Force, so AzAuth builds a new
+        # credential, whose callback shows a new device code (DECOMPILED) -- and the one retry.
+        Get-RenewalProbeEvent -Probe $R | Should -Be @(
+            'TOKEN: graph 44444444-4444-4444-4444-444444444444 force=False'
+            'GRAPH: v1.0/groups?probe=E12'
+            'TOKEN: graph 44444444-4444-4444-4444-444444444444 force=True'
+            'GRAPH: v1.0/groups?probe=E12')
+        $R.Output | Should -Contain 'DEVICE CODE TOKEN CALLS: 2'
+        Get-RenewalProbeLine -Probe $R -Prefix 'GRAPH RESULT: ' | Should -Be @('item-2')
         Get-RenewalProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
         $R.Output | Should -Contain 'MARKER: False'
         $R.Output | Should -Contain 'OUTPUT COUNT: 1'

@@ -2132,9 +2132,10 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
 }
 
 Describe 'Invoke-OERArmRequest renews an expiring token before the request (A11, BL-105)' {
-    # A11, the mirror of the Graph wrapper's suite: a delegated or managed identity session's Azure
+    # A11, the mirror of the Graph wrapper's suite: an interactive or managed identity session's Azure
     # Resource Manager token is renewed BEFORE it expires, before every call and so before every page,
-    # through Initialize-OERAuth with -IncludeARM and -Renewal and without -ForceRefresh. Initialize-OERAuth
+    # through Initialize-OERAuth with -IncludeARM and -Renewal and without -ForceRefresh; a device code
+    # session's is not (Ruling R12, RA10). Initialize-OERAuth
     # is mocked here: the mock records each call's parameters in the order of the requests and replaces
     # the state's ARM token with a renewed one that lasts an hour, as a real renewal leaves it.
     # Invoke-WebRequest records each request and whether it carried the token the session held or the
@@ -2218,11 +2219,8 @@ Describe 'Invoke-OERArmRequest renews an expiring token before the request (A11,
         $Call.ContainsKey('ClientId') | Should -BeFalse
     }
 
-    It 'RA2: renews a <Method> session''s ARM token and forwards its client id' -ForEach @(
-        @{ Method = 'DeviceCode'; ClientId = '' }
-        @{ Method = 'ManagedIdentity'; ClientId = 'cccccccc-cccc-cccc-cccc-cccccccccccc' }
-    ) {
-        Set-ArmRenewalState -AuthMethod $Method -ClientId $ClientId -Minutes 2
+    It 'RA2: renews a ManagedIdentity session''s ARM token and forwards its client id' {
+        Set-ArmRenewalState -AuthMethod ManagedIdentity -ClientId 'cccccccc-cccc-cccc-cccc-cccccccccccc' -Minutes 2
 
         $R = InModuleScope Omnicit.EntraRBAC {
             $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01'
@@ -2234,15 +2232,10 @@ Describe 'Invoke-OERArmRequest renews an expiring token before the request (A11,
         $Call = $R.Calls[0]
         [bool]$Call['Renewal'] | Should -BeTrue
         [bool]$Call['IncludeARM'] | Should -BeTrue
-        $Call['AuthMethod'] | Should -BeExactly $Method
+        $Call['AuthMethod'] | Should -BeExactly 'ManagedIdentity'
         $Call.ContainsKey('ForceRefresh') | Should -BeFalse
-        if ($ClientId) {
-            # A user-assigned managed identity renews as the same principal, not the system-assigned one.
-            $Call['ClientId'] | Should -BeExactly $ClientId
-        }
-        else {
-            $Call.ContainsKey('ClientId') | Should -BeFalse
-        }
+        # A user-assigned managed identity renews as the same principal, not the system-assigned one.
+        $Call['ClientId'] | Should -BeExactly 'cccccccc-cccc-cccc-cccc-cccccccccccc'
     }
 
     It 'RA3: does not renew an app-only <Method> session''s ARM token within a command and sends the request with it' -ForEach @(
@@ -2458,6 +2451,30 @@ Describe 'Invoke-OERArmRequest renews an expiring token before the request (A11,
         $Silent.Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
         $Silent.Caught.TargetObject | Should -BeExactly 'Invoke-ArmCallWithRefresh'
     }
+
+    It 'RA10: does not renew a DeviceCode session''s ARM token before the request and sends the request with it' {
+        # Ruling R12: a device-code Get-AzToken without Force that reuses the credential AzAuth holds
+        # never returns (DECOMPILED, AzAuth 2.10.0), so a device code session's ARM token is not renewed
+        # before a request, whether it is due or has already expired: it is sent until Azure Resource
+        # Manager rejects it, and that 401 forces the refresh (TA9).
+        Set-ArmRenewalState -AuthMethod DeviceCode -Minutes 2
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $Due = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01&case=due'
+            $script:_OERAuthState.ArmTokenExpiry = [DateTime]::UtcNow.AddMinutes(-1)
+            $Expired = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01&case=expired'
+            Should -Invoke Initialize-OERAuth -Times 0
+            Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+            @{ Due = $Due; Expired = $Expired; Log = $script:A11Log.ToArray() }
+        }
+
+        @($R.Due.value)[0].id | Should -Be 'ok'
+        @($R.Expired.value)[0].id | Should -Be 'ok'
+        # No renewal: each request went out with the token the session holds.
+        $R.Log | Should -Be @(
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01&case=due | held'
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01&case=expired | held')
+    }
 }
 
 Describe 'Invoke-OERArmRequest renews a rejected token that has expired without -ForceRefresh (A11, BL-105)' {
@@ -2465,7 +2482,8 @@ Describe 'Invoke-OERArmRequest renews a rejected token that has expired without 
     # expired, or expires within the renewal window, is renewed the way a token due before a request is
     # -- through Initialize-OERAuth with -IncludeARM and -Renewal and without -ForceRefresh, so
     # Get-AzToken is called without Force -- and the request is retried once. A 401 for a token that is
-    # still valid, or whose expiry the state does not record, keeps -ForceRefresh. There is no claims
+    # still valid, or whose expiry the state does not record, keeps -ForceRefresh, and so does every 401
+    # of a device code session (Ruling R12, TA9). There is no claims
     # path on ARM. Initialize-OERAuth is mocked: it records each call's parameters in the order of the
     # requests and replaces the state's ARM token with a new one that lasts an hour, as a renewal or a
     # forced refresh leaves it. In every test the REQUEST mock moves the expiry (into the past or into
@@ -2576,7 +2594,7 @@ Describe 'Invoke-OERArmRequest renews a rejected token that has expired without 
         @($R.Verbose | Where-Object { $_ -like '*Forcing re-authentication*' }).Count | Should -Be 0
     }
 
-    It 'TA2:a 401 for a token within the window renews it with -IncludeARM and without -ForceRefresh and retries once' {
+    It 'TA2: a 401 for a token within the window renews it with -IncludeARM and without -ForceRefresh and retries once' {
         Set-ArmRejectionState -AuthMethod ManagedIdentity -ClientId 'cccccccc-cccc-cccc-cccc-cccccccccccc'
 
         $R = InModuleScope Omnicit.EntraRBAC {
@@ -2639,7 +2657,7 @@ Describe 'Invoke-OERArmRequest renews a rejected token that has expired without 
         @($R.Verbose | Where-Object { $_ -like '*Renewing it and retrying once*' }).Count | Should -Be 0
     }
 
-    It 'TA4:a 401 when the state records no expiry forces the refresh, as before' {
+    It 'TA4: a 401 when the state records no expiry forces the refresh, as before' {
         Set-ArmRejectionState -AuthMethod Interactive -NoExpiry
 
         $R = InModuleScope Omnicit.EntraRBAC {
@@ -2763,5 +2781,54 @@ Describe 'Invoke-OERArmRequest renews a rejected token that has expired without 
         # One tick after it the token is not due: forced, not renewed.
         [bool]$R.Calls[1]['ForceRefresh'] | Should -BeTrue
         $R.Calls[1].ContainsKey('Renewal') | Should -BeFalse
+    }
+
+    It 'TA9: a DeviceCode 401 for an expired token forces the refresh, as before' {
+        Set-ArmRejectionState -AuthMethod DeviceCode
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            # Ruling R12: a device-code Get-AzToken without Force that reuses the credential AzAuth holds
+            # never returns (DECOMPILED, AzAuth 2.10.0), so a device code session's 401 is forced whatever
+            # the expiry: an expired token, then one within the window.
+            $script:A11RejectOn = @(1, 3)
+            $script:A11ExpireAt = [DateTime]::UtcNow.AddMinutes(-1)
+            $Streams = @(Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01&case=expired' -Verbose 4>&1)
+            $Result = $Streams | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] }
+            $script:A11ExpireAt = [DateTime]::UtcNow.AddMinutes(2)
+            $Due = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01&case=due'
+            Should -Invoke Initialize-OERAuth -Times 2 -Exactly
+            Should -Invoke Initialize-OERAuth -Times 2 -Exactly -ParameterFilter { $ForceRefresh -and $IncludeARM -and -not $Renewal }
+            Should -Invoke Initialize-OERAuth -Times 0 -ParameterFilter { $Renewal }
+            Should -Invoke Invoke-WebRequest -Times 4 -Exactly
+            @{
+                Result  = $Result
+                Due     = $Due
+                Log     = $script:A11Log.ToArray()
+                Calls   = $script:A11Renewals.ToArray()
+                Verbose = @($Streams | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+            }
+        }
+
+        $R.Result.id | Should -Be 'after-refresh'
+        $R.Due.id | Should -Be 'after-refresh'
+        # The second call's first request is sent with the token the first call's refresh left.
+        $R.Log | Should -Be @(
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01&case=expired | held'
+            'INIT'
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01&case=expired | renewed'
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01&case=due | renewed'
+            'INIT'
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01&case=due | renewed')
+        $R.Calls.Count | Should -Be 2
+        foreach ($Call in $R.Calls) {
+            [bool]$Call['ForceRefresh'] | Should -BeTrue
+            [bool]$Call['IncludeARM'] | Should -BeTrue
+            $Call['AuthMethod'] | Should -BeExactly 'DeviceCode'
+            $Call['TenantId'] | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+            $Call.ContainsKey('Renewal') | Should -BeFalse
+        }
+        # The verbose line names the branch taken.
+        @($R.Verbose | Where-Object { $_ -like '*ARM token rejected (status=401). Forcing re-authentication and retrying once...' }).Count | Should -Be 1
+        @($R.Verbose | Where-Object { $_ -like '*Renewing it and retrying once*' }).Count | Should -Be 0
     }
 }

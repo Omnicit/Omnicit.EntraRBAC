@@ -70,17 +70,20 @@ function Invoke-OERGraphRequest {
        described in item 5, since this is the other way a paged read can fail partway through.
 
     7. Token renewal before expiry: before every attempt -- the first, each throttled retry, and so
-       every page under -All -- a delegated or managed identity session's (Interactive, DeviceCode or
+       every page under -All -- an interactive or managed identity session's (Interactive or
        ManagedIdentity) Microsoft Graph token that expires within the renewal window
        (Get-OERTokenRenewalThreshold, five minutes) is renewed through Initialize-OERAuth -Renewal, with
        the session's tenant, method and client id and without -ForceRefresh, so Get-AzToken is called
-       without Force (Force only for a cloud switch). A 401 for a token that has expired, or expires
-       within the same window, is renewed the same way before its one retry; a 401 for a token that is
-       still valid, or whose expiry the state does not record, is forced with -ForceRefresh, as before.
-       An app-only session (ClientSecret or ClientCertificate) is not renewed within a command, since
-       the module keeps no secret or certificate. A renewal that fails sends no request: inside a try
-       its error is the call's, and with no try up the call stack the latch gate then refuses the
-       request with SignInRefused.
+       without Force (Force only for a cloud switch). A 401 for such a token that has expired, or
+       expires within the same window, is renewed the same way before its one retry; a 401 for a token
+       that is still valid, or whose expiry the state does not record, is forced with -ForceRefresh, as
+       before. A device code session (DeviceCode) is not renewed before a request, and every 401 of one
+       is forced, as before: decompiled from AzAuth 2.10.0, a device-code Get-AzToken without Force
+       that reuses the credential AzAuth holds never returns (docs/development/rationale.md, "A long
+       run renews its token before it expires"). An app-only session (ClientSecret or
+       ClientCertificate) is not renewed within a command, since the module keeps no secret or
+       certificate. A renewal that fails sends no request: inside a try its error is the call's, and
+       with no try up the call stack the latch gate then refuses the request with SignInRefused.
 
     .PARAMETER Method
     HTTP method for the Graph request. Defaults to GET.
@@ -833,23 +836,30 @@ function Invoke-OERGraphRequest {
             # A11 (BL-105): renew the session's Microsoft Graph token before it expires -- before every
             # attempt (the first and each throttled retry), and so before every page of an -All read.
             # Initialize-OERAuth renews only when a command begins, so a long command used to run into
-            # its token's expiry and refresh only after Graph answered 401, with -ForceRefresh. Only a
-            # session that can be renewed without key material: Interactive, DeviceCode and
-            # ManagedIdentity. An app-only session (ClientSecret, ClientCertificate) is not renewed
-            # within a command, since the module never keeps its secret or certificate; a token whose
-            # expiry the state does not record is not renewed here either. The window is
-            # Get-OERTokenRenewalThreshold's, the one Initialize-OERAuth's cached return reads, so a
+            # its token's expiry and refresh only after Graph answered 401, with -ForceRefresh. Only an
+            # Interactive or ManagedIdentity session. An app-only session (ClientSecret,
+            # ClientCertificate) is not renewed within a command, since the module never keeps its
+            # secret or certificate. Nor is a DeviceCode session (Ruling R12): DECOMPILED, AzAuth
+            # 2.10.0, a device-code Get-AzToken without Force that reuses the credential AzAuth stores
+            # (a DeviceCodeCredential for the same client id) waits on a queue that only the device-code
+            # callback of a credential built for this call completes, so it never returns, prints no
+            # code, and -TimeoutSeconds does not bound it -- which fits the hang measured under
+            # "Switching tenants in one process", further finding 1, in docs/development/rationale.md.
+            # Its token is sent until Graph rejects it, and the 401 below forces the refresh, as before
+            # A11. A token whose expiry the state does not record is not renewed here either. The window
+            # is Get-OERTokenRenewalThreshold's, the one Initialize-OERAuth's cached return reads, so a
             # token due here is never answered from the cache. No -ForceRefresh, so Get-AzToken is
             # called without Force (Force only for a cloud switch); -Renewal keeps a success from
             # clearing the session-uncertain marker (A10). Here, ahead of the session gate and never
-            # between a gate and the request (gate 10). A 401 for an expired token is renewed the same
-            # way further down, and followed by the gates before its retry. A renewal that fails
+            # between a gate and the request (gate 10). A 401 for an expired token of an interactive or
+            # managed identity session is renewed the same way further down, and followed by the gates
+            # before its retry. A renewal that fails
             # latches this function -- or, refused under a command whose own sign-in was refused
             # (BL-74), leaves that command latched on the call stack -- so the gates below refuse the
             # request: the latch gate with SignInRefused, after the session gate, which still reports a
             # changed session as GraphSessionChanged. Outside any try too; inside one, the renewal's
             # error is the call's.
-            [bool]$RenewalDue = ($script:_OERAuthState.AuthMethod -in @('Interactive', 'DeviceCode', 'ManagedIdentity')) -and
+            [bool]$RenewalDue = ($script:_OERAuthState.AuthMethod -in @('Interactive', 'ManagedIdentity')) -and
                 $null -ne $script:_OERAuthState.GraphTokenExpiry -and
                 $script:_OERAuthState.GraphTokenExpiry -le (Get-OERTokenRenewalThreshold)
             if ($RenewalDue) {
@@ -1089,9 +1099,10 @@ function Invoke-OERGraphRequest {
 
         # -- Token rejected/expired (not a claims challenge) -- renew or refresh, and retry --
         # A 401 here means the bearer token is invalid or expired (claims challenges were already
-        # handled above). A token that has expired, or expires within the renewal window, is RENEWED, as
-        # one due before a request is; any other 401 -- the token is still valid, or its expiry is not
-        # recorded -- FORCES a token refresh. Either way the request is retried once instead of
+        # handled above). An interactive or managed identity token that has expired, or expires within
+        # the renewal window, is RENEWED, as one due before a request is; any other 401 -- the token is
+        # still valid, its expiry is not recorded, or the session is a device code session -- FORCES a
+        # token refresh. Either way the request is retried once instead of
         # surfacing the failure. The split is where $RefreshParams is built below.
         #
         # STATUS READ: PRIMARY vs SECONDARY, same split as Get-ThrottleDelay above and via the SAME
@@ -1138,11 +1149,16 @@ function Invoke-OERGraphRequest {
             # credential it holds. A 401 for a token that is still valid -- revoked, a Continuous Access
             # Evaluation event, or a token from another tenant -- is not an expiry: only a forced refresh
             # makes AzAuth drop the credential that minted it, so that one is forced, as before. So is a
-            # token whose expiry the state does not record. The window is Get-OERTokenRenewalThreshold's,
-            # the one the renewal before a request and Initialize-OERAuth's cached return read. The
-            # claims challenge above is unchanged, and the app-only refusal above stays first: an
-            # app-only session is never renewed here.
-            [bool]$TokenExpired = $null -ne $script:_OERAuthState.GraphTokenExpiry -and
+            # token whose expiry the state does not record, and so is every 401 of a DeviceCode session,
+            # whatever its expiry (Ruling R12): a device-code Get-AzToken without Force that reuses the
+            # credential AzAuth stores never returns, while Force makes AzAuth build a new credential,
+            # which shows a new device code and is bounded by AzAuth's timeout (both DECOMPILED, AzAuth
+            # 2.10.0; see the renewal before a request above) -- exactly as before A11. The window is
+            # Get-OERTokenRenewalThreshold's, the one the renewal before a request and
+            # Initialize-OERAuth's cached return read. The claims challenge above is unchanged, and the
+            # app-only refusal above stays first: an app-only session is never renewed here.
+            [bool]$TokenExpired = $script:_OERAuthState.AuthMethod -ne 'DeviceCode' -and
+                $null -ne $script:_OERAuthState.GraphTokenExpiry -and
                 $script:_OERAuthState.GraphTokenExpiry -le (Get-OERTokenRenewalThreshold)
             # Forward the cached ClientId (see Invoke-OERArmRequest for the rationale): a
             # user-assigned managed identity must re-acquire as the same principal, not the

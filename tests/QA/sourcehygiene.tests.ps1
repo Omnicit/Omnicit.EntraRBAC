@@ -1439,8 +1439,8 @@ BeforeAll {
         (BL-88, A14), is called only by Invoke-OERStructure, so a second apply path cannot compare -- or
         skip comparing -- on rules of its own.
         Get-OERTokenRenewalThreshold, the single owner of the token renewal window (A11, BL-105), is
-        called only by Initialize-OERAuth, for its cached return, and by the two wrappers, which renew a
-        delegated or managed identity session's token before a request when it expires within that
+        called only by Initialize-OERAuth, for its cached return, and by the two wrappers, which renew an
+        interactive or managed identity session's token before a request when it expires within that
         window: the two readings must agree, or a token the transports find due is answered from the
         cache. None of those three files may call AddMinutes, AddSeconds or AddHours either -- a second
         window literal -- which a rule of its own holds, read from the tree.
@@ -3722,9 +3722,9 @@ only through Invoke-OERStructure.
         $script:transportOwnerViolations['Get-OERTokenRenewalThreshold'] -join "`n" | Should -BeNullOrEmpty -Because @'
 Get-OERTokenRenewalThreshold is the single owner of the token renewal window (A11, BL-105): a cached
 token that expires at or before the instant it returns is due. Initialize-OERAuth reads it for its cached
-return, and Invoke-OERGraphRequest and Invoke-OERArmRequest read it before every request to renew a
-delegated or managed identity session's token before it expires, without -ForceRefresh. The two must agree
-to the tick: a token the transports find due must never be answered from the cache, or the renewal returns
+return, and Invoke-OERGraphRequest and Invoke-OERArmRequest read it before every request to renew an
+interactive or managed identity session's token before it expires, without -ForceRefresh. The two
+must agree to the tick: a token the transports find due must never be answered from the cache, or the renewal returns
 without renewing anything and the request goes out with the expiring token. A fourth caller is another
 reading of when a token is due in the making. Decide whether a token is due only in those three files.
 '@

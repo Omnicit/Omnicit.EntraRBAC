@@ -5369,10 +5369,11 @@ Describe 'Initialize-OERAuth session uncertain after a refused sign-in (A10)' {
 }
 
 Describe 'Initialize-OERAuth renewal window and -Renewal (A11, BL-105)' {
-    # A11: the module's transports renew a delegated or managed identity session's token before it
-    # expires, through this function, without -ForceRefresh. Two things here make that work. The
-    # window is Get-OERTokenRenewalThreshold's, the one the transports read, so a token they find due
-    # is never answered from this function's cache. And -Renewal marks the call as the transport's own:
+    # A11: the module's transports renew an interactive or managed identity session's token before it
+    # expires, through this function, without -ForceRefresh (a device code session's is not, Ruling
+    # R12). Two things here make that work. The window is Get-OERTokenRenewalThreshold's, the one the
+    # transports read, so a token they find due is never answered from this function's cache. And
+    # -Renewal marks the call as the transport's own:
     # it passes the state's tenant on the command's behalf, so a success must not clear the
     # session-uncertain marker (A10), exactly as -ForceRefresh and -ClaimsChallenge do not. The tenant is
     # invented: A is 4444..., and every token is issued for the tenant it was requested for.
