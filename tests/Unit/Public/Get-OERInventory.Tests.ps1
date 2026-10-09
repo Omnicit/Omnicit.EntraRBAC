@@ -1275,9 +1275,30 @@ Describe 'Get-OERInventory' {
         }
 
         It 'warns rather than silently collapsing an unrepresentable recurrence interval' {
-            # Live absoluteMonthly interval 6 is a semi-annual review. New-OERAccessReviewRecurrence
-            # cannot emit interval 6, so it is exported as the nearest coarser cadence (Monthly) -- but
-            # the warning must name the true interval so the loss is visible, not silent.
+            # Live absoluteMonthly interval 2 (every other month) is a review whose cadence
+            # New-OERAccessReviewRecurrence cannot emit (it emits 1, 3, 6 and 12), so it is exported as
+            # the nearest coarser cadence (Monthly) -- but the warning must name the true interval so
+            # the loss is visible, not silent.
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-bimonthly'; DisplayName = 'Bi-Monthly Review'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @(); StageCount = 0
+                    Recurrence = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 2 }
+                        range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
+                    }
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable Warned -WarningAction SilentlyContinue
+            $Inv.AccessReviews[0].recurrence | Should -Be 'Monthly'
+            ($Warned -join ' ') | Should -Match 'interval 2'
+        }
+
+        It 'exports a live absoluteMonthly interval 6 as SemiAnnually and does not warn about the cadence' {
+            # Interval 6 is the SemiAnnually cadence, which the module can now emit, so it is a
+            # representable pattern: no collapse onto Monthly and no warning that one happened.
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
                 [PSCustomObject]@{
                     Id = 'ar-semi'; DisplayName = 'Semi-Annual Review'
@@ -1291,8 +1312,11 @@ Describe 'Get-OERInventory' {
             }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable Warned -WarningAction SilentlyContinue
-            $Inv.AccessReviews[0].recurrence | Should -Be 'Monthly'
-            ($Warned -join ' ') | Should -Match 'interval 6'
+            # The export reached the review, so an empty warning list below is not vacuous.
+            @($Inv.AccessReviews).Count | Should -Be 1
+            $Inv.AccessReviews[0].displayName | Should -Be 'Semi-Annual Review'
+            $Inv.AccessReviews[0].recurrence | Should -BeExactly 'SemiAnnually'
+            @($Warned).Count | Should -Be 0
         }
 
         It 'uses -All (list-all) when no AccessReviewFilter is given' {

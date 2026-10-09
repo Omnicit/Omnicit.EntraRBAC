@@ -35,6 +35,21 @@ Describe 'New-OERAccessReviewDefinition' {
         }
     }
 
+    It 'POSTs -Recurrence SemiAnnually as absoluteMonthly interval 6 with a noEnd range' {
+        New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+            -AccessPackage 'AP' -AssignmentPolicy 'Standard' -Reviewer '11111111-1111-1111-1111-111111111111' `
+            -Recurrence SemiAnnually -StartDate ([datetime]'2026-07-05') -DurationInDays 14
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'POST' -and
+            $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions' -and
+            $Body.settings.recurrence.pattern.type -eq 'absoluteMonthly' -and
+            $Body.settings.recurrence.pattern.interval -eq 6 -and
+            $Body.settings.recurrence.pattern.dayOfMonth -eq 5 -and
+            $Body.settings.recurrence.range.type -eq 'noEnd' -and
+            $Body.settings.recurrence.range.startDate -eq '2026-07-05'
+        }
+    }
+
     It 'POSTs stageSettings and omits top-level reviewers for multi-stage' {
         $Stage = New-OERAccessReviewStage -StageId '1' -DurationInDays 7 -Reviewer '11111111-1111-1111-1111-111111111111'
         New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `

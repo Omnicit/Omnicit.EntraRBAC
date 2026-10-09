@@ -32,6 +32,16 @@ Describe 'New-OERAccessReviewRecurrence' {
             $r.pattern.dayOfMonth | Should -Be 5
         }
     }
+    It 'builds a semi-annual recurrence as absoluteMonthly interval 6 with dayOfMonth from the start date' {
+        InModuleScope Omnicit.EntraRBAC {
+            $r = New-OERAccessReviewRecurrence -Recurrence SemiAnnually -StartDate ([datetime]'2026-07-05')
+            $r.pattern.type       | Should -Be 'absoluteMonthly'
+            $r.pattern.interval   | Should -Be 6
+            $r.pattern.dayOfMonth | Should -Be 5
+            $r.range.type         | Should -Be 'noEnd'
+            $r.range.startDate    | Should -Be '2026-07-05'
+        }
+    }
     It 'builds an endDate range' {
         InModuleScope Omnicit.EntraRBAC {
             $r = New-OERAccessReviewRecurrence -Recurrence Monthly -StartDate ([datetime]'2026-07-01') -EndDate ([datetime]'2027-07-01')

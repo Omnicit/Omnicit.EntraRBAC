@@ -32,7 +32,7 @@ function New-OERAccessReviewRecurrence {
     [OutputType([hashtable])]
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'Annually')]
+        [Parameter(Mandatory)][ValidateSet('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'SemiAnnually', 'Annually')]
         [string]$Recurrence,
         [Parameter(Mandatory)][datetime]$StartDate,
         [datetime]$EndDate,
@@ -49,7 +49,7 @@ function New-OERAccessReviewRecurrence {
         [ordered]@{ type = 'weekly'; interval = 1 }
     }
     else {
-        $Interval = switch ($Recurrence) { 'Monthly' { 1 } 'Quarterly' { 3 } 'Annually' { 12 } }
+        $Interval = switch ($Recurrence) { 'Monthly' { 1 } 'Quarterly' { 3 } 'SemiAnnually' { 6 } 'Annually' { 12 } }
         [ordered]@{ type = 'absoluteMonthly'; interval = $Interval; dayOfMonth = $StartDate.Day }
     }
 

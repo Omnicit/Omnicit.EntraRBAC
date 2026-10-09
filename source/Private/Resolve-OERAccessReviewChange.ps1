@@ -341,6 +341,7 @@ function Resolve-OERAccessReviewChange {
                 switch ($Interval) {
                     1 { 'Monthly' }
                     3 { 'Quarterly' }
+                    6 { 'SemiAnnually' }
                     12 { 'Annually' }
                     default { 'Monthly' }
                 }
@@ -350,14 +351,14 @@ function Resolve-OERAccessReviewChange {
     }
 
     # New-OERAccessReviewRecurrence can emit only weekly interval 1 and absoluteMonthly interval
-    # 1/3/12, and both the inventory and the collapse above map every other interval onto one of those
-    # names. Rebuilding the recurrence object from a collapsed cadence therefore REWRITES a live
-    # semi-annual or n-weekly review -- silently, while reporting Updated. Track it and refuse.
+    # 1/3/6/12, and both the inventory and the collapse above map every other interval onto one of
+    # those names. Rebuilding the recurrence object from a collapsed cadence therefore REWRITES a live
+    # bi-monthly or n-weekly review -- silently, while reporting Updated. Track it and refuse.
     $CurrentPatternRepresentable = $true
     if ($CurrentPattern) {
         $CurrentPatternRepresentable = switch ([string]$CurrentPattern.type) {
             'weekly'          { [int]$CurrentPattern.interval -eq 1 }
-            'absoluteMonthly' { [int]$CurrentPattern.interval -in 1, 3, 12 }
+            'absoluteMonthly' { [int]$CurrentPattern.interval -in 1, 3, 6, 12 }
             default           { $false }
         }
     }
@@ -413,8 +414,8 @@ function Resolve-OERAccessReviewChange {
             }
             elseif (-not $CurrentPatternRepresentable) {
                 # Rebuilding the recurrence object here would send the emitter's coarser cadence in
-                # place of a live pattern it cannot reproduce (e.g. absoluteMonthly interval 6, or a
-                # weekly interval other than 1) -- silently downgrading a semi-annual or n-weekly review
+                # place of a live pattern it cannot reproduce (e.g. absoluteMonthly interval 2, or a
+                # weekly interval other than 1) -- silently downgrading a bi-monthly or n-weekly review
                 # while reporting Updated. Suppress the whole unit (Recurrence, StartDate, EndDate,
                 # Occurrences) rather than send a range without the pattern it belongs to.
                 $NotApplied.Add(

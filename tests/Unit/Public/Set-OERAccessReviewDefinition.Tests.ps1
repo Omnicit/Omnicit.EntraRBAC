@@ -61,6 +61,19 @@ Describe 'Set-OERAccessReviewDefinition' {
         } -Times 1
     }
 
+    It '-Recurrence SemiAnnually PUTs absoluteMonthly interval 6 with a noEnd range' {
+        Set-OERAccessReviewDefinition -Id 'd1' -Recurrence SemiAnnually -StartDate ([datetime]'2026-01-15')
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'PUT' -and
+            $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions/d1' -and
+            $Body.settings.recurrence.pattern.type -eq 'absoluteMonthly' -and
+            $Body.settings.recurrence.pattern.interval -eq 6 -and
+            $Body.settings.recurrence.pattern.dayOfMonth -eq 15 -and
+            $Body.settings.recurrence.range.type -eq 'noEnd' -and
+            $Body.settings.recurrence.range.startDate -eq '2026-01-15'
+        }
+    }
+
     It '-WhatIf suppresses the PUT call' {
         Set-OERAccessReviewDefinition -Id 'd1' -DisplayName 'New' -WhatIf
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter {

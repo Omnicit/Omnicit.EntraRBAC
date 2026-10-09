@@ -1618,13 +1618,13 @@ function Get-OERInventory {
                     $PType = [string]$Rec.pattern.type
                     $Interval = [int]$Rec.pattern.interval
                     # New-OERAccessReviewRecurrence can only emit weekly interval 1 and absoluteMonthly
-                    # interval 1/3/12 (mirrors Resolve-OERAccessReviewChange's representable check), so
+                    # interval 1/3/6/12 (mirrors Resolve-OERAccessReviewChange's representable check), so
                     # every other live interval collapses onto a coarser cadence below. Warn before the
-                    # collapse rather than exporting a semi-annual or n-weekly review as Monthly/Weekly
+                    # collapse rather than exporting a bi-monthly or n-weekly review as Monthly/Weekly
                     # with no sign anything was lost.
                     $PatternRepresentable = switch ($PType) {
                         'weekly'          { $Interval -eq 1 }
-                        'absoluteMonthly' { $Interval -in 1, 3, 12 }
+                        'absoluteMonthly' { $Interval -in 1, 3, 6, 12 }
                         default           { $false }
                     }
                     if (-not $PatternRepresentable) {
@@ -1632,7 +1632,7 @@ function Get-OERInventory {
                     }
                     $Cadence = switch ($PType) {
                         'weekly' { 'Weekly' }
-                        'absoluteMonthly' { switch ($Interval) { 1 { 'Monthly' } 3 { 'Quarterly' } 12 { 'Annually' } default { 'Monthly' } } }
+                        'absoluteMonthly' { switch ($Interval) { 1 { 'Monthly' } 3 { 'Quarterly' } 6 { 'SemiAnnually' } 12 { 'Annually' } default { 'Monthly' } } }
                         default { 'OneTime' }
                     }
                 }

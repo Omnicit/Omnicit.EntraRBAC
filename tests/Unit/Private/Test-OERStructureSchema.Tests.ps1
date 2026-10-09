@@ -319,9 +319,26 @@ Describe 'Test-OERStructureSchema' {
         }
     }
 
+    It 'accepts a SemiAnnually recurrence, warning only about a non-canonical casing of it' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "accessReviews": [ { "displayName": "r", "accessPackage": "ap", "assignmentPolicy": "p", "recurrence": "SemiAnnually" } ] }' | ConvertFrom-Json
+            $Exact = Test-OERStructureSchema -Document $Doc
+            $Exact.Valid | Should -BeTrue
+            @($Exact.Errors | Where-Object { $_.Path -eq 'accessReviews[0].recurrence' }).Count |
+                Should -Be 0 -Because 'the canonical spelling needs no finding'
+            $Doc = '{ "version": "1.0", "accessReviews": [ { "displayName": "r", "accessPackage": "ap", "assignmentPolicy": "p", "recurrence": "semiannually" } ] }' | ConvertFrom-Json
+            $Lower = Test-OERStructureSchema -Document $Doc
+            $Lower.Valid | Should -BeTrue
+            $Findings = @($Lower.Errors | Where-Object { $_.Path -eq 'accessReviews[0].recurrence' })
+            $Findings.Count | Should -Be 1
+            $Findings[0].Severity | Should -BeExactly 'Warning'
+            $Findings[0].Message | Should -Match "canonical spelling is 'SemiAnnually'"
+        }
+    }
+
     It 'accepts all valid recurrence values' {
         InModuleScope $script:moduleName {
-            foreach ($Rec in @('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'Annually')) {
+            foreach ($Rec in @('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'SemiAnnually', 'Annually')) {
                 $Doc = ('{ "version": "1.0", "accessReviews": [ { "displayName": "r", "accessPackage": "ap", "assignmentPolicy": "p", "recurrence": "' + $Rec + '" } ] }') | ConvertFrom-Json
                 (Test-OERStructureSchema -Document $Doc).Valid | Should -BeTrue -Because "recurrence '$Rec' is valid"
             }

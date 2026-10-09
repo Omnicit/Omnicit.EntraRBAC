@@ -157,7 +157,7 @@ function Set-OERAccessReviewDefinition {
 
         [PSCustomObject[]]$Stage,
 
-        [ValidateSet('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'Annually')]
+        [ValidateSet('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'SemiAnnually', 'Annually')]
         [string]$Recurrence,
 
         [datetime]$StartDate,

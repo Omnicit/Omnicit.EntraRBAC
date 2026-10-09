@@ -397,7 +397,7 @@ function Get-OERStructureSchemaJson {
           "assignmentPolicy": { "type": "string" },
           "recurrence": {
             "type": [ "string", "null" ],
-            "enum": [ "OneTime", "Weekly", "Monthly", "Quarterly", "Annually", null ],
+            "enum": [ "OneTime", "Weekly", "Monthly", "Quarterly", "SemiAnnually", "Annually", null ],
             "description": "An explicit null means a one-time review, exactly as omitting the key does -- the offline validator treats a null as undeclared and applies the OneTime default. null appears in both type and enum because draft-07 asserts them independently."
           },
           "startDate": { "type": "string", "description": "ISO 8601 date or date-time the first review instance starts. Defaults to today when omitted." },

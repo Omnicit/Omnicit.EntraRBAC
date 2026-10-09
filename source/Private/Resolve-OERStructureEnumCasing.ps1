@@ -64,7 +64,7 @@ function Resolve-OERStructureEnumCasing {
         membershipRuleProcessingState = @('On', 'Paused')
         catalogResourceType           = @('Group', 'Application', 'SharePointSite')
         approverInfoVisibility        = @('Default', 'Visible', 'NotVisible')
-        accessReviewRecurrence        = @('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'Annually')
+        accessReviewRecurrence        = @('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'SemiAnnually', 'Annually')
         accessReviewDefaultDecision   = @('None', 'Approve', 'Deny', 'Recommendation')
         principalType                 = @('User', 'Group', 'ServicePrincipal')
         directoryRoleAssignmentType   = @('Eligible', 'Active')

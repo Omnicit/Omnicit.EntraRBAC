@@ -368,6 +368,7 @@ Describe 'Resolve-OERAccessReviewChange' {
                 @{ Type = 'weekly';          Interval = 1;  Cadence = 'Weekly' }
                 @{ Type = 'absoluteMonthly'; Interval = 1;  Cadence = 'Monthly' }
                 @{ Type = 'absoluteMonthly'; Interval = 3;  Cadence = 'Quarterly' }
+                @{ Type = 'absoluteMonthly'; Interval = 6;  Cadence = 'SemiAnnually' }
                 @{ Type = 'absoluteMonthly'; Interval = 12; Cadence = 'Annually' }
             )
             foreach ($Case in $Cases) {
@@ -378,6 +379,9 @@ Describe 'Resolve-OERAccessReviewChange' {
                 $Declared = [PSCustomObject]@{ displayName = 'Q3 AP review'; recurrence = $Case.Cadence }
                 $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
                 $Change.Changed | Should -Be $false -Because "$($Case.Type)/$($Case.Interval) is $($Case.Cadence)"
+                # A pattern the module cannot represent also reports Changed = false, with the reason in
+                # NotApplied, so an empty NotApplied is what proves the pattern was mapped and not skipped.
+                @($Change.NotApplied) | Should -BeNullOrEmpty -Because "$($Case.Type)/$($Case.Interval) is representable"
             }
             # A definition with no recurrence object at all is a OneTime review.
             $Current.Recurrence = $null
@@ -523,11 +527,32 @@ Describe 'Resolve-OERAccessReviewChange' {
     }
 
     It 'does not rewrite an unrepresentable live interval when another field changes' {
-        # Live absoluteMonthly interval 6 (semi-annual) is outside New-OERAccessReviewRecurrence's
-        # vocabulary (1/3/12). Its collapsed cadence is 'Monthly' (the same default the inventory
+        # Live absoluteMonthly interval 2 (every other month) is outside New-OERAccessReviewRecurrence's
+        # vocabulary (1/3/6/12). Its collapsed cadence is 'Monthly' (the same default the inventory
         # projection uses), so the declared 'Monthly' does not even look like drift -- only the
         # startDate change forces the recurrence unit to be considered at all. Rebuilding the
-        # recurrence from 'Monthly' here would silently downgrade the live semi-annual review.
+        # recurrence from 'Monthly' here would silently downgrade the live bi-monthly review.
+        InModuleScope $script:moduleName {
+            $Current = [PSCustomObject]@{
+                DisplayName = 'R'
+                Recurrence  = [PSCustomObject]@{
+                    pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 2; dayOfMonth = 1 }
+                    range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
+                }
+                Settings    = @{}
+            }
+            $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'Monthly'; startDate = '2026-02-01' }
+            $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+            $Change.SetParams.ContainsKey('Recurrence') | Should -Be $false
+            $Change.SetParams.ContainsKey('StartDate')  | Should -Be $false
+            ($Change.NotApplied -join ' ') | Should -Match 'interval 2'
+        }
+    }
+
+    It 'treats a live absoluteMonthly interval 6 as representable and rewrites it when the start date drifts' {
+        # Interval 6 is the SemiAnnually cadence, which New-OERAccessReviewRecurrence can now emit, so a
+        # declared SemiAnnually with a different startDate is an ordinary recurrence write and not a
+        # NotApplied entry. This is what goes red if 6 is dropped from the representable list.
         InModuleScope $script:moduleName {
             $Current = [PSCustomObject]@{
                 DisplayName = 'R'
@@ -537,11 +562,54 @@ Describe 'Resolve-OERAccessReviewChange' {
                 }
                 Settings    = @{}
             }
-            $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'Monthly'; startDate = '2026-02-01' }
+            $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'SemiAnnually'; startDate = '2026-02-01' }
             $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
-            $Change.SetParams.ContainsKey('Recurrence') | Should -Be $false
-            $Change.SetParams.ContainsKey('StartDate')  | Should -Be $false
-            ($Change.NotApplied -join ' ') | Should -Match 'interval 6'
+            $Change.Changed                | Should -Be $true
+            $Change.SetParams.Recurrence   | Should -BeExactly 'SemiAnnually'
+            $Change.SetParams.StartDate    | Should -Be ([datetime]'2026-02-01')
+            @($Change.NotApplied)          | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'reports a Quarterly review declared SemiAnnually as a recurrence change that keeps the live start date' {
+        InModuleScope $script:moduleName {
+            $Current = [PSCustomObject]@{
+                DisplayName = 'R'
+                Recurrence  = [PSCustomObject]@{
+                    pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                    range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
+                }
+                Settings    = @{}
+            }
+            $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'SemiAnnually' }
+            $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+            $Change.Changed              | Should -Be $true
+            $Change.SetParams.Recurrence | Should -BeExactly 'SemiAnnually'
+            $Change.SetParams.StartDate  | Should -Be ([datetime]'2026-01-01')
+            ($Change.Changes -join ' ')  | Should -Match 'recurrence=SemiAnnually'
+            @($Change.NotApplied)        | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'reports a live interval 6 declared Monthly (what an export before SemiAnnually wrote) as a recurrence change' {
+        # Before SemiAnnually existed an interval-6 review was exported as Monthly, with a warning. Such
+        # a document now differs from the live cadence and is applied: the review moves to Monthly. This
+        # is the documented consequence, pinned here so it is a decision and not an accident.
+        InModuleScope $script:moduleName {
+            $Current = [PSCustomObject]@{
+                DisplayName = 'R'
+                Recurrence  = [PSCustomObject]@{
+                    pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 6; dayOfMonth = 1 }
+                    range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
+                }
+                Settings    = @{}
+            }
+            $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'Monthly' }
+            $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+            $Change.Changed              | Should -Be $true
+            $Change.SetParams.Recurrence | Should -BeExactly 'Monthly'
+            $Change.SetParams.StartDate  | Should -Be ([datetime]'2026-01-01')
+            @($Change.NotApplied)        | Should -BeNullOrEmpty
         }
     }
 

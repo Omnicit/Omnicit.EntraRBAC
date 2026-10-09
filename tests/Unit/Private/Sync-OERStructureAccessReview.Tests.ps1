@@ -35,6 +35,30 @@ Describe 'Sync-OERStructureAccessReview' {
         }
     }
 
+    It 'creates a missing access review declared "semiannually" in any casing with -Recurrence SemiAnnually' {
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Get-OERAccessReviewDefinition { @() }
+            Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1'; DisplayName = 'Semi-annual AP-Sales' } }
+            Mock Initialize-OERAuth {}
+            $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
+                displayName       = 'Semi-annual AP-Sales'
+                accessPackage     = 'AP-Sales'
+                assignmentPolicy  = 'Default'
+                reviewers         = @('manager')
+                fallbackReviewers = @('fallback@contoso.com')
+                recurrence        = 'semiannually'
+            }))
+            @($r | Where-Object Action -eq 'Failed').Count | Should -Be 0
+            @($r | Where-Object Action -eq 'Created').Count | Should -Be 1
+            Should -Invoke New-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter { $Recurrence -ceq 'SemiAnnually' }
+        }
+    }
+
     It 'reports Unchanged when definition with matching DisplayName already exists and does not call New-OERAccessReviewDefinition' {
         InModuleScope $script:moduleName {
             function Invoke-SyncArViaCaller {
@@ -881,6 +905,9 @@ Describe 'Sync-OERStructureAccessReview' {
             }) -ErrorAction SilentlyContinue)
             ($r | Where-Object Action -eq 'Failed').Count | Should -BeGreaterThan 0
             Should -Invoke New-OERAccessReviewDefinition -Times 0
+            # The refusal names every accepted cadence, SemiAnnually included, in canonical order.
+            @($r | Where-Object Action -eq 'Failed')[0].Detail |
+                Should -BeExactly "unrecognised recurrence value 'Biweekly'; expected OneTime, Weekly, Monthly, Quarterly, SemiAnnually, or Annually"
         }
     }
 
@@ -1690,6 +1717,120 @@ Describe 'Sync-OERStructureAccessReview' {
                 Should -Invoke Set-OERAccessReviewDefinition -Times 1 -ParameterFilter {
                     $Recurrence -eq 'Monthly' -and $StartDate -eq ([datetime]'2026-07-01')
                 }
+            }
+        }
+
+        It 'moves a live Quarterly review to SemiAnnually, and the PUT the real Set cmdlet sends carries absoluteMonthly interval 6' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                # The existence probe sees the converted shape of a live Quarterly review. The REAL
+                # Set-OERAccessReviewDefinition then runs, and only the transport under it is mocked: a
+                # stateful stand-in for the raw definition, so the post-write read-back carries exactly
+                # what the PUT sent and the handler's verification is a genuine round trip.
+                $script:SemiAnnualRaw = @{
+                    id                      = 'ar-1'
+                    displayName             = 'Q3 AP review'
+                    status                  = 'InProgress'
+                    descriptionForAdmins    = 'admin text'
+                    descriptionForReviewers = 'reviewer text'
+                    scope                   = @{ query = "/identityGovernance/entitlementManagement/assignments?`$filter=(accessPackage/id eq 'ap-1' and assignmentPolicy/id eq 'pol-1')" }
+                    reviewers               = @(@{ query = '/users/usr-1'; queryType = 'MicrosoftGraph' })
+                    settings                = @{
+                        instanceDurationInDays = 14
+                        recurrence             = @{
+                            pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                            range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                        }
+                    }
+                }
+                try {
+                    Mock Get-OERAccessReviewDefinition {
+                        [PSCustomObject]@{
+                            Id                 = 'ar-1'
+                            DisplayName        = 'Q3 AP review'
+                            AccessPackageId    = 'ap-1'
+                            AssignmentPolicyId = 'pol-1'
+                            Reviewers          = @(@{ query = '/users/usr-1' })
+                            FallbackReviewers  = @()
+                            DurationInDays     = 14
+                            Recurrence         = @{
+                                pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                                range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                            }
+                            Settings           = @{ instanceDurationInDays = 14 }
+                        }
+                    }
+                    Mock Resolve-OERAccessReviewDefinitionId { 'ar-1' }
+                    Mock Invoke-OERGraphRequest {
+                        if ($Method -eq 'PUT') {
+                            $script:SemiAnnualRaw.settings = $Body.settings
+                            return $null
+                        }
+                        return $script:SemiAnnualRaw
+                    }
+                    Mock Initialize-OERAuth {}
+                    $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
+                        displayName = 'Q3 AP review'; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'
+                        recurrence = 'SemiAnnually'
+                    }))
+                    @($r | Where-Object Action -eq 'Failed').Count | Should -Be 0
+                    @($r | Where-Object Action -eq 'Updated').Count | Should -Be 1
+                    Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                        $Method -eq 'PUT' -and
+                        $Body.settings.recurrence.pattern.type -eq 'absoluteMonthly' -and
+                        $Body.settings.recurrence.pattern.interval -eq 6 -and
+                        $Body.settings.recurrence.pattern.dayOfMonth -eq 1 -and
+                        $Body.settings.recurrence.range.type -eq 'noEnd' -and
+                        $Body.settings.recurrence.range.startDate -eq '2026-07-01'
+                    }
+                }
+                finally {
+                    Remove-Variable -Name SemiAnnualRaw -Scope Script -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
+        It 'reports Unchanged and sends no write when a live interval 6 review is declared SemiAnnually' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Get-OERAccessReviewDefinition {
+                    [PSCustomObject]@{
+                        Id                 = 'ar-1'
+                        DisplayName        = 'Q3 AP review'
+                        AccessPackageId    = 'ap-1'
+                        AssignmentPolicyId = 'pol-1'
+                        Reviewers          = @(@{ query = '/users/usr-1' })
+                        FallbackReviewers  = @()
+                        DurationInDays     = 14
+                        Recurrence         = @{
+                            pattern = @{ type = 'absoluteMonthly'; interval = 6; dayOfMonth = 1 }
+                            range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                        }
+                        Settings           = @{ instanceDurationInDays = 14 }
+                    }
+                }
+                Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+                Mock Set-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-1' } }
+                Mock Initialize-OERAuth {}
+                $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -Item ([PSCustomObject]@{
+                    displayName = 'Q3 AP review'; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'
+                    recurrence = 'SemiAnnually'; startDate = '2026-07-01'
+                }))
+                # The Unchanged record shows the handler reached the reconcile and found nothing to do,
+                # so the two zero-call assertions below are not vacuous.
+                @($r).Action | Should -Contain 'Unchanged'
+                @($r | Where-Object { $_.Action -in 'Failed', 'Skipped', 'Updated' }).Count | Should -Be 0
+                Should -Invoke Get-OERAccessReviewDefinition -Times 1 -Exactly
+                Should -Invoke Set-OERAccessReviewDefinition -Times 0
+                Should -Invoke New-OERAccessReviewDefinition -Times 0
             }
         }
     }
