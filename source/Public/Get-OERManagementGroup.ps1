@@ -41,15 +41,20 @@ function Get-OERManagementGroup {
     Get-OERManagementGroup -Name 'mg-platform' -Recurse
     Gets the mg-platform management group with its full child hierarchy.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'List')]
     [OutputType([PSCustomObject])]
     param(
-        [Parameter(ValueFromPipelineByPropertyName)]
+        [Parameter(ParameterSetName = 'ByName', Mandatory, Position = 0, ValueFromPipelineByPropertyName)]
         [Alias('ManagementGroupName', 'ManagementGroup')]
         [string]$Name,
 
+        [Parameter(ParameterSetName = 'ByName')]
         [switch]$Expand,
+
+        [Parameter(ParameterSetName = 'ByName')]
         [switch]$Recurse,
+
+        [Parameter(Position = 1)]
         [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
@@ -59,8 +64,8 @@ function Get-OERManagementGroup {
         Initialize-OERAuth @AuthParams -IncludeARM
     }
     process {
-        if ($Name) {
-            $Path = "/providers/Microsoft.Management/managementGroups/$([uri]::EscapeDataString($Name))?api-version=2020-05-01"
+        if ($PSCmdlet.ParameterSetName -eq 'ByName') {
+            $Path ="/providers/Microsoft.Management/managementGroups/$([uri]::EscapeDataString($Name))?api-version=2020-05-01"
             if ($Expand -or $Recurse) { $Path += '&$expand=children' }
             if ($Recurse) { $Path += '&$recurse=true' }
             try {

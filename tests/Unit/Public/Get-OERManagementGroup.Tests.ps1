@@ -382,4 +382,266 @@ Describe 'Get-OERManagementGroup' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -ParameterFilter { $Path -like '*/getEntities?*' }
         }
     }
+
+    # -Expand and -Recurse only mean something beside -Name, so they sit in the ByName parameter set
+    # with it, and a call without -Name is refused at BINDING, before the begin block signs in.
+    # Putting parameters into sets drops PowerShell's automatic positions, so -Name and -TenantId
+    # declare theirs (0 and 1): 'Get-OERManagementGroup mg1 contoso.onmicrosoft.com' binds as before.
+    Context 'parameter sets (A10)' {
+        BeforeAll {
+            # The cmdlet's own body, defined in a fresh host-less runspace further down.
+            $Definition = (Get-Command -Module Omnicit.EntraRBAC -Name Get-OERManagementGroup).Definition
+
+            # Runs one call of the cmdlet's body in a FRESH runspace with no host. There a missing
+            # mandatory parameter is an error record, never a prompt, so the refusal can be observed.
+            # Module auto-loading is off first, so a call that does bind cannot load the module and
+            # reach its transport: Initialize-OERAuth is a stub that only records that begin ran.
+            function Invoke-HostlessManagementGroup {
+                param([string]$Body, [string]$Arguments)
+                $Text = @(
+                    '$PSModuleAutoLoadingPreference = ''None'''
+                    'function Initialize-OERAuth { $global:OERBegan = $true }'
+                    'function Get-OERManagementGroup {'
+                    $Body
+                    '}'
+                    "Get-OERManagementGroup $Arguments"
+                ) -join "`n"
+                $Runspace = [runspacefactory]::CreateRunspace()
+                $Runspace.Open()
+                $Ps = [powershell]::Create()
+                try {
+                    $Ps.Runspace = $Runspace
+                    $null = $Ps.AddScript($Text)
+                    $Output = @()
+                    $Thrown = $null
+                    try { $Output = @($Ps.Invoke()) } catch { $Thrown = $PSItem }
+                    $Records = [System.Collections.Generic.List[System.Management.Automation.ErrorRecord]]::new()
+                    foreach ($Record in $Ps.Streams.Error) { $Records.Add($Record) }
+                    if ($Thrown) {
+                        # A terminating binding error surfaces as a MethodInvocationException from
+                        # Invoke(); the record is on its InnerException.
+                        $Cause = $Thrown.Exception
+                        if ($Cause -is [System.Management.Automation.MethodInvocationException] -and $Cause.InnerException) {
+                            $Cause = $Cause.InnerException
+                        }
+                        $Found = if ($Cause -is [System.Management.Automation.IContainsErrorRecord]) {
+                            $Cause.ErrorRecord
+                        } else {
+                            [System.Management.Automation.ErrorRecord]::new($Cause, 'UnreadableInvokeFailure', 'NotSpecified', $null)
+                        }
+                        $Seen = @($Records | Where-Object { [object]::ReferenceEquals($_.Exception, $Found.Exception) })
+                        if ($Seen.Count -eq 0) { $Records.Add($Found) }
+                    }
+                    [PSCustomObject]@{
+                        Output = $Output
+                        Errors = $Records.ToArray()
+                        Began  = [bool]$Runspace.SessionStateProxy.PSVariable.GetValue('OERBegan')
+                    }
+                } finally {
+                    $Ps.Dispose()
+                    $Runspace.Dispose()
+                }
+            }
+        }
+
+        BeforeEach {
+            # One FILTERED mock: a -Name read of any group. Any other ARM call throws (Pester 6.2), so
+            # an unwanted list or parent read fails the test instead of passing silently.
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter {
+                $Path -like '/providers/Microsoft.Management/managementGroups/*?api-version=2020-05-01*'
+            } {
+                $Leaf = (($Path -split '\?')[0] -split '/')[-1]
+                [PSCustomObject]@{
+                    id         = "/providers/Microsoft.Management/managementGroups/$Leaf"
+                    name       = $Leaf
+                    properties = [PSCustomObject]@{ tenantId = 't'; displayName = "MG $Leaf" }
+                }
+            }
+        }
+
+        It 'declares List as the default set and keeps -Expand and -Recurse out of it' {
+            $Command = Get-Command Get-OERManagementGroup
+            $Binding = @($Command.ScriptBlock.Attributes | Where-Object { $_ -is [System.Management.Automation.CmdletBindingAttribute] })
+            $Binding.Count | Should -Be 1
+            $Binding[0].DefaultParameterSetName | Should -BeExactly 'List'
+            @($Command.ParameterSets.Name | Sort-Object) | Should -Be @('ByName', 'List')
+
+            @($Command.Parameters['Expand'].ParameterSets.Keys) | Should -Be @('ByName')
+            @($Command.Parameters['Recurse'].ParameterSets.Keys) | Should -Be @('ByName')
+            $Command.Parameters['Expand'].ParameterSets['ByName'].IsMandatory | Should -BeFalse
+            $Command.Parameters['Recurse'].ParameterSets['ByName'].IsMandatory | Should -BeFalse
+
+            $ListSet = $Command.ParameterSets | Where-Object { $_.Name -eq 'List' }
+            $ListSet.Parameters.Name | Should -Not -Contain 'Name'
+            $ListSet.Parameters.Name | Should -Not -Contain 'Expand'
+            $ListSet.Parameters.Name | Should -Not -Contain 'Recurse'
+            $ListSet.Parameters.Name | Should -Contain 'TenantId'
+            $ByNameSet = $Command.ParameterSets | Where-Object { $_.Name -eq 'ByName' }
+            $ByNameSet.Parameters.Name | Should -Contain 'Name'
+            $ByNameSet.Parameters.Name | Should -Contain 'Expand'
+            $ByNameSet.Parameters.Name | Should -Contain 'Recurse'
+            $ByNameSet.Parameters.Name | Should -Contain 'TenantId'
+        }
+
+        It 'makes -Name mandatory in ByName at position 0, still bound from the pipeline by property name' {
+            $Name = (Get-Command Get-OERManagementGroup).Parameters['Name']
+            @($Name.ParameterSets.Keys) | Should -Be @('ByName')
+            $Name.ParameterSets['ByName'].IsMandatory | Should -BeTrue
+            $Name.ParameterSets['ByName'].Position | Should -Be 0
+            $Name.ParameterSets['ByName'].ValueFromPipelineByPropertyName | Should -BeTrue
+            $Name.ParameterSets['ByName'].ValueFromPipeline | Should -BeFalse
+            @($Name.Aliases) | Should -Be @('ManagementGroupName', 'ManagementGroup')
+        }
+
+        It 'gives -TenantId position 1 in every set and keeps it optional and non-empty' {
+            $TenantId = (Get-Command Get-OERManagementGroup).Parameters['TenantId']
+            @($TenantId.ParameterSets.Keys) | Should -Be @('__AllParameterSets')
+            $TenantId.ParameterSets['__AllParameterSets'].Position | Should -Be 1
+            $TenantId.ParameterSets['__AllParameterSets'].IsMandatory | Should -BeFalse
+            @($TenantId.Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateNotNullOrEmptyAttribute] }).Count | Should -Be 1
+        }
+
+        # Each of these used to be accepted and listed every group, the switch silently ignored. Run
+        # in a fresh runspace with no host; never in this process, where an interactive host would
+        # PROMPT for the missing -Name.
+        $Refused = @(
+            @{ Label = '-Recurse'; Arguments = '-Recurse' }
+            @{ Label = '-Expand'; Arguments = '-Expand' }
+            @{ Label = '-Expand -Recurse'; Arguments = '-Expand -Recurse' }
+            @{ Label = '-TenantId with -Recurse'; Arguments = '-TenantId contoso.onmicrosoft.com -Recurse' }
+        )
+        It 'refuses <Label> without -Name at binding, before begin: no output and one MissingMandatoryParameter' -ForEach $Refused {
+            $Result = Invoke-HostlessManagementGroup -Body $Definition -Arguments $Arguments
+
+            @($Result.Output).Count | Should -Be 0
+            @($Result.Errors).Count | Should -Be 1
+            $Result.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'MissingMandatoryParameter,Get-OERManagementGroup'
+            $Result.Began | Should -BeFalse -Because 'a refused binding must stop the command before its begin block signs in'
+        }
+
+        # The same harness must be able to SEE a call that binds, or the refusals above prove nothing.
+        $Accepted = @(
+            @{ Label = 'no parameters (the list)'; Arguments = '' }
+            @{ Label = '-TenantId alone'; Arguments = '-TenantId contoso.onmicrosoft.com' }
+            @{ Label = '-Name'; Arguments = '-Name mg1' }
+            @{ Label = '-Name with -Expand and -Recurse'; Arguments = '-Name mg1 -Expand -Recurse' }
+            @{ Label = 'the name and the tenant by position'; Arguments = 'mg1 contoso.onmicrosoft.com' }
+        )
+        It 'lets <Label> bind and reach the begin block (control for the refusals)' -ForEach $Accepted {
+            $Result = Invoke-HostlessManagementGroup -Body $Definition -Arguments $Arguments
+
+            $Result.Began | Should -BeTrue
+            @($Result.Errors | Where-Object { $_.FullyQualifiedErrorId -like 'MissingMandatoryParameter*' }).Count | Should -Be 0
+        }
+
+        It 'refuses an empty -Name at binding and sends nothing' {
+            { Get-OERManagementGroup -Name '' } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationErrorEmptyStringNotAllowed,Get-OERManagementGroup'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
+        }
+
+        It 'refuses a piped object with an empty ManagementGroupName and sends nothing' {
+            { [PSCustomObject]@{ ManagementGroupName = '' } | Get-OERManagementGroup -ErrorAction Stop } |
+                Should -Throw -ErrorId 'ParameterArgumentValidationErrorEmptyStringNotAllowed,Get-OERManagementGroup'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+        }
+
+        It 'reads the group named by a piped ManagementGroupName' {
+            $Out = @([PSCustomObject]@{ ManagementGroupName = 'mg1' } | Get-OERManagementGroup -ErrorAction Stop)
+
+            $Out.Count | Should -Be 1
+            $Out[0].ManagementGroupName | Should -BeExactly 'mg1'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Management/managementGroups/mg1?api-version=2020-05-01'
+            }
+        }
+
+        It 'reads the group named by a piped ManagementGroup' {
+            $Out = @([PSCustomObject]@{ ManagementGroup = 'mg2' } | Get-OERManagementGroup -ErrorAction Stop)
+
+            $Out.Count | Should -Be 1
+            $Out[0].ManagementGroupName | Should -BeExactly 'mg2'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Management/managementGroups/mg2?api-version=2020-05-01'
+            }
+        }
+
+        It 'reads the group named by a piped Name' {
+            $Out = @([PSCustomObject]@{ Name = 'mg3' } | Get-OERManagementGroup -ErrorAction Stop)
+
+            $Out.Count | Should -Be 1
+            $Out[0].ManagementGroupName | Should -BeExactly 'mg3'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Management/managementGroups/mg3?api-version=2020-05-01'
+            }
+        }
+
+        It 'sends one read per piped object' {
+            $Out = @(
+                [PSCustomObject]@{ ManagementGroupName = 'mg1' }, [PSCustomObject]@{ ManagementGroupName = 'mg2' } |
+                    Get-OERManagementGroup -ErrorAction Stop
+            )
+
+            @($Out.ManagementGroupName) | Should -Be @('mg1', 'mg2')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 2 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Management/managementGroups/mg1?api-version=2020-05-01'
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Management/managementGroups/mg2?api-version=2020-05-01'
+            }
+        }
+
+        It 'sends the expand and recurse query for a converted group piped with -Recurse' {
+            # The object a previous Get-OERManagementGroup emits: ManagementGroupName stored, Name an
+            # AliasProperty of it from the module's type data.
+            $Piped = InModuleScope Omnicit.EntraRBAC {
+                ConvertTo-OERManagementGroup -InputObject ([PSCustomObject]@{
+                        id         = '/providers/Microsoft.Management/managementGroups/mg1'
+                        name       = 'mg1'
+                        properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'MG One' }
+                    })
+            }
+            $Piped.Name | Should -BeExactly 'mg1'
+
+            $Out = @($Piped | Get-OERManagementGroup -Recurse -ErrorAction Stop)
+
+            $Out.Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Management/managementGroups/mg1?api-version=2020-05-01&$expand=children&$recurse=true'
+            }
+        }
+
+        It 'binds the name by position' {
+            $Out = @(Get-OERManagementGroup 'mg1' -ErrorAction Stop)
+
+            $Out.Count | Should -Be 1
+            $Out[0].ManagementGroupName | Should -BeExactly 'mg1'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Management/managementGroups/mg1?api-version=2020-05-01'
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter {
+                $IncludeARM -and -not $TenantId
+            }
+        }
+
+        It 'binds the name and the tenant by position' {
+            $Out = @(Get-OERManagementGroup 'mg1' 'contoso.onmicrosoft.com' -ErrorAction Stop)
+
+            $Out.Count | Should -Be 1
+            $Out[0].ManagementGroupName | Should -BeExactly 'mg1'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Path -ceq '/providers/Microsoft.Management/managementGroups/mg1?api-version=2020-05-01'
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter {
+                $IncludeARM -and $TenantId -ceq 'contoso.onmicrosoft.com'
+            }
+        }
+    }
 }
