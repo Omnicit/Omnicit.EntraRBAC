@@ -264,7 +264,7 @@ function Invoke-S106Apply {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -286,13 +286,27 @@ ValidateSet True; interval 6 True; read back True`.
 clone; a `False` on the last line -- build the worktree first (`./build.ps1 -Tasks build`), never
 while the gate runs.
 
-Result:
+Result: 2026-10-09 09:16 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main at 6817b33, never switched; the worktree on this branch at ae6f8c7 with 0 tracked changes (that commit only adds this checklist), and its build carries A (the six-value ValidateSet, the builder's interval 6 and the read-back of interval 6).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s106] The module loads from a worktree that is not the main clone: True
+[oer-s106] Main clone: branch main; HEAD 6817b33
+[oer-s106] Worktree: branch feat/semiannual-access-review-cadence; HEAD ae6f8c7 docs: add the live checklist for the semi-annual access review cadence; tracked changes: 0
+[oer-s106] The worktree's build carries A: ValidateSet True; interval 6 True; read back True
+RUNNER: check S.1 exit code 0; started 2026-10-09T09:16:19Z; took 2 s.
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -307,7 +321,28 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not enabled
 for this run; never sign in another way.
 
-Result:
+Result: 2026-10-09 09:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only certificate session, app name, test tenant, the service principal and the token's signed-in object, organization, verified domain, ARM token from the certificate, test subscription Enabled); identity check passed; the module is the worktree's build (1.1.4).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s106] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg6\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s106] The module is the worktree's build: True
+RUNNER: check 0.1 exit code 0; started 2026-10-09T09:16:47Z; took 5 s.
+```
 
 ### 0.2. oer-live-cc holds the permissions this file needs
 
@@ -332,13 +367,39 @@ True` and `Every permission this file needs is granted: True`.
 decision. Do not run the prerequisite script's setup, and never sign in another way. Every check
 after this one is then marked `[~]` with "cannot be verified, and therefore we do not know".
 
-Result:
+Result: 2026-10-09 09:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: FAIL, and therefore STOP (G11.7). oer-live-cc holds 16 Microsoft Graph application permissions, among them AccessReview.Read.All and EntitlementManagement.ReadWrite.All, but NOT AccessReview.ReadWrite.All, which New-, Set- and Remove-OERAccessReviewDefinition need (Get-OERRequiredScope). Granting it is the operator's decision. Nothing was written: the prerequisite setup was not run, and sections 1 to 5 were not run.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.2 ===
+[oer-s106] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg6\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s106] Microsoft Graph application permissions granted to oer-live-cc: 16
+[oer-s106] Holds AccessReview.ReadWrite.All: False
+[oer-s106] Holds EntitlementManagement.ReadWrite.All: True
+[oer-s106] Holds AccessReview.Read.All: True
+[oer-s106] Every permission this file needs is granted: False (missing: AccessReview.ReadWrite.All)
+[oer-s106] Token requests: 0
+RUNNER: check 0.2 exit code 0; started 2026-10-09T09:17:00Z; took 6 s.
+```
 
 ## 1. Created as SemiAnnually
 
 ### 1.1. New-OERAccessReviewDefinition -Recurrence SemiAnnually stores absoluteMonthly interval 6
 
-- [ ] **1.1** The review is created, and Microsoft Graph stores its pattern as absoluteMonthly interval 6 with the start date's day of month.
+- [~] **1.1** The review is created, and Microsoft Graph stores its pattern as absoluteMonthly interval 6 with the start date's day of month.
 
 ```powershell
 Connect-OerLive -Arm
@@ -364,13 +425,17 @@ start date's day: True`.
 **Failure looks like:** an error naming `-Recurrence` (the build lacks the value), a pattern with
 another interval, or `type weekly`.
 
-Result:
+Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: cannot be verified, and therefore we do not know: not run live, since check 0.2 stopped the run (oer-live-cc does not hold AccessReview.ReadWrite.All; a new permission is the operator's decision, G11.7). Nothing was created or written. Held meanwhile, mocked at the Graph request, by New-OERAccessReviewDefinition.Tests.ps1 'POSTs -Recurrence SemiAnnually as absoluteMonthly interval 6 with a noEnd range' and New-OERAccessReviewRecurrence.Tests.ps1 'builds a semi-annual recurrence as absoluteMonthly interval 6 with dayOfMonth from the start date', in the branch's gate run on 74a5d16 (./build.ps1 -Tasks build, then -Tasks test, after -ResolveDependency -UseModuleFast): 8,889 passed, 0 failed, 0 skipped, coverage 94.97% of 18,711 commands.
+```
 
 ## 2. Exported as SemiAnnually, and unchanged when applied again
 
 ### 2.1. Get-OERInventory exports the live review as SemiAnnually, with no warning about its cadence
 
-- [ ] **2.1** The export carries `recurrence` `SemiAnnually` for `oer-s106-review` and writes no warning about a pattern it cannot represent.
+- [~] **2.1** The export carries `recurrence` `SemiAnnually` for `oer-s106-review` and writes no warning about a pattern it cannot represent.
 
 ```powershell
 Connect-OerLive -Arm
@@ -389,11 +454,15 @@ True; its recurrence is SemiAnnually: True`.
 **Failure looks like:** `recurrence Monthly` with a warning naming `absoluteMonthly interval 6` --
 the behaviour before this branch.
 
-Result:
+Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: cannot be verified, and therefore we do not know: not run live, since check 0.2 stopped the run (oer-live-cc does not hold AccessReview.ReadWrite.All; a new permission is the operator's decision, G11.7). Nothing was created or written. Held meanwhile by Get-OERInventory.Tests.ps1 'exports a live absoluteMonthly interval 6 as SemiAnnually and does not warn about the cadence', in the branch's gate run on 74a5d16 (./build.ps1 -Tasks build, then -Tasks test, after -ResolveDependency -UseModuleFast): 8,889 passed, 0 failed, 0 skipped, coverage 94.97% of 18,711 commands.
+```
 
 ### 2.2. The exported document through Invoke-OERStructure: Unchanged in the plan and in two runs, nothing written (G8)
 
-- [ ] **2.2** The plan and both runs report `Unchanged` for `oer-s106-review`, with 0 writes, and the live pattern is still absoluteMonthly interval 6.
+- [~] **2.2** The plan and both runs report `Unchanged` for `oer-s106-review`, with 0 writes, and the live pattern is still absoluteMonthly interval 6.
 
 ```powershell
 Connect-OerLive -Arm
@@ -414,13 +483,17 @@ Disconnect-OerLive
 **Failure looks like:** `Updated` or a `NotApplied` detail naming the pattern -- the comparison does
 not read interval 6 as `SemiAnnually`; or any write.
 
-Result:
+Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: cannot be verified, and therefore we do not know: not run live, since check 0.2 stopped the run (oer-live-cc does not hold AccessReview.ReadWrite.All; a new permission is the operator's decision, G11.7). Nothing was created or written. Held meanwhile by Sync-OERStructureAccessReview.Tests.ps1 'reports Unchanged and sends no write when a live interval 6 review is declared SemiAnnually' and the absoluteMonthly/6 row of Resolve-OERAccessReviewChange.Tests.ps1 'maps every live recurrence pattern back to its declared cadence', in the branch's gate run on 74a5d16 (./build.ps1 -Tasks build, then -Tasks test, after -ResolveDependency -UseModuleFast): 8,889 passed, 0 failed, 0 skipped, coverage 94.97% of 18,711 commands.
+```
 
 ## 3. Changing the cadence
 
 ### 3.1. Set-OERAccessReviewDefinition from SemiAnnually to Quarterly sends interval 3
 
-- [ ] **3.1** After `-Recurrence Quarterly`, the live pattern is absoluteMonthly interval 3, and the export says `Quarterly` with no cadence warning.
+- [~] **3.1** After `-Recurrence Quarterly`, the live pattern is absoluteMonthly interval 3, and the export says `Quarterly` with no cadence warning.
 
 ```powershell
 Connect-OerLive -Arm
@@ -436,11 +509,15 @@ Disconnect-OerLive
 **Expect:** one write (`PUT`); `3.1 live pattern: type absoluteMonthly; interval 3`; `3.1 exported:
 oer-s106-review | recurrence Quarterly`; no cadence warning.
 
-Result:
+Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: cannot be verified, and therefore we do not know: not run live, since check 0.2 stopped the run (oer-live-cc does not hold AccessReview.ReadWrite.All; a new permission is the operator's decision, G11.7). Nothing was created or written. The Quarterly write is unchanged by this branch.
+```
 
 ### 3.2. Set-OERAccessReviewDefinition from Quarterly to SemiAnnually sends interval 6
 
-- [ ] **3.2** After `-Recurrence SemiAnnually`, the live pattern is absoluteMonthly interval 6 again, and the export says `SemiAnnually` with no cadence warning.
+- [~] **3.2** After `-Recurrence SemiAnnually`, the live pattern is absoluteMonthly interval 6 again, and the export says `SemiAnnually` with no cadence warning.
 
 ```powershell
 Connect-OerLive -Arm
@@ -458,11 +535,15 @@ Disconnect-OerLive
 absoluteMonthly; interval 6`; `3.2 exported: oer-s106-review | recurrence SemiAnnually`; no cadence
 warning.
 
-Result:
+Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: cannot be verified, and therefore we do not know: not run live, since check 0.2 stopped the run (oer-live-cc does not hold AccessReview.ReadWrite.All; a new permission is the operator's decision, G11.7). Nothing was created or written. Held meanwhile by Set-OERAccessReviewDefinition.Tests.ps1 '-Recurrence SemiAnnually PUTs absoluteMonthly interval 6 with a noEnd range', in the branch's gate run on 74a5d16 (./build.ps1 -Tasks build, then -Tasks test, after -ResolveDependency -UseModuleFast): 8,889 passed, 0 failed, 0 skipped, coverage 94.97% of 18,711 commands.
+```
 
 ### 3.3. Invoke-OERStructure from Quarterly to SemiAnnually: Updated once, then Unchanged (G8)
 
-- [ ] **3.3** With the live review back at Quarterly, a document declaring `SemiAnnually` plans an update, the first run updates it (one write, live interval 6), and the second run is `Unchanged` with 0 writes.
+- [~] **3.3** With the live review back at Quarterly, a document declaring `SemiAnnually` plans an update, the first run updates it (one write, live interval 6), and the second run is `Unchanged` with 0 writes.
 
 ```powershell
 Connect-OerLive -Arm
@@ -487,13 +568,17 @@ with `writes: 0`.
 **Failure looks like:** run 1 `Skipped` with a detail saying the live pattern cannot be expressed --
 the refusal before this branch; or run 2 `Updated` (no convergence).
 
-Result:
+Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: cannot be verified, and therefore we do not know: not run live, since check 0.2 stopped the run (oer-live-cc does not hold AccessReview.ReadWrite.All; a new permission is the operator's decision, G11.7). Nothing was created or written. Held meanwhile by Sync-OERStructureAccessReview.Tests.ps1 'moves a live Quarterly review to SemiAnnually, and the PUT the real Set cmdlet sends carries absoluteMonthly interval 6' (the real Set-OERAccessReviewDefinition over a stateful transport mock) and Resolve-OERAccessReviewChange.Tests.ps1 'reports a Quarterly review declared SemiAnnually as a recurrence change that keeps the live start date', in the branch's gate run on 74a5d16 (./build.ps1 -Tasks build, then -Tasks test, after -ResolveDependency -UseModuleFast): 8,889 passed, 0 failed, 0 skipped, coverage 94.97% of 18,711 commands.
+```
 
 ## 4. Created by a document
 
 ### 4.1. A document creating a SemiAnnually review: Created, then Unchanged (G8)
 
-- [ ] **4.1** A document declaring `oer-s106-review-doc` with `"recurrence": "semiannually"` (any casing) creates it with absoluteMonthly interval 6, and the second run is `Unchanged` with 0 writes.
+- [~] **4.1** A document declaring `oer-s106-review-doc` with `"recurrence": "semiannually"` (any casing) creates it with absoluteMonthly interval 6, and the second run is `Unchanged` with 0 writes.
 
 ```powershell
 Connect-OerLive -Arm
@@ -520,13 +605,17 @@ pattern: type absoluteMonthly; interval 6`; run 2 `Unchanged` with `writes: 0`.
 **Failure looks like:** a validation error naming `recurrence`, `Failed` with "unrecognised
 recurrence value", or run 2 `Updated`.
 
-Result:
+Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: cannot be verified, and therefore we do not know: not run live, since check 0.2 stopped the run (oer-live-cc does not hold AccessReview.ReadWrite.All; a new permission is the operator's decision, G11.7). Nothing was created or written. Held meanwhile by Sync-OERStructureAccessReview.Tests.ps1 'creates a missing access review declared "semiannually" in any casing with -Recurrence SemiAnnually' and the Test-OERStructureSchema casing test, in the branch's gate run on 74a5d16 (./build.ps1 -Tasks build, then -Tasks test, after -ResolveDependency -UseModuleFast): 8,889 passed, 0 failed, 0 skipped, coverage 94.97% of 18,711 commands.
+```
 
 ## 5. A pattern the module still cannot express
 
 ### 5.1. A live weekly interval 2: exported with the same warning, and refused on apply (A, or B when it cannot run)
 
-- [ ] **5.1** A raw write makes `oer-s106-review` weekly interval 2; the export says `Weekly` with the unchanged warning naming `weekly interval 2`; a document declaring `SemiAnnually` is refused for it in the plan and in the run with 0 writes, and the live pattern stays weekly interval 2.
+- [~] **5.1** A raw write makes `oer-s106-review` weekly interval 2; the export says `Weekly` with the unchanged warning naming `weekly interval 2`; a document declaring `SemiAnnually` is refused for it in the plan and in the run with 0 writes, and the live pattern stays weekly interval 2.
 
 ```powershell
 Connect-OerLive -Arm
@@ -564,13 +653,17 @@ rather than silently collapsing an unrepresentable recurrence interval" in
 `tests/Unit/Public/Get-OERInventory.Tests.ps1`, hold the refusal and the warning for absoluteMonthly
 interval 2 and weekly interval 2.
 
-Result:
+Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: Not run live: check 0.2 stopped the run, and writing the pattern needs the missing AccessReview.ReadWrite.All. Class B, as this check provides: Resolve-OERAccessReviewChange.Tests.ps1 'does not rewrite an unrepresentable live interval when another field changes' (absoluteMonthly interval 2, refused into NotApplied naming 'interval 2') and 'reports an unrepresentable weekly interval as not applied', and Get-OERInventory.Tests.ps1 'warns rather than silently collapsing an unrepresentable recurrence interval' (absoluteMonthly interval 2 exported as Monthly with the unchanged warning naming the true interval), all green in the branch's gate run on 74a5d16 (./build.ps1 -Tasks build, then -Tasks test, after -ResolveDependency -UseModuleFast): 8,889 passed, 0 failed, 0 skipped, coverage 94.97% of 18,711 commands.
+```
 
 ## 6. The texts (class B)
 
 ### 6.1. The help, the schema, the prompt template, the rationale and the release note are held by gates and tests
 
-- [ ] **6.1** Each text is held by a gate or a unit test of the branch's gate run.
+- [x] **6.1** Each text is held by a gate or a unit test of the branch's gate run.
 
 The help of `New-OERAccessReviewRecurrence`, `New-OERAccessReviewDefinition`,
 `Set-OERAccessReviewDefinition`, `Get-OERInventory`, `Resolve-OERAccessReviewChange` and
@@ -581,13 +674,17 @@ and by the cohort test in `Resolve-OERStructureEnumCasing.Tests.ps1`; `rationale
 
 **Expect:** the branch's gate run green with 0 failures.
 
-Result:
+Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (class B). The help, the schema enum, the prompt template list, the rationale section access-review-cadence and the [Unreleased] paragraph are held by the branch's gate run on 74a5d16 (./build.ps1 -Tasks build, then -Tasks test, after -ResolveDependency -UseModuleFast): 8,889 passed, 0 failed, 0 skipped, coverage 94.97% of 18,711 commands -- the module.tests.ps1 help and changelog gates, dochygiene.tests.ps1, and the cohort in Resolve-OERStructureEnumCasing.Tests.ps1.
+```
 
 ## Teardown
 
 ### T.1. Nothing left with the prefix
 
-- [ ] **T.1** The prerequisite script's teardown deletes both reviews, the policy, the package and the catalog, and the sweep finds nothing with `oer-s106-`.
+- [x] **T.1** The prerequisite script's teardown deletes both reviews, the policy, the package and the catalog, and the sweep finds nothing with `oer-s106-`.
 
 ```powershell
 # Run from the folder that holds the prerequisite script, in its own process:
@@ -600,4 +697,88 @@ Result:
 the package and the catalog; exit code 0; the read-back lists no prefixed object, no unread
 collection and no residue row of this prefix, and the counts equal the baseline.
 
-Result:
+Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The setup was never run: Initialize-OerS106Prereq.ps1 -WhatIf refused before any write (oer-live-cc does not hold AccessReview.ReadWrite.All), so nothing with the prefix was created. The teardown found and removed nothing (removed 0, residue 0, unreadable 0, access reviews with the prefix 0), and the read-back finds no prefixed object, no unread collection, no access review with the prefix and no residue row of this prefix. The two residue rows listed belong to another project's prefix (opim-s1-) and were not touched. There is no baseline to compare with, since the setup never wrote one.
+
+--- Initialize-OerS106Prereq.ps1 -WhatIf (setup refused before any write) ---
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s106\prereq-ID-FRAGMENT-MASKEDZ.log".
+[oer-s106] Mode: CREATE or complete. Prefix 'oer-s106-'. Objects (fixed): oer-s106-catalog (catalog, no resource); oer-s106-ap (hidden access package, no resource role); oer-s106-policy (administrator assignments only). The checklist's access reviews: oer-s106-review, oer-s106-review-doc. OerLive 1.0.3.
+[oer-s106] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg6\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s106] Residue: raw\residue.json holds 2 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s106] oer-live-cc holds AccessReview.ReadWrite.All: False
+[oer-s106] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s106] oer-live-cc holds AccessReview.Read.All: True
+[oer-s106] Refusing to run: oer-live-cc does not hold AccessReview.ReadWrite.All, which creating and changing the step's access reviews needs (G11.7: a new permission is the operator's decision). Nothing was written.
+RUNNER: prereq -WhatIf exit code 1; started 2026-10-09T09:17:45Z; took 6 s.
+
+--- Initialize-OerS106Prereq.ps1 -Teardown -Unattended ---
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s106] Transcript (redacted): raw\s106\teardown-ID-FRAGMENT-MASKEDZ.log; OerLive 1.0.3.
+[oer-s106] Mode: REMOVE. Prefix 'oer-s106-'. Objects (fixed): oer-s106-catalog (catalog, no resource); oer-s106-ap (hidden access package, no resource role); oer-s106-policy (administrator assignments only). The checklist's access reviews: oer-s106-review, oer-s106-review-doc. OerLive 1.0.3.
+[oer-s106] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg6\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s106] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s106] Residue: raw\residue.json holds 2 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s106] Teardown A: no access review with the prefix.
+[oer-s106] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s106-' is left.
+[oer-s106] Teardown of 'oer-s106-': users 0, groups 0, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s106] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s106] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s106] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s106] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s106] Teardown 5/6: the prefixed groups.
+[oer-s106] Teardown 6/6: the prefixed users.
+[oer-s106] Teardown of 'oer-s106-': removed 0, residue 0, unreadable 0.
+[oer-s106] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s106-' is left.
+[oer-s106] Access reviews with the prefix after the teardown: 0
+[oer-s106] Baseline: there is none to compare with.
+[oer-s106] Done.
+RUNNER: prereq -Teardown -Unattended exit code 0; started 2026-10-09T09:18:20Z; took 6 s.
+
+--- Initialize-OerS106Prereq.ps1 -ReadBack ---
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s106] Transcript (redacted): raw\s106\readback-ID-FRAGMENT-MASKEDZ.log; OerLive 1.0.3.
+[oer-s106] Mode: READ BACK. Prefix 'oer-s106-'. Objects (fixed): oer-s106-catalog (catalog, no resource); oer-s106-ap (hidden access package, no resource role); oer-s106-policy (administrator assignments only). The checklist's access reviews: oer-s106-review, oer-s106-review-doc. OerLive 1.0.3.
+[oer-s106] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg6\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s106] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s106] Residue: raw\residue.json holds 2 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s106] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s106-' is left.
+[oer-s106] Read-back: access reviews with the prefix: 0
+[oer-s106] Baseline: there is none to compare with.
+[oer-s106] Read-back: residue row: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:09Z, attempts 3: 404 SubjectNotFound The subject is not found.; read back: still listed -- OerLive: Residue: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal': read back after the 'does not exist' answer -- not converged within budget (180 s, 10 reads).
+[oer-s106] Read-back: residue row: PIM for Groups assignment 'opim-s1-grp: PIM for Groups owner assignment of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:12Z, attempts 3: 403 UnauthorizedAccessException {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup,PrivilegedAccess.ReadWrite.AzureADGroup,PrivilegedAssignmentSchedule.Remove.AzureADGroup.","instanceAnnotations":[]}
+[oer-s106] Read-back: prefixed objects left: 0; unread collections: 0; access reviews with the prefix: 0; residue rows: 2, of them with this step's prefix: 0.
+[oer-s106] Done.
+RUNNER: prereq -ReadBack exit code 0; started 2026-10-09T09:18:27Z; took 6 s.
+```
