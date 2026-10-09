@@ -102,6 +102,7 @@
         <TableHeaders>
           <TableColumnHeader><Label>DisplayName</Label></TableColumnHeader>
           <TableColumnHeader><Label>GroupType</Label></TableColumnHeader>
+          <TableColumnHeader><Label>OnPremisesSyncEnabled</Label></TableColumnHeader>
           <TableColumnHeader><Label>Id</Label></TableColumnHeader>
         </TableHeaders>
         <TableRowEntries>
@@ -109,6 +110,7 @@
             <TableColumnItems>
               <TableColumnItem><PropertyName>DisplayName</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>GroupType</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>OnPremisesSyncEnabled</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>Id</PropertyName></TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>

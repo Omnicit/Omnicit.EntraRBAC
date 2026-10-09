@@ -360,6 +360,51 @@ Describe 'Get-OERGroup' {
         }
     }
 
+    Context 'OnPremisesSyncEnabled (A15)' {
+        # Graph's own tri-state is carried on every group and nothing is filtered out on it: a
+        # synchronized group is shown, not hidden, so a caller can decide what to do with it.
+        It 'carries the tri-state on every group of an -All read and filters nothing out' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(
+                        @{ id = 'g-cloud'; displayName = 'cloud'; onPremisesSyncEnabled = $null }
+                        @{ id = 'g-sync'; displayName = 'synced'; onPremisesSyncEnabled = $true }
+                        @{ id = 'g-was'; displayName = 'was'; onPremisesSyncEnabled = $false }
+                    ) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups' }
+            $Result = @(Get-OERGroup -All)
+            $Result.Count | Should -Be 3
+            $ById = @{}
+            foreach ($R in $Result) { $ById[$R.Id] = $R }
+            $ById['g-cloud'].OnPremisesSyncEnabled | Should -BeNullOrEmpty
+            $ById['g-sync'].OnPremisesSyncEnabled | Should -BeOfType [bool]
+            $ById['g-sync'].OnPremisesSyncEnabled | Should -BeTrue
+            $ById['g-was'].OnPremisesSyncEnabled | Should -BeOfType [bool]
+            $ById['g-was'].OnPremisesSyncEnabled | Should -BeFalse
+        }
+
+        It 'lets Where-Object OnPremisesSyncEnabled select exactly the synchronized group' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(
+                        @{ id = 'g-cloud'; displayName = 'cloud'; onPremisesSyncEnabled = $null }
+                        @{ id = 'g-sync'; displayName = 'synced'; onPremisesSyncEnabled = $true }
+                        @{ id = 'g-was'; displayName = 'was'; onPremisesSyncEnabled = $false }
+                    ) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups' }
+            $Synced = @(Get-OERGroup -All | Where-Object OnPremisesSyncEnabled)
+            $Synced.Count | Should -Be 1
+            $Synced[0].Id | Should -Be 'g-sync'
+        }
+
+        It 'carries the value on a group read by id' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'synced'; securityEnabled = $true; isAssignableToRole = $false; groupTypes = @(); onPremisesSyncEnabled = $true }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/11111111-1111-1111-1111-111111111111' }
+            $Result = Get-OERGroup -Group '11111111-1111-1111-1111-111111111111'
+            $Result.OnPremisesSyncEnabled | Should -BeOfType [bool]
+            $Result.OnPremisesSyncEnabled | Should -BeTrue
+        }
+    }
+
     Context 'paging (-All opt-in, closes rt-graph-list-reads-first-page-only)' {
         It 'passes -All to the tenant-wide -Filter list read' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {

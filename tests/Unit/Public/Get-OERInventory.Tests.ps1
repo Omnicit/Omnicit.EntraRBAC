@@ -320,6 +320,58 @@ Describe 'Get-OERInventory' {
             $Group = (Get-OERInventory -Include Groups).Groups[0]
             $Group.PSObject.Properties.Name | Should -Not -Contain 'mailNickname'
         }
+
+        It 'writes onPremisesSynced: true for a synchronized group and no such key for any other group (A15)' {
+            # Graph's onPremisesSyncEnabled is three-valued: true (synchronized), false (was, no
+            # longer) and null (never, or converted to the cloud). Only true is a managed-on-premises
+            # group, and it is written ONLY as true: a cloud group's entry stays exactly what earlier
+            # versions exported, so no existing document gains a key.
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                foreach ($Spec in @(
+                        @{ Name = 'role_sec_synced'; Sync = $true },
+                        @{ Name = 'role_sec_cloud'; Sync = $null },
+                        @{ Name = 'role_sec_formerly'; Sync = $false })) {
+                    [PSCustomObject]@{
+                        Id = "g-$($Spec.Name)"; DisplayName = $Spec.Name; Description = 'd'
+                        MailNickname = $null; GroupType = 'Regular'
+                        IsAssignableToRole = $false; MembershipRule = $null
+                        OnPremisesSyncEnabled = $Spec.Sync
+                        Members = @(); Owners = @(); PimEligibility = @()
+                    }
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroupPimPolicy { }
+            $Groups = @((Get-OERInventory -Include Groups).Groups)
+            $Groups.Count | Should -Be 3
+
+            $Synced = $Groups | Where-Object { $_.displayName -eq 'role_sec_synced' }
+            $Cloud = $Groups | Where-Object { $_.displayName -eq 'role_sec_cloud' }
+            $Formerly = $Groups | Where-Object { $_.displayName -eq 'role_sec_formerly' }
+            $Synced | Should -Not -BeNullOrEmpty
+            $Cloud | Should -Not -BeNullOrEmpty
+            $Formerly | Should -Not -BeNullOrEmpty
+
+            $Synced.onPremisesSynced | Should -BeOfType ([bool])
+            $Synced.onPremisesSynced | Should -BeTrue
+            @($Cloud.PSObject.Properties.Name) | Should -Not -Contain 'onPremisesSynced'
+            @($Formerly.PSObject.Properties.Name) | Should -Not -Contain 'onPremisesSynced'
+        }
+
+        It 'places onPremisesSynced directly after description in the group projection' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_synced'; Description = 'd'
+                    MailNickname = 'rolesec-synced'; GroupType = 'Regular'
+                    IsAssignableToRole = $false; MembershipRule = $null
+                    OnPremisesSyncEnabled = $true
+                    Members = @(); Owners = @(); PimEligibility = @()
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroupPimPolicy { }
+            $Names = [string[]]@((Get-OERInventory -Include Groups).Groups[0].PSObject.Properties.Name)
+            $Names | Should -Contain 'onPremisesSynced'
+            [Array]::IndexOf($Names, 'onPremisesSynced') | Should -Be ([Array]::IndexOf($Names, 'description') + 1)
+        }
     }
 
     Context 'pimPolicy only for a group that uses PIM for Groups' {

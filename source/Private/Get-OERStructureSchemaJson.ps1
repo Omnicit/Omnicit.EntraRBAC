@@ -71,6 +71,8 @@ function Get-OERStructureSchemaJson {
     what the apply engine does with it: the group found only under previousDisplayName is renamed, an
     entry whose two names match different groups fails without merging them, and an entry neither
     name matches fails and creates nothing. Get-OERInventory never exports it.
+    A groups[] item may carry onPremisesSynced, a boolean the export writes for a group synchronized
+    from on-premises; it is information only.
     Exactly five keys are typed [ "array", "null" ] rather than "array": groups[].members,
     administrativeUnits[].members, administrativeUnits[].scopedRoles, catalogs[].resources and
     accessPackages[].resourceRoles. For those five an omitted key still reconciles and still PRUNES,
@@ -161,6 +163,7 @@ function Get-OERStructureSchemaJson {
           "tokens": { "type": "object" },
           "roleAssignable": { "type": "boolean" },
           "dynamic": { "type": "boolean" },
+          "onPremisesSynced": { "type": "boolean", "description": "Information only, written by Get-OERInventory as true for a group synchronized from on-premises Active Directory (managed there and read-only in the cloud). Invoke-OERStructure never sends it and decides nothing on it: it writes nothing to a group its live read shows as synchronized, whatever this key says, and writes to a cloud group as usual even when this key says true." },
           "description": { "type": [ "string", "null" ] },
           "membershipRule": { "type": "string" },
           "membershipRuleProcessingState": { "type": "string", "enum": [ "On", "Paused" ] },

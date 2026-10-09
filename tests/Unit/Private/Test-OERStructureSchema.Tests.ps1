@@ -164,6 +164,42 @@ Describe 'Test-OERStructureSchema' {
         }
     }
 
+    It 'accepts a group declaring onPremisesSynced true or false, without an unknown-key warning (A15)' {
+        InModuleScope $script:moduleName {
+            $Doc = [PSCustomObject]@{
+                version = '1.0'
+                groups  = @(
+                    [PSCustomObject]@{ displayName = 'role_sec_synced'; onPremisesSynced = $true },
+                    [PSCustomObject]@{ displayName = 'role_sec_cloud'; onPremisesSynced = $false }
+                )
+            }
+            $Result = Test-OERStructureSchema -Document $Doc
+            $Result.Valid | Should -BeTrue
+            @($Result.Errors | Where-Object { $_.Path -like '*onPremisesSynced*' }) | Should -BeNullOrEmpty
+            @($Result.Errors | Where-Object { $_.Message -match 'Unknown key' -and $_.Message -match 'onPremisesSynced' }) | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'rejects onPremisesSynced given as <Label> with one Error at its own path (A15)' -ForEach @(
+        @{ Label = 'a string'; Value = 'yes' }
+        @{ Label = 'a number'; Value = 1 }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Value = $Value } {
+            $Doc = [PSCustomObject]@{
+                version = '1.0'
+                groups  = @([PSCustomObject]@{ displayName = 'role_sec_core'; onPremisesSynced = $Value })
+            }
+            $Result = Test-OERStructureSchema -Document $Doc
+            $Result.Valid | Should -BeFalse
+            $Hit = @($Result.Errors | Where-Object { $_.Path -eq 'groups[0].onPremisesSynced' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -Be 'Error'
+            $Hit[0].Message | Should -BeExactly "'onPremisesSynced' at groups[0] must be a boolean."
+            # The other finding of this document is the omitted-members Warning, so count Errors only.
+            @($Result.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 1
+        }
+    }
+
     It 'flags eligibility durationDays out of range' {
         InModuleScope $script:moduleName {
             $Doc = '{ "version": "1.0", "groups": [ { "displayName": "g", "eligibility": [ { "principal": "u", "durationDays": 99999 } ] } ] }' | ConvertFrom-Json
@@ -1632,6 +1668,7 @@ Describe 'Test-OERStructureSchema' {
                         roleAssignable                 = $true
                         dynamic                        = $false
                         description                    = 'x'
+                        onPremisesSynced               = $true
                         membershipRule                 = 'x'
                         membershipRuleProcessingState  = 'On'
                         mailNickname                   = 'rolesec-core'

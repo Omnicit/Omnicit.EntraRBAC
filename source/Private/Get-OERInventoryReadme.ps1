@@ -120,8 +120,8 @@ includes a predefined prompt that turns it into appliable improvement proposals.
   `roleAssignments.json`, `roleManagementPolicies.json` -- the same data split per area, so you can
   feed an LLM one area at a time without hitting its context limit.
 - `groupsRoster.json` -- a lightweight roster of EVERY group in the tenant, of every group type
-  (names + flags), read unfiltered. Read-only context, not an apply document. It is deliberately
-  wider than `inventory.json`: see "Which groups are covered" below.
+  (names + flags, including `onPremisesSynced`), read unfiltered. Read-only context, not an apply
+  document. It is deliberately wider than `inventory.json`: see "Which groups are covered" below.
 - `scopeHierarchy.json` -- the management group / subscription tree. Read-only context, not an
   apply document.
 - `azurePimEligibility.json` -- the Azure PIM eligible role assignments at the scopes in
@@ -146,6 +146,12 @@ That scope is deliberate rather than an oversight. `inventory.json` is the apply
 widening it widens what `Invoke-OERStructure` reconciles and, under `-Prune`, deletes. To widen it
 anyway, read the inventory yourself and supply the filter you want:
 `Get-OERInventory -GroupFilter "<odata filter>"`.
+
+A group synchronized from on-premises Active Directory (`onPremisesSynced` true in
+`groupsRoster.json`) is managed there and read-only in the cloud: it cannot be role-assignable or
+managed in PIM for Groups, so `inventory.json` details it only when the export ran with
+`-IncludeSyncedGroups` or `-AllGroupsDetailed`, and there it carries `onPremisesSynced: true`.
+`Invoke-OERStructure` writes nothing to such a group.
 
 ## Coverage limits
 

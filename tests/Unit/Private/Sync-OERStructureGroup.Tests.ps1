@@ -7628,6 +7628,610 @@ $Item = '{ "displayName": "role_sec_perm", "members": null, "eligibility": [ { "
             @($Run.Errors) | Should -Be @($script:RefusedAdvice + ' The request failed with: Graph rejected the request')
         }
     }
+
+    Context 'a group synchronized from on-premises (A15)' {
+        # Decision A15: a group whose LIVE read -- Get-OERGroup's, or the existing group New-OERGroup
+        # returns -- carries OnPremisesSyncEnabled True is managed in on-premises Active Directory and
+        # read-only in the cloud, so the handler writes nothing to it. Every write it would get is a
+        # Skipped row with no ShouldProcess call (so a plan and a real run report the same rows), every
+        # undeclared live entry is withheld from the prune, and one warning per item says why. The
+        # document's onPremisesSynced key is never consulted and never sent.
+        BeforeAll {
+            # Runs the items through the handler in module scope, one call per item as the engine makes
+            # them, as a plan (-WhatIf) or as a real run (-Confirm:$false), and hands back the rows, the
+            # warnings and the errors, so the assertions run OUTSIDE InModuleScope against the
+            # -ModuleName mocks.
+            function Invoke-SyncedGroupRun {
+                param([object[]]$Items, [switch]$Prune, [switch]$Plan)
+                InModuleScope $script:moduleName -Parameters @{ Items = $Items; PruneRun = [bool]$Prune; PlanRun = [bool]$Plan } {
+                    param($Items, $PruneRun, $PlanRun)
+                    function Invoke-SyncGroupViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item, [switch]$Prune)
+                        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                    }
+                    $Mode = if ($PlanRun) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                    $Rows = [System.Collections.Generic.List[object]]::new()
+                    $Warnings = [System.Collections.Generic.List[object]]::new()
+                    $Errors = [System.Collections.Generic.List[object]]::new()
+                    foreach ($Item in $Items) {
+                        $W = $null
+                        $E = $null
+                        foreach ($Row in @(Invoke-SyncGroupViaCaller -Item $Item -Prune:$PruneRun @Mode `
+                                    -WarningVariable W -WarningAction SilentlyContinue -ErrorVariable E -ErrorAction SilentlyContinue)) {
+                            $Rows.Add($Row)
+                        }
+                        foreach ($X in $W) { $Warnings.Add($X) }
+                        foreach ($X in $E) { $Errors.Add($X) }
+                    }
+                    [PSCustomObject]@{ Rows = $Rows.ToArray(); Warnings = $Warnings.ToArray(); Errors = $Errors.ToArray() }
+                }
+            }
+            # The same run with the warning stream merged into the output (3>&1), so a test can show the
+            # order in which the warning and the rows were written: 'W' for the warning, and
+            # '<Action>:<Detail>' for a row.
+            function Get-SyncedGroupSequence {
+                param([PSCustomObject]$Item, [switch]$Prune, [switch]$Plan)
+                InModuleScope $script:moduleName -Parameters @{ Item = $Item; PruneRun = [bool]$Prune; PlanRun = [bool]$Plan } {
+                    param($Item, $PruneRun, $PlanRun)
+                    function Invoke-SyncGroupViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item, [switch]$Prune)
+                        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                    }
+                    $Mode = if ($PlanRun) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                    foreach ($Record in @(Invoke-SyncGroupViaCaller -Item $Item -Prune:$PruneRun @Mode -WarningAction Continue -ErrorAction SilentlyContinue 3>&1)) {
+                        if ($Record -is [System.Management.Automation.WarningRecord]) { 'W' } else { "$($Record.Action):$($Record.Detail)" }
+                    }
+                }
+            }
+            # Every write and every read a write would need: none may be called for a synchronized group.
+            $script:AssertNothingWritten = {
+                foreach ($Cmd in 'Set-OERGroup', 'New-OERGroup', 'Add-OERGroupMember', 'Remove-OERGroupMember',
+                    'Add-OERGroupEligibility', 'Send-OERNewGroupEligibilityRequest', 'Remove-OERGroupEligibility',
+                    'Set-OERGroupPimPolicy', 'Get-OERGroupPimPolicy', 'Get-OERPimGroupPolicyId', 'Get-OERListedGroupPimPolicy',
+                    'Get-OERGroupPermanentEligibilityState', 'Resolve-OERDeclaredApprover', 'Test-OERGroupPimInUse') {
+                    Should -Invoke $Cmd -Times 0 -Exactly -ModuleName $script:moduleName -Scope It
+                }
+            }
+            # The item that declares a change of every kind: properties, a member and an owner to add,
+            # a time-bound and a permanent eligibility, and a pimPolicy for both access types.
+            function New-SyncedTestItem {
+                [PSCustomObject]@{
+                    displayName  = 'grp-synced'
+                    description  = 'cloud text'
+                    mailNickname = 'grpcloud'
+                    members      = @('kept@example.com', 'new@example.com')
+                    owners       = @('owner@example.com', 'owner2@example.com')
+                    eligibility  = @([PSCustomObject]@{ principal = 'tb@example.com'; durationDays = 30 },
+                        [PSCustomObject]@{ principal = 'perm@example.com' })
+                    pimPolicy    = [PSCustomObject]@{ member = [PSCustomObject]@{ activationMaxHours = 4 }; owner = [PSCustomObject]@{ activationMaxHours = 2 } }
+                }
+            }
+            function Get-SyncedRowCount {
+                param([object[]]$Rows, [string]$Action, [string]$Detail)
+                @($Rows | Where-Object { $_.Action -ceq $Action -and $_.Detail -ceq $Detail }).Count
+            }
+            # The texts the handler and ConvertTo-OERPruneWithheldResult give, held once here.
+            $script:SyncedWarning = "Sync-OERStructureGroup: group 'grp-synced' is synchronized from on-premises (onPremisesSyncEnabled is true) and is managed there, so the apply engine writes nothing to it: every change the document declares for its properties, members, owners, eligibility or pimPolicy is reported Skipped, and -Prune removes nothing from it. Make the change in the on-premises directory."
+            $script:SyncedSuffix = ": group 'grp-synced' is synchronized from on-premises and is managed there (onPremisesSyncEnabled), so the apply engine writes nothing to it"
+            $script:SyncedWithheldTail = " stays, since group 'grp-synced' is synchronized from on-premises and is managed there, and the apply engine writes nothing to such a group, -Prune included (our own guard, not a Graph rejection). Remove it in the on-premises directory if it is meant to go."
+            $script:SyncedExtraTail = " (group 'grp-synced' is synchronized from on-premises, so -Prune leaves it in place)"
+        }
+
+        Context 'what the handler writes to it' {
+            BeforeEach {
+                Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+                Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'g-sync' }
+                Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+                Mock -ModuleName $script:moduleName Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-sync'; DisplayName = 'grp-synced'; Description = 'on-prem text'; MailNickname = 'grpsynced'
+                        GroupType = 'Regular'; IsAssignableToRole = $false; OnPremisesSyncEnabled = $true
+                        Members = @([PSCustomObject]@{ id = 'id-kept@example.com'; ObjectType = 'user' },
+                            [PSCustomObject]@{ id = 'u-extra'; ObjectType = 'user' })
+                        Owners  = @([PSCustomObject]@{ id = 'id-owner@example.com'; ObjectType = 'user' },
+                            [PSCustomObject]@{ id = 'o-extra'; ObjectType = 'user' })
+                        PimEligibility = @([PSCustomObject]@{ principalId = 'e-extra'; accessId = 'member' })
+                    }
+                }
+                Mock -ModuleName $script:moduleName Set-OERGroup { }
+                Mock -ModuleName $script:moduleName New-OERGroup { }
+                Mock -ModuleName $script:moduleName Add-OERGroupMember { }
+                Mock -ModuleName $script:moduleName Remove-OERGroupMember { }
+                Mock -ModuleName $script:moduleName Add-OERGroupEligibility { }
+                Mock -ModuleName $script:moduleName Send-OERNewGroupEligibilityRequest { }
+                Mock -ModuleName $script:moduleName Remove-OERGroupEligibility { }
+                Mock -ModuleName $script:moduleName Set-OERGroupPimPolicy { }
+                Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy { }
+                Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { }
+                Mock -ModuleName $script:moduleName Get-OERListedGroupPimPolicy { }
+                Mock -ModuleName $script:moduleName Get-OERGroupPermanentEligibilityState { [PSCustomObject]@{ HasPolicy = $true; PermanentAllowed = $false } }
+                Mock -ModuleName $script:moduleName Resolve-OERDeclaredApprover { param($Declared) $Declared }
+                Mock -ModuleName $script:moduleName Start-Sleep { }
+            }
+
+            It 'writes nothing to it under -Prune, reports every write Skipped, and the plan and the run report the same rows' {
+                $Plan = Invoke-SyncedGroupRun -Items @(New-SyncedTestItem) -Prune -Plan
+                $Run = Invoke-SyncedGroupRun -Items @(New-SyncedTestItem) -Prune
+                # Reached: the live group was read for both runs.
+                Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 2 -Exactly -Scope It
+                & $script:AssertNothingWritten
+                foreach ($Out in $Plan, $Run) {
+                    @($Out.Errors).Count | Should -Be 0
+                    $SyncWarn = @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' })
+                    $SyncWarn.Count | Should -Be 1
+                    "$($SyncWarn[0])" | Should -BeExactly $script:SyncedWarning
+                    $Rows = @($Out.Rows)
+                    $Rows.Count | Should -Be 12
+                    @($Rows | Where-Object { $_.Section -cne 'groups' -or $_.Item -cne 'grp-synced' }).Count | Should -Be 0
+                    $Props = @($Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match '^group properties \(.*Description.*\) not updated' })
+                    $Props.Count | Should -Be 1
+                    $Props[0].Detail | Should -Match 'MailNickname'
+                    $Props[0].Detail | Should -BeLike "*) not updated$($script:SyncedSuffix)"
+                    Get-SyncedRowCount -Rows $Rows -Action 'Unchanged' -Detail "member 'kept@example.com' already present" | Should -Be 1
+                    Get-SyncedRowCount -Rows $Rows -Action 'Skipped' -Detail ("member 'new@example.com' not added" + $script:SyncedSuffix) | Should -Be 1
+                    Get-SyncedRowCount -Rows $Rows -Action 'Skipped' -Detail ("prune withheld: undeclared member 'u-extra'" + $script:SyncedWithheldTail) | Should -Be 1
+                    Get-SyncedRowCount -Rows $Rows -Action 'Unchanged' -Detail "owner 'owner@example.com' already present" | Should -Be 1
+                    Get-SyncedRowCount -Rows $Rows -Action 'Skipped' -Detail ("owner 'owner2@example.com' not added" + $script:SyncedSuffix) | Should -Be 1
+                    Get-SyncedRowCount -Rows $Rows -Action 'Skipped' -Detail ("prune withheld: undeclared owner 'o-extra'" + $script:SyncedWithheldTail) | Should -Be 1
+                    Get-SyncedRowCount -Rows $Rows -Action 'Skipped' -Detail ("time-bound member eligibility for 'tb@example.com' not set (time-bound member eligibility (30 days) is absent)" + $script:SyncedSuffix) | Should -Be 1
+                    Get-SyncedRowCount -Rows $Rows -Action 'Skipped' -Detail ('pimPolicy (member) not applied (PIM for Groups cannot manage a group synchronized from on-premises, so its policy is not read)' + $script:SyncedSuffix) | Should -Be 1
+                    Get-SyncedRowCount -Rows $Rows -Action 'Skipped' -Detail ('pimPolicy (owner) not applied (PIM for Groups cannot manage a group synchronized from on-premises, so its policy is not read)' + $script:SyncedSuffix) | Should -Be 1
+                    Get-SyncedRowCount -Rows $Rows -Action 'Skipped' -Detail ("permanent member eligibility for 'perm@example.com' not set (permanent member eligibility is absent)" + $script:SyncedSuffix) | Should -Be 1
+                    Get-SyncedRowCount -Rows $Rows -Action 'Skipped' -Detail ("prune withheld: undeclared member eligibility for principal 'e-extra'" + $script:SyncedWithheldTail) | Should -Be 1
+                    # Every Skipped row that is not a withheld prune names the reason.
+                    $Declared = @($Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -notlike 'prune withheld: *' })
+                    $Declared.Count | Should -Be 7
+                    foreach ($Row in $Declared) { $Row.Detail | Should -Match 'is synchronized from on-premises and is managed there' }
+                    @($Rows | Where-Object { $_.Action -in 'Updated', 'Removed', 'Created', 'Failed', 'Extra' }).Count | Should -Be 0
+                }
+                ($Plan.Rows | ForEach-Object { "$($_.Item)|$($_.Action)|$($_.Detail)" }) |
+                    Should -Be ($Run.Rows | ForEach-Object { "$($_.Item)|$($_.Action)|$($_.Detail)" })
+                # The one warning is written before the first row it explains, in the plan and in the run.
+                foreach ($AsPlan in $true, $false) {
+                    $Sequence = @(Get-SyncedGroupSequence -Item (New-SyncedTestItem) -Prune -Plan:$AsPlan)
+                    @($Sequence | Where-Object { $_ -eq 'W' }).Count | Should -Be 1
+                    $Sequence[0] | Should -BeExactly 'W'
+                    $Sequence[1] | Should -BeLike 'Skipped:group properties (*) not updated: *'
+                }
+                & $script:AssertNothingWritten
+            }
+
+            It 'writes nothing to it without -Prune, and reports each undeclared live entry Extra with a hint that -Prune leaves it' {
+                $Plan = Invoke-SyncedGroupRun -Items @(New-SyncedTestItem) -Plan
+                $Run = Invoke-SyncedGroupRun -Items @(New-SyncedTestItem)
+                Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 2 -Exactly -Scope It
+                & $script:AssertNothingWritten
+                foreach ($Out in $Plan, $Run) {
+                    @($Out.Errors).Count | Should -Be 0
+                    # The declared changes were skipped, so the item still warns once.
+                    @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' }).Count | Should -Be 1
+                    $Extra = @($Out.Rows | Where-Object { $_.Action -eq 'Extra' })
+                    $Extra.Count | Should -Be 3
+                    foreach ($Row in $Extra) { $Row.Detail | Should -BeLike '*is synchronized from on-premises, so -Prune leaves it in place)' }
+                    Get-SyncedRowCount -Rows $Out.Rows -Action 'Extra' -Detail ("undeclared member 'u-extra'" + $script:SyncedExtraTail) | Should -Be 1
+                    Get-SyncedRowCount -Rows $Out.Rows -Action 'Extra' -Detail ("undeclared owner 'o-extra'" + $script:SyncedExtraTail) | Should -Be 1
+                    Get-SyncedRowCount -Rows $Out.Rows -Action 'Extra' -Detail ("undeclared member eligibility for principal 'e-extra'" + $script:SyncedExtraTail) | Should -Be 1
+                    @($Out.Rows | Where-Object { $_.Detail -like 'prune withheld: *' }).Count | Should -Be 0
+                    @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 7
+                    @($Out.Rows | Where-Object { $_.Action -in 'Updated', 'Removed', 'Created', 'Failed' }).Count | Should -Be 0
+                }
+                ($Plan.Rows | ForEach-Object { "$($_.Item)|$($_.Action)|$($_.Detail)" }) |
+                    Should -Be ($Run.Rows | ForEach-Object { "$($_.Item)|$($_.Action)|$($_.Detail)" })
+            }
+
+            It 'warns only under -Prune when the item declares no change and the group carries an undeclared live entry' {
+                # One item per collection, each declaring only what is live in it, so the one undeclared
+                # live entry is the item's only row about the synchronized group: its prune pass alone
+                # must write the item's warning.
+                $Cases = @(
+                    @{ Item = [PSCustomObject]@{ displayName = 'grp-synced'; members = @('kept@example.com') }
+                        Kept = "member 'kept@example.com' already present"; Candidate = "undeclared member 'u-extra'" }
+                    @{ Item = [PSCustomObject]@{ displayName = 'grp-synced'; members = $null; owners = @('owner@example.com') }
+                        Kept = "owner 'owner@example.com' already present"; Candidate = "undeclared owner 'o-extra'" }
+                    @{ Item = [PSCustomObject]@{ displayName = 'grp-synced'; members = $null; eligibility = @() }
+                        Kept = $null; Candidate = "undeclared member eligibility for principal 'e-extra'" }
+                )
+                foreach ($Case in $Cases) {
+                    $Unchanged = @('group properties match') + @($Case.Kept | Where-Object { $_ })
+                    foreach ($AsPlan in $true, $false) {
+                        $Out = Invoke-SyncedGroupRun -Items @($Case.Item) -Plan:$AsPlan
+                        @($Out.Errors).Count | Should -Be 0
+                        @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' }).Count | Should -Be 0
+                        foreach ($Detail in $Unchanged) { Get-SyncedRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail $Detail | Should -Be 1 }
+                        Get-SyncedRowCount -Rows $Out.Rows -Action 'Extra' -Detail ($Case.Candidate + $script:SyncedExtraTail) | Should -Be 1
+                        @($Out.Rows).Count | Should -Be ($Unchanged.Count + 1)
+
+                        $Out = Invoke-SyncedGroupRun -Items @($Case.Item) -Prune -Plan:$AsPlan
+                        @($Out.Errors).Count | Should -Be 0
+                        $SyncWarn = @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' })
+                        $SyncWarn.Count | Should -Be 1 -Because "the prune of $($Case.Candidate) writes the item's one warning"
+                        "$($SyncWarn[0])" | Should -BeExactly $script:SyncedWarning
+                        Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ('prune withheld: ' + $Case.Candidate + $script:SyncedWithheldTail) | Should -Be 1
+                        @($Out.Rows | Where-Object { $_.Action -eq 'Extra' }).Count | Should -Be 0
+                        @($Out.Rows).Count | Should -Be ($Unchanged.Count + 1)
+
+                        # Under -Prune the warning comes directly before the withheld row it explains.
+                        $Sequence = @(Get-SyncedGroupSequence -Item $Case.Item -Prune -Plan:$AsPlan)
+                        $Sequence | Should -Be (@($Unchanged | ForEach-Object { "Unchanged:$_" }) + 'W' + ('Skipped:prune withheld: ' + $Case.Candidate + $script:SyncedWithheldTail))
+                    }
+                }
+                Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 18 -Exactly -Scope It
+                & $script:AssertNothingWritten
+            }
+
+            It 'does not rename it, reports no Failed row and still reconciles its members (Review Focus 2)' {
+                Mock -ModuleName $script:moduleName Resolve-OERGroupId { param($DisplayName) if ($DisplayName -eq 'grp-synced') { 'g-sync' } else { $null } }
+                $Item = [PSCustomObject]@{ displayName = 'grp-new'; previousDisplayName = 'grp-synced'; members = @('kept@example.com'); owners = @('owner@example.com'); eligibility = @() }
+                # The live group still carries its previous name, so the reasons and the warning name
+                # 'grp-synced' (the live read's DisplayName); no live group carries 'grp-new', which
+                # stays only the label every row is keyed on. Each collection's undeclared live entry
+                # (u-extra, o-extra, e-extra) names it the same way.
+                $Candidates = "undeclared member 'u-extra'", "undeclared owner 'o-extra'", "undeclared member eligibility for principal 'e-extra'"
+                foreach ($AsPlan in $true, $false) {
+                    foreach ($PruneRun in $false, $true) {
+                        $Out = Invoke-SyncedGroupRun -Items @($Item) -Plan:$AsPlan -Prune:$PruneRun
+                        @($Out.Errors).Count | Should -Be 0
+                        @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                        @($Out.Rows | Where-Object { $_.Item -cne 'grp-new' }).Count | Should -Be 0
+                        Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ("group not renamed from 'grp-synced' to 'grp-new'" + $script:SyncedSuffix) | Should -Be 1
+                        Get-SyncedRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail "member 'kept@example.com' already present" | Should -Be 1
+                        Get-SyncedRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail "owner 'owner@example.com' already present" | Should -Be 1
+                        foreach ($Candidate in $Candidates) {
+                            if ($PruneRun) {
+                                Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ('prune withheld: ' + $Candidate + $script:SyncedWithheldTail) | Should -Be 1 -Because "$Candidate is withheld naming the live group"
+                            } else {
+                                Get-SyncedRowCount -Rows $Out.Rows -Action 'Extra' -Detail ($Candidate + $script:SyncedExtraTail) | Should -Be 1 -Because "$Candidate is Extra naming the live group"
+                            }
+                        }
+                        @($Out.Rows).Count | Should -Be 6
+                        $SyncWarn = @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' })
+                        $SyncWarn.Count | Should -Be 1
+                        "$($SyncWarn[0])" | Should -BeExactly $script:SyncedWarning
+                        @($Out.Rows | Where-Object { $_.Detail -match "group 'grp-new' is synchronized" }).Count | Should -Be 0
+                        @($Out.Warnings | Where-Object { "$_" -match "'grp-new'" }).Count | Should -Be 0
+                    }
+                }
+                # A rename beside another changed property names both in the one Skipped row.
+                $Item = [PSCustomObject]@{ displayName = 'grp-new'; previousDisplayName = 'grp-synced'; description = 'cloud text'; members = $null }
+                foreach ($AsPlan in $true, $false) {
+                    $Out = Invoke-SyncedGroupRun -Items @($Item) -Plan:$AsPlan
+                    @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                    Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ("group not renamed from 'grp-synced' to 'grp-new'; group properties (Description) not updated" + $script:SyncedSuffix) | Should -Be 1
+                    @($Out.Rows).Count | Should -Be 1
+                    $SyncWarn = @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' })
+                    $SyncWarn.Count | Should -Be 1
+                    "$($SyncWarn[0])" | Should -BeExactly $script:SyncedWarning
+                }
+                # Reached: the previous name was resolved and the live group read in every run.
+                Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 6 -Exactly -Scope It -ParameterFilter { $DisplayName -eq 'grp-synced' }
+                Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 6 -Exactly -Scope It
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroup -Times 0 -Scope It
+                & $script:AssertNothingWritten
+            }
+
+            It 'writes nothing to the synchronized group New-OERGroup returns in place of creating one (Review Focus 1)' {
+                Mock -ModuleName $script:moduleName Resolve-OERGroupId { $null }
+                # The existing group's own spelling: Graph's displayName match ignores case, so the
+                # group New-OERGroup finds can carry another spelling than the entry, and the reasons
+                # and the warning name it as read.
+                Mock -ModuleName $script:moduleName New-OERGroup { [PSCustomObject]@{ Id = 'g-sync'; DisplayName = 'GRP-Synced'; OnPremisesSyncEnabled = $true } }
+                $LiveSuffix = $script:SyncedSuffix.Replace("group 'grp-synced'", "group 'GRP-Synced'")
+                $Item = [PSCustomObject]@{
+                    displayName = 'grp-synced'
+                    members     = @('new@example.com')
+                    eligibility = @([PSCustomObject]@{ principal = 'tb@example.com'; durationDays = 30 },
+                        [PSCustomObject]@{ principal = 'perm@example.com' })
+                    pimPolicy   = [PSCustomObject]@{ member = [PSCustomObject]@{ activationMaxHours = 4 } }
+                }
+                $Out = Invoke-SyncedGroupRun -Items @($Item)
+                # Reached: the create was asked for once and handed back the existing group.
+                Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 1 -Exactly -Scope It
+                @($Out.Errors).Count | Should -Be 0
+                @($Out.Rows | Where-Object { $_.Item -cne 'grp-synced' }).Count | Should -Be 0
+                Get-SyncedRowCount -Rows $Out.Rows -Action 'Created' -Detail 'created group grp-synced (g-sync)' | Should -Be 1
+                Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ("member 'new@example.com' not added" + $LiveSuffix) | Should -Be 1
+                Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ("time-bound member eligibility for 'tb@example.com' not set (time-bound member eligibility (30 days) is absent)" + $LiveSuffix) | Should -Be 1
+                Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ('pimPolicy (member) not applied (PIM for Groups cannot manage a group synchronized from on-premises, so its policy is not read)' + $LiveSuffix) | Should -Be 1
+                Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ("permanent member eligibility for 'perm@example.com' not set (permanent member eligibility is absent)" + $LiveSuffix) | Should -Be 1
+                @($Out.Rows).Count | Should -Be 5
+                $SyncWarn = @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' })
+                $SyncWarn.Count | Should -Be 1
+                "$($SyncWarn[0])" | Should -BeExactly $script:SyncedWarning.Replace("group 'grp-synced'", "group 'GRP-Synced'")
+                foreach ($Cmd in 'Add-OERGroupMember', 'Send-OERNewGroupEligibilityRequest', 'Add-OERGroupEligibility', 'Set-OERGroupPimPolicy',
+                    'Get-OERPimGroupPolicyId', 'Get-OERListedGroupPimPolicy', 'Get-OERGroupPimPolicy', 'Start-Sleep', 'Set-OERGroup', 'Get-OERGroup') {
+                    Should -Invoke -ModuleName $script:moduleName $Cmd -Times 0 -Exactly -Scope It
+                }
+            }
+
+            It 'lets the live read decide, never the document key onPremisesSynced (Review Focus 3)' {
+                # (a) The live group is synchronized; the document says it is not.
+                $Item = [PSCustomObject]@{ displayName = 'grp-synced'; description = 'cloud text'; onPremisesSynced = $false; members = $null }
+                foreach ($AsPlan in $true, $false) {
+                    $Out = Invoke-SyncedGroupRun -Items @($Item) -Plan:$AsPlan
+                    Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ('group properties (Description) not updated' + $script:SyncedSuffix) | Should -Be 1
+                    @($Out.Rows).Count | Should -Be 1
+                    @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' }).Count | Should -Be 1
+                }
+                Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 2 -Exactly -Scope It
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroup -Times 0 -Scope It
+
+                # (b) The live group is a cloud group (OnPremisesSyncEnabled empty); the document says it
+                # is synchronized.
+                Mock -ModuleName $script:moduleName Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-sync'; DisplayName = 'grp-synced'; Description = 'on-prem text'; MailNickname = 'grpsynced'
+                        GroupType = 'Regular'; IsAssignableToRole = $false; OnPremisesSyncEnabled = $null; Members = @()
+                    }
+                }
+                $Item = [PSCustomObject]@{ displayName = 'grp-synced'; description = 'cloud text'; onPremisesSynced = $true; members = $null }
+                $Plan = Invoke-SyncedGroupRun -Items @($Item) -Plan
+                $Run = Invoke-SyncedGroupRun -Items @($Item)
+                Get-SyncedRowCount -Rows $Plan.Rows -Action 'Skipped' -Detail 'would update group properties (Description)' | Should -Be 1
+                Get-SyncedRowCount -Rows $Run.Rows -Action 'Updated' -Detail 'updated group properties (Description)' | Should -Be 1
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroup -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroup -Times 1 -Exactly -Scope It -ParameterFilter { $Description -eq 'cloud text' }
+                foreach ($Out in $Plan, $Run) {
+                    @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' }).Count | Should -Be 0
+                    @($Out.Rows | Where-Object { $_.Detail -match 'synchronized' }).Count | Should -Be 0
+                }
+            }
+
+            It 'writes to a group that is no longer synchronized (OnPremisesSyncEnabled False) as to any cloud group (Review Focus 4)' {
+                Mock -ModuleName $script:moduleName Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-sync'; DisplayName = 'grp-synced'; Description = 'on-prem text'; MailNickname = 'grpsynced'
+                        GroupType = 'Regular'; IsAssignableToRole = $false; OnPremisesSyncEnabled = $false
+                        Members = @([PSCustomObject]@{ id = 'id-kept@example.com'; ObjectType = 'user' },
+                            [PSCustomObject]@{ id = 'u-extra'; ObjectType = 'user' })
+                    }
+                }
+                $Item = [PSCustomObject]@{ displayName = 'grp-synced'; description = 'cloud text'; members = @('kept@example.com', 'new@example.com') }
+                $Plan = Invoke-SyncedGroupRun -Items @($Item) -Prune -Plan
+                $Run = Invoke-SyncedGroupRun -Items @($Item) -Prune
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroup -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'id-new@example.com' }
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'u-extra' }
+                Get-SyncedRowCount -Rows $Run.Rows -Action 'Updated' -Detail 'updated group properties (Description)' | Should -Be 1
+                Get-SyncedRowCount -Rows $Run.Rows -Action 'Updated' -Detail "added member 'new@example.com'" | Should -Be 1
+                Get-SyncedRowCount -Rows $Run.Rows -Action 'Removed' -Detail "removed undeclared member 'u-extra'" | Should -Be 1
+                foreach ($Out in $Plan, $Run) {
+                    @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' }).Count | Should -Be 0
+                    @($Out.Rows | Where-Object { $_.Detail -match 'synchronized' }).Count | Should -Be 0
+                }
+            }
+
+            It 'writes nothing to the synchronized item and writes to the cloud item of the same document' {
+                Mock -ModuleName $script:moduleName Resolve-OERGroupId {
+                    param($DisplayName)
+                    if ($DisplayName -eq 'grp-synced') { 'g-sync' } elseif ($DisplayName -eq 'grp-cloud') { 'g-cloud' }
+                }
+                Mock -ModuleName $script:moduleName Get-OERGroup {
+                    param($Group)
+                    if ($Group -eq 'g-sync') {
+                        [PSCustomObject]@{ Id = 'g-sync'; DisplayName = 'grp-synced'; Description = 'on-prem text'; GroupType = 'Regular'
+                            IsAssignableToRole = $false; OnPremisesSyncEnabled = $true; Members = @() }
+                    } elseif ($Group -eq 'g-cloud') {
+                        [PSCustomObject]@{ Id = 'g-cloud'; DisplayName = 'grp-cloud'; Description = 'old text'; GroupType = 'Regular'
+                            IsAssignableToRole = $false; OnPremisesSyncEnabled = $null; Members = @() }
+                    }
+                }
+                # The synchronized item first: a decision that outlived its item would skip the cloud one.
+                $Items = @(
+                    [PSCustomObject]@{ displayName = 'grp-synced'; description = 'cloud text'; members = $null }
+                    [PSCustomObject]@{ displayName = 'grp-cloud'; description = 'new text'; members = $null }
+                )
+                $Plan = Invoke-SyncedGroupRun -Items $Items -Plan
+                $Run = Invoke-SyncedGroupRun -Items $Items
+                foreach ($Out in $Plan, $Run) {
+                    @($Out.Errors).Count | Should -Be 0
+                    $Synced = @($Out.Rows | Where-Object { $_.Item -eq 'grp-synced' })
+                    $Synced.Count | Should -Be 1
+                    $Synced[0].Action | Should -BeExactly 'Skipped'
+                    $Synced[0].Detail | Should -BeExactly ('group properties (Description) not updated' + $script:SyncedSuffix)
+                    $SyncWarn = @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' })
+                    $SyncWarn.Count | Should -Be 1
+                    "$($SyncWarn[0])" | Should -BeExactly $script:SyncedWarning
+                    @($Out.Warnings | Where-Object { "$_" -match 'grp-cloud' }).Count | Should -Be 0
+                }
+                Get-SyncedRowCount -Rows $Plan.Rows -Action 'Skipped' -Detail 'would update group properties (Description)' | Should -Be 1
+                Get-SyncedRowCount -Rows $Run.Rows -Action 'Updated' -Detail 'updated group properties (Description)' | Should -Be 1
+                @($Run.Rows | Where-Object { $_.Item -eq 'grp-cloud' }).Count | Should -Be 1
+                Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 4 -Exactly -Scope It
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroup -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroup -Times 1 -Exactly -Scope It -ParameterFilter { $Group -eq 'g-cloud' -and $Description -eq 'new text' }
+            }
+
+            It 'names the group by the entry''s displayName when the live read carries no display name' {
+                # The update path: Get-OERGroup's read has no DisplayName.
+                Mock -ModuleName $script:moduleName Get-OERGroup {
+                    [PSCustomObject]@{ Id = 'g-sync'; Description = 'on-prem text'; GroupType = 'Regular'; IsAssignableToRole = $false
+                        OnPremisesSyncEnabled = $true; Members = @() }
+                }
+                $Out = Invoke-SyncedGroupRun -Items @([PSCustomObject]@{ displayName = 'grp-synced'; description = 'cloud text'; members = $null })
+                Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ('group properties (Description) not updated' + $script:SyncedSuffix) | Should -Be 1
+                @($Out.Rows).Count | Should -Be 1
+                @($Out.Warnings | Where-Object { "$_" -ceq $script:SyncedWarning }).Count | Should -Be 1
+                # The create path: the existing group New-OERGroup hands back has no DisplayName.
+                Mock -ModuleName $script:moduleName Resolve-OERGroupId { $null }
+                Mock -ModuleName $script:moduleName New-OERGroup { [PSCustomObject]@{ Id = 'g-sync'; OnPremisesSyncEnabled = $true } }
+                $Out = Invoke-SyncedGroupRun -Items @([PSCustomObject]@{ displayName = 'grp-synced'; members = @('new@example.com') })
+                Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ("member 'new@example.com' not added" + $script:SyncedSuffix) | Should -Be 1
+                @($Out.Rows).Count | Should -Be 2
+                @($Out.Warnings | Where-Object { "$_" -ceq $script:SyncedWarning }).Count | Should -Be 1
+                Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 1 -Exactly -Scope It
+                Should -Invoke -ModuleName $script:moduleName Set-OERGroup -Times 0 -Scope It
+                Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Scope It
+            }
+
+            It 'keeps the unresolved-entry and service-principal withholds ahead of the synchronized-group withhold' {
+                # Live members: a declared user, an undeclared service principal and an undeclared user.
+                Mock -ModuleName $script:moduleName Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-sync'; DisplayName = 'grp-synced'; Description = 'on-prem text'; GroupType = 'Regular'
+                        IsAssignableToRole = $false; OnPremisesSyncEnabled = $true
+                        Members = @([PSCustomObject]@{ id = 'id-kept@example.com'; ObjectType = 'user' },
+                            [PSCustomObject]@{ id = 'sp-extra'; ObjectType = 'servicePrincipal' },
+                            [PSCustomObject]@{ id = 'u-extra'; ObjectType = 'user' })
+                    }
+                }
+                Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal {
+                    param($Reference)
+                    if ($Reference -eq 'gone@example.com') { $null } else { "id-$Reference" }
+                }
+                $SpA9 = "prune withheld: undeclared member 'sp-extra' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go."
+
+                # (1) A declared member that cannot be resolved withholds every candidate of the
+                # collection for THAT reason, first: no service-principal and no synchronized-group
+                # row, and so no synchronized-group warning, since no other row is about the group.
+                $Item = [PSCustomObject]@{ displayName = 'grp-synced'; members = @('kept@example.com', 'gone@example.com') }
+                foreach ($AsPlan in $true, $false) {
+                    $Out = Invoke-SyncedGroupRun -Items @($Item) -Prune -Plan:$AsPlan
+                    foreach ($Candidate in 'sp-extra', 'u-extra') {
+                        Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ("prune withheld: declared entry 'gone@example.com' could not be resolved, so undeclared member '$Candidate' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this collection.") | Should -Be 1
+                    }
+                    Get-SyncedRowCount -Rows $Out.Rows -Action 'Failed' -Detail "could not resolve member 'gone@example.com'" | Should -Be 1
+                    Get-SyncedRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail 'group properties match' | Should -Be 1
+                    Get-SyncedRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail "member 'kept@example.com' already present" | Should -Be 1
+                    @($Out.Rows).Count | Should -Be 5
+                    @($Out.Rows | Where-Object { $_.Detail -match 'synchronized' -or $_.Detail -match 'is a service principal' }).Count | Should -Be 0
+                    @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' }).Count | Should -Be 0
+                    @($Out.Errors | Where-Object { ([string]$_.FullyQualifiedErrorId).StartsWith('PrincipalNotFound') }).Count | Should -Be 1
+                }
+
+                # (2) Without the unresolved entry the service principal keeps the A9 row, and only the
+                # user gets the synchronized-group row, which writes the item's one warning.
+                $Item = [PSCustomObject]@{ displayName = 'grp-synced'; members = @('kept@example.com') }
+                foreach ($AsPlan in $true, $false) {
+                    $Out = Invoke-SyncedGroupRun -Items @($Item) -Prune -Plan:$AsPlan
+                    @($Out.Errors).Count | Should -Be 0
+                    Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail $SpA9 | Should -Be 1
+                    Get-SyncedRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ("prune withheld: undeclared member 'u-extra'" + $script:SyncedWithheldTail) | Should -Be 1
+                    @($Out.Rows | Where-Object { $_.Detail -match "'sp-extra'" }).Count | Should -Be 1
+                    @($Out.Rows).Count | Should -Be 4
+                    $SyncWarn = @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' })
+                    $SyncWarn.Count | Should -Be 1
+                    "$($SyncWarn[0])" | Should -BeExactly $script:SyncedWarning
+                }
+                Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 4 -Exactly -Scope It
+                & $script:AssertNothingWritten
+            }
+
+            It 'reports only Unchanged rows for the entry Get-OERInventory exports for it, with -Prune, plan and run alike (round trip)' {
+                # The live group of the Context fixture, with no PIM eligibility, and each user carrying
+                # the userPrincipalName Get-OERGroup reads for it.
+                Mock -ModuleName $script:moduleName Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-sync'; DisplayName = 'grp-synced'; Description = 'on-prem text'; MailNickname = 'grpsynced'
+                        GroupType = 'Regular'; IsAssignableToRole = $false; OnPremisesSyncEnabled = $true
+                        Members = @([PSCustomObject]@{ id = 'id-kept@example.com'; ObjectType = 'user'; userPrincipalName = 'kept@example.com' },
+                            [PSCustomObject]@{ id = 'u-extra'; ObjectType = 'user'; userPrincipalName = 'extra@example.com' })
+                        Owners  = @([PSCustomObject]@{ id = 'id-owner@example.com'; ObjectType = 'user'; userPrincipalName = 'owner@example.com' },
+                            [PSCustomObject]@{ id = 'o-extra'; ObjectType = 'user'; userPrincipalName = 'owner2@example.com' })
+                        PimEligibility = @()
+                    }
+                }
+                # The resolver maps each exported reference back to the live object id.
+                Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal {
+                    param($Reference)
+                    @{ 'kept@example.com' = 'id-kept@example.com'; 'extra@example.com' = 'u-extra'
+                        'owner@example.com' = 'id-owner@example.com'; 'owner2@example.com' = 'o-extra' }[[string]$Reference]
+                }
+                # The entry Get-OERInventory projects from that read: displayName, roleAssignable,
+                # dynamic and description; onPremisesSynced true for a synchronized group; mailNickname
+                # when set; each user member and owner as its userPrincipalName; and the eligibility
+                # it read (none).
+                $Item = [PSCustomObject][ordered]@{
+                    displayName      = 'grp-synced'
+                    roleAssignable   = $false
+                    dynamic          = $false
+                    description      = 'on-prem text'
+                    onPremisesSynced = $true
+                    mailNickname     = 'grpsynced'
+                    members          = @('kept@example.com', 'extra@example.com')
+                    owners           = @('owner@example.com', 'owner2@example.com')
+                    eligibility      = @()
+                }
+                $Plan = Invoke-SyncedGroupRun -Items @($Item) -Prune -Plan
+                $Run = Invoke-SyncedGroupRun -Items @($Item) -Prune
+                foreach ($Out in $Plan, $Run) {
+                    @($Out.Errors).Count | Should -Be 0
+                    # Not vacuous: one row for the properties, one per member and one per owner, all
+                    # Unchanged, and nothing else.
+                    @($Out.Rows).Count | Should -Be 5
+                    @($Out.Rows | Where-Object { $_.Action -eq 'Unchanged' }).Count | Should -Be 5
+                    Get-SyncedRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail 'group properties match' | Should -Be 1
+                    foreach ($Detail in "member 'kept@example.com' already present", "member 'extra@example.com' already present",
+                        "owner 'owner@example.com' already present", "owner 'owner2@example.com' already present") {
+                        Get-SyncedRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail $Detail | Should -Be 1
+                    }
+                    @($Out.Warnings | Where-Object { "$_" -match 'is synchronized from on-premises' }).Count | Should -Be 0
+                }
+                Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 2 -Exactly -Scope It
+                & $script:AssertNothingWritten
+            }
+        }
+
+        Context 'the document key onPremisesSynced' {
+            It 'is never sent, on the create path or the update path, through the real New-OERGroup and Set-OERGroup' {
+                InModuleScope $script:moduleName {
+                    function Invoke-SyncGroupViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item, [switch]$Prune)
+                        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                    }
+                    $script:SyncedKeySent = [System.Collections.Generic.List[object]]::new()
+                    Mock Initialize-OERAuth { }
+                    Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                    Mock Resolve-OERStructureDefault { $null }
+                    Mock Invoke-OERGraphRequest {
+                        param($Uri, $Method, $Body)
+                        $script:SyncedKeySent.Add([PSCustomObject]@{ Method = $Method; Uri = $Uri; Body = ($Body | ConvertTo-Json -Depth 10 -Compress) })
+                        if ($Method -eq 'PATCH') { return $null }
+                        @{ id = 'g-new'; displayName = 'grp-new'; onPremisesSyncEnabled = $null }
+                    }
+
+                    # Create path: no group of that name, so the real New-OERGroup POSTs one.
+                    Mock Resolve-OERGroupId { $null }
+                    $E = $null
+                    $Rows = @(Invoke-SyncGroupViaCaller -Item ([PSCustomObject]@{ displayName = 'grp-new'; description = 'd'; onPremisesSynced = $true }) `
+                            -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable E)
+                    @($E).Count | Should -Be 0
+                    @($Rows | Where-Object { $_.Action -eq 'Created' -and $_.Detail -eq 'created group grp-new (g-new)' }).Count | Should -Be 1
+                    $Posts = @($script:SyncedKeySent | Where-Object { $_.Method -eq 'POST' })
+                    $Posts.Count | Should -Be 1
+                    $Posts[0].Uri | Should -BeExactly 'v1.0/groups'
+                    $Posts[0].Body | Should -Match '"displayName":"grp-new"'
+                    $Posts[0].Body | Should -Match '"description":"d"'
+
+                    # Update path: a live cloud group with another description, so the real Set-OERGroup
+                    # PATCHes it.
+                    Mock Resolve-OERGroupId { 'g-cloud' }
+                    Mock Get-OERGroup {
+                        [PSCustomObject]@{ Id = 'g-cloud'; DisplayName = 'grp-cloud'; Description = 'old'; MailNickname = 'grpcloud'
+                            GroupType = 'Regular'; IsAssignableToRole = $false; OnPremisesSyncEnabled = $null; Members = @() }
+                    }
+                    $E = $null
+                    $Rows = @(Invoke-SyncGroupViaCaller -Item ([PSCustomObject]@{ displayName = 'grp-cloud'; description = 'new'; onPremisesSynced = $true }) `
+                            -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable E)
+                    @($E).Count | Should -Be 0
+                    @($Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq 'updated group properties (Description)' }).Count | Should -Be 1
+                    $Patches = @($script:SyncedKeySent | Where-Object { $_.Method -eq 'PATCH' })
+                    $Patches.Count | Should -Be 1
+                    $Patches[0].Uri | Should -BeExactly 'v1.0/groups/g-cloud'
+                    $Patches[0].Body | Should -BeExactly '{"description":"new"}'
+
+                    # No request of either path carried the key.
+                    @($script:SyncedKeySent | Where-Object { $_.Body -match 'onPremisesSynced' }).Count | Should -Be 0
+                }
+            }
+        }
+    }
 }
 
 Describe 'Sync-OERStructureGroup: the plan shows the warning a real run gives (BL-17)' {

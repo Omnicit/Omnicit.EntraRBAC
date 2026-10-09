@@ -84,6 +84,25 @@ Describe 'Get-OERInventoryReadme' {
         }
     }
 
+    It 'says in the file roster that groupsRoster.json carries onPremisesSynced among its flags (A15)' {
+        InModuleScope $script:moduleName {
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @()
+            $Flat = $Md -replace '\s+', ' '
+            $Flat | Should -Match ([regex]::Escape('(names + flags, including `onPremisesSynced`)'))
+        }
+    }
+
+    It 'explains in "Which groups are covered" that a synchronized group is detailed only on request and is never written by the apply (A15)' {
+        InModuleScope $script:moduleName {
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @()
+            $Md | Should -Match '(?m)^## Which groups are covered\r?$'
+            $Section = (($Md -split '(?m)^## Which groups are covered\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
+            $Section | Should -Match ([regex]::Escape('A group synchronized from on-premises Active Directory (`onPremisesSynced` true in `groupsRoster.json`) is managed there and read-only in the cloud: it cannot be role-assignable or managed in PIM for Groups, so `inventory.json` details it only when the export ran with `-IncludeSyncedGroups` or `-AllGroupsDetailed`, and there it carries `onPremisesSynced: true`. `Invoke-OERStructure` writes nothing to such a group.'))
+            # The paragraph belongs to the section it describes, ahead of the coverage limits.
+            $Md.IndexOf('-IncludeSyncedGroups') | Should -BeLessThan $Md.IndexOf('## Coverage limits')
+        }
+    }
+
     It 'warns that an unread members, scopedRoles, resources or resourceRoles collection is written as null and must never be changed to []' {
         InModuleScope $script:moduleName {
             $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @()

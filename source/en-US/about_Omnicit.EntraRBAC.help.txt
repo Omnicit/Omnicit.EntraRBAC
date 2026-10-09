@@ -115,6 +115,17 @@ COMMAND COHORTS
     Conditional Access
         Get-OERAuthenticationContext
 
+SYNCHRONIZED GROUPS
+
+    Get-OERGroup shows OnPremisesSyncEnabled for every group: True for a group
+    synchronized from on-premises Active Directory, which is managed there and
+    read-only in the cloud. Invoke-OERStructure writes nothing to such a group:
+    each change to its properties, members, owners, eligibility or pimPolicy is
+    reported Skipped, with one warning per group, and -Prune removes nothing from
+    it. Export-OERInventory marks it onPremisesSynced in groupsRoster.json, and
+    -IncludeSyncedGroups keeps the synchronized security groups in full detail in
+    inventory.json.
+
 PERMISSIONS
 
     Ask the module rather than reading a table kept in step by hand:

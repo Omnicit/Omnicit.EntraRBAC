@@ -54,7 +54,8 @@ PowerShell module.
   listed there is unknown, not empty
 - inventory.json -- the current state, within this document's coverage limits (see below), in the
   exact apply schema. Your proposals reshape this.
-- groupsRoster.json -- every security group (names + flags only). Context for the landscape.
+- groupsRoster.json -- every group in the tenant (names + flags only, onPremisesSynced among them).
+  Context for the landscape.
 - scopeHierarchy.json -- the management group / subscription tree. Use it to place role
   assignments at the correct scope. NOTE: management groups and subscriptions are context only;
   do not try to create them.
@@ -184,13 +185,19 @@ document.
 
 - groups[]: { displayName (or template + tokens object), previousDisplayName (rename only -- the
   group's current display name or object id when displayName declares a new one; NOT captured by
-  inventory), roleAssignable (bool), dynamic (bool),
+  inventory), roleAssignable (bool), dynamic (bool), onPremisesSynced (read-only information written
+  by the export: true for a group synchronized from on-premises Active Directory),
   description, mailNickname, administrativeUnit (create-only -- applied when the group is created and
   NOT captured by inventory), membershipRule, membershipRuleProcessingState (On|Paused; dynamic
   groups only), members[] (UPNs / object ids), owners[] (UPNs / object ids -- a group owner can ADD
   MEMBERS, so this is a privilege path in its own right, not a cosmetic field), eligibility[] {
   principal (required), accessType (member|owner, default member), durationDays (1-3650;
   omit it to declare a PERMANENT eligibility) }, pimPolicy }
+  - A group with onPremisesSynced true is managed in on-premises Active Directory, and
+    Invoke-OERStructure writes nothing to it: no property, member, owner, eligibility or pimPolicy
+    change, and -Prune removes nothing from it. Do not propose changes to such a group; other
+    sections may still reference it (role assignments, administrative unit members, access package
+    resource roles). Keep the key as exported, and never add it to a group yourself.
   - displayName is the match key: an existing group is matched and updated by it. To rename a
     group, declare its new name as displayName and its current name as previousDisplayName: the
     group found under previousDisplayName alone is renamed in place. When both names match

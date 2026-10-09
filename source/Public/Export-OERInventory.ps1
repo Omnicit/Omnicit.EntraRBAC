@@ -16,9 +16,11 @@ function Export-OERInventory {
     was never used with PIM for Groups as well, so Get-OERInventory exports a pimPolicy block only
     for a group that uses PIM for Groups -- one with PIM eligibility, or one whose PIM-for-Groups
     policy has been modified -- and a group whose policies Graph merely lists is not kept in full
-    detail on that account. -AllGroupsDetailed keeps every group inventory.json covers. The cmdlet
-    reads only -- no tenant state changes -- and authenticates at entry; an ARM token is acquired
-    only when -Include names RoleAssignments or RoleManagementPolicies, the two Azure sections.
+    detail on that account. -IncludeSyncedGroups also keeps the security groups synchronized from
+    on-premises Active Directory. -AllGroupsDetailed keeps every group inventory.json covers. The
+    cmdlet reads only -- no tenant state changes -- and authenticates at entry; an ARM token is
+    acquired only when -Include names RoleAssignments or RoleManagementPolicies, the two Azure
+    sections.
 
     WHICH GROUPS INVENTORY.JSON COVERS, AND WHICH IT DOES NOT. The Groups section is read with the
     'securityEnabled eq true' filter Get-OERInventory applies by default, so it carries the
@@ -28,7 +30,9 @@ function Export-OERInventory {
     it widens what Invoke-OERStructure reconciles and, under -Prune, deletes. To widen it anyway,
     read the inventory yourself with Get-OERInventory -GroupFilter and supply the filter you want.
     groupsRoster.json is NOT filtered: it lists every group in the tenant, of every type, as
-    read-only context, so the gap between the two files is visible rather than silent.
+    read-only context, so the gap between the two files is visible rather than silent. Each of its
+    rows carries onPremisesSynced, true for a group synchronized from on-premises Active Directory
+    and false otherwise.
 
     Azure coverage is reported, not assumed. ScopesEnumerated is how many ARM scopes the walk found,
     ScopeCount is how many of them were actually read, and SkippedScopes names the ones that were
@@ -134,6 +138,14 @@ function Export-OERInventory {
     inventory.json at any detail level. Use Get-OERInventory -GroupFilter to widen the scope
     itself; groupsRoster.json already lists every group in the tenant unfiltered.
 
+    .PARAMETER IncludeSyncedGroups
+    Also keep, in full detail in inventory.json, every security group synchronized from on-premises
+    Active Directory (onPremisesSynced: true). Such a group is never RBAC-relevant by the default
+    criteria -- it cannot be role-assignable or managed in PIM for Groups -- so without this switch
+    it appears only in groupsRoster.json. It is managed on-premises: Invoke-OERStructure writes
+    nothing to it, and its onPremisesSynced key is information only. With -AllGroupsDetailed every
+    group is kept already and this switch changes nothing.
+
     .PARAMETER AllDirectoryRolePolicies
     For the DirectoryRoleManagementPolicies section, export the policy of every Microsoft Entra
     directory role, instead of only the roles that have at least one row in the tenant-scope
@@ -182,6 +194,7 @@ function Export-OERInventory {
         [string[]]$Include = @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews',
             'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments', 'RoleAssignments'),
         [switch]$AllGroupsDetailed,
+        [switch]$IncludeSyncedGroups,
         [switch]$AllDirectoryRolePolicies,
         [string]$ManagementGroup,
         [string]$Scope,
@@ -396,7 +409,12 @@ function Export-OERInventory {
                     # not exist.
                     $_.roleAssignable -eq $true -or
                     @($_.eligibility | Where-Object { $null -ne $_ }).Count -gt 0 -or
-                    ($_.PSObject.Properties.Name -contains 'pimPolicy')
+                    ($_.PSObject.Properties.Name -contains 'pimPolicy') -or
+                    # A15: a group synchronized from on-premises is never kept by the three criteria
+                    # above (it cannot be role-assignable or managed in PIM for Groups), so it is kept
+                    # only on request. Get-OERInventory writes onPremisesSynced as a boolean true for
+                    # such a group and never otherwise; anything else is not taken for it.
+                    ($IncludeSyncedGroups -and $_.onPremisesSynced -is [bool] -and $_.onPremisesSynced)
                 }
             }
         )
@@ -475,10 +493,11 @@ function Export-OERInventory {
                     $null
                 }
                 [PSCustomObject]@{
-                    displayName    = $RgName
-                    roleAssignable = [bool]$Rg.IsAssignableToRole
-                    dynamic        = ($Rg.GroupType -eq 'Dynamic')
-                    memberCount    = $MemberCount
+                    displayName      = $RgName
+                    roleAssignable   = [bool]$Rg.IsAssignableToRole
+                    dynamic          = ($Rg.GroupType -eq 'Dynamic')
+                    onPremisesSynced = (Test-OERGroupOnPremisesSynced -Group $Rg)
+                    memberCount      = $MemberCount
                 }
             })
         }

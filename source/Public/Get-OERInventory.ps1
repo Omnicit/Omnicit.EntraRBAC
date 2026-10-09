@@ -28,6 +28,9 @@ function Get-OERInventory {
     has at least one owner. A group's members and owners include its service principals, written by
     object id. A document exported by an earlier version lacks them: Invoke-OERStructure reports them
     Extra, and -Prune leaves them in place, since the group prune never removes a service principal.
+    A group synchronized from on-premises Active Directory carries onPremisesSynced: true (information
+    only; Invoke-OERStructure never sends it and writes nothing to such a group, deciding on its own
+    live read); a cloud group carries no such key.
     The Groups pimPolicy projection is emitted only for a group found to use
     PIM for Groups: one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it
     carries a lastModifiedDateTime or a lastModifiedBy). Microsoft Graph lists those policies for
@@ -608,6 +611,11 @@ function Get-OERInventory {
                     dynamic        = ($G.GroupType -eq 'Dynamic')
                     description    = $G.Description
                 }
+                # A15: information only. Written as true for a group synchronized from on-premises
+                # (Test-OERGroupOnPremisesSynced owns the rule) and never otherwise, so a cloud
+                # group's entry is exactly what earlier versions exported. Invoke-OERStructure never
+                # sends this key and decides nothing on it: it reads the group live.
+                if (Test-OERGroupOnPremisesSynced -Group $G) { $Proj.onPremisesSynced = $true }
                 if ($G.GroupType -eq 'Dynamic') {
                     $Proj.membershipRule = $G.MembershipRule
                     if ($G.MembershipRuleProcessingState) {

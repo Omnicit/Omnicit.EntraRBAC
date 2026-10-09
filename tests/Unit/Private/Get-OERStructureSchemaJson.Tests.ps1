@@ -70,6 +70,27 @@ Describe 'Get-OERStructureSchemaJson' {
         }
     }
 
+    It 'declares groups[].onPremisesSynced as a boolean that the apply engine never sends (A15)' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $Prop = $Schema.properties.groups.items.properties.onPremisesSynced
+            $Prop | Should -Not -BeNullOrEmpty
+            $Prop.type | Should -Be 'boolean'
+            $Prop.description | Should -Match 'never sends'
+            $Prop.description | Should -Match 'live'
+        }
+    }
+
+    It 'accepts a boolean groups[].onPremisesSynced and rejects any other type (draft-07 matches the validator)' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Valid = '{ "version": "1.0", "groups": [ { "displayName": "g", "onPremisesSynced": true } ] }'
+            $Invalid = '{ "version": "1.0", "groups": [ { "displayName": "g", "onPremisesSynced": "yes" } ] }'
+            Test-Json -Json $Valid -Schema $Schema -ErrorAction SilentlyContinue | Should -BeTrue
+            Test-Json -Json $Invalid -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+        }
+    }
+
     It 'validates the example apply document as conforming (mirrors Test-OERStructureSchema)' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
         InModuleScope $script:moduleName {
             $Schema = Get-OERStructureSchemaJson

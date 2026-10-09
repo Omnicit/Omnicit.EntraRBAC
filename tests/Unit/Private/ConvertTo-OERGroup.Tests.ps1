@@ -52,4 +52,22 @@ Describe 'ConvertTo-OERGroup' {
             $G.MembershipRuleProcessingState | Should -BeExactly 'Paused'
         }
     }
+
+    Context 'OnPremisesSyncEnabled (A15)' {
+        It 'carries <Case> as <Expected>' -ForEach @(
+            @{ Case = 'a synced group (true)'; Raw = @{ id = 'g-1'; displayName = 'a'; onPremisesSyncEnabled = $true }; Expected = $true }
+            @{ Case = 'a no-longer-synced group (false)'; Raw = @{ id = 'g-1'; displayName = 'a'; onPremisesSyncEnabled = $false }; Expected = $false }
+            @{ Case = 'a cloud group (null)'; Raw = @{ id = 'g-1'; displayName = 'a'; onPremisesSyncEnabled = $null }; Expected = $null }
+            @{ Case = 'an answer without the key'; Raw = @{ id = 'g-1'; displayName = 'a' }; Expected = $null }
+            @{ Case = 'a non-boolean value'; Raw = @{ id = 'g-1'; displayName = 'a'; onPremisesSyncEnabled = 'false' }; Expected = $null }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Raw = $Raw; Expected = $Expected } {
+                param($Raw, $Expected)
+                $G = ConvertTo-OERGroup -InputObject $Raw
+                @($G.PSObject.Properties.Name) | Should -Contain 'OnPremisesSyncEnabled'
+                if ($null -eq $Expected) { $G.OnPremisesSyncEnabled | Should -BeNullOrEmpty }
+                else { $G.OnPremisesSyncEnabled | Should -BeOfType [bool]; $G.OnPremisesSyncEnabled | Should -Be $Expected }
+            }
+        }
+    }
 }

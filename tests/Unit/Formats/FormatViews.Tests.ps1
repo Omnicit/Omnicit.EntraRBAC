@@ -48,7 +48,7 @@ Describe 'Format views' {
 
     It 'renders a tagged Group through the registered view with the expected columns and values' {
         # Properties are declared in ConvertTo-OERGroup's own order (Id first, GroupType fifth) so
-        # that the view's column order -- DisplayName, GroupType, Id -- is something ONLY the
+        # that the view's column order -- DisplayName, GroupType, OnPremisesSyncEnabled, Id -- is something ONLY the
         # registered view can produce; the default formatter would put Id first and Description and
         # MailNickname in between. Matching the header row alone would be weak, because the default
         # formatter emits property names as headers too and the view's headers are <Label> elements
@@ -67,13 +67,28 @@ Describe 'Format views' {
             GroupTypes                    = @()
             MembershipRule                = $null
             MembershipRuleProcessingState = $null
+            OnPremisesSyncEnabled         = $false
         }
         $G.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Group')
         $Rendered = $G | Format-Table | Out-String -Width 200
 
-        $Rendered | Should -Match 'DisplayName\s+GroupType\s+Id'
-        $Rendered | Should -Match 'role_sec_team\s+RoleEnabled\s+g1'
-        $Rendered | Should -Not -Match 'MailNickname' -Because 'the view declares exactly three columns; a MailNickname header means the default formatter ran instead'
+        $Rendered | Should -Match 'DisplayName\s+GroupType\s+OnPremisesSyncEnabled\s+Id'
+        $Rendered | Should -Match 'role_sec_team\s+RoleEnabled\s+False\s+g1'
+        $Rendered | Should -Not -Match 'MailNickname' -Because 'the view declares exactly four columns; a MailNickname header means the default formatter ran instead'
+    }
+
+    It 'renders a group built by ConvertTo-OERGroup with OnPremisesSyncEnabled between GroupType and Id (A15)' {
+        # Built through the real converter so the column reads the real property, not a hand-built
+        # fixture. The header order is something only the registered view can produce, and the
+        # ROW-VALUE match is the load-bearing assertion: a renamed <PropertyName> renders an empty
+        # cell instead of throwing.
+        $G = InModuleScope $script:moduleName {
+            ConvertTo-OERGroup -InputObject @{ id = 'g1'; displayName = 'role_sec_team'; securityEnabled = $true; isAssignableToRole = $false; groupTypes = @(); onPremisesSyncEnabled = $true }
+        }
+        $Rendered = $G | Format-Table | Out-String -Width 200
+
+        $Rendered | Should -Match 'DisplayName\s+GroupType\s+OnPremisesSyncEnabled\s+Id'
+        $Rendered | Should -Match 'role_sec_team\s+Regular\s+True\s+g1'
     }
 
     It 'renders the nine Task 8a-affected shapes through their views with the alias-backed column populated' {

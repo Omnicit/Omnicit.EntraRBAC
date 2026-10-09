@@ -39,8 +39,9 @@ function Invoke-OERStructure {
     entry that cannot be resolved withholds the prune of its collection: every undeclared live entry
     in it is reported Skipped with a Detail starting "prune withheld:", with or without -Prune,
     instead of being removed or reported Extra. A group's service principal, as a member or an
-    owner, is never removed, and the run that creates a group into an administrative unit does not
-    remove that membership (see -Prune). An OMITTED members, scopedRoles, resources or
+    owner, is never removed, the run that creates a group into an administrative unit does not
+    remove that membership, and nothing is written to, or removed from, a group whose live read shows
+    it synchronized from on-premises (see -Prune). An OMITTED members, scopedRoles, resources or
     resourceRoles key still prunes, so before the first write the engine lists every such key in one
     warning (see -Prune).
 
@@ -176,6 +177,16 @@ function Invoke-OERStructure {
     other member and owner is pruned as described here. Remove one with Remove-OERGroupMember when
     it is meant to go.
 
+    A group whose live read shows OnPremisesSyncEnabled True is synchronized from on-premises Active
+    Directory and managed there, so nothing is ever written to it. Every property, member, owner,
+    eligibility or pimPolicy change the document declares for it is reported Skipped, with one warning
+    per group and no ShouldProcess prompt, so -WhatIf and a real run report the same rows. Each
+    undeclared live member, owner or eligibility of such a group is reported Extra without -Prune and
+    Skipped, with a Detail starting "prune withheld:", with -Prune; one already withheld for another
+    reason -- an unresolved declared entry in its collection, or a service principal -- keeps that
+    reason's row. The document's onPremisesSynced key is never consulted or sent: the live read alone
+    decides.
+
     A group the document creates into an administrative unit (a groups[] entry's
     administrativeUnit) is not removed from that unit by the run that creates it. administrativeUnit
     is applied only when the group is created and never round-trips, so the unit's
@@ -209,8 +220,9 @@ function Invoke-OERStructure {
     fails is reported Failed, and nothing in it is removed or reported Extra.
 
     Five collections are reconciled even when their key is omitted, against an empty declared set,
-    so -Prune removes every live entry in them (a group's service principals excepted, and, in the
-    run that creates it, a group's membership of the unit it was created into, as above):
+    so -Prune removes every live entry in them (a group's service principals and every member of a
+    group synchronized from on-premises excepted, and, in the run that creates it, a group's
+    membership of the unit it was created into, as above):
     groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
     catalogs[].resources and accessPackages[].resourceRoles. When
     -Prune is set, one warning lists every such omitted key in a section selected by -Include before

@@ -44,6 +44,12 @@ silently empty. A script that passes `-Expand` or `-Recurse` without `-Name` now
 binding, or is asked for `-Name` where the host can prompt. An empty `-Name` is refused instead of
 listing every group.
 
+`Get-OERGroup` now shows `OnPremisesSyncEnabled`, in its table too. `groupsRoster.json` marks every
+group `onPremisesSynced`, and `Export-OERInventory -IncludeSyncedGroups` keeps the synchronized
+security groups in full detail in `inventory.json`, where they carry `onPremisesSynced: true`.
+`Invoke-OERStructure` writes nothing to a synchronized group: each change is reported `Skipped`, with
+one warning per group, and `-Prune` leaves it untouched.
+
 ## [1.1.3] - 2026-10-07
 
 `Invoke-OERStructure` without `-TenantId`, and the builders that look up a name
