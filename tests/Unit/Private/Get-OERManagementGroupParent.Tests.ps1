@@ -127,7 +127,7 @@ Describe 'Get-OERManagementGroupParent' {
         }
     }
 
-    It 'leaves out an entity without a parent id, and one whose parent id is empty' {
+    It 'leaves out an entity without a parent' {
         InModuleScope Omnicit.EntraRBAC {
             Mock Invoke-OERArmRequest {
                 [PSCustomObject]@{ value = @(
@@ -136,6 +136,27 @@ Describe 'Get-OERManagementGroupParent' {
                             type       = 'Microsoft.Management/managementGroups'
                             properties = [PSCustomObject]@{ parent = $null; parentDisplayNameChain = @('MG A') }
                         }
+                        [PSCustomObject]@{
+                            name       = 'mg-b'
+                            type       = 'Microsoft.Management/managementGroups'
+                            properties = [PSCustomObject]@{
+                                parent                 = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a' }
+                                parentDisplayNameChain = @('MG A')
+                            }
+                        }
+                    ) }
+            }
+
+            $Map = Get-OERManagementGroupParent
+
+            @($Map.Keys) | Should -Be @('mg-b')
+        }
+    }
+
+    It 'leaves out an entity whose parent id is empty' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-OERArmRequest {
+                [PSCustomObject]@{ value = @(
                         [PSCustomObject]@{
                             name       = 'mg-empty-parent-id'
                             type       = 'Microsoft.Management/managementGroups'
