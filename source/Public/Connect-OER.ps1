@@ -39,26 +39,30 @@ function Connect-OER {
     process, and Disconnect-OER clears this module's session and the Graph SDK session the module
     connected, not that credential.
 
-    During a long run the module renews the session's token by itself. Before every request it
-    sends, it renews a Microsoft Graph or Azure Resource Manager token that expires within five
-    minutes, on an interactive, device code or managed identity session, and it asks AzAuth, which
-    acquires the tokens, for the new one without Force, which would make AzAuth discard the
-    credential it holds. A request rejected because its token has expired is renewed the same way
-    and sent once more; one rejected for a token that is still valid -- revoked, for example --
-    forces a new sign-in, as before. Whether a renewal needs you depends on AzAuth, not on the
-    module (AzAuth 2.10.0, read from its code and not yet observed in a live sign-in): a managed
-    identity renews with no prompt; a device code session renews without a new code while AzAuth
-    still holds the credential it signed in with, but the module requests its Microsoft Graph and
-    Azure Resource Manager tokens under different applications, so in a session that uses both, a
-    renewal made after a token was acquired for the other one makes AzAuth build a new credential
-    and shows a new code; and an interactive session's renewal opens the browser to choose the
-    account again, since AzAuth builds a new browser credential for every interactive token. An
-    app-only session (client secret or certificate) is not renewed within a command, since
-    the module never keeps the secret or certificate: once its token expires, a request is rejected
-    with an AppOnlyTokenRefreshUnsatisfiable error, and the next command's sign-in reports
+    During a long run the module renews the session's token by itself, on an interactive or managed
+    identity session. Before every request it sends, it renews a Microsoft Graph or Azure Resource
+    Manager token that expires within five minutes, and it asks AzAuth, which acquires the tokens,
+    for the new one without Force, which would make AzAuth discard the credential it holds. A
+    request rejected because its token has expired is renewed the same way and sent once more; one
+    rejected for a token that is still valid -- revoked, for example -- forces a new sign-in, as
+    before. Whether a renewal needs you depends on AzAuth, not on the module (AzAuth 2.10.0, read
+    from its code and not yet observed in a live sign-in): a managed identity renews with no prompt,
+    and an interactive session's renewal opens the browser to choose the account again, since
+    AzAuth builds a new browser credential for every interactive token. Choose the account the
+    session signed in with: the command carries on as whichever account of the same tenant you
+    choose there. A device code session is not renewed before its token expires: a request rejected
+    because that token has expired forces a new sign-in, as before, which shows a new device code.
+    The reason is in AzAuth's code: a device code request without Force waits forever once AzAuth
+    reuses the credential it holds, which fits the known limitation under -DeviceCode. An app-only
+    session (client secret or certificate) is not renewed within a command, since the module never
+    keeps the secret or certificate: once its token expires, a request is rejected with an
+    AppOnlyTokenRefreshUnsatisfiable error, and the next command's sign-in reports
     AppOnlySessionCredentialUnavailable until Connect-OER is run with the secret or certificate. A
     renewal that fails sends nothing for that request and counts as a sign-in that failed, with the
-    consequence described below for a later command that names no tenant.
+    consequence described below for a later command that names no tenant. If the command makes
+    another request, that request tries the renewal again -- on an interactive session, another
+    browser window -- unless the session was signed in without naming a tenant, in which case that
+    request is refused too.
 
     Connect-OER also sets up a Microsoft Graph PowerShell SDK session in the current process: it
     calls Connect-MgGraph with the module's token, and so does the automatic sign-in of any other

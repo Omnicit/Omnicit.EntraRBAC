@@ -703,31 +703,37 @@ value -- except `Connect-OER`'s own call of `Initialize-OERAuth`, which passes `
 
 **A long run renews its token before it expires (A11, BL-105).** A token used to be renewed only
 when a command signed in, so a long command ran into its token's expiry and refreshed only after a
-401, with `-ForceRefresh` -- and `Force` makes AzAuth discard its credential, so a delegated session
-needed the operator again. So the transports renew a token that expires within the renewal window
-before every request: `Invoke-GraphSingle` as the first statement of its attempt loop, above the
-session gate (so before the first attempt, each throttled retry and each page), and
-`Invoke-ArmCallWithRefresh` as its first statement, before `Invoke-ArmCall` and its gates --
-directly in those two functions, the call-site exception the latch already makes for the
-transports' refreshes, and never between the earliest gate and a request (gate 10). Only an
-`Interactive`, `DeviceCode` or `ManagedIdentity` session whose state records the expiry is renewed.
-The renewal calls `Initialize-OERAuth` with the state's tenant, method and client id (ARM adds
-`-IncludeARM`) and the private `-Renewal`, never `-ForceRefresh`, so `Get-AzToken` is called without
-`Force`. `-Renewal` keeps a success from clearing the session-uncertain marker, as above; a
-same-tenant, same-identity success changes nothing `Register-OERSignInIdentity` remembers. After a
-401, a token the state records as expired, or within the window, is renewed the same way
-(`-Renewal`); only a 401 for a token still valid -- revoked, CAE, another tenant's -- or one whose
-expiry is not recorded is forced. The app-only refusal stays first on both 401 paths, and the claims
-challenge is unchanged. An app-only session (`ClientSecret`, `ClientCertificate`) is never renewed
-within a command, since the module keeps no key material -- a known limit, stated in the texts. A
-renewal that fails latches the transport function that called it, so that request is refused and
-the session left uncertain. Whether a renewal prompts is AzAuth's (decompiled, not measured): a
-managed identity never, a device code session when a token for the other resource was acquired in
-between (the module requests Graph and ARM tokens under different client ids, and AzAuth reuses its
-credential only for the same one), and an interactive session always, since AzAuth builds a new
-browser credential for every interactive token -- so never call a renewal silent for an interactive
-session. Never add `-ForceRefresh` to a renewal, never renew an app-only session, and never compute
-the window outside its owner (below).
+401, with `-ForceRefresh`, which puts `Force` on `Get-AzToken` and makes AzAuth discard its
+credential. So the transports renew a token that expires within the renewal window before every
+request: `Invoke-GraphSingle` as the first statement of its attempt loop, above the session gate (so
+before the first attempt, each throttled retry and each page), and `Invoke-ArmCallWithRefresh` as
+its first statement, before `Invoke-ArmCall` and its gates -- directly in those two functions, the
+call-site exception the latch already makes for the transports' refreshes, and never between the
+earliest gate and a request (gate 10). Only an `Interactive` or `ManagedIdentity` session whose
+state records the expiry is renewed. A `DeviceCode` session is not, and every 401 of one is forced,
+exactly as before A11 (Ruling R12, pending the architect's decision): DECOMPILED from AzAuth 2.10.0,
+a device-code `Get-AzToken` without `Force` that reuses the credential AzAuth stores -- a
+`DeviceCodeCredential` for the same client id -- waits on a queue only the device-code callback of
+a credential built for that call completes, so it never returns and prints no code, while `Force`
+builds a new credential, which shows a new code. That fits the hang measured in the tenant-switch
+shape (below). The renewal calls `Initialize-OERAuth` with the state's tenant, method and client id
+(ARM adds `-IncludeARM`) and the private `-Renewal`, never `-ForceRefresh`, so `Get-AzToken` is
+called without `Force`. `-Renewal` keeps a success from clearing the session-uncertain marker, as
+above; a same-tenant, same-identity success changes nothing `Register-OERSignInIdentity` remembers.
+After a 401, an `Interactive` or `ManagedIdentity` token the state records as expired, or within the
+window, is renewed the same way (`-Renewal`); a 401 for a token still valid -- revoked, CAE,
+another tenant's -- for one whose expiry is not recorded, and for any `DeviceCode` token is forced.
+The app-only refusal stays first on both 401 paths, and the claims challenge is unchanged. An
+app-only session (`ClientSecret`, `ClientCertificate`) is never renewed within a command, since the
+module keeps no key material -- a known limit, stated in the texts. A renewal that fails latches the
+transport function that called it, so that request is refused and the session left uncertain.
+Whether a renewal prompts is AzAuth's (decompiled, not measured): a managed identity never, and an
+interactive session always, since AzAuth builds a new browser credential for every interactive
+token -- so never call a renewal silent for an interactive session. Never add `-ForceRefresh` to a
+renewal, never renew an app-only session, never let a transport renew a `DeviceCode` session without
+`Force` (it can hang), and never compute the window outside its owner (below). Known limit, older
+than A11 and unchanged by it: `Initialize-OERAuth`'s own device-code acquisition when a command
+begins within the window calls `Get-AzToken` without `Force` and can hang the same way.
 `Why: docs/development/rationale.md#a-long-run-renews-its-token-before-it-expires`
 
 | Parameter set | Key parameters | Use case |
@@ -783,7 +789,9 @@ retired with its tracker; do not bring it back. `Connect-OER -Force` is the only
 makes a switch take effect. Never "fix" a switch by
 adding an automatic `-Force` without a new decision -- and weigh one knowing that, measured, a
 device-code sign-in without `-Force` that reuses a credential which has already completed a sign-in
-and names a different tenant never returns.
+and names a different tenant never returns. The tenant is not what hangs it: by the decompiled
+mechanism under A11 above, any device-code call without `Force` that reuses the stored credential
+never returns, the same tenant included.
 `Why: docs/development/rationale.md#auth-state`,
 `docs/development/rationale.md#switching-tenants-in-one-process`
 
@@ -1069,11 +1077,11 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Get-OERInventoryTenantId`. `Why: docs/development/rationale.md#a-document-names-the-tenant-it-was-exported-from`
 - **`Get-OERTokenRenewalThreshold` is the single owner of the token renewal window** -- five
   minutes from now, in UTC: a token that expires at or before it is due. `Initialize-OERAuth`'s
-  cached return keeps a token that expires after it, and the two transports renew one that expires
-  at or before it (A11, BL-105). Only `Initialize-OERAuth`, `Invoke-OERGraphRequest` and
-  `Invoke-OERArmRequest` call it, and none of those three files calls `AddMinutes`, `AddSeconds` or
-  `AddHours`: never write a second window literal. Gate 10 of `tests/QA/sourcehygiene.tests.ps1`
-  holds both.
+  cached return keeps a token that expires after it, and the two transports renew an interactive or
+  managed identity session's token that expires at or before it (A11, BL-105). Only
+  `Initialize-OERAuth`, `Invoke-OERGraphRequest` and `Invoke-OERArmRequest` call it, and none of
+  those three files calls `AddMinutes`, `AddSeconds` or `AddHours`: never write a second window
+  literal. Gate 10 of `tests/QA/sourcehygiene.tests.ps1` holds both.
   `Why: docs/development/rationale.md#a-long-run-renews-its-token-before-it-expires`
 
 ---
