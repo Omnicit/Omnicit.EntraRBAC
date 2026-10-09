@@ -29,7 +29,7 @@ line break. The `NotDirectAssignment` example now parses for a role name with a 
 
 `SemiAnnually` (every six months) is a new access review cadence for `New-OERAccessReviewDefinition`,
 `Set-OERAccessReviewDefinition` and the `recurrence` of a structure document. A live review with a
-six-month interval now exports as `SemiAnnually`, without a warning, and applies as Unchanged. An
+six-month interval now exports as `SemiAnnually`, without a warning, and applies as `Unchanged`. An
 earlier export recorded it as `Monthly`; re-export before applying, or the apply makes it monthly.
 
 ## [1.1.3] - 2026-10-07

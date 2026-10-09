@@ -1133,55 +1133,63 @@ pattern:
 Monthly, Quarterly, SemiAnnually, Annually is canonical: `Resolve-OERStructureEnumCasing` owns it
 (`accessReviewRecurrence`), and every other list repeats it in that order.
 
-**Where the vocabulary stands.** The names are spelled out in six places: the `-Recurrence`
+**Where the vocabulary stands.** The canonical list is `accessReviewRecurrence` in
+`Resolve-OERStructureEnumCasing`. Six more places spell the names out: the `-Recurrence`
 `ValidateSet` of `New-OERAccessReviewRecurrence`, of `New-OERAccessReviewDefinition` and of
-`Set-OERAccessReviewDefinition`; `$ValidRecurrenceValues` (and the refusal text beside it) in
+`Set-OERAccessReviewDefinition`; the `$ValidRecurrenceValues` array in
 `Sync-OERStructureAccessReview`; the `recurrence` list of the exported prompt template; and the
 `accessReviews[].recurrence` enum of the structure schema. The "access review recurrence vocabulary
-cohort" in `tests/Unit/Private/Resolve-OERStructureEnumCasing.Tests.ps1` reads each of them out of
-the source tree and compares it with the canonical list, order included, so a cadence added to five
-of the six places fails the build. The interval numbers (1, 3, 6 and 12) and the interval-to-cadence
-switch stand in two more places, written out twice on purpose: the export in `Get-OERInventory` and
-the live-state diff in `Resolve-OERAccessReviewChange`. The cohort does not read those; behaviour
-tests do (`Get-OERInventory.Tests.ps1`, `Resolve-OERAccessReviewChange.Tests.ps1`), so a change to
-the vocabulary touches the cohort's six lists and these two switches, and the help texts that
-enumerate the cadences.
+cohort" in `tests/Unit/Private/Resolve-OERStructureEnumCasing.Tests.ps1` reads each of those six out
+of the source tree and compares it with the canonical list, order included, so a cadence missing
+from any one of them fails the build. For the array it reads only the string literals of the
+`$ValidRecurrenceValues` assignment. The refusal text beside it in `Sync-OERStructureAccessReview`
+(the `unrecognised recurrence value` message, which ends in the list of accepted cadences) is one
+more spelling that the cohort does not read; a test in `Sync-OERStructureAccessReview.Tests.ps1`
+pins it verbatim.
+
+The interval numbers (1, 3, 6 and 12) stand in three more places, each written out on its own and
+held by behaviour tests, not by the cohort: the cadence-to-interval `switch` of
+`New-OERAccessReviewRecurrence` (`New-OERAccessReviewRecurrence.Tests.ps1`), and the
+interval-to-cadence `switch` with the set of representable intervals, in the export in
+`Get-OERInventory` (`Get-OERInventory.Tests.ps1`) and in the live-state diff in
+`Resolve-OERAccessReviewChange` (`Resolve-OERAccessReviewChange.Tests.ps1`). A change to the
+vocabulary therefore touches the canonical list, the six lists the cohort reads, the refusal text,
+those three interval sites, and the help texts that enumerate the cadences.
 
 **Why `SemiAnnually` was added** (Sprint 10 step 6, BL-108, decision A12 of 2026-10-08). A live run
-showed three reviews with `absoluteMonthly` interval 6, so the pattern is common in real tenants and
-is not an oddity of one. Graph accepts and keeps it: check 5.5 of
-`docs/live-verification/pr53-checklist.md` (2026-08-24) created a semi-annual review in the portal
-and it existed, and check 5.6 then saw the module name its pattern as interval 6. The pattern shape
-the module writes (`type`, `interval`, `dayOfMonth`) is the documented one: the
+showed three reviews with `absoluteMonthly` interval 6. Graph accepts and keeps that pattern: check
+5.5 of `docs/live-verification/pr53-checklist.md` (2026-08-24) created a semi-annual review in the
+portal and it existed, and check 5.6 then saw the module name its pattern as interval 6. The pattern
+shape the module writes (`type`, `interval`, `dayOfMonth`) is the documented one: the
 `accessReviewScheduleSettings` resource type says "Only dayOfMonth, interval, and type (weekly,
 absoluteMonthly) properties are supported"
-(https://learn.microsoft.com/graph/api/resources/accessreviewschedulesettings). The portals offer the cadence under two names, "Semi-annually"
-on the PIM access review page
+(https://learn.microsoft.com/graph/api/resources/accessreviewschedulesettings).
+The portals offer the cadence under two names, "Semi-annually" on the PIM access review page
 (https://learn.microsoft.com/entra/id-governance/privileged-identity-management/pim-create-roles-and-resource-roles-review)
 and "Bi-annually" on the entitlement management access package review page
 (https://learn.microsoft.com/entra/id-governance/entitlement-management-access-reviews-create).
-Without a name for it the module could neither export nor apply such a review: the export collapsed
-it onto `Monthly` with a warning, and the apply refused to rewrite it (check 5.6, same run), so
-those reviews could never be managed from a document. The name is `SemiAnnually`, one word, matching
-`Quarterly` and `Annually`.
+Without a name for it the module exported such a review lossily, as `Monthly` with a warning, and
+refused to rewrite its recurrence, start date and range on apply (check 5.6, same run), while its
+other fields applied as usual. So the cadence and schedule of those reviews could never be managed
+from a document. The name is `SemiAnnually`, one word, matching `Quarterly` and `Annually`.
 
-**What is still outside the vocabulary.** Any other live pattern is exported as the nearest cadence
-(an `absoluteMonthly` interval other than 1, 3, 6 or 12 as `Monthly`, a `weekly` interval other
-than 1 as `Weekly`, any other pattern type as `OneTime`) with a warning that names the true
-pattern, and `Resolve-OERAccessReviewChange`
-refuses to rebuild it: the recurrence, start date and range unit is suppressed and reported in
-`NotApplied`, never written, since rebuilding it from the collapsed cadence would downgrade a live
-review while reporting `Updated`. None of that changed, and no new ErrorId, parameter or value
-came with `SemiAnnually` (A8).
+**What is still outside the vocabulary.** Any other live pattern is exported under a cadence the
+module can name -- an `absoluteMonthly` interval other than 1, 3, 6 or 12 as `Monthly`, a `weekly`
+interval other than 1 as `Weekly`, any other pattern type as `OneTime` -- with a warning that names
+the true pattern. `Resolve-OERAccessReviewChange` refuses to rebuild it: the recurrence, start date
+and range unit is suppressed and reported in `NotApplied`, never written, since rebuilding it from
+the collapsed cadence would downgrade a live review while reporting `Updated`. None of that
+changed, and no new ErrorId, parameter or value came with `SemiAnnually` (A8).
 
 **The consequence for an older document.** An export made before this change recorded a live
 semi-annual review as `Monthly`, with the warning. Applied now, that document differs from the live
-cadence, so `Invoke-OERStructure` changes the review to monthly (interval 1), and the plan shows it
-as `Updated`. Before this change the same apply left the review alone, since interval 6 was outside
-the vocabulary. That is the cost of making the cadence expressible, pinned by a test in
-`Resolve-OERAccessReviewChange.Tests.ps1` so it is a decision and not an accident. The remedy is the
-release note's: re-export the inventory before applying a document that predates this change, and
-read the `-WhatIf` plan.
+cadence, so `Invoke-OERStructure` changes the review to monthly (interval 1): a real run reports it
+`Updated`, and a `-WhatIf` run reports a `Skipped` record whose detail says it would update the
+access review with `recurrence=Monthly`. Before this change the same apply left the review alone,
+since interval 6 was outside the vocabulary. That is the cost of making the cadence expressible,
+pinned by a test in `Resolve-OERAccessReviewChange.Tests.ps1` so it is a decision and not an
+accident. The release note names the remedy: re-export before applying a document that predates
+this change. Running the apply with `-WhatIf` first shows the change without making it.
 
 ## declared-property
 

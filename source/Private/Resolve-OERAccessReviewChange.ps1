@@ -33,11 +33,12 @@ function Resolve-OERAccessReviewChange {
 
     A third consequence: New-OERAccessReviewRecurrence can only emit weekly interval 1 and
     absoluteMonthly interval 1/3/6/12, so a live pattern outside that set (a bi-monthly
-    absoluteMonthly interval 2, a bi-weekly weekly interval 2, ...) cannot be reproduced. Rebuilding the recurrence
-    object from the collapsed cadence in that case would silently downgrade the live review to a
-    coarser one while reporting Updated. The recurrence/startDate/endDate/occurrences unit is therefore
-    suppressed and reported in NotApplied instead whenever the live pattern is not representable, even
-    when some other field in the same unit legitimately differs.
+    absoluteMonthly interval 2, a bi-weekly weekly interval 2, ...) cannot be reproduced.
+    Rebuilding the recurrence object from the collapsed cadence in that case would silently
+    downgrade the live review to a coarser one while reporting Updated. The
+    recurrence/startDate/endDate/occurrences unit is therefore suppressed and reported in
+    NotApplied instead whenever the live pattern is not representable, even when some other field
+    in the same unit legitimately differs.
 
     Reviewer sets are compared on RESOLVED OBJECT IDS supplied by the caller in -DeclaredReviewer, so
     a display-name change in the tenant does not look like drift. The live keys are derived from each
