@@ -31,8 +31,9 @@ function Initialize-OERAuth {
     acquired access token through Invoke-AzRestMethod, so all ARM calls go through Invoke-OERArmRequest
     with the cached token instead.
 
-    Auth configuration (method, tenant, client id, cloud, and credential material) is cached in
-    $script:_OERAuthState so tokens can be silently re-acquired near expiry without re-prompting.
+    The auth configuration -- method, tenant, client id and cloud, never the credential material --
+    is cached in $script:_OERAuthState, and a renewal near expiry signs in again with it. Whether
+    that renewal prompts depends on the sign-in type; see about_Omnicit.EntraRBAC, LONG RUNS.
 
     The tenant each acquired token was actually ISSUED for is recorded beside the requested one, as
     TokenTenantId and ArmTokenTenantId. TenantId keeps naming what the caller asked for, since that
@@ -122,6 +123,12 @@ function Initialize-OERAuth {
     primary interaction, not a warning: a caller running with -WarningAction SilentlyContinue never
     saw the code and the sign-in appeared to hang. Only the device-code path is treated this way;
     every other credential type calls Get-AzToken exactly as before.
+
+    Every device code token request, for Microsoft Graph and for Azure Resource Manager, carries
+    -Force (A17), so AzAuth builds a new credential and prints a new code each time: a device code
+    credential AzAuth stored and reused for a later request never returns. The cached return is
+    unchanged: a device code session whose token is still valid answers from the cache with no token
+    request. Every other credential type gets -Force only for -ForceRefresh and a cloud switch.
 
     -Environment selects the sovereign cloud. Every endpoint that follows from it -- the Graph token
     audience, the Graph environment name handed to Connect-MgGraph, the Azure Resource Manager
@@ -784,19 +791,21 @@ function Initialize-OERAuth {
     # pipeline neither wraps nor unrolls it), and a terminating Get-AzToken failure still propagates
     # out of the pipeline into the caller's try/catch -- a redirection does not swallow a throw.
     #
-    # BOTH call sites, Graph and ARM. On the device-code path the ARM acquisition is expected to
-    # raise a device code of its own rather than reuse the Graph sign-in: the Graph call passes a
-    # client id (the caller's, or $DefaultGraphClientId) and the ARM call passes none, and AzAuth
-    # reuses its process-wide credential only for the same credential type AND the same client id.
-    # Measured offline, with the network blocked: a device-code Graph call followed by a device-code
-    # ARM call for the same tenant built a NEW credential instance for the ARM call, under
-    # Azure.Identity's default public client. Inferred from the decompiled Azure.Identity, not
-    # executed: that new instance holds neither the Graph sign-in's authentication record nor its
-    # in-memory token cache, so it cannot complete silently. That the operator is then shown a second
-    # device code follows from that inference and has not yet been observed live. The ARM acquisition
-    # is also reached with Force still on the splat under -ForceRefresh, and on its own by an
-    # -IncludeARM call made when only the Graph token was cached. Every one of these shapes can raise
-    # a real device code, and an invisible one there fails exactly the same way.
+    # BOTH call sites, Graph and ARM. On the device-code path the ARM acquisition raises a device
+    # code of its own rather than reusing the Graph sign-in: the Graph call passes a client id (the
+    # caller's, or $DefaultGraphClientId) and the ARM call passes none, and AzAuth reuses its
+    # process-wide credential only for the same credential type AND the same client id. Measured
+    # offline, with the network blocked: a device-code Graph call followed by a device-code ARM call
+    # for the same tenant built a NEW credential instance for the ARM call, under Azure.Identity's
+    # default public client. The second device code is MEASURED live as well: on 2026-09-16 (AzAuth
+    # 2.9.0) checks 3.1, 3.3a and 6.1a of the fix-tenant-switch-warning live checklist each ran a
+    # device code Connect-OER -IncludeARM, printed two code instructions, recorded
+    # InformationRecords 2 and ended SUCCEEDED. The ARM acquisition is also reached under
+    # -ForceRefresh, and on its own by an -IncludeARM call made when only the Graph token was
+    # cached. Since A17 every device code token request carries Force (SEC (A17, BL-112), where the
+    # splat is built below), so each of these shapes, and the Graph call itself, makes AzAuth build
+    # a new credential and raise a real device code -- and an invisible one there fails exactly the
+    # same way.
     function Invoke-AzTokenCall {
         param(
             [hashtable]$TokenParameter,
@@ -819,10 +828,25 @@ function Initialize-OERAuth {
     $TokenParams = @{ ErrorAction = 'Stop' }
     if ($EffectiveTenant -ne 'organizations') { $TokenParams.Tenant = $EffectiveTenant }
     if ($ClaimsChallenge) { $TokenParams.Claim = $ClaimsChallenge }
-    # ORed, not overwritten: -ForceRefresh keeps its own reason for forcing, and a cloud switch adds
-    # a second one. See the $script:_OERLastAuthorityHost comment above for why AzAuth's static
-    # credential cache leaves -Force as the only way to move the authority.
-    if ($ForceRefresh -or $EffectiveAuthorityHost -ne $script:_OERLastAuthorityHost) {
+    # SEC (A17, BL-112): every device code token request carries Force (decision A17, Philip
+    # 2026-10-09), the Microsoft Graph and the Azure Resource Manager token alike. AzAuth keeps the
+    # device code credential it built and reuses it for the next device code request with the same
+    # client id, and a reused device code credential never returns: DECOMPILED,
+    # GetAzToken.EndProcessing waits on a queue that only a NEW credential's callback completes, so no
+    # code is printed and the call hangs; MEASURED live 2026-09-16 for a tenant switch. Force makes
+    # AzAuth clear its stored credential and build a new one, which prints a new code. Device code
+    # ONLY: every other credential type keeps Force for -ForceRefresh and a cloud switch only, as
+    # before. This is the single owner of that decision, read in exactly two places: the Force
+    # condition below and the removal of Force after a Microsoft Graph acquisition. It is NOT a cache
+    # term: $GraphCached, $ArmCached and $ClearsUncertainty read $ForceRefresh and never this, so a
+    # device code session whose token is still valid answers from the cached return above with no
+    # token request at all.
+    [bool]$DeviceCodeForced = $EffectiveMethod -eq 'DeviceCode'
+    # ORed, not overwritten: -ForceRefresh keeps its own reason for forcing, a device code sign-in adds
+    # a second one (A17, above), and a cloud switch a third; each term is independently deletable. See
+    # the $script:_OERLastAuthorityHost comment above for why AzAuth's static credential cache leaves
+    # -Force as the only way to move the authority.
+    if ($ForceRefresh -or $DeviceCodeForced -or $EffectiveAuthorityHost -ne $script:_OERLastAuthorityHost) {
         $TokenParams.Force = $true
     }
 
@@ -1073,7 +1097,9 @@ function Initialize-OERAuth {
             # SUCCESSFUL sign-in first attempts silent reacquisition for the requested tenant.
             # CONTRADICTED BY MEASUREMENT, 2026-09-16, twice on a healthy connection: when such a
             # credential names another tenant without -Force there is no fall-back to a new device
-            # code -- the call never returns, and -Force cured it every time.
+            # code -- the call never returns, and -Force cured it every time. Since A17 every device
+            # code token request carries Force (SEC (A17, BL-112), where the splat is built), so the
+            # module no longer reuses such a credential.
             #
             # MEASURED live, 2026-09-15/16, against real tokens: AzToken.TenantId carries the acquired
             # token's own tid claim, not an echo of the requested value (checklist 4.1, 4.2 and 4.3a,
@@ -1126,11 +1152,13 @@ function Initialize-OERAuth {
             # the same authority. That matters for the credential types AzAuth reuses, such as a
             # client secret: without Force, its ARM call on the standard
             # 'Connect-OER -Environment USGov -IncludeARM' path reuses the credential the Graph call
-            # just built. It is NOT what decides whether a second prompt appears. On DeviceCode the ARM
-            # call builds a new credential anyway, since it passes no client id where the Graph call
-            # passes one (measured offline), and on Interactive every call constructs a new credential
-            # (decompiled, not executed). An explicit -ForceRefresh is the caller's own instruction
-            # and survives.
+            # just built. It is NOT what decides whether a second prompt appears. A device code sign-in
+            # keeps Force on the ARM call ($DeviceCodeForced, SEC (A17, BL-112) above) because A17 has
+            # no exceptions -- every device code token request carries it -- and not because this call
+            # would otherwise hang: after the Graph call the ARM call passes no client id, so AzAuth
+            # builds a new credential for it anyway. On Interactive every call constructs a new
+            # credential (decompiled, not executed). An explicit -ForceRefresh is the caller's own
+            # instruction and survives.
             #
             # Removed HERE, inside the Graph-acquired branch, and nowhere else. When the Graph token
             # was cached and only ARM runs, the tracker can still legitimately name a different
@@ -1138,7 +1166,7 @@ function Initialize-OERAuth {
             # the state (see the recording comment above) -- and that ARM call genuinely does need
             # the -Force to move the authority. Hoisting this removal out of this branch would break
             # exactly that case.
-            if (-not $ForceRefresh) { $TokenParams.Remove('Force') }
+            if (-not $ForceRefresh -and -not $DeviceCodeForced) { $TokenParams.Remove('Force') }
 
             $SecureToken = [System.Net.NetworkCredential]::new('', $GraphToken.Token).SecurePassword
 

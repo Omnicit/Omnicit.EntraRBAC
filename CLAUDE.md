@@ -759,7 +759,8 @@ strings.
 whole process, and `Get-AzToken -Tenant` is not honoured by every credential type: the device code
 and managed identity requests do not carry the named tenant at all (measured), with a device-code
 credential reused after a successful sign-in passing it on for a silent re-acquisition instead
-(inferred), and a client secret credential refuses a different tenant until `-Force` rebuilds it
+(inferred; since A17 the module never reuses one, below), and a client secret credential refuses a
+different tenant until `-Force` rebuilds it
 (or, with `AZURE_IDENTITY_DISABLE_MULTITENANTAUTH` set, silently requests the token from the previous
 tenant; measured).
 `Initialize-OERAuth` refuses, with `TenantMismatch`, a token issued for another tenant than the one
@@ -780,12 +781,19 @@ warns, for a client secret switch it can predict will not take effect (a
 `-WarningAction Stop`/`$WarningPreference = 'Stop'` caller is stopped at that `Write-Warning`, before
 any token request). The post-call warning that compared granted tenants is
 retired with its tracker; do not bring it back. `Connect-OER -Force` is the only public lever that
-makes a switch take effect. Never "fix" a switch by
-adding an automatic `-Force` without a new decision -- and weigh one knowing that, measured, a
-device-code sign-in without `-Force` that reuses a credential which has already completed a sign-in
-and names a different tenant never returns.
+makes a switch take effect. **Every device code token request, Graph and ARM, carries `Force`**
+(A17, BL-112, Philip's decision 2026-10-09): a device code request without it that reuses the
+credential AzAuth stored for the same client id never returns -- no code, no error (decompiled;
+measured live for a tenant switch) -- and `Force` makes AzAuth build a new credential, which prints
+a new code. `$DeviceCodeForced` in `Initialize-OERAuth` is the single owner of that decision, read
+only by the `Force` condition and by the removal of `Force` after a Graph acquisition, and it is
+NOT a cache term: `$GraphCached`, `$ArmCached` and `$ClearsUncertainty` never read it, so a device
+code session whose tokens are still valid answers from the cached return with no token request.
+Never add an automatic `-Force` to any other sign-in type without a new decision, and never make
+the device code `Force` bypass the cached return.
 `Why: docs/development/rationale.md#auth-state`,
-`docs/development/rationale.md#switching-tenants-in-one-process`
+`docs/development/rationale.md#switching-tenants-in-one-process`,
+`docs/development/rationale.md#every-device-code-sign-in-is-forced`
 
 ---
 

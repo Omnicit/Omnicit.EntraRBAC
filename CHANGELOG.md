@@ -22,6 +22,11 @@ not sent. `New-`/`Set-OERConfiguration` refuse a white-space `-TenantId`. `SignI
 its actual cause, and the `SignInRefused` after a failed sign-in no longer says the session may be
 the previous tenant's.
 
+Every device code sign-in now prints a new code, for Microsoft Graph and Azure Resource Manager
+alike, so a later one in the same PowerShell session no longer reuses the credential AzAuth keeps
+for the process, which could hang with no code shown, and needs no `-Force` to avoid that. The help
+and README now say how a long run renews its token for each sign-in type and what it asks of you.
+
 `Invoke-OERStructure -WhatIf` now plans what the run does when an Azure role policy entry's
 approvers would name nobody: both report it `Failed` with `ApproverRequired` and change nothing.
 `Test-OERStructure` refuses a `tenantId` that is not a string, as the schema does, or that ends in a

@@ -39,6 +39,28 @@ function Connect-OER {
     process, and Disconnect-OER clears this module's session and the Graph SDK session the module
     connected, not that credential.
 
+    An access token lasts about an hour (Microsoft Entra ID gives one a default lifetime of 60 to
+    90 minutes), so a longer run has to renew it. Where the sign-in type allows it, the module
+    renews a token when a command starts within five minutes of the token's expiry, and in the
+    middle of a command when Microsoft Graph or Azure Resource Manager rejects it with 401, after
+    which the rejected request is sent once more. A renewal signs in again: an interactive session
+    opens the browser, so a long run asks you to sign in about once an hour (choose the account the
+    session signed in with; the account picker also offers other accounts of the same tenant, and
+    the command then carries on as the one you pick), and a device code session prints a new code to
+    enter. A managed identity renews with no prompt and is the only sign-in that renews unattended.
+    A client secret or certificate session is not renewed, since the module never keeps the secret
+    or certificate: once the token has expired a request is refused with
+    AppOnlyTokenRefreshUnsatisfiable, and a command that starts within five minutes of its expiry,
+    or later, fails to sign in with AppOnlySessionCredentialUnavailable, until Connect-OER is run
+    with the secret or certificate again. A renewal nobody completes fails like any other sign-in:
+    the request it was for is not sent, and the session is left uncertain. Before a long run, run
+    Connect-OER -Force with the session's own sign-in parameters, so that it starts with a new
+    token: a plain Connect-OER with the same sign-in returns the session it has while the token has
+    more than five minutes left, and a bare Connect-OER -Force signs in interactively. Stay at the
+    keyboard during an interactive or device code run. An app-only run renews only between
+    commands, so run Connect-OER -Force with the secret or certificate before each command and keep
+    each command shorter than a token's lifetime. See about_Omnicit.EntraRBAC, LONG RUNS.
+
     Connect-OER also sets up a Microsoft Graph PowerShell SDK session in the current process: it
     calls Connect-MgGraph with the module's token, and so does the automatic sign-in of any other
     OER cmdlet. Disconnect-OER closes that session, and leaves one another Connect-MgGraph started,
@@ -97,13 +119,14 @@ function Connect-OER {
     Use interactive browser sign-in (delegated). This is the default when no credential is supplied.
 
     .PARAMETER DeviceCode
-    Use device-code sign-in, suitable for headless or remote sessions. Known limitation: in a
-    PowerShell process where a device-code sign-in has already completed, a further device-code
-    sign-in naming a different tenant without -Force never returns -- no device code is printed, no
-    error is raised, and Ctrl+C is the only escape, after which the PowerShell session has to be
-    exited. Pass -Force on the switching call, or start a new PowerShell session. A first
-    device-code sign-in in a process is unaffected, and so is a switch made straight after a
-    -IncludeARM sign-in. See about_Omnicit.EntraRBAC, SWITCHING TENANTS.
+    Use device-code sign-in, suitable for headless or remote sessions. Every device code sign-in
+    prints a new code to enter, for the Microsoft Graph and the Azure Resource Manager token alike
+    (two with -IncludeARM), and so does every renewal of the token: the module makes AzAuth build
+    a new credential each time. A later device code sign-in in the same PowerShell process
+    therefore no longer reuses the credential AzAuth keeps for the process, which used to make it
+    never return, with no code printed and no error, and it does not need -Force for that. Each
+    code has to be entered, so a long device code run needs someone at the keyboard. See
+    about_Omnicit.EntraRBAC, SWITCHING TENANTS and LONG RUNS.
 
     .PARAMETER ManagedIdentity
     Use an Azure managed identity. Combine with -ClientId for a user-assigned identity.
@@ -151,11 +174,11 @@ function Connect-OER {
     Signs in again even when a cached session exists, and makes AzAuth discard the credential it
     keeps for the whole PowerShell process and build a new one. Use it to move a client secret
     sign-in for the same application to another tenant in the same session: without it that sign-in
-    keeps the tenant it was first made for. A device-code sign-in that switches tenants in a process
-    where a device-code sign-in has already completed needs it too: without -Force that call never
-    returns -- no device code is printed and no error is raised -- and Ctrl+C is the only escape. It
-    still does not make a device code or managed identity sign-in send the tenant you name; see
-    about_Omnicit.EntraRBAC, SWITCHING TENANTS.
+    keeps the tenant it was first made for. A device code sign-in does not need -Force to make
+    AzAuth build a new credential: the module does that for every device code sign-in itself. On a
+    device code session -Force still signs in again when a cached session exists, which prints new
+    codes. It still does not make a device code or managed identity sign-in send the tenant you
+    name; see about_Omnicit.EntraRBAC, SWITCHING TENANTS.
 
     .EXAMPLE
     Connect-OER -TenantId 'contoso.onmicrosoft.com'

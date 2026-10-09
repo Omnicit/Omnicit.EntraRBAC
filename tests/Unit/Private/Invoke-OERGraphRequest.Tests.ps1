@@ -6346,3 +6346,97 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 }
+
+Describe 'Invoke-OERGraphRequest refreshes a device code session with Force (A17, BL-112)' {
+    # Every device code token request carries Force (A17): a device code credential AzAuth stored and
+    # reused for a later request never returns, and Force makes AzAuth build a new one, which prints a
+    # new code. The two refreshes this wrapper makes -- the claims step-up and the token-rejected retry --
+    # run through the real Initialize-OERAuth here, end to end: Get-AzToken, Connect-MgGraph,
+    # Get-MgContext and the sender, Invoke-MgGraphRequest, are mocked in the module scope, and nothing
+    # else is. The session is a device code sign-in for an invented GUID tenant, so no domain lookup
+    # runs, and the list of token requests is emptied after it, so only the refresh's requests count.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+        }
+        $script:A17Tenant = '33333333-3333-3333-3333-333333333333'
+        $script:A17Calls = [System.Collections.Generic.List[object]]::new()
+        $script:A17GraphRequests = 0
+        # One stable Graph SDK session, which is the module's own once it has connected.
+        $script:A17Context = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '33333333-3333-3333-3333-333333333333'
+            Account = 'admin@contoso.com'; AppName = 'oer-test-app'; Environment = 'Global'
+            Scopes = @('Group.ReadWrite.All')
+        }
+        Mock -ModuleName $script:moduleName Get-MgContext { $script:A17Context }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        # Every parameter the module passes, since a mock body without a param() block sees an empty
+        # $PSBoundParameters. Each request is recorded as its resource and the parameter names it bound,
+        # and answered with a token issued for the tenant it named.
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $WarningAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            $script:A17Calls.Add([pscustomobject]@{ Resource = $Resource; Keys = @($PSBoundParameters.Keys) })
+            [pscustomobject]@{
+                Token     = 'NOT-A-REAL-TOKEN-a17'
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = 'admin@contoso.com'
+                TenantId  = $Tenant
+            }
+        }
+        InModuleScope $script:moduleName -Parameters @{ T = $script:A17Tenant } {
+            param($T)
+            Initialize-OERAuth -TenantId $T -AuthMethod 'DeviceCode'
+        }
+        # The session's own sign-in made one Microsoft Graph token request; only the refresh counts below.
+        $script:A17Calls.Count | Should -Be 1
+        $script:A17Calls.Clear()
+    }
+
+    It 'E1: a claims challenge steps up with Force and the claims on the Microsoft Graph token request, and sends the retry once' {
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $script:A17GraphRequests++
+            if ($script:A17GraphRequests -eq 1) {
+                throw [System.Exception]::new('WWW-Authenticate: Bearer claims="eyJhY2Nlc3MiOnt9fQ"')
+            }
+            @{ value = @('after-stepup') }
+        }
+
+        $Result = InModuleScope $script:moduleName { Invoke-OERGraphRequest -Uri 'v1.0/groups' }
+
+        $Result.value | Should -Be 'after-stepup'
+        # The challenged request and one retry.
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 2 -Exactly
+        $script:A17Calls.Count | Should -Be 1 -Because 'the step-up requests one Microsoft Graph token and nothing else'
+        [string]$script:A17Calls[0].Resource | Should -BeLike '*graph*'
+        ($script:A17Calls[0].Keys -contains 'DeviceCode') | Should -BeTrue -Because 'the step-up keeps the device code sign-in'
+        ($script:A17Calls[0].Keys -contains 'Claim') | Should -BeTrue -Because 'the step-up carries the claims'
+        ($script:A17Calls[0].Keys -contains 'Force') | Should -BeTrue -Because 'the step-up''s device code token request builds a new credential'
+    }
+
+    It 'E2: a rejected token refreshes with Force on the Microsoft Graph token request, and sends the retry once' {
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $script:A17GraphRequests++
+            if ($script:A17GraphRequests -eq 1) {
+                throw [System.Exception]::new('InvalidAuthenticationToken: token is expired')
+            }
+            @{ value = @('after-refresh') }
+        }
+
+        $Result = InModuleScope $script:moduleName { Invoke-OERGraphRequest -Uri 'v1.0/groups' }
+
+        $Result.value | Should -Be 'after-refresh'
+        # The rejected request and one retry.
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 2 -Exactly
+        $script:A17Calls.Count | Should -Be 1 -Because 'the refresh requests one Microsoft Graph token and nothing else'
+        [string]$script:A17Calls[0].Resource | Should -BeLike '*graph*'
+        ($script:A17Calls[0].Keys -contains 'DeviceCode') | Should -BeTrue -Because 'the refresh keeps the device code sign-in'
+        ($script:A17Calls[0].Keys -contains 'Claim') | Should -BeFalse -Because 'a rejected token carries no claims challenge'
+        ($script:A17Calls[0].Keys -contains 'Force') | Should -BeTrue -Because 'the refresh''s device code token request builds a new credential'
+    }
+}
