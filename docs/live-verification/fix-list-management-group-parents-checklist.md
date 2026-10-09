@@ -140,7 +140,7 @@ function Get-S107Entities {
 }
 
 function Write-S107Own {
-    # A command's OWN records in an -ErrorVariable (the id ends in ,<Command>), as ids only.
+    # A command's OWN records in an -ErrorVariable (the id ends in a comma and the command's name), as ids only.
     param([object[]]$Records, [string]$Command)
     $Own = @($Records | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and ([string]$_.FullyQualifiedErrorId).EndsWith(",$Command") })
     Write-OerLiveStep ("{0} own errors: {1}{2}" -f $Command, $Own.Count, $(if ($Own.Count) { ' -- ' + (($Own | ForEach-Object { $_.FullyQualifiedErrorId }) -join '; ') } else { '' }))
