@@ -1277,7 +1277,7 @@ Describe 'Get-OERInventory' {
         It 'warns rather than silently collapsing an unrepresentable recurrence interval' {
             # Live absoluteMonthly interval 2 (every other month) is a review whose cadence
             # New-OERAccessReviewRecurrence cannot emit (it emits 1, 3, 6 and 12), so it is exported as
-            # the nearest coarser cadence (Monthly) -- but the warning must name the true interval so
+            # Monthly, a cadence the module can name -- but the warning must name the true interval so
             # the loss is visible, not silent.
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
                 [PSCustomObject]@{

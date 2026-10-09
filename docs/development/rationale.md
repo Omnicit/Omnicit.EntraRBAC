@@ -1139,13 +1139,16 @@ Monthly, Quarterly, SemiAnnually, Annually is canonical: `Resolve-OERStructureEn
 `Set-OERAccessReviewDefinition`; the `$ValidRecurrenceValues` array in
 `Sync-OERStructureAccessReview`; the `recurrence` list of the exported prompt template; and the
 `accessReviews[].recurrence` enum of the structure schema. The "access review recurrence vocabulary
-cohort" in `tests/Unit/Private/Resolve-OERStructureEnumCasing.Tests.ps1` reads each of those six out
-of the source tree and compares it with the canonical list, order included, so a cadence missing
-from any one of them fails the build. For the array it reads only the string literals of the
-`$ValidRecurrenceValues` assignment. The refusal text beside it in `Sync-OERStructureAccessReview`
-(the `unrecognised recurrence value` message, which ends in the list of accepted cadences) is one
-more spelling that the cohort does not read; a test in `Sync-OERStructureAccessReview.Tests.ps1`
-pins it verbatim.
+cohort" in `tests/Unit/Private/Resolve-OERStructureEnumCasing.Tests.ps1` compares each of those six
+with the canonical list, order included, so a cadence missing from any one of them fails the build.
+It reads the four code lists (the three `-Recurrence` `ValidateSet` attributes and the
+`$ValidRecurrenceValues` array) out of the source tree with the PowerShell parser, and the other two
+from the module's own output, through `InModuleScope`: the prompt list from the exported prompt
+template and the enum from the structure schema. For the array it reads only the string literals of
+the `$ValidRecurrenceValues` assignment. The refusal text beside it in
+`Sync-OERStructureAccessReview` (the `unrecognised recurrence value` message, which ends in the list
+of accepted cadences) is one more spelling that the cohort does not read; a test in
+`Sync-OERStructureAccessReview.Tests.ps1` pins it verbatim.
 
 The interval numbers (1, 3, 6 and 12) stand in three more places, each written out on its own and
 held by behaviour tests, not by the cohort: the cadence-to-interval `switch` of
@@ -1157,7 +1160,7 @@ vocabulary therefore touches the canonical list, the six lists the cohort reads,
 those three interval sites, and the help texts that enumerate the cadences.
 
 **Why `SemiAnnually` was added** (Sprint 10 step 6, BL-108, decision A12 of 2026-10-08). A live run
-showed three reviews with `absoluteMonthly` interval 6. Graph accepts and keeps that pattern: check
+showed three reviews with `absoluteMonthly` interval 6. Graph stores and returns that pattern: check
 5.5 of `docs/live-verification/pr53-checklist.md` (2026-08-24) created a semi-annual review in the
 portal and it existed, and check 5.6 then saw the module name its pattern as interval 6. The pattern
 shape the module writes (`type`, `interval`, `dayOfMonth`) is the documented one: the
@@ -1179,17 +1182,19 @@ interval other than 1 as `Weekly`, any other pattern type as `OneTime` -- with a
 the true pattern. `Resolve-OERAccessReviewChange` refuses to rebuild it: the recurrence, start date
 and range unit is suppressed and reported in `NotApplied`, never written, since rebuilding it from
 the collapsed cadence would downgrade a live review while reporting `Updated`. None of that
-changed, and no new ErrorId, parameter or value came with `SemiAnnually` (A8).
+changed, and no new ErrorId or parameter came with `SemiAnnually`, nor any value other than
+`SemiAnnually` itself (A8).
 
 **The consequence for an older document.** An export made before this change recorded a live
 semi-annual review as `Monthly`, with the warning. Applied now, that document differs from the live
 cadence, so `Invoke-OERStructure` changes the review to monthly (interval 1): a real run reports it
 `Updated`, and a `-WhatIf` run reports a `Skipped` record whose detail says it would update the
-access review with `recurrence=Monthly`. Before this change the same apply left the review alone,
-since interval 6 was outside the vocabulary. That is the cost of making the cadence expressible,
-pinned by a test in `Resolve-OERAccessReviewChange.Tests.ps1` so it is a decision and not an
-accident. The release note names the remedy: re-export before applying a document that predates
-this change. Running the apply with `-WhatIf` first shows the change without making it.
+access review with `recurrence=Monthly`. Before this change the same apply left the review's
+recurrence alone, since interval 6 was outside the vocabulary. That is the cost of making the
+cadence expressible, pinned by a test in `Resolve-OERAccessReviewChange.Tests.ps1` so it is a
+decision and not an accident. The release note names the remedy: re-export before applying a
+document that predates this change. Running the apply with `-WhatIf` first shows the change without
+making it.
 
 ## declared-property
 
