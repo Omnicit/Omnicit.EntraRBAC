@@ -365,10 +365,10 @@ Describe 'Get-OERGroupRelation' {
             $Unguarded | Should -BeNullOrEmpty -Because 'a caller outside a try would carry on past a failed read and emit the untyped half (docs/development/rationale.md#typed-group-member-read)'
         }
 
-        It 'does find the three callers, Get-OERGroup for members and for owners and Get-OERGroupMember, so the try scan is not vacuous' {
+        It 'does find the three callers, Read-OERGroupCollection for members and for owners and Get-OERGroupMember, so the try scan is not vacuous' {
             $Callers = @($Calls | Where-Object { $_.Path -ne 'Private/Get-OERGroupRelation.ps1' })
             $Callers.Count | Should -BeGreaterOrEqual 3
-            @($Callers | Where-Object { $_.Path -eq 'Public/Get-OERGroup.ps1' }).Count | Should -BeGreaterOrEqual 2
+            @($Callers | Where-Object { $_.Path -eq 'Private/Read-OERGroupCollection.ps1' }).Count | Should -BeGreaterOrEqual 2
             @($Callers | Where-Object { $_.Path -eq 'Public/Get-OERGroupMember.ps1' }).Count | Should -BeGreaterOrEqual 1
         }
 
