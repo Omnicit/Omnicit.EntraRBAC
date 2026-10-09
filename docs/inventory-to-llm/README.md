@@ -36,6 +36,8 @@ role that is actually in use; add `-AllDirectoryRolePolicies` to export the poli
 directory role instead. Add `RoleManagementPolicies` to `-Include` to also read Azure PIM policies
 at every scope (slower). Only RBAC-relevant groups are detailed in `inventory.json`; the full
 landscape is in `groupsRoster.json`. Use `-AllGroupsDetailed` to keep every group in full detail.
+Add `-IncludeSyncedGroups` to also keep the security groups synchronized from on-premises Active
+Directory (`onPremisesSynced: true`); `Invoke-OERStructure` writes nothing to such a group.
 
 ## 2. Ask an LLM
 

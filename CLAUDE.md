@@ -1047,6 +1047,19 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   a changed policy onboards an existing group. Never re-implement the check inline. The criterion is
   documented, not yet measured live, and misses a group used only through PIM active assignments.
   `Why: docs/development/rationale.md#pim-in-use-criterion`
+- **`Test-OERGroupOnPremisesSynced` is the single owner of whether a live group is synchronized from
+  on-premises** -- `OnPremisesSyncEnabled` (Graph's `onPremisesSyncEnabled`, carried by
+  `ConvertTo-OERGroup`) is the boolean true; false (no longer synced) and empty (never synced, or its
+  source of authority converted to the cloud) are not. `Sync-OERStructureGroup` writes nothing to such
+  a group, deciding on its LIVE read and never on the document's `onPremisesSynced` key: every
+  property, member, owner, eligibility or `pimPolicy` change is `Skipped` with no `ShouldProcess`
+  call, one warning per item, and each prune candidate is withheld
+  (`ConvertTo-OERPruneWithheldResult -SyncedGroup`). `Get-OERInventory` writes the document key
+  `onPremisesSynced` only as true, and `Export-OERInventory` the roster flag (a boolean on every row)
+  from the same predicate; the key is information only and never sent.
+  Never read `OnPremisesSyncEnabled` anywhere else -- the cohort check in
+  `tests/Unit/Private/Test-OERGroupOnPremisesSynced.Tests.ps1` holds it.
+  `Why: docs/development/rationale.md#synced-groups`
 - **`Resolve-OERTenantDomain` is the single owner of the module's one network call outside the
   Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
   discovery lookup of a tenant named by domain at the cloud's Microsoft Entra ID authority, the host

@@ -6146,7 +6146,7 @@ could cut its own privileges part-way through the run. Under A9 that service pri
 removed, so the case does not arise. A delegated user removing themselves through a group prune was
 possible before this fix and still is; this change does not touch it.
 
-**The five kinds of withheld prune `ConvertTo-OERPruneWithheldResult` builds.** One parameter set per
+**The six kinds of withheld prune `ConvertTo-OERPruneWithheldResult` builds.** One parameter set per
 kind, each a `Skipped` row whose Detail starts `prune withheld:` and carries no warning and no
 ShouldProcess prompt: a declared entry that could not be resolved, which withholds every candidate of
 its collection (`-Unresolved`); an entry whose scope could not be resolved, which withholds every
@@ -6154,8 +6154,10 @@ candidate of the section (`-UnresolvedScope`, A12 under [#role-assignment-key](#
 a live administrative unit scoped role whose name the directory role list did not give, beside a
 role the document declares by a name no live role of that principal matches, which is neither added
 nor removed (`-Declared` with `-UnnamedRoleId`); a group member or owner that is a service principal
-(`-ObjectType`, A9 above); and, since Sprint 9 step 6, a live administrative unit member that is a
-group this run created into the unit (`-CreatedGroup`, BL-07, below). The directory role prune's two
+(`-ObjectType`, A9 above); since Sprint 9 step 6, a live administrative unit member that is a
+group this run created into the unit (`-CreatedGroup`, BL-07, below); and, since Sprint 10 step 7b,
+every live member, owner or eligibility of a group synchronized from on-premises (`-SyncedGroup`,
+A15, under [#synced-groups](#synced-groups)). The directory role prune's two
 guards for the signed-in identity, under [#directory-role-assignments](#directory-role-assignments),
 write their own `prune withheld:` rows.
 
@@ -6816,3 +6818,136 @@ requires MFA, the diff has no live MFA to see, so `ConflictReason` stays `$null`
 nothing, while the real `Set-OERGroupPimPolicy`, which reads the rule itself, reconciles and warns
 once. Under `-WhatIf` step 5 makes one policy read per changed permanent eligibility that a real
 run makes inside `Add-OERGroupEligibility` anyway, so the permissions it needs are unchanged.
+
+## synced-groups
+
+Sprint 10 step 7b (BL-110, decision A15) made the module show, mark and respect the groups that are
+synchronized from on-premises Active Directory. This anchor records the background, what Microsoft
+Learn says, what was measured, rulings R1-R10 each with its cost if wrong, why the engine decides the
+way it does, and what is NOT verified live. `Test-OERGroupOnPremisesSynced` is the single owner of the
+question (CLAUDE.md, Code Style).
+
+**Background (BL-110).** Before this step the module never told a synchronized group from a cloud
+group. `Get-OERGroup` did not show it. The export's relevance criteria (role-assignable, a
+`pimPolicy` block, eligibility) never keep such a group, so it appeared in `groupsRoster.json`
+unmarked, and in `inventory.json` only under `-AllGroupsDetailed`. And the apply engine, given a
+document that declares a change to one (hand-written, or exported with `-AllGroupsDetailed`), sent
+every write to Graph, which per Learn refuses it: one `Failed` row and one error record per write,
+for a refusal the engine could have known in advance.
+
+**What Microsoft Learn says.**
+
+- Group resource type: `onPremisesSyncEnabled` is `true` if the group is synced from an on-premises
+  directory, `false` if it was originally synced and is no longer synced, and `null` if it has never
+  synced (the default). Returned by default, read-only.
+- "Configure Group Source of Authority (SOA)": a synchronized group is read-only in the cloud ("any
+  write attempts to the group in the cloud fail"; the page's own example is a PATCH of the display
+  name, and the message differs for mail-enabled groups). After an administrator converts the source
+  of authority to the cloud, `onPremisesSyncEnabled` is `null` (and stays `null` after a rollback
+  until the sync client takes the object over again), so `null` does not mean only "never synced".
+- "Bring groups into Privileged Identity Management" and the PIM for Groups API overview: dynamic
+  groups and groups synchronized from an on-premises environment can't be managed in PIM for Groups
+  (the fact [#pim-in-use-criterion](#pim-in-use-criterion) already rests on). "Use Microsoft Entra
+  groups to manage role assignments" lists assigning Microsoft Entra roles to on-premises groups among
+  the scenarios not supported. Those two are why the default export criteria never keep a
+  synchronized group.
+
+The text of those pages does not give the status or code a refused write answers with, so the engine
+does not depend on it: it writes nothing.
+
+**What was measured (2026-10-09).** Read-only, as the dedicated live-verification identity, counts
+only. `v1.0/groups` without `$select` listed 98 groups, every one carrying the key
+`onPremisesSyncEnabled`, all `null`; the security-enabled filtered read listed 92, all `null`; a
+single read of a cloud group carried the key, `null`; the organization's `onPremisesSyncEnabled` was
+`null` (it has never been synchronized). So the key is returned by default on a list and on a single
+read, and neither `Get-OERGroup` nor `New-OERGroup` sends a `$select`, so no request changed. And the
+test tenant has no synchronized group.
+
+**Not verified live.** Because of that last fact, the synchronized form is proved by class B (unit
+tests on mocked reads) and class C (Philip, after the merge, in an environment of his own): that a
+synchronized group reads `true` on a list and on a single read; what Graph answers a write to one
+with; that `false` (no longer synced) is a group the cloud may write to (R2); and the rows and the
+warning the engine gives on a real synchronized group.
+
+**R1 (the property value).** `OnPremisesSyncEnabled` carries Graph's own tri-state: `True`, `False`
+or empty, and any value that is not a boolean reads as empty. The `Get-OERGroup` table shows it, so
+an operator sees the difference between no longer synced and never synced. If wrong: cast to
+`[bool]` in `ConvertTo-OERGroup` (one line); a no-longer-synced group then reads `False` like a
+cloud group, and the table loses that distinction.
+
+**R2 (the predicate).** Only the boolean `True` means synchronized. `False` (no longer synced,
+cloud-managed) and empty (never synced, or its source of authority converted, which Learn says reads
+`null`) are written to as cloud groups; so are a missing property, a string `True`, the number 1 and
+a null group, none of which is an answer. If wrong: a group Graph reports `False` that is still
+read-only would be written and refused by Graph, a `Failed` row as before this step.
+
+**R3 (the roster flag).** The roster row's flag is `onPremisesSynced`, the same name as the document
+key, a boolean on EVERY row, so a reader filters on it with no null handling. If wrong: rename one
+key in the roster row, the bundle README and the prompt.
+
+**R4 (the document key is written only as `true`).** `Get-OERInventory` writes `onPremisesSynced:
+true` for a synchronized group and nothing for any other, so a cloud group's exported entry is
+byte-identical to what earlier versions wrote and every earlier export and hand-written document
+keeps converging. The key is information only: `Invoke-OERStructure` never sends it and never
+decides on it (`schema.json` types it as a boolean, and says so). If wrong: write it for every group;
+every exported group entry grows a key and the existing tests that pin entries change.
+
+**R5 (the export filter reads the projection key).** `Export-OERInventory -IncludeSyncedGroups` keeps
+a synchronized security group in full detail in `inventory.json`. `Export-OERInventory` receives only
+`Get-OERInventory`'s projection, so the filter reads its `onPremisesSynced` key (only a boolean
+`true` counts), which the predicate wrote: the rule still has one owner. The switch is on request
+because a default criterion that kept every synchronized security group would fill `inventory.json`,
+and an LLM's context, with groups no proposal can change. The Groups section is security-enabled
+only, so a synchronized distribution group stays in the roster alone; with `-AllGroupsDetailed` every
+group is kept already and the switch changes nothing. If wrong: the export would need the live
+objects, which Sprint 10 step 8 restructures anyway.
+
+**R6 (one warning per item).** The handler writes one warning for a synchronized group, before the
+first `Skipped` write and, under `-Prune`, before the first withheld prune, under `-WhatIf` too. A
+group whose only rows are `Extra` writes none, since nothing was asked to be written, and neither do
+the rows withheld for another reason (below). If wrong: a per-row warning; noisier, the same rows.
+
+**R7 (`pimPolicy` is not read for a synchronized group).** PIM for Groups cannot manage such a
+group (Learn), so no live policy can match what the document declares. Reading it would add a request
+and an error record in the caller's `-ErrorVariable`, and the declared policy is `Skipped` either
+way. The row says the policy is not read. If wrong: a synchronized group whose live policy already
+matches reads `Skipped` where `Unchanged` would be true; nothing is written either way.
+
+**R8 (the create path).** `New-OERGroup` can return an EXISTING group it found by name (read without
+`$select`) in place of creating one. The predicate is asked of that object too, so a synchronized
+group found there is not written to either. The `Created` row the handler already reports for that
+case is unchanged (existing behaviour, out of scope). If wrong: in that race the synchronized
+group's members, owners and eligibility would be attempted and refused by Graph, as before this step.
+
+**R9 (the validator).** `Test-OERStructureSchema` checks only the key's type, an Error for a
+non-boolean, as `schema.json` does, and reads an explicit `null` like an absent key, as it does every
+other boolean it checks. It gives no Warning for an entry that declares changes beside
+`onPremisesSynced: true`: the engine decides on the live read, so the document key cannot predict
+the outcome. If wrong: add a Warning finding in a later step.
+
+**R10 (the reason names the live group).** The warning and every reason text name the group by the
+display name its LIVE read carries. For a synchronized group found only under `previousDisplayName`
+that is the previous name, never the document's new one, since the rename is never made. Every row
+stays keyed on the document's entry (`-Item`), so a row is found where the document put it. If
+wrong: name the document's displayName in the texts; a reader of a renamed entry is then told that a
+group they cannot find by that name is synchronized.
+
+**Why the engine decides on the live read, and never on the document key.** A document can be stale
+or hand-written: the key may be missing from a group that is synchronized now, or declared `true` on
+one that has since been converted to the cloud. The live read is the fact. So a cloud group is
+written to as usual whatever the key says, and a synchronized group is skipped whatever the key says.
+
+**Why a `Skipped` row and no ShouldProcess call, rather than letting Graph refuse.** A refused write
+is a `Failed` row with an error record, noise for something the engine knows before it asks. `Skipped`
+with the reason tells the operator where the change has to be made (in the on-premises directory),
+and since no `ShouldProcess` call is made, `-WhatIf` and a real run report the same rows and no
+`-Confirm` prompt is shown for a write that will not happen. A property that matches stays
+`Unchanged`, and each prune candidate is withheld (`-SyncedGroup` of
+`ConvertTo-OERPruneWithheldResult`): `Skipped` with `prune withheld:` under `-Prune`, `Extra` with a
+hint that `-Prune` leaves it in place without. An undeclared candidate that is already withheld for
+another reason, an unresolved declared entry in its collection or a service principal, keeps that
+reason's row; only the others get this one.
+
+**What does not change.** A write that only points at the group, such as a role assignment, an
+administrative unit membership or an access package resource role, belongs to another section and is
+applied as before; the group itself is not written.

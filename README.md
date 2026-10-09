@@ -761,6 +761,14 @@ Get-OERInventory -Include Groups, Catalogs | Test-OERStructure
 document does not list is reported `Extra`, or `Skipped` with `-Prune`, and left in place. Remove
 one by hand with `Remove-OERGroupMember -ServicePrincipal` (add `-AccessType owner` for an owner).
 
+`Invoke-OERStructure` writes nothing to a group synchronized from on-premises Active Directory
+(`OnPremisesSyncEnabled` is true on `Get-OERGroup`): every change to its properties, members, owners,
+eligibility or `pimPolicy` is reported `Skipped`, with one warning per group, and `-Prune` removes
+nothing from it. It decides on the group as read live. The export marks such a group
+`onPremisesSynced` in `groupsRoster.json`, and `Export-OERInventory -IncludeSyncedGroups` also keeps
+the synchronized security groups in full detail in `inventory.json`, where the key is information
+only.
+
 ---
 
 ## Documentation
