@@ -23,6 +23,8 @@ BeforeAll {
     }
 
     $script:ScriptPath = Join-Path -Path $script:Root -ChildPath '.github/scripts/PublishArtefact.ps1'
+    $script:WorkflowText = [System.IO.File]::ReadAllText((Join-Path -Path $script:Root -ChildPath '.github/workflows/build-and-test.yml'))
+    $script:Pwsh = Join-Path -Path $PSHOME -ChildPath $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
     $script:ModuleName = 'Omnicit.EntraRBAC'
     $script:ShaA = 'a' * 40
     $script:ShaB = 'b' * 40
@@ -194,7 +196,9 @@ function gh
 
     function New-TestRoot
     {
-        # A fresh directory, always in the long path form (see the Windows note in the plan).
+        # A fresh directory, always in the long path form. On Windows, Resolve-Path keeps an 8.3 short
+        # component (RUNNER~1) while Get-ChildItem returns the long one, which would break the relative
+        # paths PublishArtefact.ps1 records; Get-Item's FullName is the long form.
         param ([Parameter(Mandatory = $true)] [string] $Name)
 
         $script:RootCount++
@@ -322,6 +326,212 @@ function gh
         $null = New-Item -ItemType Directory -Path $Target -Force
         Copy-Item -Path (Join-Path -Path (Get-TestVersionFolder -Build $Build) -ChildPath '*') -Destination $Target -Recurse
         $Target
+    }
+
+    function Get-WorkflowStepRun
+    {
+        <#
+            The run: text of one step of the publish job, exactly as the workflow holds it: the
+            lines after 'run: |' that are blank or indented deeper than 'run:', less the first
+            line's indentation, the way a YAML literal block is read. Throws unless the job, the
+            step and its run block are each found exactly once, so a renamed step fails here
+            instead of leaving a check that runs nothing.
+        #>
+        param ([Parameter(Mandatory = $true)] [string] $Step)
+
+        $Lines = $script:WorkflowText -split '\r?\n'
+        $JobStart = @(for ($Index = 0; $Index -lt $Lines.Count; $Index++) { if ($Lines[$Index] -cmatch '^  publish:\s*$') { $Index } })
+
+        if ($JobStart.Count -ne 1)
+        {
+            throw ("Expected one 'publish:' job in the workflow, found {0}." -f $JobStart.Count)
+        }
+
+        $StepStart = @(for ($Index = $JobStart[0] + 1; $Index -lt $Lines.Count; $Index++) { if ($Lines[$Index] -ceq ('      - name: {0}' -f $Step)) { $Index } })
+
+        if ($StepStart.Count -ne 1)
+        {
+            throw ("Expected one step named '{0}' in the publish job, found {1}." -f $Step, $StepStart.Count)
+        }
+
+        $RunLine = -1
+        $RunIndent = 0
+
+        for ($Index = $StepStart[0] + 1; $Index -lt $Lines.Count; $Index++)
+        {
+            if ($Lines[$Index] -cmatch '^      - name: ')
+            {
+                break
+            }
+
+            if ($Lines[$Index] -cmatch '^(\s+)run: \|\s*$')
+            {
+                $RunLine = $Index
+                $RunIndent = $Matches[1].Length
+                break
+            }
+        }
+
+        if ($RunLine -lt 0)
+        {
+            throw ("The step '{0}' has no 'run: |' block." -f $Step)
+        }
+
+        $Block = [System.Collections.Generic.List[string]]::new()
+
+        for ($Index = $RunLine + 1; $Index -lt $Lines.Count; $Index++)
+        {
+            $Line = $Lines[$Index]
+
+            if ($Line.Trim().Length -eq 0)
+            {
+                $Block.Add('')
+                continue
+            }
+
+            if (($Line.Length - $Line.TrimStart(' ').Length) -le $RunIndent)
+            {
+                break
+            }
+
+            $Block.Add($Line)
+        }
+
+        while ($Block.Count -gt 0 -and $Block[$Block.Count - 1] -eq '')
+        {
+            $Block.RemoveAt($Block.Count - 1)
+        }
+
+        $First = @($Block | Where-Object -FilterScript { $_ -ne '' })[0]
+        $Strip = $First.Length - $First.TrimStart(' ').Length
+
+        (@($Block | ForEach-Object -Process { if ($_ -eq '') { '' } else { $_.Substring($Strip) } }) -join "`n")
+    }
+
+    function Invoke-PublishJob
+    {
+        <#
+            One attempt of the publish job on a fresh runner: a new workspace holding the checked
+            out script and the downloaded artefact, a new GITHUB_ENV and a new RUNNER_TEMP. The
+            steps that reach the network (checkout, download, dependency install) are not run;
+            the five that decide what is published and tagged are, in order, each in a pwsh
+            process of its own, wrapped the way `shell: pwsh` wraps a step:
+            $ErrorActionPreference = 'stop' first, the exit-code check last, the file dot-sourced
+            by -Command. The stand-ins are dot-sourced directly after the first line. What each
+            step writes to GITHUB_ENV reaches the steps after it, as on a runner. The job stops at
+            the first step that exits nonzero.
+
+            One line is the harness's own: $ErrorView = 'NormalView'. The default concise view
+            wraps a long error message at the width of the host, and that width differs between
+            hosts, so a phrase of a message such as 're-run this job' would match on one machine
+            and be split across two lines on another. NormalView prints the message on one line.
+            It changes how an error is shown and nothing about whether a step fails.
+
+            A re-run of the failed job in the same run is this function called again with the
+            same -Build: the artefact of a run does not change between its attempts.
+        #>
+        param (
+            [Parameter(Mandatory = $true)] [string] $Build,
+            [Parameter(Mandatory = $true)] [string] $Sha,
+            [Parameter(Mandatory = $true)] [string] $World,
+            [string] $Ref = 'refs/heads/main'
+        )
+
+        $Workspace = New-TestRoot -Name 'runner'
+        $RunnerTemp = New-TestRoot -Name 'runner-temp'
+        $Scripts = Join-Path -Path $Workspace -ChildPath '.github/scripts'
+        $null = New-Item -ItemType Directory -Path $Scripts -Force
+        Copy-Item -LiteralPath $script:ScriptPath -Destination $Scripts
+        $Artefact = Join-Path -Path $Workspace -ChildPath 'artefact'
+        $null = New-Item -ItemType Directory -Path $Artefact
+        Copy-Item -Path (Join-Path -Path $Build -ChildPath '*') -Destination $Artefact -Recurse
+        $GitHubEnv = Join-Path -Path $RunnerTemp -ChildPath 'github-env'
+        [System.IO.File]::WriteAllText($GitHubEnv, '')
+
+        $Environment = [ordered]@{
+            GITHUB_SHA        = $Sha
+            GITHUB_REF        = $Ref
+            GITHUB_REF_NAME   = ($Ref -replace '^refs/(heads|tags)/', '')
+            GITHUB_REPOSITORY = 'Omnicit/Omnicit.EntraRBAC'
+            GITHUB_ENV        = $GitHubEnv
+            RUNNER_TEMP       = $RunnerTemp
+            EXPECTED_SHA      = $Sha
+            GH_TOKEN          = 'NOT-A-REAL-TOKEN'
+            GALLERY_API_TOKEN = 'NOT-A-REAL-TOKEN'
+            OER_FAKE_ROOT     = $World
+        }
+
+        $Steps = @(
+            'Verify the artefact against publish-meta.json'
+            'Refuse a version the triggering ref does not call for'
+            'Publish to the PowerShell Gallery'
+            'Confirm the version is on the Gallery'
+            'Tag the published commit and create the release'
+        )
+
+        $Ran = [System.Collections.Generic.List[string]]::new()
+        $Log = [System.Text.StringBuilder]::new()
+        $Failed = $null
+        $StepNumber = 0
+
+        foreach ($Step in $Steps)
+        {
+            $StepNumber++
+            $StepFile = Join-Path -Path $RunnerTemp -ChildPath ('step-{0}.ps1' -f $StepNumber)
+            $Wrapped = "`$ErrorActionPreference = 'stop'`n`$ErrorView = 'NormalView'`n. '{0}'`n{1}`nif ((Test-Path -LiteralPath variable:\LASTEXITCODE)) {{ exit `$LASTEXITCODE }}`n" -f $script:StandInPath, (Get-WorkflowStepRun -Step $Step)
+            [System.IO.File]::WriteAllText($StepFile, $Wrapped)
+
+            $Info = [System.Diagnostics.ProcessStartInfo]::new($script:Pwsh)
+            foreach ($Argument in @('-NoProfile', '-NonInteractive', '-Command', (". '{0}'" -f $StepFile)))
+            {
+                $Info.ArgumentList.Add($Argument)
+            }
+            $Info.WorkingDirectory = $Workspace
+            $Info.UseShellExecute = $false
+            $Info.RedirectStandardOutput = $true
+            $Info.RedirectStandardError = $true
+
+            foreach ($Key in $Environment.Keys)
+            {
+                $Info.Environment[$Key] = [string]$Environment[$Key]
+            }
+
+            $Process = [System.Diagnostics.Process]::Start($Info)
+            $StandardOutput = $Process.StandardOutput.ReadToEndAsync()
+            $StandardError = $Process.StandardError.ReadToEndAsync()
+
+            if (-not $Process.WaitForExit(180000))
+            {
+                $Process.Kill($true)
+                throw ("The step '{0}' did not finish within three minutes." -f $Step)
+            }
+
+            $Process.WaitForExit()
+            $null = $Log.AppendLine(('=== {0} (exit {1})' -f $Step, $Process.ExitCode))
+            $null = $Log.AppendLine($StandardOutput.Result)
+            $null = $Log.AppendLine($StandardError.Result)
+            $Ran.Add($Step)
+
+            foreach ($Line in [System.IO.File]::ReadAllLines($GitHubEnv))
+            {
+                if ($Line -match '^([^=]+)=(.*)$')
+                {
+                    $Environment[$Matches[1]] = $Matches[2]
+                }
+            }
+
+            if ($Process.ExitCode -ne 0)
+            {
+                $Failed = $Step
+                break
+            }
+        }
+
+        [PSCustomObject]@{
+            Ran    = $Ran.ToArray()
+            Failed = $Failed
+            Output = $Log.ToString()
+        }
     }
 }
 
@@ -472,5 +682,158 @@ Describe 'PublishArtefact.ps1 -Compare' {
 
         { Invoke-Compare -Build $Copy -Sha $Sha } | Should -Throw -ExpectedMessage $Expected
         @(Get-FakeLog -World $script:World -Name 'save').Count | Should -Be 0 -Because 'an artefact that fails verification is never compared'
+    }
+}
+
+Describe 'The publish job, run step by step against a fake Gallery and a fake GitHub' {
+    BeforeAll {
+        $script:Tag = 'Tag the published commit and create the release'
+        $script:V3 = '1.1.4-preview0003'
+        $script:V4 = '1.1.4-preview0004'
+        $script:JobA = New-TestBuild -Sha $script:ShaA -Version $script:V3 -Body 'A'
+        $script:JobB = New-TestBuild -Sha $script:ShaB -Version $script:V3 -Body 'B'
+        # GitVersion counts up from a tag (the measured table in rationale.md#publish-on-merge),
+        # so once the repair tag is on A, B's rebuild carries the next preview. This build plays
+        # that rebuild.
+        $script:JobB4 = New-TestBuild -Sha $script:ShaB -Version $script:V4 -Body 'B'
+        $script:JobC = New-TestBuild -Sha $script:ShaC -Version '1.1.4' -Body 'C'
+
+        function Assert-Refused
+        {
+            # The tag step ran and refused, and NOTHING reached GitHub from it.
+            param ([Parameter(Mandatory = $true)] $Job, [Parameter(Mandatory = $true)] [string] $World, [int] $ReleaseCreates = 0)
+
+            $Job.Failed | Should -Be $script:Tag -Because ('the tag step must stop the job; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Job.Output)
+            $Job.Output | Should -BeLike '*REFUSING TO TAG.*'
+            @(Get-FakeLog -World $World -Name 'gh' | Where-Object -FilterScript { $_ -like 'release create*' }).Count | Should -Be $ReleaseCreates -Because 'a refused run sends no gh release create'
+        }
+    }
+
+    It 'publishes and tags its own commit on an ordinary merge, as before' {
+        $World = New-FakeWorld
+
+        $Job = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        $Job.Failed | Should -BeNullOrEmpty -Because ('the job runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Job.Output)
+        @(Get-FakeLog -World $World -Name 'publish') | Should -Be @($script:V3)
+        @(Get-FakeLog -World $World -Name 'save').Count | Should -Be 1 -Because 'an ordinary merge is compared too, before it is tagged'
+        $GitHub = Get-FakeGitHub -World $World
+        $GitHub['tags']["v$script:V3"] | Should -Be $script:ShaA
+        $GitHub['releases']["v$script:V3"]['Commit'] | Should -Be $script:ShaA
+        $GitHub['releases']["v$script:V3"]['Prerelease'] | Should -BeTrue
+    }
+
+    It 'tags its own commit when the failed job is re-run in the same run after a 500 whose upload arrived (2026-10-08)' {
+        $World = New-FakeWorld
+        $null = New-Item -ItemType File -Path (Join-Path -Path $World -ChildPath 'publish-answers-500')
+
+        $First = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+        $First.Failed | Should -Be 'Publish to the PowerShell Gallery'
+        @(Get-FakeLog -World $World -Name 'publish') | Should -Be @($script:V3) -Because 'the upload arrived although the call failed'
+        (Get-FakeGitHub -World $World)['tags'].Count | Should -Be 0
+
+        $Rerun = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        $Rerun.Failed | Should -BeNullOrEmpty -Because ('the re-run runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Rerun.Output)
+        $Rerun.Output | Should -BeLike '*SKIPPING THE PUBLISH*'
+        @(Get-FakeLog -World $World -Name 'publish') | Should -Be @($script:V3) -Because 'nothing is published twice'
+        $GitHub = Get-FakeGitHub -World $World
+        $GitHub['tags']["v$script:V3"] | Should -Be $script:ShaA
+        $GitHub['releases']["v$script:V3"]['Commit'] | Should -Be $script:ShaA
+    }
+
+    It 'refuses to tag the next merge when the version is already there from another commit, after <Case>' -ForEach @(
+        @{ Case = 'a tag step that failed'; Fault = 'gh-create-fails'; FailedStep = 'Tag the published commit and create the release'; ReleaseCreates = 1 }
+        @{ Case = 'a 500 nobody re-ran (the near miss of 2026-10-08)'; Fault = 'publish-answers-500'; FailedStep = 'Publish to the PowerShell Gallery'; ReleaseCreates = 0 }
+    ) {
+        $World = New-FakeWorld
+        $null = New-Item -ItemType File -Path (Join-Path -Path $World -ChildPath $Fault)
+        $JobForA = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+        $JobForA.Failed | Should -Be $FailedStep
+
+        $JobForB = Invoke-PublishJob -Build $script:JobB -Sha $script:ShaB -World $World
+
+        Assert-Refused -Job $JobForB -World $World -ReleaseCreates $ReleaseCreates
+        $JobForB.Output | Should -BeLike '*SKIPPING THE PUBLISH*'
+        $JobForB.Output | Should -BeLike "*git tag v$($script:V3) <commit>*"
+        $JobForB.Output | Should -BeLike '*re-run ALL jobs of this run*'
+        @(Get-FakeLog -World $World -Name 'publish') | Should -Be @($script:V3) -Because 'B published nothing'
+        $GitHub = Get-FakeGitHub -World $World
+        $GitHub['tags'].Count | Should -Be 0
+        $GitHub['releases'].Count | Should -Be 0
+    }
+
+    It 'refuses again when only the failed jobs are re-run after a refusal, before and after the repair tag' {
+        $World = New-FakeWorld
+        $null = New-Item -ItemType File -Path (Join-Path -Path $World -ChildPath 'gh-create-fails')
+        $null = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+        Assert-Refused -Job (Invoke-PublishJob -Build $script:JobB -Sha $script:ShaB -World $World) -World $World -ReleaseCreates 1
+
+        # Re-run of the failed jobs: the same run, so the same artefact.
+        Assert-Refused -Job (Invoke-PublishJob -Build $script:JobB -Sha $script:ShaB -World $World) -World $World -ReleaseCreates 1
+        (Get-FakeGitHub -World $World)['tags'].Count | Should -Be 0
+
+        # The repair tag goes on A by hand, but only the failed jobs are re-run.
+        Set-FakeGitHub -World $World -Tag "v$script:V3" -Sha $script:ShaA
+        Assert-Refused -Job (Invoke-PublishJob -Build $script:JobB -Sha $script:ShaB -World $World) -World $World -ReleaseCreates 1
+        $GitHub = Get-FakeGitHub -World $World
+        $GitHub['tags']["v$script:V3"] | Should -Be $script:ShaA
+        $GitHub['releases'].Count | Should -Be 0 -Because "no release with B's notes is attached to A's tag"
+
+        # Even with a release made on A by hand, B's run does not go green.
+        Set-FakeGitHub -World $World -Tag "v$script:V3" -Sha $script:ShaA -WithRelease
+        Assert-Refused -Job (Invoke-PublishJob -Build $script:JobB -Sha $script:ShaB -World $World) -World $World -ReleaseCreates 1
+    }
+
+    It 'publishes and tags the refused commit once the repair tag is on the published commit and all its jobs are re-run' {
+        $World = New-FakeWorld
+        $null = New-Item -ItemType File -Path (Join-Path -Path $World -ChildPath 'gh-create-fails')
+        $null = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+        Assert-Refused -Job (Invoke-PublishJob -Build $script:JobB -Sha $script:ShaB -World $World) -World $World -ReleaseCreates 1
+        Set-FakeGitHub -World $World -Tag "v$script:V3" -Sha $script:ShaA
+
+        $Rebuilt = Invoke-PublishJob -Build $script:JobB4 -Sha $script:ShaB -World $World
+
+        $Rebuilt.Failed | Should -BeNullOrEmpty -Because ('the re-run of all jobs runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Rebuilt.Output)
+        @(Get-FakeLog -World $World -Name 'publish') | Should -Be @($script:V3, $script:V4)
+        $GitHub = Get-FakeGitHub -World $World
+        $GitHub['tags']["v$script:V3"] | Should -Be $script:ShaA
+        $GitHub['tags']["v$script:V4"] | Should -Be $script:ShaB
+        $GitHub['releases']["v$script:V4"]['Commit'] | Should -Be $script:ShaB
+    }
+
+    It 'refuses to tag when the package cannot be read back, and tags once a re-run can read it' {
+        $World = New-FakeWorld
+        $Fault = Join-Path -Path $World -ChildPath 'save-fails'
+        $null = New-Item -ItemType File -Path $Fault
+
+        $First = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        Assert-Refused -Job $First -World $World
+        $First.Output | Should -BeLike '*503 (Service Unavailable)*'
+        $First.Output | Should -BeLike '*re-run this job*'
+        (Get-FakeGitHub -World $World)['tags'].Count | Should -Be 0
+
+        Remove-Item -LiteralPath $Fault
+        $Rerun = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        $Rerun.Failed | Should -BeNullOrEmpty -Because ('the re-run runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Rerun.Output)
+        (Get-FakeGitHub -World $World)['tags']["v$script:V3"] | Should -Be $script:ShaA
+    }
+
+    It 'leaves a v-tag run as it was: no comparison, and the release goes on the tag that started the run' {
+        $World = New-FakeWorld
+        Set-FakeGitHub -World $World -Tag 'v1.1.4' -Sha $script:ShaC
+
+        $Job = Invoke-PublishJob -Build $script:JobC -Sha $script:ShaC -World $World -Ref 'refs/tags/v1.1.4'
+
+        $Job.Failed | Should -BeNullOrEmpty -Because ('the job runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Job.Output)
+        $Job.Output | Should -BeLike '*A v-tag run: v1.1.4 started this run*'
+        @(Get-FakeLog -World $World -Name 'save').Count | Should -Be 0 -Because 'a v-tag run reads nothing back'
+        @(Get-FakeLog -World $World -Name 'publish') | Should -Be @('1.1.4')
+        $GitHub = Get-FakeGitHub -World $World
+        $GitHub['tags']['v1.1.4'] | Should -Be $script:ShaC
+        $GitHub['releases']['v1.1.4']['Commit'] | Should -Be $script:ShaC
+        $GitHub['releases']['v1.1.4']['Prerelease'] | Should -BeFalse
     }
 }

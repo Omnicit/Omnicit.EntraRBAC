@@ -454,15 +454,22 @@ jobs:
               throw 'The GALLERYAPITOKEN secret is empty or was not passed to this job. Failing rather than skipping: a silent skip reports success while publishing nothing.'
           }
 
-          # IDEMPOTENCE. A re-run after a partial failure -- most likely a publish that succeeded
-          # while the release step did not -- must be able to carry on instead of dying on a
-          # version that is already out there. Find-PSResource -Version takes NuGet RANGE syntax,
-          # so a bare version means "at least this one"; the brackets are what make it exact.
-          # This also settles the race between two pushes to main computing the same version.
+          # IDEMPOTENCE. A re-run after a partial failure must be able to carry on instead of dying
+          # on a version that is already out there: a publish that succeeded while the tag step did
+          # not, or an upload the Gallery accepted while answering with an error -- on 2026-10-08 it
+          # answered 500 to an upload that had arrived, and this step failed. Find-PSResource
+          # -Version takes NuGet RANGE syntax, so a bare version means "at least this one"; the
+          # brackets are what make it exact.
+          #
+          # A version that is already there is NOT proof that this commit published it. When no tag
+          # follows a publish, nothing moves GitVersion's base, so the NEXT merge to main computes
+          # the same version and arrives here as well. Skipping is right either way, since a version
+          # cannot be republished. Whether this commit may then be tagged is the tag step's call:
+          # it compares the package on the Gallery with this run's tested build first.
           $Existing = @(Find-PSResource -Name $ModuleName -Repository 'PSGallery' -Version "[$Version]" -Prerelease -ErrorAction SilentlyContinue)
 
           if ($Existing.Count -gt 0) {
-              Write-Host "SKIPPING THE PUBLISH: $ModuleName $Version is already on the PowerShell Gallery. A version cannot be republished or deleted, so this run goes straight on to the tag and release step."
+              Write-Host "SKIPPING THE PUBLISH: $ModuleName $Version is already on the PowerShell Gallery, and a version cannot be republished or deleted. The tag step tags $env:GITHUB_SHA only if the package there is this run's tested build."
               return
           }
 
@@ -509,11 +516,27 @@ jobs:
         # computed 1.0.1-preview0002; adding a SECOND commit with no new tag computed
         # 1.0.1-preview0002 AGAIN.
         #
-        # SO, IF THIS STEP FAILS AFTER THE PUBLISH SUCCEEDED: the next merge to main computes the
-        # same version, the idempotence check above finds it on the Gallery and skips, and that
-        # merge publishes NOTHING. It is not a lost release, and nothing is broken on the Gallery,
-        # but the line stalls until someone pushes the missing tag by hand onto the commit that was
-        # published -- after which the next build counts up again.
+        # SO A PUBLISH THAT NO TAG FOLLOWS -- this step failed, or the publish step failed although
+        # its upload reached the Gallery -- leaves the next merge to main computing the SAME version.
+        # Its publish step finds that version on the Gallery and skips, and before this step was
+        # guarded it then created the tag and the release on ITS OWN commit over the package built
+        # from the previous one: the tag named code that was never published under it.
+        #
+        # So on every run but a v-tag run this step first runs PublishArtefact.ps1 -Compare, which
+        # reads the package back from the Gallery and compares it, file by file and SHA-256 by
+        # SHA-256, with this run's tested artefact. It tags GITHUB_SHA only when they are the same
+        # build; a package from another commit, or a read that fails, stops the step before
+        # anything is created, with the repair in the message. In practice:
+        #
+        #   - a re-run of the failed job in the SAME run reuses the tested artefact, so it matches
+        #     and tags, as the re-run after the Gallery's 500 on 2026-10-08 did;
+        #   - a later merge, and a re-run of only the failed jobs after a refusal, carry another
+        #     build and are refused;
+        #   - the repair is the tag pushed by hand onto the commit that published the version,
+        #     then a re-run of ALL jobs of the refused run, which counts up and publishes it.
+        #
+        # The comparison runs BEFORE the release lookup, so a run whose build is not the package
+        # stays red even when a release for the tag already exists on another commit.
         #
         # On a v-tag run the tag already exists and gh uses it rather than creating one. It must
         # stay that way: the 'Stable Version' ruleset refuses GITHUB_TOKEN any create, move or
@@ -526,6 +549,15 @@ jobs:
           $ModuleName = 'Omnicit.EntraRBAC'
           $Version = $env:PublishVersion
           $Tag = "v$Version"
+
+          # A v-tag run is the one run that is not compared: the tag already exists, on the commit
+          # this run builds, and the refusal step above has proved the version is the tag.
+          if ($env:GITHUB_REF -clike 'refs/tags/v*') {
+              Write-Host "A v-tag run: $Tag started this run and already points at $env:GITHUB_SHA, so the package on the Gallery is not compared."
+          }
+          else {
+              ./.github/scripts/PublishArtefact.ps1 -Compare -Path 'artefact' -Sha $env:GITHUB_SHA -Repository 'PSGallery' -DownloadPath (Join-Path $env:RUNNER_TEMP 'published-package')
+          }
 
           $null = gh release view $Tag 2>$null
           if ($LASTEXITCODE -eq 0) {
