@@ -56,6 +56,23 @@ Describe 'Get-OERInventoryPromptTemplate' {
         }
     }
 
+    It 'tells the model groupsRoster.json carries onPremisesSynced among its flags (A15)' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('- groupsRoster.json -- every group in the tenant (names + flags only, onPremisesSynced among them). Context for the landscape.'))
+            # The old wording called the roster "every security group", which it is not: it is unfiltered.
+            $T | Should -Not -Match ([regex]::Escape('groupsRoster.json -- every security group'))
+        }
+    }
+
+    It 'documents onPremisesSynced as read-only information and tells the model to leave a synchronized group alone (A15)' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('dynamic (bool), onPremisesSynced (read-only information written by the export: true for a group synchronized from on-premises Active Directory),'))
+            $T | Should -Match ([regex]::Escape('A group with onPremisesSynced true is managed in on-premises Active Directory, and Invoke-OERStructure writes nothing to it: no property, member, owner, eligibility or pimPolicy change, and -Prune removes nothing from it. Do not propose changes to such a group; other sections may still reference it (role assignments, administrative unit members, access package resource roles). Keep the key as exported, and never add it to a group yourself.'))
+        }
+    }
+
     It 'documents the granular assignment policy fields' {
         InModuleScope $script:moduleName {
             $T = Get-OERInventoryPromptTemplate

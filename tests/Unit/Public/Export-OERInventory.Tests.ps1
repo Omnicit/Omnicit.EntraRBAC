@@ -452,6 +452,119 @@ Describe 'Export-OERInventory (the roster is complete, the apply document is not
     }
 }
 
+Describe 'Export-OERInventory (-IncludeSyncedGroups, A15)' {
+    # A group synchronized from on-premises is never role-assignable and never managed in PIM for
+    # Groups, so none of the three RBAC-relevance criteria keeps it in inventory.json. The switch
+    # keeps it on request; Get-OERInventory writes onPremisesSynced as a boolean true for such a
+    # group and never otherwise, and the filter takes nothing but that.
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        # The group order is rbac, synced, plain: the order a kept set must come back in.
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $inv = [PSCustomObject]@{
+                Version = '1.0'
+                Groups = @(
+                    [PSCustomObject]@{ displayName = 'rbac';   roleAssignable = $true;  dynamic = $false; members = @('person26@example.com'); eligibility = @() },
+                    [PSCustomObject]@{ displayName = 'synced'; roleAssignable = $false; dynamic = $false; onPremisesSynced = $true; members = @() },
+                    [PSCustomObject]@{ displayName = 'plain';  roleAssignable = $false; dynamic = $false; members = @() }
+                )
+                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $inv
+        }
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            [PSCustomObject]@{ Id = 'g1'; DisplayName = 'rbac';   GroupType = 'RoleEnabled'; IsAssignableToRole = $true }
+            [PSCustomObject]@{ Id = 'g2'; DisplayName = 'synced'; GroupType = 'Regular';     IsAssignableToRole = $false; OnPremisesSyncEnabled = $true }
+            [PSCustomObject]@{ Id = 'g3'; DisplayName = 'plain';  GroupType = 'Regular';     IsAssignableToRole = $false }
+        }
+    }
+
+    It 'declares the switch' {
+        $Param = (Get-Command Export-OERInventory).Parameters['IncludeSyncedGroups']
+        $Param | Should -Not -BeNullOrEmpty
+        $Param.ParameterType | Should -Be ([System.Management.Automation.SwitchParameter])
+    }
+
+    It 'keeps a synchronized group out of inventory.json without the switch (today''s selection)' {
+        $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.Groups.displayName) | Should -Be @('rbac')
+        $Result.Groups | Should -Be 1
+        # The roster still lists all three, the synchronized one flagged: that file is the only place
+        # such a group appears without the switch.
+        $Result.RosterCount | Should -Be 3
+    }
+
+    It 'keeps the synchronized group, after the role-assignable one and with its flag, under -IncludeSyncedGroups' {
+        $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups -IncludeSyncedGroups
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.Groups.displayName) | Should -Be @('rbac', 'synced')
+        $Result.Groups | Should -Be 2
+        $Synced = $Inv.Groups | Where-Object { $_.displayName -eq 'synced' }
+        $Synced.onPremisesSynced | Should -BeTrue -Because 'the key is what tells the apply document a group is managed on-premises'
+        $Synced.onPremisesSynced | Should -BeOfType ([bool])
+        # The role-assignable group is a cloud group and carries no such key at all.
+        @(($Inv.Groups | Where-Object { $_.displayName -eq 'rbac' }).PSObject.Properties.Name) | Should -Not -Contain 'onPremisesSynced'
+        # The per-area file is cut from the same set.
+        $PerArea = @(Get-Content (Join-Path $Result.BundlePath 'groups.json') -Raw | ConvertFrom-Json)
+        @($PerArea.displayName) | Should -Be @('rbac', 'synced')
+        # A cloud group that is neither role-assignable nor PIM-managed is still not kept.
+        @($Inv.Groups.displayName) | Should -Not -Contain 'plain'
+    }
+
+    It 'keeps every group with -AllGroupsDetailed, as before' {
+        $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups -AllGroupsDetailed
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.Groups.displayName) | Should -Be @('rbac', 'synced', 'plain')
+        $Result.Groups | Should -Be 3
+    }
+
+    It 'keeps each group exactly once when -AllGroupsDetailed and -IncludeSyncedGroups are combined' {
+        $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups -AllGroupsDetailed -IncludeSyncedGroups
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.Groups.displayName) | Should -Be @('rbac', 'synced', 'plain') -Because 'the synchronized group must not be listed once for each way of being kept'
+        $Result.Groups | Should -Be 3
+    }
+
+    It 'takes only a boolean true for a synchronized group, never the string True or a boolean false' {
+        # A hand-built inventory can carry any shape; Get-OERInventory writes a boolean true or no key.
+        # The string 'True' and the boolean false are not synchronized groups, so neither is kept.
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $inv = [PSCustomObject]@{
+                Version = '1.0'
+                Groups = @(
+                    [PSCustomObject]@{ displayName = 'rbac';       roleAssignable = $true;  dynamic = $false; members = @(); eligibility = @() },
+                    [PSCustomObject]@{ displayName = 'as-string';  roleAssignable = $false; dynamic = $false; onPremisesSynced = 'True'; members = @() },
+                    [PSCustomObject]@{ displayName = 'as-false';   roleAssignable = $false; dynamic = $false; onPremisesSynced = $false;  members = @() },
+                    [PSCustomObject]@{ displayName = 'as-bool';    roleAssignable = $false; dynamic = $false; onPremisesSynced = $true;   members = @() }
+                )
+                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $inv
+        }
+        $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups -IncludeSyncedGroups
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.Groups.displayName) | Should -Be @('rbac', 'as-bool')
+        $Result.Groups | Should -Be 2
+    }
+
+    It 'makes the selection here and sends Get-OERInventory the same read, with no group filter' {
+        # The selection is made on the projection Get-OERInventory returns, so the switch adds
+        # nothing to the read and cannot widen the securityEnabled scope of inventory.json.
+        Export-OERInventory -OutputPath $TestDrive -Include Groups -IncludeSyncedGroups | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter {
+            -not $GroupFilter -and $IncludeId -eq $true
+        }
+    }
+}
+
 Describe 'Export-OERInventory (Azure walk)' {
     BeforeEach {
         InModuleScope $script:moduleName { $script:_OERAuthState = $null }
