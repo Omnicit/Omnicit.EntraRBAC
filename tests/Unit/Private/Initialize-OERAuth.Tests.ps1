@@ -2117,6 +2117,367 @@ Describe 'Initialize-OERAuth device-code instruction visibility' {
     }
 }
 
+Describe 'Initialize-OERAuth forces every device code sign-in (A17, BL-112)' {
+    # AzAuth keeps the device code credential it built for the whole process and reuses it for the next
+    # device code request with the same client id, and a reused device code credential never returns:
+    # GetAzToken.EndProcessing waits on a queue that only a NEW credential's callback completes
+    # (DECOMPILED, AzAuth 2.10.0; MEASURED live 2026-09-16 for a tenant switch). -Force makes AzAuth clear
+    # that credential and build a new one, which prints a new code. So every device code token request
+    # carries Force (decision A17): the Microsoft Graph and the Azure Resource Manager token, in
+    # Connect-OER, at a command's start near expiry, on an Azure Resource Manager token acquired on its
+    # own, under -ForceRefresh and -ClaimsChallenge, and after Disconnect-OER. Every other sign-in type
+    # keeps Force for -ForceRefresh and a cloud switch only, and a device code session whose tokens are
+    # still valid still answers from the cache with no token request at all.
+    #
+    # Every assertion counts the token requests exactly, Microsoft Graph and Azure Resource Manager apart,
+    # so a "without Force" can never pass on a request that was not made. The tenant is an invented GUID,
+    # so no domain lookup runs.
+    BeforeAll {
+        $script:A17Tenant = '33333333-3333-3333-3333-333333333333'
+        $script:A17ClientId = '55555555-5555-5555-5555-555555555555'
+        $script:A17Claims = '{"access_token":{"acrs":{"essential":true,"value":"c1"}}}'
+
+        # The capturing Get-AzToken. Its param() block lists every parameter the module passes, since a
+        # mock body without one sees an empty $PSBoundParameters. Each request is recorded as the resource
+        # it asked for and the parameter names it bound, and answered with a token issued for the tenant
+        # it named.
+        $script:A17TokenMock = {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $WarningAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            $script:A17Calls.Add([pscustomobject]@{ Resource = $Resource; Keys = @($PSBoundParameters.Keys) })
+            [pscustomobject]@{
+                Token     = 'NOT-A-REAL-TOKEN-a17'
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = 'admin@contoso.com'
+                TenantId  = $Tenant
+            }
+        }
+
+        # Calls Initialize-OERAuth from a script block in the module scope, as the other Describes do.
+        function script:Invoke-A17SignIn {
+            param([hashtable]$Parameters)
+            InModuleScope $script:moduleName -Parameters @{ P = $Parameters } {
+                param($P)
+                Initialize-OERAuth @P
+            }
+        }
+
+        # Moves the cached tokens' expiry, as time passing would.
+        function script:Set-A17Expiry {
+            param([int]$GraphMinutes, [int]$ArmMinutes)
+            InModuleScope $script:moduleName -Parameters @{ G = $GraphMinutes; A = $ArmMinutes } {
+                param($G, $A)
+                $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes($G)
+                $script:_OERAuthState.ArmTokenExpiry = [DateTime]::UtcNow.AddMinutes($A)
+            }
+        }
+
+        # One sign-in type with its credential named explicitly: for Initialize-OERAuth (-AuthMethod) or
+        # for Connect-OER (its parameter set). An inherited app-only identity cannot renew, so every call
+        # names its credential again.
+        function script:Get-A17SignIn {
+            param([string]$Method, [switch]$ForConnectOER)
+            $P = @{}
+            if (-not $ForConnectOER) { $P.AuthMethod = $Method }
+            switch ($Method) {
+                'Interactive' { if ($ForConnectOER) { $P.Interactive = $true } }
+                'ManagedIdentity' { if ($ForConnectOER) { $P.ManagedIdentity = $true } }
+                'ClientSecret' {
+                    $P.ClientId = $script:A17ClientId
+                    $P.ClientSecret = ConvertTo-SecureString 'not-a-real-secret' -AsPlainText -Force
+                }
+                'ClientCertificate' {
+                    $P.ClientId = $script:A17ClientId
+                    $P.CertificatePath = 'oer-a17-not-a-real-certificate.pfx'
+                }
+            }
+            $P
+        }
+
+        # The recorded requests for one resource.
+        function script:Get-A17Call {
+            param([ValidateSet('Graph', 'Arm')][string]$Kind)
+            [string]$Pattern = if ($Kind -eq 'Graph') { '*graph*' } else { '*management*' }
+            @($script:A17Calls | Where-Object { [string]$_.Resource -like $Pattern })
+        }
+
+        # Exactly $Graph Microsoft Graph and $Arm Azure Resource Manager token requests and no other, each
+        # with Force when $Force is $true and without it when $Force is $false, and each carrying every
+        # parameter named in $Key. The counts come first, so a missing Force can never pass on a request
+        # that was not made, and Graph is checked before ARM, so a failure names the resource it is about.
+        function script:Assert-A17TokenCall {
+            param([int]$Graph, [int]$Arm, [bool]$Force, [string[]]$Key = @())
+            $GraphCalls = @(Get-A17Call -Kind Graph)
+            $ArmCalls = @(Get-A17Call -Kind Arm)
+            $script:A17Calls.Count | Should -Be ($Graph + $Arm) -Because 'every token request is recorded, each for Microsoft Graph or Azure Resource Manager'
+            $GraphCalls.Count | Should -Be $Graph -Because 'the Microsoft Graph token requests are counted exactly'
+            $ArmCalls.Count | Should -Be $Arm -Because 'the Azure Resource Manager token requests are counted exactly'
+            [string]$Expected = if ($Force) { 'carries' } else { 'does not carry' }
+            foreach ($Call in $GraphCalls) {
+                ($Call.Keys -contains 'Force') | Should -Be $Force -Because "the Microsoft Graph token request $Expected Force"
+                foreach ($Name in $Key) {
+                    ($Call.Keys -contains $Name) | Should -BeTrue -Because "the Microsoft Graph token request carries $Name"
+                }
+            }
+            foreach ($Call in $ArmCalls) {
+                ($Call.Keys -contains 'Force') | Should -Be $Force -Because "the Azure Resource Manager token request $Expected Force"
+                foreach ($Name in $Key) {
+                    ($Call.Keys -contains $Name) | Should -BeTrue -Because "the Azure Resource Manager token request carries $Name"
+                }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+        }
+        $script:A17Calls = [System.Collections.Generic.List[object]]::new()
+        # BL-12: every tenant here is a GUID, so no lookup runs; the mock keeps one off the network if it did.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '33333333-3333-3333-3333-333333333333' }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        # Disconnect-OER calls it for the module's own Graph SDK session, and the transport tripwire
+        # refuses a real one.
+        Mock -ModuleName $script:moduleName Disconnect-MgGraph { }
+    }
+
+    Context 'a device code sign-in' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-AzToken -MockWith $script:A17TokenMock
+        }
+
+        It 'D1: Connect-OER -DeviceCode -IncludeARM sends the Microsoft Graph and the Azure Resource Manager token request with Force' {
+            Connect-OER -TenantId $script:A17Tenant -DeviceCode -IncludeARM
+
+            Assert-A17TokenCall -Graph 1 -Arm 1 -Force $true -Key 'DeviceCode'
+        }
+
+        It 'D1b: Connect-OER -DeviceCode without -IncludeARM sends one Microsoft Graph token request, with Force' {
+            Connect-OER -TenantId $script:A17Tenant -DeviceCode
+
+            Assert-A17TokenCall -Graph 1 -Arm 0 -Force $true -Key 'DeviceCode'
+        }
+
+        It 'D2: a command that starts within five minutes of expiry and inherits the session renews both tokens with Force' {
+            Invoke-A17SignIn @{ TenantId = $script:A17Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true }
+            Set-A17Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A17Calls.Clear()
+
+            # No -TenantId and no -AuthMethod: inherited from the session, as every cmdlet does.
+            Invoke-A17SignIn @{ IncludeARM = $true }
+
+            Assert-A17TokenCall -Graph 1 -Arm 1 -Force $true -Key 'DeviceCode'
+        }
+
+        It 'D2b: a public cmdlet that starts within five minutes of expiry (Get-OERSubscription) renews both tokens with Force' {
+            Mock -ModuleName $script:moduleName Invoke-OERArmRequest { @{ value = @() } }
+            Invoke-A17SignIn @{ TenantId = $script:A17Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true }
+            Set-A17Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A17Calls.Clear()
+
+            $Subscriptions = @(Get-OERSubscription)
+
+            $Subscriptions.Count | Should -Be 0
+            # The cmdlet got past its sign-in and sent its one request.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly
+            Assert-A17TokenCall -Graph 1 -Arm 1 -Force $true -Key 'DeviceCode'
+        }
+
+        It 'D3: an Azure Resource Manager token acquired beside a cached Microsoft Graph token is requested with Force' {
+            Invoke-A17SignIn @{ TenantId = $script:A17Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true }
+            Set-A17Expiry -GraphMinutes 60 -ArmMinutes 2
+            $script:A17Calls.Clear()
+
+            Invoke-A17SignIn @{ IncludeARM = $true }
+
+            Assert-A17TokenCall -Graph 0 -Arm 1 -Force $true -Key 'DeviceCode'
+        }
+
+        It 'D4: -ForceRefresh -IncludeARM on a device code session sends both token requests with Force' {
+            Invoke-A17SignIn @{ TenantId = $script:A17Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true }
+            $script:A17Calls.Clear()
+
+            Invoke-A17SignIn @{ TenantId = $script:A17Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true; ForceRefresh = $true }
+
+            Assert-A17TokenCall -Graph 1 -Arm 1 -Force $true -Key 'DeviceCode'
+        }
+
+        It 'D5: a claims challenge on a device code session sends one Microsoft Graph token request with Force and the claims' {
+            Invoke-A17SignIn @{ TenantId = $script:A17Tenant; AuthMethod = 'DeviceCode' }
+            $script:A17Calls.Clear()
+
+            Invoke-A17SignIn @{ TenantId = $script:A17Tenant; AuthMethod = 'DeviceCode'; ClaimsChallenge = $script:A17Claims }
+
+            Assert-A17TokenCall -Graph 1 -Arm 0 -Force $true -Key 'DeviceCode', 'Claim'
+        }
+
+        It 'D6: Connect-OER -DeviceCode after Disconnect-OER sends both token requests with Force' {
+            Connect-OER -TenantId $script:A17Tenant -DeviceCode -IncludeARM
+            Disconnect-OER -Confirm:$false
+            # Disconnect-OER really ran: the module's own Graph SDK session was ended and its state cleared.
+            Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 1 -Exactly
+            (InModuleScope $script:moduleName { $null -eq $script:_OERAuthState }) | Should -BeTrue
+            $script:A17Calls.Clear()
+
+            Connect-OER -TenantId $script:A17Tenant -DeviceCode -IncludeARM
+
+            Assert-A17TokenCall -Graph 1 -Arm 1 -Force $true -Key 'DeviceCode'
+        }
+
+        It 'D7: a device code session whose tokens are still valid answers from the cache, with no token request' {
+            Invoke-A17SignIn @{ TenantId = $script:A17Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true }
+            $AfterFirst = $script:A17Calls.Count
+
+            Invoke-A17SignIn @{ TenantId = $script:A17Tenant; AuthMethod = 'DeviceCode'; IncludeARM = $true }
+
+            # The first sign-in's Microsoft Graph and Azure Resource Manager requests, and none for the second.
+            $AfterFirst | Should -Be 2
+            $script:A17Calls.Count | Should -Be 2 -Because 'a device code session whose tokens are still valid answers from the cache'
+            @(Get-A17Call -Kind Graph).Count | Should -Be 1
+            @(Get-A17Call -Kind Arm).Count | Should -Be 1
+        }
+    }
+
+    Context 'every other sign-in type' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-AzToken -MockWith $script:A17TokenMock
+        }
+
+        It 'N1: the first <Method> sign-in with -IncludeARM sends both token requests without Force' -ForEach @(
+            @{ Method = 'Interactive' }
+            @{ Method = 'ManagedIdentity' }
+            @{ Method = 'ClientSecret' }
+            @{ Method = 'ClientCertificate' }
+        ) {
+            $SignIn = Get-A17SignIn -Method $Method
+
+            Invoke-A17SignIn (@{ TenantId = $script:A17Tenant; IncludeARM = $true } + $SignIn)
+
+            Assert-A17TokenCall -Graph 1 -Arm 1 -Force $false
+        }
+
+        It 'N2: renewing the <Method> session at a command''s start sends both token requests without Force' -ForEach @(
+            @{ Method = 'Interactive' }
+            @{ Method = 'ManagedIdentity' }
+            @{ Method = 'ClientSecret' }
+            @{ Method = 'ClientCertificate' }
+        ) {
+            $SignIn = Get-A17SignIn -Method $Method
+            Invoke-A17SignIn (@{ TenantId = $script:A17Tenant; IncludeARM = $true } + $SignIn)
+            Set-A17Expiry -GraphMinutes 2 -ArmMinutes 2
+            $script:A17Calls.Clear()
+
+            Invoke-A17SignIn (@{ TenantId = $script:A17Tenant; IncludeARM = $true } + $SignIn)
+
+            Assert-A17TokenCall -Graph 1 -Arm 1 -Force $false
+        }
+
+        It 'N3: a claims challenge on the <Method> session sends one Microsoft Graph token request with the claims and without Force' -ForEach @(
+            @{ Method = 'Interactive' }
+            @{ Method = 'ManagedIdentity' }
+            @{ Method = 'ClientSecret' }
+            @{ Method = 'ClientCertificate' }
+        ) {
+            $SignIn = Get-A17SignIn -Method $Method
+            Invoke-A17SignIn (@{ TenantId = $script:A17Tenant } + $SignIn)
+            $script:A17Calls.Clear()
+
+            Invoke-A17SignIn (@{ TenantId = $script:A17Tenant; ClaimsChallenge = $script:A17Claims } + $SignIn)
+
+            Assert-A17TokenCall -Graph 1 -Arm 0 -Force $false -Key 'Claim'
+        }
+
+        It 'N4: Connect-OER with <Method> after Disconnect-OER sends both token requests without Force' -ForEach @(
+            @{ Method = 'Interactive' }
+            @{ Method = 'ManagedIdentity' }
+            @{ Method = 'ClientSecret' }
+            @{ Method = 'ClientCertificate' }
+        ) {
+            $Connect = Get-A17SignIn -Method $Method -ForConnectOER
+            Connect-OER -TenantId $script:A17Tenant -IncludeARM @Connect
+            Disconnect-OER -Confirm:$false
+            Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 1 -Exactly
+            (InModuleScope $script:moduleName { $null -eq $script:_OERAuthState }) | Should -BeTrue
+            $script:A17Calls.Clear()
+
+            Connect-OER -TenantId $script:A17Tenant -IncludeARM @Connect
+
+            Assert-A17TokenCall -Graph 1 -Arm 1 -Force $false
+        }
+    }
+
+    Context 'the device code with Force on' {
+        It 'D8: a near-expiry renewal with -IncludeARM shows both device codes on the information stream under silenced warnings, with Force bound on both requests' {
+            # The pattern of 'surfaces the device code on the information stream even when warnings are
+            # silenced' above, and for its reason: a Pester mock body reads $WarningPreference from the
+            # global scope only, so only a real advanced function in the module scope drops a warning
+            # when warnings are silenced and keeps it under the -WarningAction Continue the module passes.
+            # The stub records whether Force was bound and warns with a code per resource. Nothing
+            # authenticates: it returns a fabricated token and never loads or calls AzAuth.
+            $Captured = InModuleScope $script:moduleName -Parameters @{ T = $script:A17Tenant } {
+                param($T)
+                function script:Get-AzToken {
+                    [CmdletBinding()]
+                    param(
+                        [string]$Resource, [string]$Tenant, [string]$ClientId, $ClientSecret,
+                        [switch]$Interactive, [switch]$DeviceCode, [switch]$ManagedIdentity,
+                        $ClientCertificate, [string]$ClientCertificatePath, [string[]]$Scope,
+                        [switch]$Force, [string]$Claim
+                    )
+                    [string]$Code = if ($Resource -like '*management*') { 'A17ARMCODE' } else { 'A17GRAPHCODE' }
+                    $script:A17StubCalls.Add([pscustomobject]@{ Resource = $Resource; Force = $Force.IsPresent })
+                    Write-Warning "To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code $Code to authenticate."
+                    [pscustomobject]@{ Token = 'NOT-A-REAL-TOKEN-a17'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = $Tenant }
+                }
+                $script:A17StubCalls = [System.Collections.Generic.List[object]]::new()
+                try {
+                    Initialize-OERAuth -TenantId $T -AuthMethod 'DeviceCode' -IncludeARM 6>$null
+                    $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+                    $script:_OERAuthState.ArmTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+                    $script:A17StubCalls.Clear()
+
+                    $InfoVar = $null
+                    $WarnVar = $null
+                    # The automation host: warnings silenced at the scope every callee resolves through,
+                    # restored in a finally.
+                    $PreviousWarningPreference = $global:WarningPreference
+                    $global:WarningPreference = 'SilentlyContinue'
+                    try {
+                        # A command's start near expiry, inheriting the device code session.
+                        Initialize-OERAuth -IncludeARM -InformationVariable InfoVar -WarningVariable WarnVar 6>$null
+                    } finally {
+                        $global:WarningPreference = $PreviousWarningPreference
+                    }
+                    [pscustomobject]@{
+                        Information = @($InfoVar | ForEach-Object { [string]$_.MessageData })
+                        Warning     = @($WarnVar | ForEach-Object { [string]$_.Message })
+                        Calls       = @($script:A17StubCalls)
+                    }
+                } finally {
+                    # Unqualified, from the same InModuleScope block, as above: removes the stub, the
+                    # nearest definition, and never the tripwire's global replacement.
+                    Remove-Item -Path 'function:Get-AzToken' -ErrorAction SilentlyContinue
+                    Remove-Variable -Name A17StubCalls -Scope Script -ErrorAction SilentlyContinue
+                }
+            }
+
+            $Captured.Calls.Count | Should -Be 2 -Because 'the renewal requests the Microsoft Graph and the Azure Resource Manager token'
+            @($Captured.Calls | Where-Object { $_.Resource -like '*graph*' }).Count | Should -Be 1
+            @($Captured.Calls | Where-Object { $_.Resource -like '*management*' }).Count | Should -Be 1
+            foreach ($Call in $Captured.Calls) {
+                $Call.Force | Should -BeTrue -Because "the device code token request for '$($Call.Resource)' builds a new credential"
+            }
+            ($Captured.Information -join "`n") | Should -Match 'A17GRAPHCODE'
+            ($Captured.Information -join "`n") | Should -Match 'A17ARMCODE'
+            ($Captured.Warning -join "`n") | Should -Not -Match 'A17GRAPHCODE|A17ARMCODE'
+        }
+    }
+}
+
 Describe 'Initialize-OERAuth granted-tenant guard' {
     BeforeEach {
         InModuleScope $script:moduleName {

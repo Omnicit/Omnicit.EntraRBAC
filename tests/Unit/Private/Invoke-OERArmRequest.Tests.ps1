@@ -2130,3 +2130,76 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 }
+
+Describe 'Invoke-OERArmRequest refreshes a device code session with Force (A17, BL-112)' {
+    # Every device code token request carries Force (A17): a device code credential AzAuth stored and
+    # reused for a later request never returns, and Force makes AzAuth build a new one, which prints a
+    # new code. The 401 refresh this wrapper makes runs through the real Initialize-OERAuth here, end to
+    # end: Get-AzToken, Connect-MgGraph, Get-MgContext and the sender, Invoke-WebRequest, are mocked in
+    # the module scope, and nothing else is. The session is a device code sign-in with -IncludeARM for an
+    # invented GUID tenant, so no domain lookup runs, and the list of token requests is emptied after it,
+    # so only the refresh's requests count.
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+        }
+        $script:A17Tenant = '33333333-3333-3333-3333-333333333333'
+        $script:A17Calls = [System.Collections.Generic.List[object]]::new()
+        $script:A17ArmRequests = 0
+        # One stable Graph SDK session, which is the module's own once it has connected.
+        $script:A17Context = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '33333333-3333-3333-3333-333333333333'
+            Account = 'admin@contoso.com'; AppName = 'oer-test-app'; Environment = 'Global'
+            Scopes = @('Group.ReadWrite.All')
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Get-MgContext { $script:A17Context }
+        Mock -ModuleName Omnicit.EntraRBAC Connect-MgGraph { }
+        # Every parameter the module passes, since a mock body without a param() block sees an empty
+        # $PSBoundParameters. Each request is recorded as its resource and the parameter names it bound,
+        # and answered with a token issued for the tenant it named.
+        Mock -ModuleName Omnicit.EntraRBAC Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $WarningAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            $script:A17Calls.Add([pscustomobject]@{ Resource = $Resource; Keys = @($PSBoundParameters.Keys) })
+            [pscustomobject]@{
+                Token     = 'NOT-A-REAL-TOKEN-a17'
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = 'admin@contoso.com'
+                TenantId  = $Tenant
+            }
+        }
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ T = $script:A17Tenant } {
+            param($T)
+            Initialize-OERAuth -TenantId $T -AuthMethod 'DeviceCode' -IncludeARM
+        }
+        # The session's own sign-in made a Microsoft Graph and an Azure Resource Manager token request;
+        # only the refresh counts below.
+        $script:A17Calls.Count | Should -Be 2
+        $script:A17Calls.Clear()
+    }
+
+    It 'E3: a rejected Azure Resource Manager token refreshes with Force on the Azure Resource Manager token request, and sends the retry once' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest {
+            $script:A17ArmRequests++
+            if ($script:A17ArmRequests -eq 1) { [PSCustomObject]@{ StatusCode = 401; Content = '' } }
+            else { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[]}' } }
+        }
+
+        $null = InModuleScope Omnicit.EntraRBAC { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' }
+
+        # The rejected request and one retry.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 2 -Exactly
+        # The refresh renews both tokens (-ForceRefresh -IncludeARM): one Microsoft Graph and one Azure
+        # Resource Manager token request, and no other.
+        $script:A17Calls.Count | Should -Be 2 -Because 'the refresh renews the Microsoft Graph and the Azure Resource Manager token'
+        $Arm = @($script:A17Calls | Where-Object { [string]$_.Resource -like '*management*' })
+        $Arm.Count | Should -Be 1 -Because 'the refresh requests one Azure Resource Manager token'
+        ($Arm[0].Keys -contains 'DeviceCode') | Should -BeTrue -Because 'the refresh keeps the device code sign-in'
+        ($Arm[0].Keys -contains 'Force') | Should -BeTrue -Because 'the refresh''s device code Azure Resource Manager token request builds a new credential'
+    }
+}
