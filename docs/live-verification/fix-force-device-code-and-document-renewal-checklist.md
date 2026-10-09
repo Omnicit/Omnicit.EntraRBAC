@@ -308,20 +308,23 @@ Result:
 
 ### 2.1. A Microsoft Graph read
 
-- [ ] **2.1** `Get-OERGroup` on a fresh module session returns groups with no token request and no error.
+- [ ] **2.1** `Get-OERGroup -Group` on a fresh module session reads one group by its id, with no token request and no error.
 
 ```powershell
 Connect-OerLive -Arm
 Start-S104bFence
+$First = & (Get-Module -Name Omnicit.EntraRBAC) { Invoke-OERGraphRequest -Uri 'v1.0/groups?$top=1&$select=id' }
+$Id = [string]@($First.value)[0].id
 $E = $null
-$Out = @(Get-OERGroup -ErrorAction SilentlyContinue -ErrorVariable E)
-Write-OerLiveStep "groups returned: $($Out.Count); errors: $(@($E).Count)"
+$Out = @(Get-OERGroup -Group $Id -ErrorAction SilentlyContinue -ErrorVariable E)
+Write-OerLiveStep "groups returned: $($Out.Count); it is the group asked for: $(@($Out | Where-Object { [string]$_.Id -eq $Id }).Count -eq 1); errors: $(@($E).Count)"
 Write-S104bTokenCalls
 Disconnect-OerLive
 ```
 
-**Expect:** at least one group, errors 0; `token requests: 0`.
-**Failure looks like:** an error, a token request, or no group.
+**Expect:** one group, the group asked for `True`, errors 0; `token requests: 0`.
+**Failure looks like:** an error, a token request, or no group. (`Get-OERGroup` takes `-Group`,
+`-Filter` or `-All`; a bare call is a binding error, not a read.)
 
 Result:
 
