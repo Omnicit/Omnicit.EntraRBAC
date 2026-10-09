@@ -12,12 +12,12 @@ function Remove-OERGroupMember {
     non-terminating GroupNotFound error; a group lookup that itself fails (a refused, throttled or
     failed read) is reported as that failure, never as GroupNotFound. Supports -WhatIf and -Confirm.
 
-    Principals may be given as raw object ids with -PrincipalId or by name with -User (user
-    principal name), -GroupPrincipal (group display name) and -ServicePrincipal (service principal
-    display name); all four accept multiple values and are unioned into a single run. A non-GUID
-    value passed to -PrincipalId produces a non-terminating InvalidPrincipalId error naming the
-    friendly alternatives instead of an opaque Graph failure. Note that -Group is the TARGET group
-    and -GroupPrincipal is a group being removed as a member.
+    Principals may be given as raw object ids with -PrincipalId, or with -User (user principal name
+    or object id), -GroupPrincipal (group display name or object id) and -ServicePrincipal (service
+    principal display name or object id); all four accept multiple values and are unioned into a
+    single run. A non-GUID value passed to -PrincipalId produces a non-terminating
+    InvalidPrincipalId error naming the friendly alternatives instead of an opaque Graph failure.
+    Note that -Group is the TARGET group and -GroupPrincipal is a group being removed as a member.
 
     The -Group parameter accepts group display names, object ids (GUIDs), and the pipeline aliases
     Id, GroupId, and DisplayName so that output from Get-OERGroup and Get-OERGroupMember pipes

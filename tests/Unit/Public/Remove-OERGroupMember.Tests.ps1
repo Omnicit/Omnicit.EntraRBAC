@@ -243,3 +243,32 @@ Describe 'Remove-OERGroupMember verbose output' {
         $Verbose | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Remove-OERGroupMember help' {
+    It 'says in the description what each parameter says about -User, -GroupPrincipal and -ServicePrincipal (BL-104 F5)' {
+        # Read through Get-Help, never the command's Definition: the Definition holds the function body,
+        # so a match there would prove nothing about the help. Whitespace is collapsed first, so the
+        # assertions do not depend on where the prose wraps.
+        $Help = Get-Help Remove-OERGroupMember -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $ParamText = @{}
+        foreach ($P in @($Help.Parameters.Parameter)) {
+            $ParamText[[string]$P.Name] = ((@($P.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        }
+
+        # The description names what each parameter takes, as that parameter's own text does.
+        $Description | Should -Match ([regex]::Escape('-User (user principal name or object id)'))
+        $Description | Should -Match ([regex]::Escape('-GroupPrincipal (group display name or object id)'))
+        $Description | Should -Match ([regex]::Escape('-ServicePrincipal (service principal display name or object id)'))
+
+        # Paired with the parameter texts it must agree with, so the sentence cannot drift from them
+        # unnoticed: each one still says a name OR an object id.
+        $ParamText['User'] | Should -Match ([regex]::Escape('user principal name or object id'))
+        $ParamText['GroupPrincipal'] | Should -Match ([regex]::Escape('group display name or object id'))
+        $ParamText['ServicePrincipal'] | Should -Match ([regex]::Escape('service principal display name or object id'))
+
+        # The rest of the paragraph stands: all four are unioned, and the -PrincipalId refusal follows.
+        $Description | Should -Match ([regex]::Escape('all four accept multiple values and are unioned into a single run'))
+        $Description | Should -Match ([regex]::Escape('A non-GUID value passed to -PrincipalId produces a non-terminating InvalidPrincipalId error'))
+    }
+}
