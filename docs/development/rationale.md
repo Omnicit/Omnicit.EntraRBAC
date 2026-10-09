@@ -2278,9 +2278,10 @@ rules and the call's parameters.
    BUILT A NEW credential instance, because AzAuth's reuse test also requires a matching client id,
    and the Graph and ARM calls in this module's own shape never share one -- the ARM call falls
    back to Azure.Identity's built-in default public client. `Initialize-OERAuth`'s comment above
-   `Invoke-AzTokenCall` already documents this measured shape and states plainly that whether the
-   operator is shown a second device code on the ARM call "has not yet been observed live" --
-   consistent with what this spike measured, not a contradiction of it.
+   `Invoke-AzTokenCall` documents this measured shape. That the operator is then shown a second
+   device code on the ARM call is MEASURED live as well: on 2026-09-16 checklists 3.1, 3.3a and
+   6.1a each ran `Connect-OER -DeviceCode -IncludeARM`, printed two device code instructions
+   (`InformationRecords` 2) and ended `SUCCEEDED` -- consistent with what this spike measured.
 
 ### A client secret reaches AzAuth as a string
 
@@ -4121,10 +4122,12 @@ id, parameter or public value (A8).
 **What it costs.** Every device code token request prints a code to enter, so a sign-in with
 `-IncludeARM` prints two, and so does a renewal of both tokens. MEASURED for a forced Graph request:
 in checklist 4.2 the raw Graph device code call, repeated with `-Force` after it hung, printed a
-fresh code. INFERRED for the ARM token, as the comment
-above `Invoke-AzTokenCall` in `Initialize-OERAuth.ps1` records: a new credential holds neither the
-earlier sign-in's authentication record nor its in-memory token cache, so it cannot complete
-silently; a second code for the ARM token has not yet been observed live. DECOMPILED, nothing that
+fresh code. MEASURED for the ARM token as well, on a call that built a new credential, which is what
+`Force` now does on every call: on 2026-09-16 (AzAuth 2.9.0, IL-identical to 2.10.0) checklists 3.1,
+3.3a and 6.1a each ran `Connect-OER -DeviceCode -IncludeARM` live, printed two device code
+instructions, recorded `InformationRecords` 2 and ended `SUCCEEDED`; their ARM call passed no client
+id and so built a new credential (further finding 2 under
+[Switching tenants in one process](#switching-tenants-in-one-process)). DECOMPILED, nothing that
 used to work is lost: before A17 a device code request either built a new credential, and printed a
 code as it does now, or reused the stored one and never returned, whether its silent re-acquisition
 succeeded or failed. So no request that used to return without a code now asks for one.
