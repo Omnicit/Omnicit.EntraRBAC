@@ -177,7 +177,7 @@ function Get-S104Renewals {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -199,13 +199,26 @@ window's owner: True; A: True; B: True; device code forced: True`.
 clone; a `False` on the last line -- build the worktree first (`./build.ps1 -Tasks build`), never
 while the gate runs.
 
-Result:
+Result: 2026-10-09 02:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree on this branch at e54a6c0 with 0 tracked changes (the build is of 9dc7287's source; e54a6c0 adds only this checklist); the build carries the window's owner, A, B and the device-code force.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s104] The module loads from a worktree that is not the main clone: True
+[oer-s104] Main clone: branch main; HEAD 6817b33
+[oer-s104] Worktree: branch fix/renew-the-token-silently; HEAD e54a6c0 docs: add the live checklist for renewing a token during a long run; tracked changes: 0
+[oer-s104] The worktree's build carries the window's owner: True; A: True; B: True; device code forced: True
+RUNNER: check S.1 exit code 0; started 2026-10-09T02:50:09Z; took 2 s.
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, is app-only, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, is app-only, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -222,13 +235,34 @@ about an hour left).
 **Failure looks like:** any `False` in the identity lines, or `application is disabled` -- STOP: the
 identity is not enabled for this run; never sign in another way.
 
-Result:
+Result: 2026-10-09 02:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc; identity check passed; the module is the worktree's build (1.1.4); sign-in method ClientCertificate, with neither token due for renewal (59 min left).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s104] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg4\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s104] The module is the worktree's build: True
+[oer-s104] sign-in method: ClientCertificate; Graph token due for renewal: False (59 min left); ARM token due for renewal: False (59 min left)
+RUNNER: check 0.1 exit code 0; started 2026-10-09T02:50:11Z; took 6 s.
+```
 
 ## 1. App-only: a token in the renewal window is not renewed within a command (regression, A)
 
 ### 1.1. Microsoft Graph: the request goes out with the token the session holds
 
-- [ ] **1.1** With the Microsoft Graph token's recorded expiry moved two minutes ahead -- inside the renewal window -- a Graph request through the module's transport makes no token request, writes no renewal line, sends once and is answered; the expiry stays where it was moved.
+- [x] **1.1** With the Microsoft Graph token's recorded expiry moved two minutes ahead -- inside the renewal window -- a Graph request through the module's transport makes no token request, writes no renewal line, sends once and is answered; the expiry stays where it was moved.
 
 ```powershell
 Connect-OerLive -Arm
@@ -253,11 +287,36 @@ Azure Resource Manager requests: 0`; `error caught: none`.
 **Failure looks like:** a token request (the fence refuses it, and the line names it), a renewal line,
 an error caught (`AppOnly...` or `SignInRefused`), or no response.
 
-Result:
+Result: 2026-10-09 02:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With the Microsoft Graph token's recorded expiry moved two minutes ahead (due: True, 1 min left), a Graph request through the module's transport made no token request, wrote no renewal line (its one verbose line is the request itself), sent once and was answered with the test tenant's organization; no error; the expiry was still due afterwards, so nothing renewed it.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s104] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg4\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s104] Before: sign-in method: ClientCertificate; Graph token due for renewal: True (1 min left); ARM token due for renewal: False (59 min left)
+[oer-s104] error caught: none
+[oer-s104] Response read: organizations 1; it is the test tenant: True
+[oer-s104] renewal lines in the verbose stream: 0; verbose lines: 1
+[oer-s104] After: sign-in method: ClientCertificate; Graph token due for renewal: True (1 min left); ARM token due for renewal: False (59 min left)
+[oer-s104] token requests: 0; Microsoft Graph requests: 1; Azure Resource Manager requests: 0
+RUNNER: check 1.1 exit code 0; started 2026-10-09T02:50:26Z; took 5 s.
+```
 
 ### 1.2. Azure Resource Manager: the same with the ARM token
 
-- [ ] **1.2** With the ARM token's recorded expiry moved two minutes ahead, an ARM request through the module's transport makes no token request, writes no renewal line, sends once and is answered with the test subscription; the expiry stays where it was moved.
+- [x] **1.2** With the ARM token's recorded expiry moved two minutes ahead, an ARM request through the module's transport makes no token request, writes no renewal line, sends once and is answered with the test subscription; the expiry stays where it was moved.
 
 ```powershell
 Connect-OerLive -Arm
@@ -280,11 +339,36 @@ Disconnect-OerLive
 0; Microsoft Graph requests: 0; Azure Resource Manager requests: 1`; `error caught: none`.
 **Failure looks like:** a token request, a renewal line, an error caught, or no response.
 
-Result:
+Result: 2026-10-09 02:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With the ARM token's recorded expiry moved two minutes ahead (due: True, 1 min left), an ARM request through the module's transport made no token request, wrote no renewal line, sent once and was answered with the test subscription; no error; the ARM expiry was still due afterwards.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2 ===
+[oer-s104] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg4\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s104] Before: sign-in method: ClientCertificate; Graph token due for renewal: False (59 min left); ARM token due for renewal: True (1 min left)
+[oer-s104] error caught: none
+[oer-s104] Response read: subscriptions 1; the test subscription is among them: True
+[oer-s104] renewal lines in the verbose stream: 0; verbose lines: 1
+[oer-s104] After: sign-in method: ClientCertificate; Graph token due for renewal: False (59 min left); ARM token due for renewal: True (1 min left)
+[oer-s104] token requests: 0; Microsoft Graph requests: 0; Azure Resource Manager requests: 1
+RUNNER: check 1.2 exit code 0; started 2026-10-09T02:50:31Z; took 5 s.
+```
 
 ### 1.3. A paged read with the Graph token in the window reads every page with the token it holds
 
-- [ ] **1.3** With the Graph token's recorded expiry inside the renewal window, a paged read of the tenant's groups two at a time (`-All`) makes no token request and no renewal, and returns exactly the groups one large page returns.
+- [x] **1.3** With the Graph token's recorded expiry inside the renewal window, a paged read of the tenant's groups two at a time (`-All`) makes no token request and no renewal, and returns exactly the groups one large page returns.
 
 ```powershell
 Connect-OerLive -Arm
@@ -312,13 +396,36 @@ lines in the verbose stream: 0`; the same groups as one large page, `True`; the 
 read twice); a single request when the tenant holds more than two groups (the paging was not
 exercised -- not a pass).
 
-Result:
+Result: 2026-10-09 02:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With the Graph token due, the paged read two at a time (-All) read 97 groups in 49 requests and wrote no renewal line; one large page read the same 97 groups (the same ids: True); 0 token requests and 50 Graph requests in all; the Graph token still due afterwards.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.3 ===
+[oer-s104] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg4\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s104] paged read: 97 groups in 49 requests; renewal lines in the verbose stream: 0; verbose lines: 98
+[oer-s104] one large page: 97 groups; the same groups: True
+[oer-s104] After: sign-in method: ClientCertificate; Graph token due for renewal: True (1 min left); ARM token due for renewal: False (59 min left)
+[oer-s104] token requests: 0; Microsoft Graph requests: 50; Azure Resource Manager requests: 0
+RUNNER: check 1.3 exit code 0; started 2026-10-09T02:50:36Z; took 7 s.
+```
 
 ## 2. Ordinary commands read as before (regression)
 
 ### 2.1. Get-OERSubscription
 
-- [ ] **2.1** `Get-OERSubscription` on a fresh module session returns the test subscription, with no token request and no error.
+- [x] **2.1** `Get-OERSubscription` on a fresh module session returns the test subscription, with no token request and no error.
 
 ```powershell
 Connect-OerLive -Arm
@@ -336,11 +443,32 @@ Disconnect-OerLive
 requests: 0`; at least one Azure Resource Manager request.
 **Failure looks like:** an error, a token request, or the test subscription missing.
 
-Result:
+Result: 2026-10-09 02:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Get-OERSubscription on a fresh module session returned 1 subscription, the test subscription, with no error; 0 token requests, 1 Azure Resource Manager request.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s104] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg4\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s104] subscriptions returned: 1; the test subscription is among them: True; errors: 0
+[oer-s104] token requests: 0; Microsoft Graph requests: 0; Azure Resource Manager requests: 1
+RUNNER: check 2.1 exit code 0; started 2026-10-09T02:50:52Z; took 5 s.
+```
 
 ### 2.2. Get-OERGroup -All
 
-- [ ] **2.2** `Get-OERGroup -All` on a fresh module session returns as many groups as the transport's own paged read of security and non-security groups, with no token request and no error.
+- [x] **2.2** `Get-OERGroup -All` on a fresh module session returns as many groups as the transport's own paged read of security and non-security groups, with no token request and no error.
 
 ```powershell
 Connect-OerLive -Arm
@@ -357,7 +485,28 @@ Disconnect-OerLive
 **Failure looks like:** an error, a token request, or a different number (read the cmdlet's own
 filter before calling it a defect: `Get-OERGroup -All` lists what its help says it lists).
 
-Result:
+Result: 2026-10-09 02:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Get-OERGroup -All on a fresh module session returned 97 groups with no error, as many as the transport's own paged read; 0 token requests (the block does not start the request counters, and says so).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.2 ===
+[oer-s104] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg4\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s104] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s104] Get-OERGroup -All: 97 groups; errors: 0; the transport's own read: 97 groups; the same number: True
+[oer-s104] token requests: 0; Microsoft Graph requests: not counted in this block; Azure Resource Manager requests: not counted in this block
+RUNNER: check 2.2 exit code 0; started 2026-10-09T02:50:57Z; took 5 s.
+```
 
 ## C. The operator's check: a delegated session renews while a command runs (class C, after the merge)
 
@@ -525,7 +674,7 @@ Result:
 
 ### T.1. Nothing left: no session and nothing with the prefix
 
-- [ ] **T.1** No module state and no Graph SDK session is left in the process; the sweep finds nothing with the prefix `oer-s104-` in the tenant.
+- [x] **T.1** No module state and no Graph SDK session is left in the process; the sweep finds nothing with the prefix `oer-s104-` in the tenant.
 
 ```powershell
 Connect-OerLive -Graph
@@ -540,5 +689,26 @@ Write-OerLiveStep "After Disconnect-OerLive: Graph SDK session present: $([bool]
 **Failure looks like:** an object with the prefix -- this file creates none, so it is someone else's
 and a stop; an unread collection -- the sweep is not a proof of absence.
 
-Result:
+Result: 2026-10-09 02:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Nothing in the tenant carries the prefix oer-s104- (0 objects, 0 unread collections; this file creates none); no Graph SDK session is left after Disconnect-OerLive. The WARNING line is Disconnect-OER's own, written when OerLive's Disconnect-OerLive calls it after the -Graph sign-in, as in Sprint 10 step 3.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[oer-s104] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg4\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s104] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s104] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s104] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s104] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s104] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s104] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s104] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s104] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s104-' is left.
+[oer-s104] objects with the prefix: 0; unread collections: 0
+WARNING: Disconnect-OER leaves the Microsoft Graph PowerShell SDK session in this process connected, since Omnicit.EntraRBAC has no record of connecting it. Run Disconnect-MgGraph to end that session.
+[oer-s104] After Disconnect-OerLive: Graph SDK session present: False
+RUNNER: check T.1 exit code 0; started 2026-10-09T02:51:01Z; took 4 s.
+```
 
