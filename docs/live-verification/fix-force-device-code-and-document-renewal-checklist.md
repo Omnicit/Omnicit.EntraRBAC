@@ -173,7 +173,10 @@ Write-OerLiveStep "Main clone: branch $MainBranch; HEAD $($MainHead.Substring(0,
 Write-OerLiveStep "Worktree: branch $(git -C $Cfg.Repo branch --show-current); HEAD $(git -C $Cfg.Repo log -1 --format='%h %s'); tracked changes: $(@(git -C $Cfg.Repo status --porcelain --untracked-files=no).Count)"
 $Psm1 = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psm1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 $Has = { param($Text) [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch $Text -Quiet) }
-Write-OerLiveStep "The worktree's build carries the device code force: $(& $Has "[bool]`$DeviceCodeForced = `$EffectiveMethod -eq 'DeviceCode'"); on the Force decision: $(& $Has 'if ($ForceRefresh -or $DeviceCodeForced -or'); kept for the ARM request: $(& $Has '-not $ForceRefresh -and -not $DeviceCodeForced')"
+$Owner = & $Has '[bool]$DeviceCodeForced = $EffectiveMethod -eq ''DeviceCode'''
+$Decision = & $Has 'if ($ForceRefresh -or $DeviceCodeForced -or'
+$Kept = & $Has '-not $ForceRefresh -and -not $DeviceCodeForced'
+Write-OerLiveStep "The worktree's build carries the device code force: $Owner; on the Force decision: $Decision; kept for the ARM request: $Kept"
 ```
 
 **Expect:** `The module loads from a worktree that is not the main clone: True`; the main clone on
