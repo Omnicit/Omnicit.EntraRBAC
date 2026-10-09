@@ -22,6 +22,11 @@ not sent. `New-`/`Set-OERConfiguration` refuse a white-space `-TenantId`. `SignI
 its actual cause, and the `SignInRefused` after a failed sign-in no longer says the session may be
 the previous tenant's.
 
+`Invoke-OERStructure -WhatIf` now plans what the run does when an Azure role policy entry's
+approvers would name nobody: both report it `Failed` with `ApproverRequired` and change nothing.
+`Test-OERStructure` refuses a `tenantId` that is not a string, as the schema does, or that ends in a
+line break. The `NotDirectAssignment` example now parses for a role name with a curly apostrophe.
+
 ## [1.1.3] - 2026-10-07
 
 `Invoke-OERStructure` without `-TenantId`, and the builders that look up a name

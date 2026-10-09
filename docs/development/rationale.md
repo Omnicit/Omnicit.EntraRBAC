@@ -1254,7 +1254,18 @@ composed from friendly parts, which is the job the friendly properties already d
 ## guid-predicate
 
 `Test-OERGuid` is the single GUID predicate. Never re-implement the canonical
-`^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$` regex inline.
+`^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\z` regex inline.
+
+Since Sprint 10 step 5 (BL-101) the predicate ends in `\z`. With `$`, a value followed by one line
+feed passed (a carriage return and line feed already failed), while an ECMA-262 validator of the
+schema's pattern refused it, so the offline validator and such a validator disagreed on a `tenantId`
+read from a file or a here-string with a stray line break. PowerShell's own `Test-Json`, whose
+regular expressions are .NET's, accepts that value like the old predicate did; only a strictly
+ECMA-262 validator refuses it.
+
+What changes module-wide: every caller asks `Test-OERGuid` whether a value is an object id, so a
+value followed by a line feed now takes each caller's name path instead -- a lookup by name, or a
+refusal such as `InvalidPrincipalId` for `-PrincipalId`; a `-TenantId` goes to the tenant lookup.
 
 The deliberate exception is the wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup`,
 which intentionally also accepts braced, parenthesised and dash-less forms that `Test-OERGuid`
@@ -3330,13 +3341,20 @@ cmdlet or a pipeline neighbour switched to by the time the document is assembled
 `Get-OERInventory` returns, and passes it to both of its converter calls. The bundle folder's name
 and the summary's `TenantId` keep the tenant as named, as before; only `inventory.json` carries the
 granted tenant. The validator (`Test-OERStructureSchema`, Rule 1b) and the schema
-(`Get-OERStructureSchemaJson`) know the key: a present `tenantId` must be a canonical GUID, and an
-explicit `null`, an empty string or any other value is an Error (Ruling R3), which
-`Invoke-OERStructure` reports as `StructureValidationFailed` before either comparison. A `null` is
-refused rather than read as no key, since an LLM that wrote one would otherwise drop the check
-silently; a document meant to carry no check omits the key. If wrong: treat an explicit `null` as
-absent, one condition. A document without the key is valid as before. The prompt template tells an
-LLM to keep `tenantId` exactly as exported and never to invent, change or remove one.
+(`Get-OERStructureSchemaJson`) know the key: a present `tenantId` must be a string holding a
+canonical GUID, and an explicit `null`, an empty string, a value that is not a string or any other
+value is an Error (Ruling R3), which `Invoke-OERStructure` reports as `StructureValidationFailed`
+before either comparison. A `null` is refused rather than read as no key, since an LLM that wrote one
+would otherwise drop the check silently; a document meant to carry no check omits the key. If wrong:
+treat an explicit `null` as absent, one condition. Until Sprint 10 step 5 (BL-101) the validator
+accepted two shapes the schema is written to refuse: a GUID followed by a line feed, through the
+predicate's `$` (only a strictly ECMA-262 validator refuses it; PowerShell's own `Test-Json`, whose
+regular expressions are .NET's, accepts it like the old predicate did), and a one-GUID array, through
+Rule 1b's string cast, which reads a one-element array as its element (`Test-Json` refuses that one
+too). Both are now refused, the first by the predicate's `\z` and the second by Rule 1b's own check
+that the value is a string, as the schema's `type: string` does. A document without the key is valid
+as before. The prompt template tells an LLM to keep `tenantId` exactly as exported and never to
+invent, change or remove one.
 
 **The two comparisons, and their order.** `Get-OERDocumentTenantMismatch` is the single owner of
 the comparison and of the `DocumentTenantMismatch` id and message. It returns nothing for a document
@@ -3459,12 +3477,6 @@ rule.
   document declares, nothing to remove; applied anywhere else it is refused. Read in the code, not
   tested. The capture stays in `begin` (R7, and the reason under "The export"). If wrong: the
   exported `tenantId` can name the previous session's tenant for an empty bundle.
-- `Test-OERGuid` matches with `$`, which .NET lets match before a final line feed, so the validator
-  accepts a `tenantId` of a GUID followed by a line feed, which the schema's pattern refuses; the
-  comparison then never finds that value equal to a token tenant, so the document is refused (fails
-  closed). A one-element array holding a GUID passes the validator's `[string]` cast while the
-  schema's `type: string` refuses it; the comparison reads it as that GUID, so it names no other
-  tenant. This step's review found both and left them as they are.
 - Nothing machine-checks who calls `Get-OERInventoryTenantId`; gate 10 holds only the comparison.
   `tests/Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` runs with no state, so its
   export-to-apply round trip carries no `tenantId` and never reaches the comparison.
@@ -3473,8 +3485,8 @@ rule.
 paragraph of its own beside its pipeline session rule, and its `-TenantId` and `-InputObject` point
 at it; `Get-OERInventory`'s and `Export-OERInventory`'s help say what `tenantId` names, that it is
 not the tenant as named, and when it is left out; `Test-OERStructure`'s help that the key is
-checked offline as a canonical GUID and compared only by the apply. The README and the about topic
-carry it in the clause and the short paragraph described under "The user-facing texts" of
+checked offline as a string holding a canonical GUID and compared only by the apply. The README and
+the about topic carry it in the clause and the short paragraph described under "The user-facing texts" of
 [A command sends nothing under a sign-in a later command replaced](#a-command-sends-nothing-under-a-sign-in-a-later-command-replaced),
 and the copy example removes the key. CLAUDE.md carries the closed and open halves in its
 Authentication Architecture rule and the two owners in a Code Style rule.
@@ -5447,7 +5459,10 @@ just made. Now `Sync-OERStructureGroup` records each successful create into a un
 the document names it, the new group's id and its name -- in a list `Invoke-OERStructure` keeps per
 document and passes to the groups and administrative units handlers as a private parameter (ruling
 R8: a run-scoped list through the handlers' extra parameters, as `roleAssignments` already does). A
-group `New-OERGroup` found already existing is recorded too, which can only withhold. The unit's
+group `New-OERGroup` found already existing is recorded too, which can only withhold. Its withheld
+row therefore says the run either created the group into the unit or found it already existing
+(Sprint 10 step 5, BL-100): the handler cannot tell the two apart, and the earlier text claimed a
+create in both. The unit's
 prune pass, straight after the unresolved-entry call, withholds a candidate whose id is a recorded
 group id and whose record names this unit, by its display name or its object id (a reference that
 parses as a GUID, braced and dash-less forms included, is read as the unit's object id and compared
@@ -5704,6 +5719,23 @@ the cmdlet's own record.
 `Resolve-OERPrincipalOrId` with every cmdlet that uses it -- read only the message and
 `Test-OERAmbiguousNameError`, so they publish the same ids and messages as before. Their existing
 tests pass without a change, which is the proof.
+
+**BL-97 (F1): approvers that name nobody fail in the plan too.** For an Azure role management policy
+the diff sends both approver sides whenever either differs, since Azure Resource Manager replaces the
+whole approver list, the side the document does not declare seeded from the live policy. A declared
+empty side beside an other side that is empty too -- declared, or seeded empty from the live policy
+-- is therefore exactly the call `Set-OERRoleManagementPolicy` refuses with `ApproverRequired`
+before anything is sent. Before Sprint 10 step 5 the `-WhatIf` plan reported that entry as "would
+update" while every run reported it `Failed`. Now `Resolve-OERRoleManagementPolicyChange` flags it,
+in its `ApproverRequired` property (the Azure shape only, never with `-SendDeclaredApproverSideOnly`,
+where the directory-role cmdlet carries the undeclared side from the live rule), and
+`Sync-OERStructureRoleManagementPolicy` reports the entry `Failed` with that same ErrorId before its
+`ShouldProcess` gate: the plan and the run report the same row, and nothing is sent, the other
+declared fields of the entry included. The condition is exactly the cmdlet's own (Sprint 10 step 5,
+ruling R1): an approver parameter is bound and the non-blank values of both name nobody. A document that turns
+approval on over an empty live approver list sends no approver parameter, so it is not flagged:
+nothing refuses it before Azure Resource Manager, and the plan and the run already agree. The
+cmdlet's own refusal stays in place as the backstop.
 
 ## failed-schedule-request
 

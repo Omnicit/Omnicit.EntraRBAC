@@ -23,10 +23,10 @@ function Test-OERStructure {
     to leave the collection untouched, or declare it. The members key of a group or administrative
     unit declared "dynamic": true is not reported.
 
-    A top-level tenantId, when present, must be a canonical GUID (an explicit null or any other value is
-    an Error; a document without the key is valid). The check is offline: Test-OERStructure does not
-    compare tenantId with any session, while Invoke-OERStructure does and refuses a document that
-    names another tenant.
+    A top-level tenantId, when present, must be a string holding a canonical GUID (an explicit null, a
+    value that is not a string, such as an array, or any other value is an Error; a document without
+    the key is valid). The check is offline: Test-OERStructure does not compare tenantId with any
+    session, while Invoke-OERStructure does and refuses a document that names another tenant.
 
     A worked apply document showing every section the engine understands is kept in the repository
     at docs/examples/example-structure.json, and the full export to apply walkthrough is documented

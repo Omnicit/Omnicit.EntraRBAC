@@ -610,3 +610,115 @@ Describe 'Resolve-OERRoleManagementPolicyChange declared empty side on the Azure
         }
     }
 }
+
+Describe 'Resolve-OERRoleManagementPolicyChange ApproverRequired flag (BL-97, F1)' {
+    # Set-OERRoleManagementPolicy refuses, with ApproverRequired and before anything is sent, a call
+    # that binds -ApproverUser or -ApproverGroup and names no approver among them. On the Azure path
+    # this diff sends both sides whenever either differs, the undeclared side seeded from the live
+    # policy, so it flags exactly that call -- and nothing else -- for the handler to refuse before
+    # its ShouldProcess gate. The flag is a [bool] on every result, never $null.
+    BeforeEach {
+        $script:LiveUser  = [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; UserType = 'User' }
+        $script:LiveGroup = [PSCustomObject]@{ Id = '33333333-3333-3333-3333-333333333333'; UserType = 'Group' }
+    }
+
+    It 'flags both sides declared empty against a live user and group approver' {
+        $Declared = '{ "scope": "/s", "role": "Owner", "approvers": { "users": [], "groups": [] } }' | ConvertFrom-Json
+        $Current = [PSCustomObject]@{ RequireApproval = $true; ActivationMaxHours = 8; Approvers = @($script:LiveUser, $script:LiveGroup) }
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $Current } {
+            param($Declared, $Current)
+            $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current
+            $Change.ApproverRequired | Should -BeOfType [bool]
+            $Change.ApproverRequired | Should -BeTrue
+            $Change.Changed | Should -BeTrue
+            @($Change.PSObject.Properties.Name) | Should -Be @('Changed', 'SetParams', 'Changes', 'ApproverRequired')
+        }
+    }
+
+    It 'flags a declared empty users side whose seeded group side is empty too' {
+        $Declared = '{ "scope": "/s", "role": "Owner", "approvers": { "users": [] } }' | ConvertFrom-Json
+        $Current = [PSCustomObject]@{ RequireApproval = $true; ActivationMaxHours = 8; Approvers = @($script:LiveUser) }
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $Current } {
+            param($Declared, $Current)
+            $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current
+            $Change.ApproverRequired | Should -BeOfType [bool]
+            $Change.ApproverRequired | Should -BeTrue
+            $Change.Changed | Should -BeTrue
+        }
+    }
+
+    It 'does not flag a declared empty users side whose seeded group side names the live group' {
+        $Declared = '{ "scope": "/s", "role": "Owner", "approvers": { "users": [] } }' | ConvertFrom-Json
+        $Current = [PSCustomObject]@{ RequireApproval = $true; ActivationMaxHours = 8; Approvers = @($script:LiveUser, $script:LiveGroup) }
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $Current } {
+            param($Declared, $Current)
+            $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current
+            $Change.ApproverRequired | Should -BeOfType [bool]
+            $Change.ApproverRequired | Should -BeFalse
+            $Change.Changed | Should -BeTrue
+            @($Change.SetParams.ApproverGroup) | Should -Be @('33333333-3333-3333-3333-333333333333')
+        }
+    }
+
+    It 'does not flag empty approvers beside requireApproval false, which sends no approver parameter' {
+        $Declared = '{ "scope": "/s", "role": "Owner", "requireApproval": false, "approvers": { "users": [], "groups": [] } }' | ConvertFrom-Json
+        $Current = [PSCustomObject]@{ RequireApproval = $true; ActivationMaxHours = 8; Approvers = @($script:LiveUser) }
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $Current } {
+            param($Declared, $Current)
+            $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current
+            $Change.ApproverRequired | Should -BeOfType [bool]
+            $Change.ApproverRequired | Should -BeFalse
+            $Change.SetParams.ContainsKey('ApproverUser') | Should -BeFalse
+            $Change.SetParams.ContainsKey('ApproverGroup') | Should -BeFalse
+            $Change.SetParams.RequireApproval | Should -BeFalse
+        }
+    }
+
+    It 'does not flag empty approvers that already match a live policy with no approver' {
+        $Declared = '{ "scope": "/s", "role": "Owner", "approvers": { "users": [], "groups": [] } }' | ConvertFrom-Json
+        $Current = [PSCustomObject]@{ RequireApproval = $true; ActivationMaxHours = 8; Approvers = @() }
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $Current } {
+            param($Declared, $Current)
+            $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current
+            $Change.ApproverRequired | Should -BeOfType [bool]
+            $Change.ApproverRequired | Should -BeFalse
+            $Change.Changed | Should -BeFalse
+        }
+    }
+
+    It 'never flags the directory-role shape (-SendDeclaredApproverSideOnly)' {
+        $Declared = '{ "scope": "/s", "role": "Owner", "approvers": { "users": [], "groups": [] } }' | ConvertFrom-Json
+        $Current = [PSCustomObject]@{ RequireApproval = $true; ActivationMaxHours = 8; Approvers = @($script:LiveUser, $script:LiveGroup) }
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $Current } {
+            param($Declared, $Current)
+            $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current -SendDeclaredApproverSideOnly
+            $Change.ApproverRequired | Should -BeOfType [bool]
+            $Change.ApproverRequired | Should -BeFalse
+            $Change.Changed | Should -BeTrue
+        }
+    }
+
+    It 'does not flag a declared user beside a seeded live group' {
+        $Declared = '{ "scope": "/s", "role": "Owner", "approvers": { "users": [ "22222222-2222-2222-2222-222222222222" ] } }' | ConvertFrom-Json
+        $Current = [PSCustomObject]@{ RequireApproval = $true; ActivationMaxHours = 8; Approvers = @($script:LiveGroup) }
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $Current } {
+            param($Declared, $Current)
+            $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current
+            $Change.ApproverRequired | Should -BeOfType [bool]
+            $Change.ApproverRequired | Should -BeFalse
+            $Change.Changed | Should -BeTrue
+        }
+    }
+
+    It 'flags the entry when another declared field differs too, and still carries that field' {
+        $Declared = '{ "scope": "/s", "role": "Owner", "activationMaxHours": 4, "approvers": { "users": [], "groups": [] } }' | ConvertFrom-Json
+        $Current = [PSCustomObject]@{ RequireApproval = $true; ActivationMaxHours = 8; Approvers = @($script:LiveUser, $script:LiveGroup) }
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $Current } {
+            param($Declared, $Current)
+            $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current
+            $Change.ApproverRequired | Should -BeOfType [bool]
+            $Change.ApproverRequired | Should -BeTrue
+            $Change.SetParams.ActivationMaxHours | Should -Be 4
+        }
+    }
+}

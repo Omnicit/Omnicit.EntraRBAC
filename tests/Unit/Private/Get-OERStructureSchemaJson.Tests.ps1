@@ -400,6 +400,19 @@ Describe 'Get-OERStructureSchemaJson' {
         }
     }
 
+    It 'says how administrativeUnit is matched to the unit entry: a GUID by id compared as a GUID, any other value by displayName ignoring case (BL-100)' {
+        # Since Sprint 9 step 6 (ruling R14) a value that parses as a GUID is compared AS A GUID with the
+        # entry's declared id (so braced and dash-less forms match), and any other value is compared with
+        # displayName ignoring case. The earlier text said displayName OR id matched "this value (ignoring
+        # case)", which is no longer how the check reads it.
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $Description = $Schema.properties.groups.items.properties.administrativeUnit.description
+            $Description | Should -Match ([regex]::Escape('by its declared id when the value parses as a GUID (compared as a GUID, so braced and dash-less forms match), otherwise by its displayName, ignoring case'))
+            $Description | Should -Not -Match ([regex]::Escape('matches this value (ignoring case)'))
+        }
+    }
+
     It 'declares every access review field the apply handler consumes' {
         InModuleScope $script:moduleName {
             $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json

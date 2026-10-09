@@ -9,13 +9,14 @@ function Resolve-OERRoleManagementPolicyChange {
     declared roleManagementPolicies[] entry against the current Get-OERRoleManagementPolicy object and
     returns a tagged result with a Changed flag, a SetParams hashtable ready to splat into
     Set-OERRoleManagementPolicy (only the fields that differ, never the scope or role targeting
-    parameters), and a human-readable Changes list. Presence semantics apply: a field the document
-    does not declare is never compared and never sent, so an omitted field means "leave the live
-    setting untouched", not "set it to false". A field present with an explicit JSON null counts as
-    UNDECLARED for exactly the same reason -- it matches the offline validator Test-OERStructureSchema,
-    and it is what stops "authenticationContextId": null from disabling a live authentication context
-    or "requireMfaOnActivation": null from disabling MFA. An empty string is still a declared value:
-    authenticationContextId "" remains the documented "disable the authentication context" request.
+    parameters), a human-readable Changes list and an ApproverRequired flag. Presence semantics
+    apply: a field the document does not declare is never compared and never sent, so an omitted
+    field means "leave the live setting untouched", not "set it to false". A field present with an
+    explicit JSON null counts as UNDECLARED for exactly the same reason -- it matches the offline
+    validator Test-OERStructureSchema, and it is what stops "authenticationContextId": null from
+    disabling a live authentication context or "requireMfaOnActivation": null from disabling MFA.
+    An empty string is still a declared value: authenticationContextId "" remains the documented
+    "disable the authentication context" request.
     A document that explicitly declares requireApproval = false suppresses the approver parameters
     entirely: approvers only apply while approval is required (Resolve-OERPolicyRulePatch forces
     isApprovalRequired = true whenever approvers are sent), and Set-OERRoleManagementPolicy refuses
@@ -36,10 +37,13 @@ function Resolve-OERRoleManagementPolicyChange {
     Microsoft Graph semantics of replacing only the side it is bound for and carrying the other from
     the live rule; the comparison itself is the same ids-against-ids set test either way, and a
     declared empty list is a genuinely empty side for both callers, so it equals a live side that is
-    already empty. A change that would leave the Azure policy with no approver at all is not
-    prevented here: Set-OERRoleManagementPolicy refuses it with ApproverRequired. A null Current
-    (the policy could not be read) is treated as everything-declared-is-changed. No Graph, ARM, or
-    authentication occurs.
+    already empty. A change that would send approvers naming nobody -- which
+    Set-OERRoleManagementPolicy refuses with ApproverRequired, since Azure Resource Manager replaces
+    the whole approver list -- is not sent by this diff's caller: the result's ApproverRequired
+    property is $true for it (never with -SendDeclaredApproverSideOnly), and
+    Sync-OERStructureRoleManagementPolicy reports the entry Failed before its ShouldProcess gate. A
+    null Current (the policy could not be read) is treated as everything-declared-is-changed. No
+    Graph, ARM, or authentication occurs.
 
     .PARAMETER Declared
     One roleManagementPolicies[] entry from the structure document. Recognized fields:
@@ -248,10 +252,24 @@ function Resolve-OERRoleManagementPolicyChange {
         }
     }
 
+    # BL-97 (F1): Set-OERRoleManagementPolicy refuses, with ApproverRequired and before anything is
+    # sent, a call that binds -ApproverUser or -ApproverGroup and names no approver among them, since
+    # Azure Resource Manager replaces the whole approver list. This diff sends both sides whenever
+    # either differs, so a declared empty side beside an other side that is empty too -- declared, or
+    # seeded empty from the live policy -- is exactly that call. It is flagged here, with that cmdlet's
+    # own count of the non-blank values, so the handler can refuse it before ShouldProcess and a
+    # -WhatIf plan says what the run does. Only the Azure Resource Manager shape is flagged: with
+    # -SendDeclaredApproverSideOnly the directory-role cmdlet carries the undeclared side from the
+    # live rule and applies its own rule.
+    $ApproverRequired = (-not $SendDeclaredApproverSideOnly) -and
+        ($SetParams.ContainsKey('ApproverUser') -or $SetParams.ContainsKey('ApproverGroup')) -and
+        (@(@($SetParams.ApproverUser) + @($SetParams.ApproverGroup) | Where-Object { $_ }).Count -eq 0)
+
     $Out = [PSCustomObject]@{
-        Changed   = ($SetParams.Keys.Count -gt 0)
-        SetParams = $SetParams
-        Changes   = $Changes.ToArray()
+        Changed          = ($SetParams.Keys.Count -gt 0)
+        SetParams        = $SetParams
+        Changes          = $Changes.ToArray()
+        ApproverRequired = [bool]$ApproverRequired
     }
     $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.RoleManagementPolicyChange')
     $Out

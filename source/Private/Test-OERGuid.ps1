@@ -17,6 +17,12 @@ function Test-OERGuid {
     dash-less GUIDs uses the wider [guid] cast instead -- Get-OERInventory and New-OERGroup do
     exactly that on purpose, and must not be migrated to this predicate.
 
+    The pattern ends in \z, not $: in a .NET regular expression $ also matches before a final line
+    feed. With $, a GUID followed by one line feed passed (a carriage return and line feed already
+    failed), while an ECMA-262 validator of the structure document's JSON Schema pattern refuses it.
+    PowerShell's own Test-Json, whose regular expressions are .NET's, accepts it, as the old
+    predicate did (BL-101).
+
     .PARAMETER Value
     The string value to test for canonical GUID format.
 
@@ -33,5 +39,5 @@ function Test-OERGuid {
     param(
         [string]$Value
     )
-    return [bool]($Value -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$')
+    return [bool]($Value -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\z')
 }

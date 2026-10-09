@@ -190,12 +190,12 @@ Describe 'Test-OERStructure help pointer to the worked example' {
 }
 
 Describe 'Test-OERStructure help documents the tenantId (BL-88, A14)' {
-    It 'says tenantId must be a canonical GUID and that only Invoke-OERStructure compares it with a session' {
+    It 'says tenantId must be a string holding a canonical GUID and that only Invoke-OERStructure compares it with a session' {
         # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
         $Help = Get-Help Test-OERStructure -Full
         $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
 
-        $Description | Should -Match ([regex]::Escape('A top-level tenantId, when present, must be a canonical GUID (an explicit null or any other value is an Error; a document without the key is valid).'))
+        $Description | Should -Match ([regex]::Escape('A top-level tenantId, when present, must be a string holding a canonical GUID (an explicit null, a value that is not a string, such as an array, or any other value is an Error; a document without the key is valid).'))
         $Description | Should -Match ([regex]::Escape('The check is offline: Test-OERStructure does not compare tenantId with any session, while Invoke-OERStructure does and refuses a document that names another tenant.'))
     }
 }
