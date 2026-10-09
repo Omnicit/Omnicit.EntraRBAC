@@ -278,6 +278,40 @@ it signs in, with no token request; otherwise, once it has signed in, it compare
 the tenant the session's tokens were issued for. To apply an export in another tenant -- as a
 template, like the copy above -- change its `tenantId` to that tenant's ID or remove the key first.
 
+### Long runs
+
+An access token lasts about an hour: Microsoft Entra ID gives one a default lifetime of 60 to 90
+minutes, so a run longer than that outlives the token it started with. Where the sign-in type
+allows it, the module renews a token in two places: when a command starts within five minutes of
+the token's expiry, and in the middle of a command when Microsoft Graph or Azure Resource Manager
+rejects the token with 401, after which the rejected request is sent once more. What a renewal costs
+depends on the sign-in type:
+
+| Sign-in type | Renewal of the token |
+|---|---|
+| Interactive | Every renewal opens the browser to sign in again, so a long run asks you to sign in about once an hour. The account picker lets you choose another account of the same tenant, and the command then carries on as that account: choose the account the session signed in with |
+| Device code | Every renewal prints a new code to enter, about once an hour, as every device code sign-in does: see the known limitation under [Switching tenants](#switching-tenants) |
+| Managed identity | Renews with no prompt |
+| Client secret and certificate | Not renewed, since the module never keeps the secret or certificate: once the token has expired a request is refused with `AppOnlyTokenRefreshUnsatisfiable`, and a command that starts within five minutes of its expiry, or later, fails to sign in with `AppOnlySessionCredentialUnavailable`, until you run `Connect-OER` with the secret or certificate again |
+
+Before a long run, run `Connect-OER -Force` with the session's own sign-in -- the same `-TenantId`,
+credential and `-IncludeARM` as the first `Connect-OER` -- so the run starts with a new token. A
+plain `Connect-OER` with the same sign-in returns the session it has while its token has more than
+five minutes left, and a bare `Connect-OER -Force` signs in interactively, as a bare `Connect-OER`
+always does. Stay at the keyboard during an interactive or device code run: a managed identity is the
+only sign-in that renews unattended.
+
+An app-only run renews only between commands. Run `Connect-OER -Force` with the secret or certificate
+before each command, and keep each command shorter than a token's lifetime. Without `-Force`,
+`Connect-OER` with the same credential returns at once while the token has more than five minutes
+left and signs in again when it has less.
+
+A renewal nobody completes -- a browser sign-in or a device code left unanswered -- fails like any
+other sign-in: the request it was for is not sent, and the session is left uncertain, so a later
+command that names no tenant sends nothing, as [Disconnect](#disconnect) describes.
+
+This same information is also available offline via `Get-Help about_Omnicit.EntraRBAC` (LONG RUNS).
+
 ### Switching tenants
 
 One PowerShell session works in one tenant at a time. Whether a later `Connect-OER` call naming a

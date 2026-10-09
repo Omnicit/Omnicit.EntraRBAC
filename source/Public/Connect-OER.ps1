@@ -39,6 +39,28 @@ function Connect-OER {
     process, and Disconnect-OER clears this module's session and the Graph SDK session the module
     connected, not that credential.
 
+    An access token lasts about an hour (Microsoft Entra ID gives one a default lifetime of 60 to
+    90 minutes), so a longer run has to renew it. Where the sign-in type allows it, the module
+    renews a token when a command starts within five minutes of the token's expiry, and in the
+    middle of a command when Microsoft Graph or Azure Resource Manager rejects it with 401, after
+    which the rejected request is sent once more. A renewal signs in again: an interactive session
+    opens the browser, so a long run asks you to sign in about once an hour (choose the account the
+    session signed in with; the account picker also offers other accounts of the same tenant, and
+    the command then carries on as the one you pick), and a device code session prints a new code to
+    enter. A managed identity renews with no prompt and is the only sign-in that renews unattended.
+    A client secret or certificate session is not renewed, since the module never keeps the secret
+    or certificate: once the token has expired a request is refused with
+    AppOnlyTokenRefreshUnsatisfiable, and a command that starts within five minutes of its expiry,
+    or later, fails to sign in with AppOnlySessionCredentialUnavailable, until Connect-OER is run
+    with the secret or certificate again. A renewal nobody completes fails like any other sign-in:
+    the request it was for is not sent, and the session is left uncertain. Before a long run, run
+    Connect-OER -Force with the session's own sign-in parameters, so that it starts with a new
+    token: a plain Connect-OER with the same sign-in returns the session it has while the token has
+    more than five minutes left, and a bare Connect-OER -Force signs in interactively. Stay at the
+    keyboard during an interactive or device code run. An app-only run renews only between
+    commands, so run Connect-OER -Force with the secret or certificate before each command and keep
+    each command shorter than a token's lifetime. See about_Omnicit.EntraRBAC, LONG RUNS.
+
     Connect-OER also sets up a Microsoft Graph PowerShell SDK session in the current process: it
     calls Connect-MgGraph with the module's token, and so does the automatic sign-in of any other
     OER cmdlet. Disconnect-OER closes that session, and leaves one another Connect-MgGraph started,

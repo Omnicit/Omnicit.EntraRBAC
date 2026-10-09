@@ -364,7 +364,9 @@ function Invoke-OERArmRequest {
 
     # -- 401: token rejected/expired -> force refresh and retry once --
     # One forced refresh serves the WHOLE call, pages included. Per-page budgets would turn a long
-    # -All walk against a genuinely broken token into a refresh storm.
+    # -All walk against a genuinely broken token into a refresh storm. The refresh signs in again,
+    # as in Invoke-OERGraphRequest: an interactive session opens the browser and a device code
+    # session prints a new code; see about_Omnicit.EntraRBAC, LONG RUNS.
     $RefreshBudget = [ref]$false
     function Invoke-ArmCallWithRefresh ([string]$CallPath, [string]$CallMethod, [hashtable]$CallBody, [string]$BaseUrl, [ref]$RefreshBudget) {
         $CallResult = Invoke-ArmCall -CallPath $CallPath -CallMethod $CallMethod -CallBody $CallBody -BaseUrl $BaseUrl
