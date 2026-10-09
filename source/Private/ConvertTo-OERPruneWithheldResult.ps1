@@ -83,10 +83,11 @@ function ConvertTo-OERPruneWithheldResult {
     (decision A15, Sprint 10 step 7b). Such a group is managed in on-premises Active Directory and is
     read-only in the cloud, so the group prune removes nothing from it. The caller decides that the
     group is synchronized, from its live read, with Test-OERGroupOnPremisesSynced, and passes the
-    group's name as -SyncedGroup; this helper owns both texts. With -Prune it returns exactly one
-    Skipped record whose Detail starts 'prune withheld: ', names the candidate and the group, says the
-    apply engine writes nothing to such a group, -Prune included (the module's own guard, not a Graph
-    rejection), and that the candidate is removed in the on-premises directory if it is meant to go.
+    group's live display name as -SyncedGroup; this helper owns both texts. With -Prune it returns
+    exactly one Skipped record whose Detail starts 'prune withheld: ', names the candidate and the
+    group, says the apply engine writes nothing to such a group, -Prune included (the module's own
+    guard, not a Graph rejection), and that the candidate is removed in the on-premises directory if
+    it is meant to go.
     Without -Prune it returns the Extra record the pass would have written, whose hint says that
     -Prune leaves it in place rather than "use -Prune to remove". The caller calls it straight after
     the unresolved-entry and service-principal calls above and before any other guard, the last-owner
@@ -139,10 +140,11 @@ function ConvertTo-OERPruneWithheldResult {
     with -Unresolved, -UnresolvedScope, -Declared, -UnnamedRoleId or -ObjectType.
 
     .PARAMETER SyncedGroup
-    The name of the group whose live read shows it synchronized from on-premises
-    (Test-OERGroupOnPremisesSynced), the label the group handler reports the group under. Mandatory in
-    this form, and not combinable with -Unresolved, -UnresolvedScope, -Declared, -UnnamedRoleId,
-    -ObjectType or -CreatedGroup.
+    The live display name of the group whose live read shows it synchronized from on-premises
+    (Test-OERGroupOnPremisesSynced): the name the group carries as read, which for a group found
+    only under its previousDisplayName is not the document's new displayName (the record's -Item
+    stays the document's label). Mandatory in this form, and not combinable with -Unresolved,
+    -UnresolvedScope, -Declared, -UnnamedRoleId, -ObjectType or -CreatedGroup.
 
     .PARAMETER Prune
     With -ObjectType: whether the caller runs with -Prune. With it the service principal's record is

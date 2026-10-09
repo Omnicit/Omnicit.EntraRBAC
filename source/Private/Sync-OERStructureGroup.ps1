@@ -258,14 +258,20 @@ function Sync-OERStructureGroup {
     read-only in the cloud, and the handler writes nothing to it. Every property, member, owner,
     eligibility or pimPolicy change the entry declares is reported Skipped, naming the reason, with no
     ShouldProcess call and no request, so -WhatIf and a real run report the same rows; a declared
-    pimPolicy is not even read, since PIM for Groups cannot manage such a group. Each undeclared live
-    member, owner or eligibility is Extra without -Prune, with a hint that -Prune leaves it in place,
-    and Skipped with -Prune, its Detail starting 'prune withheld:' (ConvertTo-OERPruneWithheldResult
-    -SyncedGroup). One warning per item, written before the first such row, says so; Extra rows alone
-    write none. What already matches stays Unchanged. The document's onPremisesSynced key is never
-    consulted and never sent: a cloud group is written to as usual whatever that key says. A write
-    that only points at the group (a role assignment, an administrative unit membership, an access
-    package resource role) is another section's and unchanged.
+    pimPolicy is not even read, since PIM for Groups cannot manage such a group. An undeclared live
+    member, owner or eligibility that is already withheld for another reason -- an unresolved
+    declared entry in its collection (see "Withheld prune" below), or a service principal (see
+    "Service principals" above) -- keeps that reason's row; every other one is Extra without -Prune,
+    with a hint that -Prune leaves it in place, and Skipped with -Prune, its Detail starting
+    'prune withheld:' (ConvertTo-OERPruneWithheldResult -SyncedGroup). One warning per item, written
+    before the first such row, says so; Extra rows alone, and the rows withheld for another reason,
+    write none. The warning and every reason name the group as the live read does, so a group found
+    only under previousDisplayName is named by the name it still carries, not by the new
+    displayName, while every row stays keyed on the entry's displayName. What already matches stays
+    Unchanged. The document's onPremisesSynced key is never consulted and never sent: a cloud group
+    is written to as usual whatever that key says. A write that only points at the group (a role
+    assignment, an administrative unit membership, an access package resource role) is another
+    section's and unchanged.
 
     Withheld prune: members, owners and eligibility each withhold their OWN prune when one of their
     declared entries cannot be resolved (Resolve-OERStructurePrincipal gives no object id). Such an
@@ -386,19 +392,22 @@ function Sync-OERStructureGroup {
         # Skipped through Write-SyncedGroupSkip, with no ShouldProcess call, so the plan and the run
         # report the same rows; each prune candidate is withheld (ConvertTo-OERPruneWithheldResult
         # -SyncedGroup). One warning per item, before the first such row: a Skipped write, or a
-        # withheld prune under -Prune.
+        # withheld prune under -Prune. The warning and the reasons name the group as the live read
+        # does ($SyncedGroupName): a group found only under previousDisplayName does not carry the
+        # document's new name. Every row stays keyed on the document entry (-Item $Name).
         $GroupSynced = $false
+        $SyncedGroupName = $Name
         $SyncedState = @{ Warned = $false }
         function Write-SyncedGroupWarning {
             if ($SyncedState.Warned) { return }
             $SyncedState.Warned = $true
-            Write-Warning "Sync-OERStructureGroup: group '$Name' is synchronized from on-premises (onPremisesSyncEnabled is true) and is managed there, so the apply engine writes nothing to it: every change the document declares for its properties, members, owners, eligibility or pimPolicy is reported Skipped, and -Prune removes nothing from it. Make the change in the on-premises directory."
+            Write-Warning "Sync-OERStructureGroup: group '$SyncedGroupName' is synchronized from on-premises (onPremisesSyncEnabled is true) and is managed there, so the apply engine writes nothing to it: every change the document declares for its properties, members, owners, eligibility or pimPolicy is reported Skipped, and -Prune removes nothing from it. Make the change in the on-premises directory."
         }
         function Write-SyncedGroupSkip {
             param([string]$What)
             Write-SyncedGroupWarning
             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
-                -Detail "${What}: group '$Name' is synchronized from on-premises and is managed there (onPremisesSyncEnabled), so the apply engine writes nothing to it"
+                -Detail "${What}: group '$SyncedGroupName' is synchronized from on-premises and is managed there (onPremisesSyncEnabled), so the apply engine writes nothing to it"
         }
 
         # -- Check existence ----------------------------------------------------------------
@@ -542,6 +551,7 @@ function Sync-OERStructureGroup {
             # New-OERGroup hands back an EXISTING group of that name, read without $select, in place
             # of creating one: that read decides as Get-OERGroup's does below (A15).
             $GroupSynced = Test-OERGroupOnPremisesSynced -Group $Created
+            $SyncedGroupName = if ($Created.DisplayName) { [string]$Created.DisplayName } else { $Name }
 
             $Gid = $Created.Id
             $CreatedThisRun = $true
@@ -602,8 +612,10 @@ function Sync-OERStructureGroup {
                     -ErrorRecord $PSItem
                 return
             }
-            # A15: the live read decides whether the group is synchronized from on-premises.
+            # A15: the live read decides whether the group is synchronized from on-premises, and
+            # names it (a group found under previousDisplayName still carries its previous name).
             $GroupSynced = Test-OERGroupOnPremisesSynced -Group $Cur
+            $SyncedGroupName = if ($Cur.DisplayName) { [string]$Cur.DisplayName } else { $Name }
             $CurrentMembers   = if ($Cur.Members) { @($Cur.Members) } else { @() }
             $CurrentOwners    = if ($Cur.Owners) { @($Cur.Owners) } else { @() }
             $CurrentEligibles = if ($Cur.PimEligibility) { @($Cur.PimEligibility) } else { @() }
@@ -816,7 +828,7 @@ function Sync-OERStructureGroup {
                         # item's one warning comes first under -Prune.
                         if ($GroupSynced) {
                             if ($Prune) { Write-SyncedGroupWarning }
-                            ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Candidate "undeclared member '$CurId'" -SyncedGroup $Name -Prune:$Prune
+                            ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Candidate "undeclared member '$CurId'" -SyncedGroup $SyncedGroupName -Prune:$Prune
                             continue
                         }
                         if ($Prune) {
@@ -921,7 +933,7 @@ function Sync-OERStructureGroup {
                     # group synchronized from on-premises.
                     if ($GroupSynced) {
                         if ($Prune) { Write-SyncedGroupWarning }
-                        ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Candidate "undeclared owner '$CurId'" -SyncedGroup $Name -Prune:$Prune
+                        ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Candidate "undeclared owner '$CurId'" -SyncedGroup $SyncedGroupName -Prune:$Prune
                         continue
                     }
                     if ($Prune) {
@@ -1737,7 +1749,7 @@ function Sync-OERStructureGroup {
                 # A15: nothing is removed from a group synchronized from on-premises.
                 if ($GroupSynced) {
                     if ($Prune) { Write-SyncedGroupWarning }
-                    ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Candidate $Label -SyncedGroup $Name -Prune:$Prune
+                    ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Candidate $Label -SyncedGroup $SyncedGroupName -Prune:$Prune
                     continue
                 }
                 if ($Prune) {
