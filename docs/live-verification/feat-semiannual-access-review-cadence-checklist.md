@@ -1028,10 +1028,10 @@ and by the cohort test in `Resolve-OERStructureEnumCasing.Tests.ps1`; `rationale
 
 **Expect:** the branch's gate run green with 0 failures.
 
-Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-09 11:38 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
-Verdict: PASS (class B). The help, the schema enum, the prompt template list, the rationale section access-review-cadence and the [Unreleased] paragraph are held by the branch's gate run on 74a5d16 (./build.ps1 -Tasks build, then -Tasks test, after -ResolveDependency -UseModuleFast): 8,889 passed, 0 failed, 0 skipped, coverage 94.97% of 18,711 commands -- the module.tests.ps1 help and changelog gates, dochygiene.tests.ps1, and the cohort in Resolve-OERStructureEnumCasing.Tests.ps1.
+Verdict: PASS (class B, round 1). The help of Resolve-OERAccessReviewChange, Sync-OERStructureAccessReview and Get-OERInventory (A19), the step's cadence help, the schema enum, the prompt template list, the rationale section access-review-cadence (A19, the measured Graph v1.0 write limits, the dayOfMonth read back as 0) and the [Unreleased] paragraph (405 characters; RawData 1,950) are held by round 1's gate run on 95bca2b (./build.ps1 -Tasks build, then -Tasks test, after -ResolveDependency -UseModuleFast): 8,933 passed, 0 failed, 0 skipped, coverage 94.98% of 18,713 commands -- the module.tests.ps1 help and changelog gates, dochygiene.tests.ps1 and the cohort in Resolve-OERStructureEnumCasing.Tests.ps1.
 ```
 
 ## Teardown
