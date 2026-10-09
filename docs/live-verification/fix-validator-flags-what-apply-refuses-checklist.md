@@ -214,7 +214,9 @@ function New-S105Document {
 
 function Write-S105Rows {
     param([Parameter(Mandatory)][string]$Label, [AllowEmptyCollection()][object[]]$Rows)
-    Write-OerLiveStep "$Label rows: $(@($Rows).Count)"
+    # An if-statement assignment unrolls no rows to $null, and @($null).Count is 1: drop nulls first.
+    $Rows = @(@($Rows) | Where-Object { $null -ne $_ })
+    Write-OerLiveStep "$Label rows: $($Rows.Count)"
     foreach ($R in @($Rows)) {
         Write-OerLiveStep "$Label row: $($R.Section) | $($R.Action) | $($R.Detail)"
         if ([string]$R.Action -eq 'Failed') { Write-OerLiveStep "$Label row Detail is the expected text: $([string]$R.Detail -ceq $ExpectedDetail)" }
@@ -344,6 +346,8 @@ $TokenBefore = $global:S105TokenCalls
 Start-S105Count
 $E = $null
 $Caught = $null
+# Assigned first: a terminating refusal leaves the assignment below unmade, and @($null).Count is 1.
+$Rows = @()
 try {
     $Rows = @(Get-OERGroup -Group $Approver -TenantId ($Cfg.TenantId + "`n") -ErrorAction SilentlyContinue -ErrorVariable E)
 } catch { $Caught = $PSItem }
