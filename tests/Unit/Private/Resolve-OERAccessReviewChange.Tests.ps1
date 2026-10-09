@@ -591,25 +591,176 @@ Describe 'Resolve-OERAccessReviewChange' {
         }
     }
 
-    It 'reports a live interval 6 declared Monthly (what an export before SemiAnnually wrote) as a recurrence change' {
-        # Before SemiAnnually existed an interval-6 review was exported as Monthly, with a warning. Such
-        # a document now differs from the live cadence and is applied: the review moves to Monthly. This
-        # is the documented consequence, pinned here so it is a decision and not an accident.
-        InModuleScope $script:moduleName {
-            $Current = [PSCustomObject]@{
-                DisplayName = 'R'
-                Recurrence  = [PSCustomObject]@{
-                    pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 6; dayOfMonth = 1 }
-                    range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
+    Context 'a live interval 6 declared Monthly (A19)' {
+        # Every export before 1.1.4 wrote a live absoluteMonthly interval 6 as Monthly, with a warning.
+        # Applying such a document literally would make a semi-annual review monthly, so the diff leaves
+        # the whole recurrence unit alone and reports one NotApplied entry carrying this exact reason.
+        BeforeAll {
+            $script:A19Reason = "the live review is semi-annual (absoluteMonthly interval 6), which an export made before 1.1.4 wrote as 'Monthly'; the recurrence, start date and range were left untouched so the review is not made monthly. Declare 'SemiAnnually' to keep it, or run Set-OERAccessReviewDefinition with -Recurrence Monthly and a -StartDate to make it monthly on purpose"
+        }
+
+        It 'leaves a live interval 6 declared Monthly (what an export before 1.1.4 wrote) untouched and says why (A19)' {
+            InModuleScope $script:moduleName -Parameters @{ Reason = $script:A19Reason } {
+                param($Reason)
+                $Current = [PSCustomObject]@{
+                    DisplayName = 'R'
+                    Recurrence  = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 6; dayOfMonth = 1 }
+                        range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
+                    }
+                    Settings    = @{}
                 }
-                Settings    = @{}
+                $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'Monthly' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.Changed              | Should -Be $false
+                $Change.SetParams.Keys.Count | Should -Be 0
+                @($Change.NotApplied).Count  | Should -Be 1
+                @($Change.NotApplied)[0]     | Should -BeExactly $Reason
+                @($Change.Changes).Count     | Should -Be 0
             }
-            $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'Monthly' }
-            $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
-            $Change.Changed              | Should -Be $true
-            $Change.SetParams.Recurrence | Should -BeExactly 'Monthly'
-            $Change.SetParams.StartDate  | Should -Be ([datetime]'2026-01-01')
-            @($Change.NotApplied)        | Should -BeNullOrEmpty
+        }
+
+        It 'leaves the whole recurrence unit of a live interval 6 untouched when a document declaring Monthly also changes its start date and range' {
+            InModuleScope $script:moduleName -Parameters @{ Reason = $script:A19Reason } {
+                param($Reason)
+                $Current = [PSCustomObject]@{
+                    DisplayName = 'R'
+                    Recurrence  = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 6; dayOfMonth = 1 }
+                        range   = [PSCustomObject]@{ type = 'endDate'; startDate = '2026-01-01'; endDate = '2026-12-31' }
+                    }
+                    Settings    = @{}
+                }
+                $Declared = [PSCustomObject]@{
+                    displayName = 'R'; recurrence = 'Monthly'; startDate = '2026-03-01'; occurrences = 4
+                }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                foreach ($Key in 'Recurrence', 'StartDate', 'EndDate', 'Occurrences') {
+                    $Change.SetParams.ContainsKey($Key) | Should -Be $false -Because "$Key belongs to the recurrence unit"
+                }
+                $Change.Changed             | Should -Be $false
+                @($Change.NotApplied).Count | Should -Be 1
+                @($Change.NotApplied)[0]    | Should -BeExactly $Reason
+            }
+        }
+
+        It 'still applies a field outside the recurrence unit when a live interval 6 is declared Monthly' {
+            InModuleScope $script:moduleName -Parameters @{ Reason = $script:A19Reason } {
+                param($Reason)
+                $Current = [PSCustomObject]@{
+                    DisplayName          = 'R'
+                    DescriptionForAdmins = 'old'
+                    Recurrence           = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 6; dayOfMonth = 1 }
+                        range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
+                    }
+                    Settings             = @{}
+                }
+                $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'Monthly'; descriptionForAdmins = 'new' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.Changed                        | Should -Be $true
+                $Change.SetParams.Keys.Count           | Should -Be 1
+                @($Change.SetParams.Keys)[0]           | Should -BeExactly 'DescriptionForAdmins'
+                $Change.SetParams.DescriptionForAdmins | Should -BeExactly 'new'
+                @($Change.NotApplied).Count            | Should -Be 1
+                @($Change.NotApplied)[0]               | Should -BeExactly $Reason
+            }
+        }
+
+        It 'refuses a live interval 6 declared monthly in any casing' {
+            # The handler normalizes the casing before it calls the diff, but the diff must not depend on it.
+            InModuleScope $script:moduleName -Parameters @{ Reason = $script:A19Reason } {
+                param($Reason)
+                $Current = [PSCustomObject]@{
+                    DisplayName = 'R'
+                    Recurrence  = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 6; dayOfMonth = 1 }
+                        range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
+                    }
+                    Settings    = @{}
+                }
+                $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'monthly' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.Changed              | Should -Be $false
+                $Change.SetParams.Keys.Count | Should -Be 0
+                @($Change.NotApplied).Count  | Should -Be 1
+                @($Change.NotApplied)[0]     | Should -BeExactly $Reason
+                @($Change.Changes).Count     | Should -Be 0
+            }
+        }
+
+        It 'gives the A19 reason, not the startDate hint, when the live interval 6 carries no readable start date' {
+            # Declaring a startDate would not make this change applicable, so the startDate hint would
+            # mislead: the A19 refusal has to win over it.
+            InModuleScope $script:moduleName -Parameters @{ Reason = $script:A19Reason } {
+                param($Reason)
+                $Current = [PSCustomObject]@{
+                    DisplayName = 'R'
+                    Recurrence  = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 6; dayOfMonth = 1 }
+                        range   = [PSCustomObject]@{ type = 'noEnd' }
+                    }
+                    Settings    = @{}
+                }
+                $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'Monthly' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                @($Change.NotApplied).Count  | Should -Be 1
+                @($Change.NotApplied)[0]     | Should -BeExactly $Reason
+                @($Change.NotApplied)[0]     | Should -Not -Match 'needs a startDate'
+                $Change.SetParams.Keys.Count | Should -Be 0
+            }
+        }
+
+        It 'still writes a live interval 6 declared <Cadence> as an ordinary recurrence change' -ForEach @(
+            @{ Cadence = 'Quarterly' }
+            @{ Cadence = 'Annually' }
+            @{ Cadence = 'Weekly' }
+            @{ Cadence = 'OneTime' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Cadence = $Cadence } {
+                param($Cadence)
+                $Current = [PSCustomObject]@{
+                    DisplayName = 'R'
+                    Recurrence  = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 6; dayOfMonth = 1 }
+                        range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
+                    }
+                    Settings    = @{}
+                }
+                $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = $Cadence }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.Changed              | Should -Be $true
+                $Change.SetParams.Recurrence | Should -BeExactly $Cadence
+                $Change.SetParams.StartDate  | Should -Be ([datetime]'2026-01-01')
+                @($Change.NotApplied)        | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'does not apply the A19 rule to a live interval 1 or 3 declared Monthly' {
+            InModuleScope $script:moduleName {
+                # Live interval 1 declared Monthly with a drifted start date: an ordinary start-date write.
+                $Current = [PSCustomObject]@{
+                    DisplayName = 'R'
+                    Recurrence  = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 1; dayOfMonth = 1 }
+                        range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
+                    }
+                    Settings    = @{}
+                }
+                $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'Monthly'; startDate = '2026-02-01' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.SetParams.Recurrence | Should -BeExactly 'Monthly'
+                $Change.SetParams.StartDate  | Should -Be ([datetime]'2026-02-01')
+                @($Change.NotApplied)        | Should -BeNullOrEmpty
+
+                # Live interval 3 declared Monthly with no start date: a cadence write on the live start date.
+                $Current.Recurrence.pattern.interval = 3
+                $Declared = [PSCustomObject]@{ displayName = 'R'; recurrence = 'Monthly' }
+                $Change = Resolve-OERAccessReviewChange -Declared $Declared -Current $Current
+                $Change.SetParams.Recurrence | Should -BeExactly 'Monthly'
+                $Change.SetParams.StartDate  | Should -Be ([datetime]'2026-01-01')
+                @($Change.NotApplied)        | Should -BeNullOrEmpty
+            }
         }
     }
 

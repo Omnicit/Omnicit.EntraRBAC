@@ -40,6 +40,15 @@ function Resolve-OERAccessReviewChange {
     NotApplied instead whenever the live pattern is not representable, even when some other field
     in the same unit legitimately differs.
 
+    A fourth rule protects a semi-annual review from an older export. A live absoluteMonthly interval
+    6 is the SemiAnnually cadence, but every export before 1.1.4 wrote it as Monthly, with a warning,
+    so a document declaring Monthly against that live pattern is most likely such an export, and
+    applying it literally would make a semi-annual review monthly. The
+    recurrence/startDate/endDate/occurrences unit is therefore suppressed and reported in NotApplied,
+    exactly like the unrepresentable case, while the fields outside the unit still apply. Declaring
+    SemiAnnually keeps the review, and Set-OERAccessReviewDefinition -Recurrence Monthly with
+    -StartDate changes it on purpose. Every other transition is unaffected.
+
     Reviewer sets are compared on RESOLVED OBJECT IDS supplied by the caller in -DeclaredReviewer, so
     a display-name change in the tenant does not look like drift. The live keys are derived from each
     reviewer scope query by Resolve-OERReviewerScopeQuery, the module's single owner of that grammar:
@@ -410,7 +419,21 @@ function Resolve-OERAccessReviewChange {
                 $ParsedCurrentStart = [datetime]::MinValue
                 if ([datetime]::TryParse($CurrentStart, [ref]$ParsedCurrentStart)) { $EffectiveStart = $ParsedCurrentStart }
             }
-            if ($null -eq $EffectiveStart) {
+            if ($CurrentCadence -eq 'SemiAnnually' -and $DeclaredCadence -ieq 'Monthly') {
+                # A19 -- every export before 1.1.4 wrote a live absoluteMonthly interval 6 as Monthly, so
+                # this document is most likely such an export. Applying it literally would make a
+                # semi-annual review monthly, an overwrite in the tenant. Leave the whole unit
+                # (Recurrence, StartDate, EndDate, Occurrences) untouched and say why. Checked FIRST:
+                # declaring a startDate would not make this change applicable, so the startDate hint
+                # below would mislead.
+                $NotApplied.Add(
+                    'the live review is semi-annual (absoluteMonthly interval 6), which an export made before ' +
+                    "1.1.4 wrote as 'Monthly'; the recurrence, start date and range were left untouched so the " +
+                    "review is not made monthly. Declare 'SemiAnnually' to keep it, or run " +
+                    'Set-OERAccessReviewDefinition with -Recurrence Monthly and a -StartDate to make it monthly ' +
+                    'on purpose')
+            }
+            elseif ($null -eq $EffectiveStart) {
                 $NotApplied.Add("recurrence change to '$DeclaredCadence' needs a startDate; declare 'startDate' to apply it")
             }
             elseif (-not $CurrentPatternRepresentable) {
