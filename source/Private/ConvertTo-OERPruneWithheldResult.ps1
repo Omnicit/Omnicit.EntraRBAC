@@ -1,7 +1,7 @@
 function ConvertTo-OERPruneWithheldResult {
     <#
     .SYNOPSIS
-    Builds the Skipped record that withholds a prune when a declared entry, or the scope of one, could not be resolved, when a live scoped role's name could not be read, when a live group member or owner is a service principal, or when a live administrative unit member is a group this run created into the unit, or found already existing when it went to create it.
+    Builds the Skipped record that withholds a prune when a declared entry, or the scope of one, could not be resolved, when a live scoped role's name could not be read, when a live group member or owner is a service principal, when a live administrative unit member is a group this run created into the unit, or found already existing when it went to create it, or when the live group is synchronized from on-premises.
 
     .DESCRIPTION
     The single owner of the apply engine's withhold-prune rule and of its reason text. Every
@@ -79,6 +79,21 @@ function ConvertTo-OERPruneWithheldResult {
     its -Prune branch, and continues with the next candidate when it returns a record: no
     Write-Warning and no ShouldProcess prompt is issued for it.
 
+    A sixth kind is every LIVE member, owner or eligibility of a group synchronized from on-premises
+    (decision A15, Sprint 10 step 7b). Such a group is managed in on-premises Active Directory and is
+    read-only in the cloud, so the group prune removes nothing from it. The caller decides that the
+    group is synchronized, from its live read, with Test-OERGroupOnPremisesSynced, and passes the
+    group's name as -SyncedGroup; this helper owns both texts. With -Prune it returns exactly one
+    Skipped record whose Detail starts 'prune withheld: ', names the candidate and the group, says the
+    apply engine writes nothing to such a group, -Prune included (the module's own guard, not a Graph
+    rejection), and that the candidate is removed in the on-premises directory if it is meant to go.
+    Without -Prune it returns the Extra record the pass would have written, whose hint says that
+    -Prune leaves it in place rather than "use -Prune to remove". The caller calls it straight after
+    the unresolved-entry and service-principal calls above and before any other guard, the last-owner
+    guard included, and continues with the next candidate: no ShouldProcess prompt is issued for it.
+    Under -Prune the caller writes its one warning for the item itself, before the first such record;
+    this helper writes none.
+
     .PARAMETER Section
     The document section the prune pass belongs to (for example groups or administrativeUnits).
 
@@ -93,8 +108,8 @@ function ConvertTo-OERPruneWithheldResult {
 
     .PARAMETER Candidate
     A readable description of the live entry the pass would otherwise report Extra or remove, for
-    example "undeclared member '<id>'". Used by the -Unresolved, the -ObjectType and the
-    -CreatedGroup forms.
+    example "undeclared member '<id>'". Used by the -Unresolved, the -ObjectType, the -CreatedGroup
+    and the -SyncedGroup forms.
 
     .PARAMETER UnresolvedScope
     The labels of the declared entries of the section whose scope could not be resolved, in document
@@ -123,10 +138,18 @@ function ConvertTo-OERPruneWithheldResult {
     recorded). Mandatory in this form, and not combinable
     with -Unresolved, -UnresolvedScope, -Declared, -UnnamedRoleId or -ObjectType.
 
+    .PARAMETER SyncedGroup
+    The name of the group whose live read shows it synchronized from on-premises
+    (Test-OERGroupOnPremisesSynced), the label the group handler reports the group under. Mandatory in
+    this form, and not combinable with -Unresolved, -UnresolvedScope, -Declared, -UnnamedRoleId,
+    -ObjectType or -CreatedGroup.
+
     .PARAMETER Prune
     With -ObjectType: whether the caller runs with -Prune. With it the service principal's record is
     the Skipped "prune withheld:" record; without it, the Extra record. With -CreatedGroup: with it
-    the Skipped "prune withheld:" record; without it nothing, so the caller reports Extra.
+    the Skipped "prune withheld:" record; without it nothing, so the caller reports Extra. With
+    -SyncedGroup: with it the Skipped "prune withheld:" record; without it, the Extra record whose
+    hint says -Prune leaves the candidate in place.
 
     .EXAMPLE
     $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'role_sec_x' -Unresolved $MemberUnresolved -Candidate "undeclared member '$CurId'"
@@ -170,6 +193,14 @@ function ConvertTo-OERPruneWithheldResult {
     Emits the Skipped record and moves on to the next live member under -Prune, for a member that is
     the group 'grp-new' this run created into the unit (or found already existing); without -Prune it returns nothing and the
     pass reports the member Extra as usual.
+
+    .EXAMPLE
+    ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'grp-synced' -Candidate "undeclared member '$CurId'" -SyncedGroup 'grp-synced' -Prune:$Prune
+    continue
+
+    For a group whose live read shows it synchronized from on-premises: emits the Skipped "prune
+    withheld:" record (with -Prune) or the Extra record whose hint says -Prune leaves the member in
+    place (without), and moves on to the next live member. Nothing is removed from such a group.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding(DefaultParameterSetName = 'Unresolved')]
@@ -179,15 +210,27 @@ function ConvertTo-OERPruneWithheldResult {
         [Parameter(Mandatory, ParameterSetName = 'Unresolved')][AllowEmptyCollection()][AllowEmptyString()][string[]]$Unresolved,
         [Parameter(Mandatory, ParameterSetName = 'Unresolved')]
         [Parameter(Mandatory, ParameterSetName = 'ObjectType')]
-        [Parameter(Mandatory, ParameterSetName = 'CreatedGroup')][string]$Candidate,
+        [Parameter(Mandatory, ParameterSetName = 'CreatedGroup')]
+        [Parameter(Mandatory, ParameterSetName = 'SyncedGroup')][string]$Candidate,
         [Parameter(ParameterSetName = 'Unresolved')][AllowEmptyCollection()][string[]]$UnresolvedScope = @(),
         [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string]$Declared,
         [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string[]]$UnnamedRoleId,
         [Parameter(Mandatory, ParameterSetName = 'ObjectType')][AllowNull()][AllowEmptyString()][string]$ObjectType,
         [Parameter(Mandatory, ParameterSetName = 'CreatedGroup')][string]$CreatedGroup,
+        [Parameter(Mandatory, ParameterSetName = 'SyncedGroup')][string]$SyncedGroup,
         [Parameter(ParameterSetName = 'ObjectType')]
-        [Parameter(ParameterSetName = 'CreatedGroup')][switch]$Prune
+        [Parameter(ParameterSetName = 'CreatedGroup')]
+        [Parameter(ParameterSetName = 'SyncedGroup')][switch]$Prune
     )
+
+    if ($PSCmdlet.ParameterSetName -eq 'SyncedGroup') {
+        if ($Prune) {
+            return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Skipped' `
+                -Detail "prune withheld: $Candidate stays, since group '$SyncedGroup' is synchronized from on-premises and is managed there, and the apply engine writes nothing to such a group, -Prune included (our own guard, not a Graph rejection). Remove it in the on-premises directory if it is meant to go."
+        }
+        return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Extra' `
+            -Detail "$Candidate (group '$SyncedGroup' is synchronized from on-premises, so -Prune leaves it in place)"
+    }
 
     if ($PSCmdlet.ParameterSetName -eq 'CreatedGroup') {
         if (-not $Prune) { return }

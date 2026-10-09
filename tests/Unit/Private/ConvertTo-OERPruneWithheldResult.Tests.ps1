@@ -301,4 +301,53 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
             }
         }
     }
+
+    # A sixth kind (A15, Sprint 10 step 7b): every live member, owner or eligibility of a group whose
+    # LIVE read shows it synchronized from on-premises. Such a group is managed in on-premises Active
+    # Directory, so the group prune removes nothing from it. The caller decides that the group is
+    # synchronized (Test-OERGroupOnPremisesSynced); the helper owns both texts: under -Prune the
+    # Skipped record, without it the Extra record, whose hint says -Prune leaves the entry in place.
+    Context 'the SyncedGroup form (A15)' {
+        It 'with -Prune returns one Skipped record that starts prune withheld: and names the group' {
+            InModuleScope $script:moduleName {
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'grp-synced' -Candidate "undeclared member 'u-1'" -SyncedGroup 'grp-synced' -Prune)
+                $R.Count | Should -Be 1
+                $R[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureResult'
+                $R[0].Section | Should -BeExactly 'groups'
+                $R[0].Item | Should -BeExactly 'grp-synced'
+                $R[0].Error | Should -BeNullOrEmpty
+                $R[0].Action | Should -Be 'Skipped'
+                $R[0].Detail | Should -BeLike 'prune withheld: *'
+                $R[0].Detail | Should -Match "undeclared member 'u-1'"
+                $R[0].Detail | Should -Match "group 'grp-synced' is synchronized from on-premises"
+                $R[0].Detail | Should -Match 'our own guard, not a Graph rejection'
+                $R[0].Detail | Should -BeExactly ("prune withheld: undeclared member 'u-1' stays, since group 'grp-synced' is synchronized from on-premises and is managed there, " +
+                    'and the apply engine writes nothing to such a group, -Prune included (our own guard, not a Graph rejection). ' +
+                    'Remove it in the on-premises directory if it is meant to go.')
+            }
+        }
+        It 'without -Prune returns one Extra record whose hint says -Prune leaves it in place' {
+            InModuleScope $script:moduleName {
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'grp-synced' -Candidate "undeclared member 'u-1'" -SyncedGroup 'grp-synced')
+                $R.Count | Should -Be 1
+                $R[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureResult'
+                $R[0].Item | Should -BeExactly 'grp-synced'
+                $R[0].Action | Should -Be 'Extra'
+                $R[0].Detail | Should -Be "undeclared member 'u-1' (group 'grp-synced' is synchronized from on-premises, so -Prune leaves it in place)"
+                # -Prune:$false, as the handler passes it, is the same call.
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'grp-synced' -Candidate "undeclared owner 'o-1'" -SyncedGroup 'grp-synced' -Prune:$false)
+                $R.Count | Should -Be 1
+                $R[0].Action | Should -Be 'Extra'
+                $R[0].Detail | Should -BeExactly "undeclared owner 'o-1' (group 'grp-synced' is synchronized from on-premises, so -Prune leaves it in place)"
+            }
+        }
+        It 'cannot be combined with -Unresolved or -ObjectType' {
+            InModuleScope $script:moduleName {
+                { ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'x' -Candidate 'c' -SyncedGroup 'x' -ObjectType 'user' -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+                { ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'x' -Candidate 'c' -SyncedGroup 'x' -Unresolved @('a') -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+            }
+        }
+    }
 }
