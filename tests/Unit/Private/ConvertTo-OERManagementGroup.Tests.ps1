@@ -161,4 +161,70 @@ Describe 'ConvertTo-OERManagementGroup' {
         $Result.Count | Should -Be 1
         $Result[0].SubscriptionId | Should -Be 'cccc2222-0000-0000-0000-000000000000'
     }
+
+    # A listed group carries no details.parent: Get-OERManagementGroup reads its parent separately
+    # and hands it in with -Parent (A10).
+    Context '-Parent, the parent read separately for a listed group (A10)' {
+        BeforeAll {
+            $script:ShapeNames = @('ResourceId', 'ManagementGroupName', 'DisplayName', 'TenantId', 'ParentId', 'ParentName', 'ParentDisplayName', 'Children')
+        }
+
+        It 'fills the three parent properties of a list item from -Parent, in the unchanged shape' {
+            $ShapeNames = $script:ShapeNames
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ ShapeNames = $ShapeNames } {
+                param($ShapeNames)
+                $Out = ConvertTo-OERManagementGroup -InputObject @{
+                    id         = '/providers/Microsoft.Management/managementGroups/mg-b'
+                    name       = 'mg-b'
+                    type       = 'Microsoft.Management/managementGroups'
+                    properties = @{ tenantId = 't'; displayName = 'MG B' }
+                } -Parent ([PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a'; name = 'mg-a'; displayName = 'MG A' })
+
+                $Out.ParentId | Should -BeExactly '/providers/Microsoft.Management/managementGroups/mg-a'
+                $Out.ParentName | Should -BeExactly 'mg-a'
+                $Out.ParentDisplayName | Should -BeExactly 'MG A'
+                $Out.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.ManagementGroup'
+                @(($Out.PSObject.Properties | Where-Object MemberType -EQ 'NoteProperty').Name) | Should -Be $ShapeNames
+            }
+        }
+
+        It 'leaves the three parent properties $null for -Parent $null, even when details.parent is present' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Out = ConvertTo-OERManagementGroup -InputObject @{
+                    id         = '/providers/Microsoft.Management/managementGroups/mg-b'
+                    name       = 'mg-b'
+                    properties = @{
+                        tenantId    = 't'
+                        displayName = 'MG B'
+                        details     = @{ parent = @{ id = '/providers/Microsoft.Management/managementGroups/mg-a'; name = 'mg-a'; displayName = 'MG A' } }
+                    }
+                } -Parent $null
+
+                $Out.ParentId | Should -Be $null
+                $Out.ParentName | Should -Be $null
+                $Out.ParentDisplayName | Should -Be $null
+            }
+        }
+
+        It 'reads details.parent as before when -Parent is not given, in the unchanged shape' {
+            $ShapeNames = $script:ShapeNames
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ ShapeNames = $ShapeNames } {
+                param($ShapeNames)
+                $Out = ConvertTo-OERManagementGroup -InputObject @{
+                    id         = '/providers/Microsoft.Management/managementGroups/mg-b'
+                    name       = 'mg-b'
+                    properties = @{
+                        tenantId    = 't'
+                        displayName = 'MG B'
+                        details     = @{ parent = @{ id = '/providers/Microsoft.Management/managementGroups/mg-a'; name = 'mg-a'; displayName = 'MG A' } }
+                    }
+                }
+
+                $Out.ParentId | Should -BeExactly '/providers/Microsoft.Management/managementGroups/mg-a'
+                $Out.ParentName | Should -BeExactly 'mg-a'
+                $Out.ParentDisplayName | Should -BeExactly 'MG A'
+                @(($Out.PSObject.Properties | Where-Object MemberType -EQ 'NoteProperty').Name) | Should -Be $ShapeNames
+            }
+        }
+    }
 }

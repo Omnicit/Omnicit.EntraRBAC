@@ -4,18 +4,22 @@ function Resolve-OERInventoryScopeTree {
     Enumerates the management group / subscription scopes to walk for a tenant inventory.
 
     .DESCRIPTION
-    Composes Get-OERManagementGroup and Get-OERSubscription into a flat list of ARM scope strings
-    (every management group id and every subscription id) plus a nested hierarchy object used for the
-    scopeHierarchy.json context file. -ManagementGroup narrows to a single branch; -Scope returns
-    exactly that one raw scope without enumerating. Authentication (with ARM) is ensured at entry.
+    Composes the management groups (Get-OERManagementGroupList for the full tree,
+    Get-OERManagementGroup -Name for one branch) and Get-OERSubscription into a flat list of ARM
+    scope strings (every management group id and every subscription id) plus a nested hierarchy
+    object used for the scopeHierarchy.json context file. -ManagementGroup narrows to a single branch;
+    -Scope returns exactly that one raw scope without enumerating. Authentication (with ARM) is
+    ensured at entry.
 
     A listing that fails is never read as an empty level. For the full tree, a management-group or
     subscription listing that is refused or fails is caught, warned about, and named in the output's
     SkippedScopes ('<management groups: the listing failed>' / '<subscriptions: the listing
     failed>'), and the other level is still enumerated; the caller reports those levels as skipped.
     For a -ManagementGroup branch the read of the named branch throws, since nothing of it could be
-    walked. The management-group list comes from Get-OERManagementGroup, which bypasses the
-    service's cache; a management group created moments ago can still be missing until Azure has
+    walked. The management-group list comes from Get-OERManagementGroupList, the listing
+    Get-OERManagementGroup uses, converted here with ConvertTo-OERManagementGroup; the export does
+    not read the parents of the listed groups, so it gains no failure mode from that read. A
+    management group created moments ago can still be missing from the list until Azure has
     updated its hierarchy.
 
     .PARAMETER ManagementGroup
@@ -72,7 +76,7 @@ function Resolve-OERInventoryScopeTree {
         @(Get-OERManagementGroup -Name $ManagementGroup -ErrorAction Stop)
     } else {
         try {
-            @(Get-OERManagementGroup -ErrorAction Stop)
+            @(Get-OERManagementGroupList | ForEach-Object { ConvertTo-OERManagementGroup -InputObject $_ })
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             Write-Warning "Could not list the management groups, so no management group is walked: $($PSItem.Exception.Message)"

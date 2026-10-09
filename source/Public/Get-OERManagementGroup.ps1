@@ -85,14 +85,68 @@ function Get-OERManagementGroup {
         }
 
         try {
-            $Response = Invoke-OERArmRequest -Path '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -All
+            $Items = @(Get-OERManagementGroupList)
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $PSCmdlet.WriteError($PSItem)
             return
         }
-        foreach ($Item in @($Response.value)) {
-            ConvertTo-OERManagementGroup -InputObject $Item
+
+        # The tenant root group's name is its tenant id. It has no parent, so it is never looked up
+        # and is never reported as unread.
+        $IsRoot = @(foreach ($Item in $Items) {
+                $ItemName = [string]$Item.name
+                $ItemName -ne '' -and $ItemName -eq [string]$Item.properties.tenantId
+            })
+
+        # The Management Groups - List answer carries no parent (Microsoft Learn: a listed item has
+        # only id, name, type, displayName and tenantId), so the parents are read separately: ONE
+        # Entities - List call per list, not one GET per group. A parent that could not be read is
+        # reported as an error and never shown as an empty parent, since an empty ParentId otherwise
+        # reads as "this group has no parent".
+        $ParentByName = @{}
+        $ParentReadError = $null
+        if ($IsRoot -contains $false) {
+            try {
+                $ParentByName = Get-OERManagementGroupParent
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $ParentReadError = $PSItem
+            }
+        }
+
+        # Every group is emitted, in list order, before the error below is written, so a caller under
+        # -ErrorAction Stop still receives all of them.
+        $Unread = [System.Collections.Generic.List[string]]::new()
+        for ($Index = 0; $Index -lt $Items.Count; $Index++) {
+            $Item = $Items[$Index]
+            $ItemName = [string]$Item.name
+            if ($IsRoot[$Index]) {
+                ConvertTo-OERManagementGroup -InputObject $Item -Parent $null
+            } elseif ($ParentByName.ContainsKey($ItemName)) {
+                ConvertTo-OERManagementGroup -InputObject $Item -Parent $ParentByName[$ItemName]
+            } else {
+                $Unread.Add($ItemName)
+                ConvertTo-OERManagementGroup -InputObject $Item -Parent $null
+            }
+        }
+
+        if ($Unread.Count -gt 0) {
+            $Names = @($Unread | ForEach-Object { "'$_'" }) -join ', '
+            $Reason = if ($ParentReadError) {
+                "the entity listing failed: $($ParentReadError.Exception.Message)"
+            } else {
+                'the entity listing (Entities - List) returned no parent for them'
+            }
+            $ErrorParams = @{
+                Message      = [System.Exception]::new("Could not read the parent of $($Unread.Count) management group(s): $Names -- $Reason. Their ParentId, ParentName and ParentDisplayName are empty, which here does not mean that they have no parent.")
+                ErrorId      = 'ManagementGroupParentReadFailed'
+                Category     = 'ReadError'
+                TargetObject = [string[]]$Unread.ToArray()
+                Cmdlet       = $PSCmdlet
+            }
+            if ($ParentReadError) { $ErrorParams.InnerException = $ParentReadError.Exception }
+            Write-CmdletError @ErrorParams
         }
     }
 }
