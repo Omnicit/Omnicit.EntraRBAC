@@ -117,6 +117,7 @@ function Test-OERStructureSchema {
     Warning, since both names then find the same group and a case-only rename is not possible
     through the document (Set-OERGroup -NewDisplayName does it). An explicit null is not declared,
     as for every other key, and that Warning does not compare a template-based group's computed name.
+    A group's onPremisesSynced, when present, must be a boolean (Error); it is information only.
     A groups[] entry declaring a non-empty administrativeUnit whose matching administrativeUnits[]
     entry exists in the same document but does not name the group in its members is a Warning
     (issue #59, BL-07): administrativeUnit is applied only when the group is created and never
@@ -379,8 +380,8 @@ function Test-OERStructureSchema {
 
                 Add-UnknownKeyWarning -Node $G -Section 'groups' -Item $GItem -Path $GPath `
                     -KnownKey @('displayName', 'previousDisplayName', 'template', 'tokens', 'roleAssignable',
-                        'dynamic', 'description', 'membershipRule', 'membershipRuleProcessingState', 'mailNickname',
-                        'administrativeUnit', 'members', 'owners', 'eligibility', 'pimPolicy', 'id')
+                        'dynamic', 'description', 'onPremisesSynced', 'membershipRule', 'membershipRuleProcessingState',
+                        'mailNickname', 'administrativeUnit', 'members', 'owners', 'eligibility', 'pimPolicy', 'id')
 
                 if ($HasDN -and $HasTpl) {
                     Add-Finding -Section 'groups' -Item $GItem -Path $GPath `
@@ -439,6 +440,16 @@ function Test-OERStructureSchema {
                             Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.$GStringProp" `
                                 -Message "'$GStringProp' at $GPath must be a string."
                         }
+                    }
+                }
+
+                # A15: onPremisesSynced is information the export writes for a group synchronized
+                # from on-premises. The apply engine never sends it and decides nothing on it; only
+                # its type is checked, as schema.json does.
+                if (Test-HasProp -Node $G -Name 'onPremisesSynced') {
+                    if ($G.onPremisesSynced -isnot [bool]) {
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.onPremisesSynced" `
+                            -Message "'onPremisesSynced' at $GPath must be a boolean."
                     }
                 }
 

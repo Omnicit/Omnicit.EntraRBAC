@@ -424,6 +424,32 @@ Describe 'Export-OERInventory (the roster is complete, the apply document is not
             -not $GroupFilter
         }
     }
+
+    It 'marks every roster row with onPremisesSynced: true for a synchronized group and false for a cloud group (A15)' {
+        # The roster is the file an operator reads to see EVERY group, so unlike the apply document
+        # it states the flag on every row, true or false. The rule is Test-OERGroupOnPremisesSynced's:
+        # only a boolean true is synchronized, and the null a cloud group carries is not.
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            param($Group, $Filter, $All, $IncludeMembers, $IncludeOwners, $IncludePimEligibility, $TenantId)
+            [PSCustomObject]@{ Id = 'g-sec'; DisplayName = 'role_sec_admin'; GroupType = 'RoleEnabled'; IsAssignableToRole = $true; OnPremisesSyncEnabled = $null }
+            [PSCustomObject]@{ Id = 'g-sync'; DisplayName = 'SyncedTeam'; GroupType = 'Regular'; IsAssignableToRole = $false; OnPremisesSyncEnabled = $true }
+            [PSCustomObject]@{ Id = 'g-was'; DisplayName = 'FormerlySynced'; GroupType = 'Regular'; IsAssignableToRole = $false; OnPremisesSyncEnabled = $false }
+        }
+        $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups
+        $Result.RosterCount | Should -Be 3
+        $Roster = @(Get-Content (Join-Path $Result.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
+        $Roster.Count | Should -Be 3
+        foreach ($Row in $Roster) {
+            @($Row.PSObject.Properties.Name) | Should -Contain 'onPremisesSynced' -Because "the row of $($Row.displayName) states the flag"
+            $Row.onPremisesSynced | Should -BeOfType ([bool])
+        }
+        ($Roster | Where-Object { $_.displayName -eq 'SyncedTeam' }).onPremisesSynced | Should -BeTrue
+        ($Roster | Where-Object { $_.displayName -eq 'role_sec_admin' }).onPremisesSynced | Should -BeFalse
+        ($Roster | Where-Object { $_.displayName -eq 'FormerlySynced' }).onPremisesSynced | Should -BeFalse
+        # The key sits after dynamic and before memberCount, the order the roster is read in.
+        [string[]]$Names = @($Roster[0].PSObject.Properties.Name)
+        $Names | Should -Be @('displayName', 'roleAssignable', 'dynamic', 'onPremisesSynced', 'memberCount')
+    }
 }
 
 Describe 'Export-OERInventory (Azure walk)' {

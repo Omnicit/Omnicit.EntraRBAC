@@ -475,10 +475,11 @@ function Export-OERInventory {
                     $null
                 }
                 [PSCustomObject]@{
-                    displayName    = $RgName
-                    roleAssignable = [bool]$Rg.IsAssignableToRole
-                    dynamic        = ($Rg.GroupType -eq 'Dynamic')
-                    memberCount    = $MemberCount
+                    displayName      = $RgName
+                    roleAssignable   = [bool]$Rg.IsAssignableToRole
+                    dynamic          = ($Rg.GroupType -eq 'Dynamic')
+                    onPremisesSynced = (Test-OERGroupOnPremisesSynced -Group $Rg)
+                    memberCount      = $MemberCount
                 }
             })
         }
