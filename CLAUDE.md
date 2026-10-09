@@ -354,23 +354,30 @@ publish it.
   `mode: ContinuousDelivery`, where the preview counter advances on a TAG and not per commit:
   measured, two merges with no tag between them build the SAME version and the second publish is
   refused by the Gallery. `Why: docs/development/rationale.md#publish-on-merge`
-- **The tag step tags only the commit whose tested build IS the package on the Gallery (A16).**
-  On every run but a `v` tag run it first runs `PublishArtefact.ps1 -Compare`, which reads the
-  package back with `Save-PSResource` and compares it with the run's tested artefact, file by file
-  and SHA-256 by SHA-256; a different build, or a read that fails, refuses the step before
-  anything is tagged or released. Before this guard, a publish that no tag followed made the NEXT
-  merge compute the same version, skip the publish and tag ITS OWN commit over the previous
-  commit's package. Now:
+- **The tag step tags only the commit whose tested build IS the package on the Gallery (A16,
+  BL-114).** On every run but a `v` tag run it first runs `PublishArtefact.ps1 -Compare`, which
+  reads the package back with `Save-PSResource` and compares it with the run's tested artefact,
+  file by file and SHA-256 by SHA-256; a different build, or a read that fails, refuses the step
+  before anything is tagged or released. So does a tag that already names another commit:
+  `gh release create` ignores `--target` for an existing tag, so a preview tag pushed by hand onto
+  the wrong commit would otherwise receive the release. Before this guard, a publish that no tag
+  followed made the NEXT merge compute the same version, skip the publish and tag ITS OWN commit
+  over the previous commit's package. Now:
   - **A publish whose tag step failed, or whose publish step failed although the upload arrived:**
     re-run the FAILED job of that same run. It reuses the tested artefact, matches and tags, as
     the re-run after the Gallery's 500 on 2026-10-08 did.
-  - **A run that was refused** (a later merge, carrying the same version): push the missing tag by
-    hand onto the commit that published the version, then re-run ALL jobs of the refused run, which
+  - **A run that was refused** (a later merge whose build differs, carrying the same version; one
+    whose build is byte-identical IS the package and is tagged): push the missing tag by hand onto
+    the commit that published the version, then re-run ALL jobs of the newest refused run, which
     counts up from that tag and publishes it. A re-run of only its failed jobs reuses its own
-    build and is refused again. The refusal message names the steps.
+    build and is refused again. The refusal message names the steps. A tag pushed onto the wrong
+    commit is refused too, and named in the message: delete it with
+    `git push origin :refs/tags/v<version>` and re-run.
   - **Never loosen the comparison to turn a refused run green.** A rebuild of the published commit
-    is a different build too (the release notes carry the build date), so re-running ALL jobs of
-    the run that published is refused as well; re-run only its failed jobs instead.
+    on a later day is a different build too (the release notes carry the build date), so
+    re-running ALL jobs of the run that published is refused as well; re-run only its failed jobs
+    instead.
+
   `Why: docs/development/rationale.md#the-tag-step-tags-only-the-build-that-was-published`
 - **Never create a version tag by hand outside that repair or a deliberate release.** The existing
   rule under **CHANGELOG and Version** still holds, and now has teeth: a stray tag changes what
