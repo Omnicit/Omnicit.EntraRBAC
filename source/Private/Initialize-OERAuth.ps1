@@ -8,8 +8,11 @@ function Initialize-OERAuth {
     .DESCRIPTION
     Every public OER cmdlet that calls Graph or Azure invokes this function at its entry point.
     It is idempotent: when a valid Graph token is already cached for the requested tenant and
-    identity (AuthMethod + ClientId) with at least five minutes of remaining lifetime (and, when
-    -IncludeARM is set, a cached ARM token), it returns immediately without acquiring new tokens.
+    identity (AuthMethod + ClientId) that expires outside the renewal window, five minutes, which
+    Get-OERTokenRenewalThreshold owns (and, when -IncludeARM is set, a cached ARM token outside the
+    same window), it returns immediately without acquiring new tokens. The module's transports renew a
+    delegated or managed identity session's token that expires within that window before a request,
+    through this function with -Renewal.
 
     Requests inherit the current session. A caller that omits -TenantId targets the tenant the
     session was established for, and a caller that omits both -AuthMethod and -ClientId reuses the
@@ -101,11 +104,11 @@ function Initialize-OERAuth {
     past the BL-74 check therefore marks the session uncertain (Set-OERSessionUncertain), directly after
     it latches its caller, and a success clears the marker when the sign-in named its tenant -- a
     -TenantId other than 'organizations', and not a transport's own refresh (-ForceRefresh or
-    -ClaimsChallenge) -- or was Connect-OER's (-ReclaimGraphSession); any other success puts back the
-    value it found. While the marker is set, a sign-in that names no tenant is refused with a terminating
-    SignInRefused (New-OERSignInRefusedError -SessionUncertain), after the GraphSessionChanged refusal and
-    before the cached return and any token call, and its caller stays latched. Connect-OER sets the marker
-    first thing, and Disconnect-OER clears it.
+    -ClaimsChallenge) or renewal (-Renewal) -- or was Connect-OER's (-ReclaimGraphSession); any other
+    success puts back the value it found. While the marker is set, a sign-in that names no tenant is
+    refused with a terminating SignInRefused (New-OERSignInRefusedError -SessionUncertain), after the
+    GraphSessionChanged refusal and before the cached return and any token call, and its caller stays
+    latched. Connect-OER sets the marker first thing, and Disconnect-OER clears it.
 
     Before a client secret token request, a warning is written when the token request that last made
     AzAuth build its credential in this PowerShell session was also a client secret request, for the
@@ -183,6 +186,16 @@ function Initialize-OERAuth {
     .PARAMETER ForceRefresh
     Bypass the cached-token idempotency check and acquire a fresh token.
 
+    .PARAMETER Renewal
+    Marks the call as a transport's own renewal of the session's token. Invoke-OERGraphRequest and
+    Invoke-OERArmRequest pass it, with the session's tenant, method and client id, when a delegated or
+    managed identity session's token expires within the renewal window (Get-OERTokenRenewalThreshold):
+    before a request, and after a 401 for such a token. It does not change which token is requested:
+    without -ForceRefresh, Get-AzToken is called without Force, so AzAuth may answer with the
+    credential it already holds. Like -ForceRefresh and -ClaimsChallenge, it keeps a successful
+    sign-in from clearing the session-uncertain marker, since the tenant is passed on the command's
+    behalf rather than named by it.
+
     .PARAMETER Environment
     The sovereign cloud to authenticate against and request endpoints for: 'Global' (the worldwide
     commercial cloud, which is also what Microsoft 365 GCC runs on), 'USGov' (GCC High), 'USGovDoD'
@@ -219,6 +232,8 @@ function Initialize-OERAuth {
         [switch]$IncludeARM,
         [string]$ClaimsChallenge,
         [switch]$ForceRefresh,
+        # The transports' own renewal before a request (A11); see .PARAMETER Renewal.
+        [switch]$Renewal,
         # SEC: deliberately NO '= Global' default, for exactly the reason spelled out on
         # -AuthMethod below. A parameter default makes every predicate that reads this value compare
         # a cached session against the DEFAULT instead of against what the caller asked for; that was
@@ -279,14 +294,14 @@ function Initialize-OERAuth {
     # command that finishes leaves every call stack, so the latch does not refuse the command after
     # it: Connect-OER, or a new command whose sign-in succeeds, sends again.
     #
-    # The calling command is the IMMEDIATE caller. Inside a transport's own refresh -- the claims
-    # step-up or the token-rejected retry of Invoke-OERGraphRequest, the 401 retry of
-    # Invoke-OERArmRequest -- that is the transport's nested function (Invoke-GraphSingle,
-    # Invoke-ArmCallWithRefresh): a refusal there refuses only that retry, and the command's next
-    # request is a new transport call (step 4b round 1, Ruling R5; docs/development/rationale.md,
-    # auth-state). Everywhere else this function is called directly in the command's own function,
-    # never from a nested function or a script block, which would latch a frame that ends at once;
-    # gate 10 of tests/QA/sourcehygiene.tests.ps1 holds every call site to that.
+    # The calling command is the IMMEDIATE caller. Inside a transport's own sign-in -- its renewal of an
+    # expiring token before a request (A11), the claims step-up or the token-rejected retry of
+    # Invoke-OERGraphRequest, the 401 retry of Invoke-OERArmRequest -- that is the transport's nested
+    # function (Invoke-GraphSingle, Invoke-ArmCallWithRefresh): a refusal there refuses only that
+    # request, and the command's next request is a new transport call (step 4b round 1, Ruling R5;
+    # docs/development/rationale.md, auth-state). Everywhere else this function is called directly in
+    # the command's own function, never from a nested function or a script block, which would latch a
+    # frame that ends at once; gate 10 of tests/QA/sourcehygiene.tests.ps1 holds every call site to that.
     #
     # The table ($script:_OERSignInLatch, a ConditionalWeakTable) stores only the boolean $true. Its
     # keys are the commands' own invocation objects -- each carries its command's bound parameters, a
@@ -370,12 +385,13 @@ function Initialize-OERAuth {
     }
 
     # SEC (A10): whether this sign-in names its tenant, for the session-uncertain marker. 'organizations'
-    # names none. A transport's own refresh (-ForceRefresh or -ClaimsChallenge without
-    # -ReclaimGraphSession) passes the state's tenant on the command's behalf, so it neither counts as
-    # naming one nor clears the marker; Connect-OER (-ReclaimGraphSession) always does.
+    # names none. A transport's own refresh (-ForceRefresh or -ClaimsChallenge) or renewal before a
+    # request (-Renewal, A11), without -ReclaimGraphSession, passes the state's tenant on the command's
+    # behalf, so it neither counts as naming one nor clears the marker; Connect-OER (-ReclaimGraphSession)
+    # always does.
     [bool]$TenantNamed = [bool]$TenantId -and $TenantId -ne 'organizations'
     [bool]$ClearsUncertainty = $ReclaimGraphSession -or
-        ($TenantNamed -and -not $ForceRefresh -and -not $ClaimsChallenge)
+        ($TenantNamed -and -not $ForceRefresh -and -not $ClaimsChallenge -and -not $Renewal)
 
     # SEC: AuthMethod and ClientId are inherited as a PAIR, and only when the caller stated no
     # -AuthMethod and either no -ClientId or the SAME -ClientId as the cached session. Inheriting a
@@ -450,7 +466,8 @@ function Initialize-OERAuth {
     }
     [string]$EffectiveAuthorityHost = $Endpoint.AuthorityHost
 
-    $FiveMinutesFromNow = [DateTime]::UtcNow.AddMinutes(5)
+    # The token renewal window's single owner, shared with the transports' renewal before a request (A11).
+    $RenewalThreshold = Get-OERTokenRenewalThreshold
 
     # SEC (A18): the Microsoft Graph PowerShell SDK session the process holds, compared with the one
     # this module connected -- read ONCE per entry, here, for the two GraphSession terms of
@@ -488,7 +505,7 @@ function Initialize-OERAuth {
         $GraphSession -ne 'Absent' -and
         $GraphSession -ne 'Changed' -and
         -not $ClaimsChallenge -and -not $ForceRefresh -and
-        $script:_OERAuthState.GraphTokenExpiry -gt $FiveMinutesFromNow
+        $script:_OERAuthState.GraphTokenExpiry -gt $RenewalThreshold
 
     # SEC: the ARM predicate carries the SAME tenant and identity terms as the Graph one, and for
     # the same reason -- an access token is issued for exactly one tenant and one principal. Without
@@ -512,7 +529,7 @@ function Initialize-OERAuth {
         -not $ForceRefresh -and
         $script:_OERAuthState.ArmToken -and
         $script:_OERAuthState.ArmTokenExpiry -and
-        $script:_OERAuthState.ArmTokenExpiry -gt $FiveMinutesFromNow)
+        $script:_OERAuthState.ArmTokenExpiry -gt $RenewalThreshold)
 
     # Captured BEFORE the state is rebuilt below: does the state being replaced belong to the same
     # tenant and principal we are now authenticating as? This gates the ARM carry-forward at the

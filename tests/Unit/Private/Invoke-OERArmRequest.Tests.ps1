@@ -2130,3 +2130,332 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 }
+
+Describe 'Invoke-OERArmRequest renews an expiring token before the request (A11, BL-105)' {
+    # A11, the mirror of the Graph wrapper's suite: a delegated or managed identity session's Azure
+    # Resource Manager token is renewed BEFORE it expires, before every call and so before every page,
+    # through Initialize-OERAuth with -IncludeARM and -Renewal and without -ForceRefresh. Initialize-OERAuth
+    # is mocked here: the mock records each call's parameters in the order of the requests and replaces
+    # the state's ARM token with a renewed one that lasts an hour, as a real renewal leaves it.
+    # Invoke-WebRequest records each request and whether it carried the token the session held or the
+    # renewed one. Both write to one module-scope log. The tenant is invented: A is 4444....
+    BeforeAll {
+        # A session for tenant A, signed in with -AuthMethod, holding an ARM token that expires in
+        # -Minutes, or whose state records no ARM expiry at all (-NoExpiry).
+        function script:Set-ArmRenewalState {
+            param(
+                [Parameter(Mandatory)][string]$AuthMethod,
+                [string]$ClientId = '',
+                [int]$Minutes = 60,
+                [switch]$NoExpiry
+            )
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ AuthMethod = $AuthMethod; ClientId = $ClientId; Minutes = $Minutes; NoExpiry = [bool]$NoExpiry } {
+                param($AuthMethod, $ClientId, $Minutes, $NoExpiry)
+                $State = @{
+                    TenantId       = '44444444-4444-4444-4444-444444444444'
+                    AuthMethod     = $AuthMethod
+                    ClientId       = $ClientId
+                    Environment    = 'Global'
+                    ArmToken       = ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm-held' -AsPlainText -Force
+                    ArmResourceUrl = 'https://management.azure.com/'
+                }
+                if (-not $NoExpiry) { $State.ArmTokenExpiry = [DateTime]::UtcNow.AddMinutes($Minutes) }
+                $script:_OERAuthState = $State
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:A11Log = [System.Collections.Generic.List[string]]::new()
+            $script:A11Renewals = [System.Collections.Generic.List[hashtable]]::new()
+            $script:A11ArmCalls = 0
+            Mock Initialize-OERAuth {
+                param($TenantId, $AuthMethod, $ClientId, $ClientSecret, $Certificate, $CertificatePath,
+                    $IncludeARM, $ClaimsChallenge, $ForceRefresh, $Renewal, $Environment, $ReclaimGraphSession)
+                $Bound = @{}
+                foreach ($Key in $PSBoundParameters.Keys) { $Bound[$Key] = $PSBoundParameters[$Key] }
+                $script:A11Renewals.Add($Bound)
+                $script:A11Log.Add('INIT')
+                $script:_OERAuthState.ArmToken = ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm-renewed' -AsPlainText -Force
+                $script:_OERAuthState.ArmTokenExpiry = [DateTime]::UtcNow.AddMinutes(60)
+            }
+            Mock Invoke-WebRequest {
+                param($Method, $Uri, $Headers, $SkipHttpErrorCheck, $Body, $ContentType)
+                $script:A11ArmCalls++
+                [string]$Label = if ([string]$Headers.Authorization -like '*-renewed') { 'renewed' } else { 'held' }
+                $script:A11Log.Add(('ARM {0} | {1}' -f $Uri, $Label))
+                [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"ok"}]}' }
+            }
+        }
+    }
+
+    AfterEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+    }
+
+    It 'RA1: renews an Interactive session''s ARM token that expires within the window before the request, with -IncludeARM and without -ForceRefresh' {
+        Set-ArmRenewalState -AuthMethod Interactive -Minutes 2
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $Result = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01'
+            Should -Invoke Initialize-OERAuth -Times 1 -Exactly
+            Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+            @{ Result = $Result; Log = $script:A11Log.ToArray(); Calls = $script:A11Renewals.ToArray() }
+        }
+
+        @($R.Result.value)[0].id | Should -Be 'ok'
+        # The renewal first, then the one request, sent with the renewed token.
+        $R.Log | Should -Be @('INIT', 'ARM https://management.azure.com/subscriptions?api-version=2022-12-01 | renewed')
+        $Call = $R.Calls[0]
+        [bool]$Call['Renewal'] | Should -BeTrue
+        [bool]$Call['IncludeARM'] | Should -BeTrue
+        $Call['TenantId'] | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+        $Call['AuthMethod'] | Should -BeExactly 'Interactive'
+        $Call.ContainsKey('ForceRefresh') | Should -BeFalse
+        $Call.ContainsKey('ClaimsChallenge') | Should -BeFalse
+        # The state carries no client id, so none is forwarded.
+        $Call.ContainsKey('ClientId') | Should -BeFalse
+    }
+
+    It 'RA2: renews a <Method> session''s ARM token and forwards its client id' -ForEach @(
+        @{ Method = 'DeviceCode'; ClientId = '' }
+        @{ Method = 'ManagedIdentity'; ClientId = 'cccccccc-cccc-cccc-cccc-cccccccccccc' }
+    ) {
+        Set-ArmRenewalState -AuthMethod $Method -ClientId $ClientId -Minutes 2
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01'
+            @{ Log = $script:A11Log.ToArray(); Calls = $script:A11Renewals.ToArray() }
+        }
+
+        $R.Log | Should -Be @('INIT', 'ARM https://management.azure.com/subscriptions?api-version=2022-12-01 | renewed')
+        $R.Calls.Count | Should -Be 1
+        $Call = $R.Calls[0]
+        [bool]$Call['Renewal'] | Should -BeTrue
+        [bool]$Call['IncludeARM'] | Should -BeTrue
+        $Call['AuthMethod'] | Should -BeExactly $Method
+        $Call.ContainsKey('ForceRefresh') | Should -BeFalse
+        if ($ClientId) {
+            # A user-assigned managed identity renews as the same principal, not the system-assigned one.
+            $Call['ClientId'] | Should -BeExactly $ClientId
+        }
+        else {
+            $Call.ContainsKey('ClientId') | Should -BeFalse
+        }
+    }
+
+    It 'RA3: does not renew an app-only <Method> session''s ARM token within a command and sends the request with it' -ForEach @(
+        @{ Method = 'ClientSecret' }
+        @{ Method = 'ClientCertificate' }
+    ) {
+        Set-ArmRenewalState -AuthMethod $Method -ClientId 'cccccccc-cccc-cccc-cccc-cccccccccccc' -Minutes 2
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $Result = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01'
+            Should -Invoke Initialize-OERAuth -Times 0
+            Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+            @{ Result = $Result; Log = $script:A11Log.ToArray() }
+        }
+
+        @($R.Result.value)[0].id | Should -Be 'ok'
+        $R.Log | Should -Be @('ARM https://management.azure.com/subscriptions?api-version=2022-12-01 | held')
+    }
+
+    It 'RA4: does not renew an ARM token that expires after the window' {
+        Set-ArmRenewalState -AuthMethod Interactive -Minutes 30
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01'
+            Should -Invoke Initialize-OERAuth -Times 0
+            Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+            @{ Log = $script:A11Log.ToArray() }
+        }
+
+        $R.Log | Should -Be @('ARM https://management.azure.com/subscriptions?api-version=2022-12-01 | held')
+    }
+
+    It 'RA5: does not renew when the state records no ARM token expiry' {
+        Set-ArmRenewalState -AuthMethod Interactive -NoExpiry
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01'
+            Should -Invoke Initialize-OERAuth -Times 0
+            Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+            @{ Log = $script:A11Log.ToArray() }
+        }
+
+        $R.Log | Should -Be @('ARM https://management.azure.com/subscriptions?api-version=2022-12-01 | held')
+    }
+
+    It 'RA6: renews at the window''s edge and not one tick after it' {
+        Set-ArmRenewalState -AuthMethod Interactive
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            # A fixed window end, so the edge is exact: a token that expires AT it is due.
+            $script:A11Edge = [DateTime]::UtcNow.AddMinutes(5)
+            Mock Get-OERTokenRenewalThreshold { $script:A11Edge }
+
+            $script:_OERAuthState.ArmTokenExpiry = $script:A11Edge
+            $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01&case=edge'
+            $AtEdge = $script:A11Renewals.Count
+
+            $script:_OERAuthState.ArmTokenExpiry = $script:A11Edge.AddTicks(1)
+            $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01&case=after'
+            @{ AtEdge = $AtEdge; After = $script:A11Renewals.Count - $AtEdge; Log = $script:A11Log.ToArray() }
+        }
+
+        $R.AtEdge | Should -Be 1
+        $R.After | Should -Be 0
+        $R.Log | Should -Be @(
+            'INIT'
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01&case=edge | renewed'
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01&case=after | renewed')
+    }
+
+    It 'RA7: an -All read that crosses the expiry renews once between the pages and reads every page' {
+        Set-ArmRenewalState -AuthMethod Interactive -Minutes 30
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-WebRequest {
+                param($Method, $Uri, $Headers, $SkipHttpErrorCheck, $Body, $ContentType)
+                $script:A11ArmCalls++
+                [string]$Label = if ([string]$Headers.Authorization -like '*-renewed') { 'renewed' } else { 'held' }
+                $script:A11Log.Add(('ARM {0} | {1}' -f $Uri, $Label))
+                switch ($script:A11ArmCalls) {
+                    1 {
+                        # The token enters the window while page 1 is read.
+                        $script:_OERAuthState.ArmTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+                        [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"a"},{"id":"b"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skipToken=p2"}' }
+                    }
+                    2 { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"c"}],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skipToken=p3"}' } }
+                    default { [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"d"}]}' } }
+                }
+            }
+
+            $Result = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All
+            Should -Invoke Invoke-WebRequest -Times 3 -Exactly
+            @{ Result = $Result; Log = $script:A11Log.ToArray(); Calls = $script:A11Renewals.ToArray() }
+        }
+
+        @($R.Result.value.id) | Should -Be @('a', 'b', 'c', 'd')
+        $R.Log | Should -Be @(
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01 | held'
+            'INIT'
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01&$skipToken=p2 | renewed'
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01&$skipToken=p3 | renewed')
+        $R.Calls.Count | Should -Be 1
+        [bool]$R.Calls[0]['Renewal'] | Should -BeTrue
+    }
+
+    It 'RA8: a proactive renewal does not spend the 401 refresh budget' {
+        Set-ArmRenewalState -AuthMethod Interactive -Minutes 2
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            # The renewed token is rejected once (revoked, for example): the 401 still gets its one
+            # forced refresh and its retry.
+            Mock Invoke-WebRequest {
+                param($Method, $Uri, $Headers, $SkipHttpErrorCheck, $Body, $ContentType)
+                $script:A11ArmCalls++
+                [string]$Label = if ([string]$Headers.Authorization -like '*-renewed') { 'renewed' } else { 'held' }
+                $script:A11Log.Add(('ARM {0} | {1}' -f $Uri, $Label))
+                if ($script:A11ArmCalls -eq 1) { return [PSCustomObject]@{ StatusCode = 401; Content = '{}' } }
+                [PSCustomObject]@{ StatusCode = 200; Content = '{"id":"after-refresh"}' }
+            }
+
+            $Result = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01'
+            Should -Invoke Initialize-OERAuth -Times 2 -Exactly
+            Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+            @{ Result = $Result; Log = $script:A11Log.ToArray(); Calls = $script:A11Renewals.ToArray() }
+        }
+
+        $R.Result.id | Should -Be 'after-refresh'
+        $R.Log | Should -Be @(
+            'INIT'
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01 | renewed'
+            'INIT'
+            'ARM https://management.azure.com/subscriptions?api-version=2022-12-01 | renewed')
+        # First the renewal, then the 401's forced refresh.
+        [bool]$R.Calls[0]['Renewal'] | Should -BeTrue
+        $R.Calls[0].ContainsKey('ForceRefresh') | Should -BeFalse
+        [bool]$R.Calls[1]['ForceRefresh'] | Should -BeTrue
+        [bool]$R.Calls[1]['IncludeARM'] | Should -BeTrue
+        $R.Calls[1].ContainsKey('Renewal') | Should -BeFalse
+    }
+
+    It 'RA9: a renewal that fails sends no request' {
+        Set-ArmRenewalState -AuthMethod Interactive -Minutes 2
+
+        # As a failed ARM acquisition in Initialize-OERAuth leaves it: a non-terminating
+        # ArmTokenAcquisitionFailed. A mock latches nothing, so under -ErrorAction Stop -- the preference
+        # many hosts and CI runners set -- that record is the call's error and nothing is sent.
+        $Stopped = InModuleScope Omnicit.EntraRBAC {
+            Mock Initialize-OERAuth {
+                [CmdletBinding()]
+                param($TenantId, $AuthMethod, $ClientId, $ClientSecret, $Certificate, $CertificatePath,
+                    $IncludeARM, $ClaimsChallenge, $ForceRefresh, $Renewal, $Environment, $ReclaimGraphSession)
+                $script:A11Log.Add('INIT')
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Failed to acquire an Azure Resource Manager token: AADSTS50076: interaction required.'),
+                        'ArmTokenAcquisitionFailed',
+                        [System.Management.Automation.ErrorCategory]::AuthenticationError,
+                        $TenantId))
+            }
+            $Caught = $null
+            try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction Stop } catch { $Caught = $PSItem }
+            Should -Invoke Initialize-OERAuth -Times 1 -Exactly
+            Should -Invoke Invoke-WebRequest -Times 0
+            @{ Caught = $Caught; Log = $script:A11Log.ToArray() }
+        }
+
+        $Stopped.Caught | Should -Not -BeNullOrEmpty
+        $Stopped.Caught.FullyQualifiedErrorId | Should -BeLike 'ArmTokenAcquisitionFailed*'
+        $Stopped.Log | Should -Be @('INIT')
+
+        # Under -ErrorAction SilentlyContinue the record does not stop the call. The real
+        # Initialize-OERAuth latches its caller -- here the transport's Invoke-ArmCallWithRefresh -- before
+        # it requests a token, and a failure leaves it latched; this mock does the same, as Lock-OERSignIn
+        # would, so the latch gate refuses the request. Pester's own try makes the gate's throw the call's
+        # error here; E5 proves, with the real function and no try anywhere, that both records appear.
+        $Silent = InModuleScope Omnicit.EntraRBAC {
+            $script:A11Log.Clear()
+            Mock Initialize-OERAuth {
+                [CmdletBinding()]
+                param($TenantId, $AuthMethod, $ClientId, $ClientSecret, $Certificate, $CertificatePath,
+                    $IncludeARM, $ClaimsChallenge, $ForceRefresh, $Renewal, $Environment, $ReclaimGraphSession)
+                $script:A11Log.Add('INIT')
+                $Frame = @(Get-PSCallStack | Where-Object {
+                        $null -ne $_.InvocationInfo -and $_.InvocationInfo.MyCommand.Name -eq 'Invoke-ArmCallWithRefresh'
+                    })[0]
+                if ($null -eq $script:_OERSignInLatch) {
+                    $script:_OERSignInLatch = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+                }
+                $script:_OERSignInLatch.AddOrUpdate($Frame.InvocationInfo, $true)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Failed to acquire an Azure Resource Manager token: AADSTS50076: interaction required.'),
+                        'ArmTokenAcquisitionFailed',
+                        [System.Management.Automation.ErrorCategory]::AuthenticationError,
+                        $TenantId))
+            }
+            $Errs = @()
+            $Caught = $null
+            $Result = $null
+            try {
+                $Result = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction SilentlyContinue -ErrorVariable Errs
+            } catch { $Caught = $PSItem }
+            # Both halves of this test together: one renewal each, and no request in either.
+            Should -Invoke Initialize-OERAuth -Times 2 -Exactly
+            Should -Invoke Invoke-WebRequest -Times 0
+            @{ Result = $Result; Caught = $Caught; Errs = @($Errs); Log = $script:A11Log.ToArray() }
+        }
+
+        $Silent.Result | Should -BeNullOrEmpty
+        $Silent.Log | Should -Be @('INIT')
+        # The renewal's record was written and did not stop the call...
+        @($Silent.Errs | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ArmTokenAcquisitionFailed*' }).Count | Should -Be 1
+        # ...and the latch gate refused the request, naming the transport's function the renewal latched.
+        $Silent.Caught | Should -Not -BeNullOrEmpty
+        $Silent.Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        $Silent.Caught.TargetObject | Should -BeExactly 'Invoke-ArmCallWithRefresh'
+    }
+}

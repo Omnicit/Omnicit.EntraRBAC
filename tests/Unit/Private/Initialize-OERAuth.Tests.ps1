@@ -5367,3 +5367,136 @@ Describe 'Initialize-OERAuth session uncertain after a refused sign-in (A10)' {
         }
     }
 }
+
+Describe 'Initialize-OERAuth renewal window and -Renewal (A11, BL-105)' {
+    # A11: the module's transports renew a delegated or managed identity session's token before it
+    # expires, through this function, without -ForceRefresh. Two things here make that work. The
+    # window is Get-OERTokenRenewalThreshold's, the one the transports read, so a token they find due
+    # is never answered from this function's cache. And -Renewal marks the call as the transport's own:
+    # it passes the state's tenant on the command's behalf, so a success must not clear the
+    # session-uncertain marker (A10), exactly as -ForceRefresh and -ClaimsChallenge do not. The tenant is
+    # invented: A is 4444..., and every token is issued for the tenant it was requested for.
+    BeforeAll {
+        # A session for tenant A that this function did not build itself (no session fingerprint, so
+        # the A18 session check compares nothing), whose Microsoft Graph token expires in -Minutes.
+        function script:Set-RenewalState {
+            param([Parameter(Mandatory)][int]$Minutes)
+            InModuleScope $script:moduleName -Parameters @{ Minutes = $Minutes } {
+                param($Minutes)
+                $script:_OERAuthState = @{
+                    TenantId         = '44444444-4444-4444-4444-444444444444'
+                    AuthMethod       = 'Interactive'
+                    ClientId         = ''
+                    Environment      = 'Global'
+                    Account          = 'admin@contoso.com'
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes($Minutes)
+                    TokenTenantId    = '44444444-4444-4444-4444-444444444444'
+                    ArmToken         = $null
+                    ArmTokenExpiry   = $null
+                    ArmResourceUrl   = $null
+                    ArmTokenTenantId = $null
+                    ClaimsSatisfied  = $false
+                }
+            }
+        }
+
+        # The marker, read through its owner with a round trip that puts back what it found.
+        function script:Get-RenewalMarker {
+            InModuleScope $script:moduleName {
+                $Was = Set-OERSessionUncertain -Value $true
+                $null = Set-OERSessionUncertain -Value $Was
+                $Was
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+            $script:_OERTenantDomainCache = $null
+        }
+        $script:CurrentContext = $null
+        $script:OwnContext = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = $Tenant }
+        }
+        # Stateful, like the SDK: no session until Connect-MgGraph, then the module's own.
+        Mock -ModuleName $script:moduleName Connect-MgGraph { $script:CurrentContext = $script:OwnContext }
+        Mock -ModuleName $script:moduleName Get-MgContext { $script:CurrentContext }
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
+    }
+
+    It 'I1: reads its renewal window from Get-OERTokenRenewalThreshold' {
+        # A Microsoft Graph token that lasts another 30 minutes. Against a window that ends now it is
+        # outside the window, so the cached return answers.
+        Set-RenewalState -Minutes 30
+        Mock -ModuleName $script:moduleName Get-OERTokenRenewalThreshold { [DateTime]::UtcNow }
+
+        InModuleScope $script:moduleName { Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' }
+
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0
+
+        # The same session against a window of an hour: the token is due, so a new one is requested.
+        Set-RenewalState -Minutes 30
+        Mock -ModuleName $script:moduleName Get-OERTokenRenewalThreshold { [DateTime]::UtcNow.AddMinutes(60) }
+
+        InModuleScope $script:moduleName { Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' }
+
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        # Once per entry: the window is read from its owner, never computed here.
+        Should -Invoke -ModuleName $script:moduleName Get-OERTokenRenewalThreshold -Times 2 -Exactly
+    }
+
+    It 'I2: a successful -Renewal sign-in leaves a set session-uncertain marker set' {
+        Set-RenewalState -Minutes 2
+        InModuleScope $script:moduleName { $null = Set-OERSessionUncertain -Value $true }
+
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive' -Renewal
+        }
+
+        # The sign-in went the whole way: one token, one connection, and the renewed expiry.
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState.GraphTokenExpiry | Should -BeGreaterThan ([DateTime]::UtcNow.AddMinutes(30))
+        }
+        Get-RenewalMarker | Should -BeTrue
+    }
+
+    It 'I3: the same sign-in without -Renewal clears it' {
+        Set-RenewalState -Minutes 2
+        InModuleScope $script:moduleName { $null = Set-OERSessionUncertain -Value $true }
+
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
+        }
+
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        Get-RenewalMarker | Should -BeFalse
+    }
+
+    It 'I4: a -Renewal sign-in for a due Interactive token calls Get-AzToken without Force' {
+        Set-RenewalState -Minutes 2
+
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive' -Renewal
+        }
+
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter { -not $Force }
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0 -ParameterFilter { $Force }
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+    }
+}

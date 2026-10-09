@@ -6,7 +6,7 @@ function Invoke-OERGraphRequest {
 
     .DESCRIPTION
     Drop-in replacement for Invoke-MgGraphRequest used by every public and private function in
-    Omnicit.EntraRBAC. Adds five layers on top of the raw Graph SDK call:
+    Omnicit.EntraRBAC. Adds seven layers on top of the raw Graph SDK call:
 
     1. Bearer token security: the $Error record that contains the raw HttpRequestMessage
        (which carries the Authorization: Bearer header in plain text) is removed from $Error
@@ -68,6 +68,16 @@ function Invoke-OERGraphRequest {
        enumeration, not an empty collection, and is raised so the pages already aggregated are never
        silently discarded. That raised error carries the same PartialValue/NextLink/PageNumber facts
        described in item 5, since this is the other way a paged read can fail partway through.
+
+    7. Token renewal before expiry: before every attempt -- the first, each throttled retry, and so
+       every page under -All -- a delegated or managed identity session's (Interactive, DeviceCode or
+       ManagedIdentity) Microsoft Graph token that expires within the renewal window
+       (Get-OERTokenRenewalThreshold, five minutes) is renewed through Initialize-OERAuth -Renewal, with
+       the session's tenant, method and client id and without -ForceRefresh, so Get-AzToken is called
+       without Force. An app-only session (ClientSecret or ClientCertificate) is not renewed within a
+       command, since the module keeps no secret or certificate. A renewal that fails sends no request:
+       inside a try its error is the call's, and with no try up the call stack the latch gate then
+       refuses the request with SignInRefused.
 
     .PARAMETER Method
     HTTP method for the Graph request. Defaults to GET.
@@ -817,6 +827,36 @@ function Invoke-OERGraphRequest {
         [int]$ThrottleAttempt = 0
         $AttemptError = $null
         while ($true) {
+            # A11 (BL-105): renew the session's Microsoft Graph token before it expires -- before every
+            # attempt (the first and each throttled retry), and so before every page of an -All read.
+            # Initialize-OERAuth renews only when a command begins, so a long command used to run into
+            # its token's expiry and refresh only after Graph answered 401, with -ForceRefresh. Only a
+            # session that can be renewed without key material: Interactive, DeviceCode and
+            # ManagedIdentity. An app-only session (ClientSecret, ClientCertificate) is not renewed
+            # within a command, since the module never keeps its secret or certificate; a token whose
+            # expiry the state does not record is not renewed here either. The window is
+            # Get-OERTokenRenewalThreshold's, the one Initialize-OERAuth's cached return reads, so a
+            # token due here is never answered from the cache. No -ForceRefresh, so Get-AzToken is
+            # called without Force; -Renewal keeps a success from clearing the session-uncertain
+            # marker (A10). Here, ahead of the session gate and never between a gate and the request
+            # (gate 10). A renewal that fails latches this function -- or, refused under a command whose
+            # own sign-in was refused (BL-74), leaves that command latched on the call stack -- so the
+            # gates below refuse the request: the latch gate with SignInRefused, after the session gate,
+            # which still reports a changed session as GraphSessionChanged. Outside any try too; inside
+            # one, the renewal's error is the call's.
+            [bool]$RenewalDue = ($script:_OERAuthState.AuthMethod -in @('Interactive', 'DeviceCode', 'ManagedIdentity')) -and
+                $null -ne $script:_OERAuthState.GraphTokenExpiry -and
+                $script:_OERAuthState.GraphTokenExpiry -le (Get-OERTokenRenewalThreshold)
+            if ($RenewalDue) {
+                Write-Verbose '[Invoke-OERGraphRequest] The Microsoft Graph token expires within the renewal window. Renewing it before the request...'
+                $RenewalParams = @{
+                    TenantId   = $script:_OERAuthState.TenantId
+                    AuthMethod = $script:_OERAuthState.AuthMethod
+                    Renewal    = $true
+                }
+                if ($script:_OERAuthState.ClientId) { $RenewalParams.ClientId = $script:_OERAuthState.ClientId }
+                Initialize-OERAuth @RenewalParams
+            }
             # SEC (A18): never a Graph call under a Microsoft Graph PowerShell SDK session this module
             # did not connect. Initialize-OERAuth refuses one at a cmdlet's entry, but that refusal does
             # not stop the CMDLET: measured 2026-10-05, a caller carries on past a nested function's

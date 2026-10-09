@@ -1438,6 +1438,12 @@ BeforeAll {
         Get-OERDocumentTenantMismatch, the single owner of the comparison of a document's tenantId
         (BL-88, A14), is called only by Invoke-OERStructure, so a second apply path cannot compare -- or
         skip comparing -- on rules of its own.
+        Get-OERTokenRenewalThreshold, the single owner of the token renewal window (A11, BL-105), is
+        called only by Initialize-OERAuth, for its cached return, and by the two wrappers, which renew a
+        delegated or managed identity session's token before a request when it expires within that
+        window: the two readings must agree, or a token the transports find due is answered from the
+        cache. None of those three files may call AddMinutes, AddSeconds or AddHours either -- a second
+        window literal -- which a rule of its own holds, read from the tree.
         Each row of $script:transportGateOwners is enforced only by its own It below, which asserts that
         the command has no caller outside its owners and that its owners really call it: no assertion
         reads the table as a whole, so a new row needs its own It, and a row without one is inert.
@@ -1478,9 +1484,13 @@ BeforeAll {
         (they mock Initialize-OERAuth). So every Initialize-OERAuth call under source/ must have
         the file's own top-level function as its nearest enclosing function -- in the Graph
         wrapper Invoke-GraphSingle, and in the ARM wrapper Invoke-ArmCallWithRefresh, the two
-        transport refreshes -- and no script block expression may stand between the call and that
-        function. A foreach, if or try statement block is part of the function; a `{ ... }` passed
-        to &, ., ForEach-Object, Where-Object, Invoke-Command or anything else is not. That is
+        transports' own sign-ins: their refreshes after a 401 or a claims challenge, and their
+        renewal of a token that expires within the renewal window before a request (A11) -- and no
+        script block expression may stand between the call and that function. A renewal stands
+        ahead of the earliest gate, never between a gate and the request it guards, which the gate
+        placement rule above already holds. A foreach, if or try statement block is part of the
+        function; a `{ ... }` passed to &, ., ForEach-Object, Where-Object, Invoke-Command or
+        anything else is not. That is
         stricter than the engine (a ForEach-Object script block inside a function was measured to
         carry the function's own invocation) on purpose: one structural rule, no list of which
         script blocks happen to be safe. Comments and help text are not code and the AST never
@@ -1528,6 +1538,7 @@ BeforeAll {
         [PSCustomObject]@{ Command = 'Resolve-OERTenantDomain'; Owners = @($script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Set-OERSessionUncertain'; Owners = @('source\Private\Initialize-OERAuth.ps1', 'source\Public\Connect-OER.ps1', 'source\Public\Disconnect-OER.ps1') }
         [PSCustomObject]@{ Command = 'Get-OERDocumentTenantMismatch'; Owners = @('source\Public\Invoke-OERStructure.ps1') }
+        [PSCustomObject]@{ Command = 'Get-OERTokenRenewalThreshold'; Owners = @($script:signInMemoryPath, $script:transportGateGraphPath, $script:transportGateArmPath) }
     )
     $script:transportGateAliases = @{ iwr = 'Invoke-WebRequest'; curl = 'Invoke-WebRequest'; wget = 'Invoke-WebRequest'; irm = 'Invoke-RestMethod' }
 
@@ -2147,6 +2158,62 @@ BeforeAll {
             if ($script:transportOwnerFileSites[$Rule.Command][$Owner] -gt 0) { continue }
             $script:transportOwnerStale[$Rule.Command].Add(('{0} -- listed as an owner of {1}, but calls it nowhere (or is not among the parsed files)' -f
                     $Owner, $Rule.Command))
+        }
+    }
+
+    # --- A second window literal (A11, BL-105; see WHO MAY CALL WHAT in the Pass 9 comment). ---
+    # Get-OERTokenRenewalThreshold owns the token renewal window, and Initialize-OERAuth and the two
+    # transport wrappers read it from there. A call of AddMinutes, AddSeconds or AddHours in any of those
+    # three files is a second window literal: a cached return and a renewal that disagree about when a
+    # token is due, so a token one of them finds due the other answers from the cache, or renews for ever.
+    # Read from the tree, so a member named in a comment or a string is not a call.
+    $script:renewalWindowFiles = @($script:signInMemoryPath, $script:transportGateGraphPath, $script:transportGateArmPath)
+    function Find-OERWindowLiteral {
+        param($Ast)
+
+        $Ast.FindAll({
+                $args[0] -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                $args[0].Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                $args[0].Member.Value -in @('AddMinutes', 'AddSeconds', 'AddHours')
+            }, $true)
+    }
+    $script:renewalWindowParsed = [System.Collections.Generic.List[string]]::new()
+    $script:renewalWindowViolations = [System.Collections.Generic.List[string]]::new()
+    foreach ($WindowPath in $script:renewalWindowFiles) {
+        $WindowFile = @($script:hygieneFiles | Where-Object {
+                ($_.RelativePath -replace '/', '\') -eq $WindowPath
+            })[0]
+        if (-not $WindowFile) { continue }
+        $WindowTokens = $null
+        $WindowErrors = $null
+        $WindowAst = [System.Management.Automation.Language.Parser]::ParseInput(
+            $WindowFile.Text, $WindowFile.Path, [ref]$WindowTokens, [ref]$WindowErrors)
+        if ($WindowErrors.Count -gt 0) { continue }
+        $script:renewalWindowParsed.Add($WindowPath)
+        foreach ($Literal in @(Find-OERWindowLiteral -Ast $WindowAst)) {
+            $script:renewalWindowViolations.Add(('{0}:{1} -- calls {2}: {3}' -f
+                    $WindowPath, $Literal.Extent.StartLineNumber, $Literal.Member.Value, $Literal.Extent.Text.Trim()))
+        }
+    }
+
+    # Known answers: the scan above must reach each count below, or a green rule proves nothing.
+    $script:renewalWindowKnownAnswers = @(
+        @{ Case = 'the literal the window replaced'; Expect = 1; Text = '$Now = [DateTime]::UtcNow.AddMinutes(5)' }
+        @{ Case = 'seconds and hours'; Expect = 2; Text = '$A = $Expiry.AddSeconds(-30); $B = (Get-Date).AddHours(1)' }
+        @{ Case = 'a member name in another letter case'; Expect = 1; Text = '$Expiry.addminutes(5)' }
+        @{ Case = 'the window read from its owner'; Expect = 0; Text = '$Threshold = Get-OERTokenRenewalThreshold' }
+        @{ Case = 'another Add member'; Expect = 0; Text = '$Expiry.AddTicks(1); $List.Add(1)' }
+        @{ Case = 'the name in a string and a comment'; Expect = 0; Text = "'AddMinutes(5)' # .AddMinutes(5)" }
+    )
+    $script:renewalWindowKnownAnswerFailures = [System.Collections.Generic.List[string]]::new()
+    foreach ($Case in $script:renewalWindowKnownAnswers) {
+        $CaseTokens = $null
+        $CaseErrors = $null
+        $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
+        $Got = @(Find-OERWindowLiteral -Ast $CaseAst).Count
+        if ($CaseErrors.Count -gt 0 -or $Got -ne $Case.Expect) {
+            $script:renewalWindowKnownAnswerFailures.Add(('{0} -- expected {1} call(s), got {2}{3}' -f
+                    $Case.Case, $Case.Expect, $Got, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
         }
     }
 
@@ -3649,6 +3716,37 @@ only through Invoke-OERStructure.
 '@
     }
 
+    It 'reads the token renewal window with Get-OERTokenRenewalThreshold only in Initialize-OERAuth and the two transport wrappers' {
+        $script:transportOwnerStale['Get-OERTokenRenewalThreshold'] -join "`n" | Should -BeNullOrEmpty -Because (
+            'Initialize-OERAuth, for its cached return, and the two transport wrappers, for their renewal before a request, must each really call Get-OERTokenRenewalThreshold; an owner listed here that calls it nowhere is a stale rule, not a pass')
+        $script:transportOwnerViolations['Get-OERTokenRenewalThreshold'] -join "`n" | Should -BeNullOrEmpty -Because @'
+Get-OERTokenRenewalThreshold is the single owner of the token renewal window (A11, BL-105): a cached
+token that expires at or before the instant it returns is due. Initialize-OERAuth reads it for its cached
+return, and Invoke-OERGraphRequest and Invoke-OERArmRequest read it before every request to renew a
+delegated or managed identity session's token before it expires, without -ForceRefresh. The two must agree
+to the tick: a token the transports find due must never be answered from the cache, or the renewal returns
+without renewing anything and the request goes out with the expiring token. A fourth caller is another
+reading of when a token is due in the making. Decide whether a token is due only in those three files.
+'@
+    }
+
+    It 'computes no second token window in Initialize-OERAuth or the two transport wrappers: no AddMinutes, AddSeconds or AddHours call' {
+        $script:renewalWindowKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because (
+            'the window-literal scan no longer reaches the count a known-answer case requires, so a green result below would prove nothing; fix the scan rather than the case')
+        @($script:renewalWindowKnownAnswers).Count | Should -Be 6 -Because (
+            'the known-answer table holds six cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        @($script:renewalWindowParsed | Sort-Object) | Should -Be @($script:renewalWindowFiles | Sort-Object) -Because (
+            'Initialize-OERAuth and the two transport wrappers must each be among the parsed files, or this rule judges less than the three files it names')
+        $script:renewalWindowViolations -join "`n" | Should -BeNullOrEmpty -Because @'
+A call of AddMinutes, AddSeconds or AddHours in Initialize-OERAuth, Invoke-OERGraphRequest or
+Invoke-OERArmRequest is a second window literal: an instant computed in that file instead of read from
+Get-OERTokenRenewalThreshold, the single owner of the token renewal window. Initialize-OERAuth's cached
+return and the transports' renewal before a request must read one window, or a token the transports find
+due is answered from the cache and never renewed, or one the cache still accepts is renewed on every
+request. Read the window from Get-OERTokenRenewalThreshold.
+'@
+    }
+
     It 'reads and writes $script:_OERSessionUncertain only in Set-OERSessionUncertain.ps1' {
         $script:sessionUncertainVariableKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because (
             'the variable scan no longer reaches the count a known-answer case requires, so a green result below would prove nothing; fix the scan rather than the case')
@@ -3884,7 +3982,8 @@ assignment and of every ArmToken read, whether it dots into the auth state (.Arm
             to sends again after a refused sign-in -- with every unit test green, since they mock
             Initialize-OERAuth. Non-vacuity first: the public files that call Initialize-OERAuth are
             read from the command names the shared walk collected, and the sites judged here must
-            cover them; the two transport refreshes must each be found in their nested function.
+            cover them; the two transports' own sign-ins (their refreshes and their renewal before a
+            request) must each be found in their nested function.
         #>
         $script:signInCallPublicFiles | Should -BeGreaterThan 80 -Because (
             '86 public files called Initialize-OERAuth when this rule was written; below 80 the command-name scan has lost files, not shrunk')
@@ -3893,9 +3992,9 @@ assignment and of every ArmToken read, whether it dots into the auth state (.Arm
         $script:signInCallFiles.Contains('source\Public\Invoke-OERStructure.ps1') | Should -BeTrue -Because (
             'Invoke-OERStructure, where a refused sign-in was found applying one tenant''s document to another, must be among the call sites this rule judged')
         $script:signInCallTransportSites['source\Private\Invoke-OERGraphRequest.ps1'] | Should -BeGreaterThan 0 -Because (
-            'the Graph wrapper calls Initialize-OERAuth in Invoke-GraphSingle for its claims step-up and its token-rejected retry; none found there leaves its exception holding over nothing')
+            'the Graph wrapper calls Initialize-OERAuth in Invoke-GraphSingle for its renewal of an expiring token before a request, its claims step-up and its token-rejected retry; none found there leaves its exception holding over nothing')
         $script:signInCallTransportSites['source\Private\Invoke-OERArmRequest.ps1'] | Should -BeGreaterThan 0 -Because (
-            'the ARM wrapper calls Initialize-OERAuth in Invoke-ArmCallWithRefresh for its 401 retry; none found there leaves its exception holding over nothing')
+            'the ARM wrapper calls Initialize-OERAuth in Invoke-ArmCallWithRefresh for its renewal of an expiring token before a request and its 401 retry; none found there leaves its exception holding over nothing')
 
         $script:signInCallKnownAnswerCount | Should -Be 11 -Because (
             'the call-site known-answer table holds eleven cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
@@ -3911,8 +4010,9 @@ the command's own function -- in its begin, process or end block, inside a forea
 need be -- and never from a nested function, a & { } or . { } script block, a ForEach-Object or
 Where-Object script block, Invoke-Command or any other script block: each of those latches a frame of
 its own that ends at once, and the command then sends its requests after a refused sign-in. The two
-transport refreshes are the exceptions, by design: Invoke-GraphSingle in the Graph wrapper and
-Invoke-ArmCallWithRefresh in the ARM wrapper (CLAUDE.md ## Authentication Architecture).
+transports' own sign-ins -- their refreshes and their renewal of an expiring token before a request --
+are the exceptions, by design: Invoke-GraphSingle in the Graph wrapper and Invoke-ArmCallWithRefresh in
+the ARM wrapper (CLAUDE.md ## Authentication Architecture).
 '@
     }
 }

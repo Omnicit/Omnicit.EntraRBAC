@@ -6346,3 +6346,661 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 }
+
+Describe 'Invoke-OERGraphRequest renews an expiring token before the request (A11, BL-105)' {
+    # A11: a delegated or managed identity session's Microsoft Graph token is renewed BEFORE it expires,
+    # before every attempt and so before every page, through Initialize-OERAuth with -Renewal and
+    # without -ForceRefresh. Initialize-OERAuth is mocked here: the mock records each call's parameters
+    # in the order of the requests and moves the state's expiry an hour ahead, as a real renewal leaves
+    # it. Invoke-MgGraphRequest records each request. Both write to one module-scope log, so the order
+    # of the renewal and the requests is read from it. The tenant is invented: A is 4444....
+    BeforeAll {
+        # A session for tenant A, signed in with -AuthMethod, whose Microsoft Graph token expires in
+        # -Minutes, or whose state records no expiry at all (-NoExpiry).
+        function script:Set-GraphRenewalState {
+            param(
+                [Parameter(Mandatory)][string]$AuthMethod,
+                [string]$ClientId = '',
+                [int]$Minutes = 60,
+                [switch]$NoExpiry
+            )
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ AuthMethod = $AuthMethod; ClientId = $ClientId; Minutes = $Minutes; NoExpiry = [bool]$NoExpiry } {
+                param($AuthMethod, $ClientId, $Minutes, $NoExpiry)
+                $State = @{
+                    TenantId    = '44444444-4444-4444-4444-444444444444'
+                    AuthMethod  = $AuthMethod
+                    ClientId    = $ClientId
+                    Environment = 'Global'
+                }
+                if (-not $NoExpiry) { $State.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes($Minutes) }
+                $script:_OERAuthState = $State
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:A11Log = [System.Collections.Generic.List[string]]::new()
+            $script:A11Renewals = [System.Collections.Generic.List[hashtable]]::new()
+            $script:A11GraphCalls = 0
+            Mock Initialize-OERAuth {
+                param($TenantId, $AuthMethod, $ClientId, $ClientSecret, $Certificate, $CertificatePath,
+                    $IncludeARM, $ClaimsChallenge, $ForceRefresh, $Renewal, $Environment, $ReclaimGraphSession)
+                $Bound = @{}
+                foreach ($Key in $PSBoundParameters.Keys) { $Bound[$Key] = $PSBoundParameters[$Key] }
+                $script:A11Renewals.Add($Bound)
+                $script:A11Log.Add('INIT')
+                $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(60)
+            }
+            Mock Invoke-MgGraphRequest {
+                param($Method, $Uri, $Body)
+                $script:A11GraphCalls++
+                $script:A11Log.Add(('GRAPH {0}' -f $Uri))
+                @{ value = @('ok') }
+            }
+        }
+    }
+
+    AfterEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+    }
+
+    It 'R1: renews an Interactive session''s token that expires within the window before the request, without -ForceRefresh' {
+        Set-GraphRenewalState -AuthMethod Interactive -Minutes 2
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups'
+            Should -Invoke Initialize-OERAuth -Times 1 -Exactly
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+            @{ Result = $Result; Log = $script:A11Log.ToArray(); Calls = $script:A11Renewals.ToArray() }
+        }
+
+        $R.Result.value | Should -Be 'ok'
+        # The renewal first, then the one request.
+        $R.Log | Should -Be @('INIT', 'GRAPH v1.0/groups')
+        $Call = $R.Calls[0]
+        [bool]$Call['Renewal'] | Should -BeTrue
+        $Call['TenantId'] | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+        $Call['AuthMethod'] | Should -BeExactly 'Interactive'
+        $Call.ContainsKey('ForceRefresh') | Should -BeFalse
+        $Call.ContainsKey('IncludeARM') | Should -BeFalse
+        $Call.ContainsKey('ClaimsChallenge') | Should -BeFalse
+        # The state carries no client id, so none is forwarded.
+        $Call.ContainsKey('ClientId') | Should -BeFalse
+    }
+
+    It 'R2: renews a <Method> session''s token and forwards its client id' -ForEach @(
+        @{ Method = 'DeviceCode'; ClientId = '' }
+        @{ Method = 'ManagedIdentity'; ClientId = 'cccccccc-cccc-cccc-cccc-cccccccccccc' }
+    ) {
+        Set-GraphRenewalState -AuthMethod $Method -ClientId $ClientId -Minutes 2
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $null = Invoke-OERGraphRequest -Uri 'v1.0/groups'
+            @{ Log = $script:A11Log.ToArray(); Calls = $script:A11Renewals.ToArray() }
+        }
+
+        $R.Log | Should -Be @('INIT', 'GRAPH v1.0/groups')
+        $R.Calls.Count | Should -Be 1
+        $Call = $R.Calls[0]
+        [bool]$Call['Renewal'] | Should -BeTrue
+        $Call['AuthMethod'] | Should -BeExactly $Method
+        $Call.ContainsKey('ForceRefresh') | Should -BeFalse
+        if ($ClientId) {
+            # A user-assigned managed identity renews as the same principal, not the system-assigned one.
+            $Call['ClientId'] | Should -BeExactly $ClientId
+        }
+        else {
+            $Call.ContainsKey('ClientId') | Should -BeFalse
+        }
+    }
+
+    It 'R3: does not renew an app-only <Method> session''s token within a command and sends the request with it' -ForEach @(
+        @{ Method = 'ClientSecret' }
+        @{ Method = 'ClientCertificate' }
+    ) {
+        Set-GraphRenewalState -AuthMethod $Method -ClientId 'cccccccc-cccc-cccc-cccc-cccccccccccc' -Minutes 2
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups'
+            Should -Invoke Initialize-OERAuth -Times 0
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+            @{ Result = $Result; Log = $script:A11Log.ToArray() }
+        }
+
+        $R.Result.value | Should -Be 'ok'
+        $R.Log | Should -Be @('GRAPH v1.0/groups')
+    }
+
+    It 'R4: does not renew a token that expires after the window' {
+        Set-GraphRenewalState -AuthMethod Interactive -Minutes 30
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $null = Invoke-OERGraphRequest -Uri 'v1.0/groups'
+            Should -Invoke Initialize-OERAuth -Times 0
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+            @{ Log = $script:A11Log.ToArray() }
+        }
+
+        $R.Log | Should -Be @('GRAPH v1.0/groups')
+    }
+
+    It 'R5: does not renew when the state records no expiry' {
+        Set-GraphRenewalState -AuthMethod Interactive -NoExpiry
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            $null = Invoke-OERGraphRequest -Uri 'v1.0/groups'
+            Should -Invoke Initialize-OERAuth -Times 0
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly
+            @{ Log = $script:A11Log.ToArray() }
+        }
+
+        $R.Log | Should -Be @('GRAPH v1.0/groups')
+    }
+
+    It 'R6: renews at the window''s edge and not one tick after it' {
+        Set-GraphRenewalState -AuthMethod Interactive
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            # A fixed window end, so the edge is exact: a token that expires AT it is due.
+            $script:A11Edge = [DateTime]::UtcNow.AddMinutes(5)
+            Mock Get-OERTokenRenewalThreshold { $script:A11Edge }
+
+            $script:_OERAuthState.GraphTokenExpiry = $script:A11Edge
+            $null = Invoke-OERGraphRequest -Uri 'v1.0/groups?case=edge'
+            $AtEdge = $script:A11Renewals.Count
+
+            $script:_OERAuthState.GraphTokenExpiry = $script:A11Edge.AddTicks(1)
+            $null = Invoke-OERGraphRequest -Uri 'v1.0/groups?case=after'
+            @{ AtEdge = $AtEdge; After = $script:A11Renewals.Count - $AtEdge; Log = $script:A11Log.ToArray() }
+        }
+
+        $R.AtEdge | Should -Be 1
+        $R.After | Should -Be 0
+        $R.Log | Should -Be @('INIT', 'GRAPH v1.0/groups?case=edge', 'GRAPH v1.0/groups?case=after')
+    }
+
+    It 'R7: renews before a throttled retry when the token entered the window while it waited' {
+        Set-GraphRenewalState -AuthMethod Interactive -Minutes 30
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            Mock Start-Sleep { }
+            Mock Invoke-MgGraphRequest {
+                param($Method, $Uri, $Body)
+                $script:A11GraphCalls++
+                $script:A11Log.Add(('GRAPH {0}' -f $Uri))
+                if ($script:A11GraphCalls -eq 1) {
+                    # The token enters the window while the throttled request waits for its retry.
+                    $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+                    $Resp = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]::TooManyRequests)
+                    $Resp.Headers.Add('Retry-After', '1')
+                    $Ex = [System.Exception]::new('{"error":{"code":"TooManyRequests","message":"throttled"}}')
+                    Add-Member -InputObject $Ex -NotePropertyName Response -NotePropertyValue $Resp
+                    throw $Ex
+                }
+                @{ value = @('after-throttle') }
+            }
+
+            $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups'
+            Should -Invoke Start-Sleep -Times 1 -Exactly
+            Should -Invoke Invoke-MgGraphRequest -Times 2 -Exactly
+            @{ Result = $Result; Log = $script:A11Log.ToArray(); Calls = $script:A11Renewals.ToArray() }
+        }
+
+        $R.Result.value | Should -Be 'after-throttle'
+        # Exactly one renewal, between the throttled request and its retry.
+        $R.Log | Should -Be @('GRAPH v1.0/groups', 'INIT', 'GRAPH v1.0/groups')
+        [bool]$R.Calls[0]['Renewal'] | Should -BeTrue
+        $R.Calls[0].ContainsKey('ForceRefresh') | Should -BeFalse
+    }
+
+    It 'R8: an -All read that crosses the expiry renews once between the pages and reads every page' {
+        Set-GraphRenewalState -AuthMethod Interactive -Minutes 30
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-MgGraphRequest {
+                param($Method, $Uri, $Body)
+                $script:A11GraphCalls++
+                $script:A11Log.Add(('GRAPH {0}' -f $Uri))
+                switch ($script:A11GraphCalls) {
+                    1 {
+                        # The token enters the window while page 1 is read.
+                        $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+                        @{ value = @('a', 'b'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=p2' }
+                    }
+                    2 { @{ value = @('c'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=p3' } }
+                    default { @{ value = @('d') } }
+                }
+            }
+
+            $Result = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All
+            Should -Invoke Invoke-MgGraphRequest -Times 3 -Exactly
+            @{ Result = $Result; Log = $script:A11Log.ToArray(); Calls = $script:A11Renewals.ToArray() }
+        }
+
+        @($R.Result.value) | Should -Be @('a', 'b', 'c', 'd')
+        $R.Log | Should -Be @(
+            'GRAPH v1.0/groups'
+            'INIT'
+            'GRAPH https://graph.microsoft.com/v1.0/groups?$skiptoken=p2'
+            'GRAPH https://graph.microsoft.com/v1.0/groups?$skiptoken=p3')
+        $R.Calls.Count | Should -Be 1
+        [bool]$R.Calls[0]['Renewal'] | Should -BeTrue
+    }
+
+    It 'R9: a renewal that fails sends no request and its error is the call''s' {
+        Set-GraphRenewalState -AuthMethod Interactive -Minutes 2
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            # The renewal's token call fails: Initialize-OERAuth raises GraphTokenAcquisitionFailed.
+            Mock Initialize-OERAuth {
+                [CmdletBinding()]
+                param($TenantId, $AuthMethod, $ClientId, $ClientSecret, $Certificate, $CertificatePath,
+                    $IncludeARM, $ClaimsChallenge, $ForceRefresh, $Renewal, $Environment, $ReclaimGraphSession)
+                $script:A11Log.Add('INIT')
+                $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Failed to acquire a Microsoft Graph token: AADSTS50076: interaction required.'),
+                        'GraphTokenAcquisitionFailed',
+                        [System.Management.Automation.ErrorCategory]::AuthenticationError,
+                        $TenantId))
+            }
+
+            $Caught = $null
+            try { $null = Invoke-OERGraphRequest -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+            Should -Invoke Initialize-OERAuth -Times 1 -Exactly
+            Should -Invoke Invoke-MgGraphRequest -Times 0
+            @{ Caught = $Caught; Log = $script:A11Log.ToArray() }
+        }
+
+        $R.Caught | Should -Not -BeNullOrEmpty
+        $R.Caught.FullyQualifiedErrorId | Should -BeLike 'GraphTokenAcquisitionFailed*'
+        $R.Log | Should -Be @('INIT')
+    }
+}
+
+Describe 'A long run renews its token with the credential AzAuth holds (A11, BL-105)' {
+    # A11 end to end: the REAL Initialize-OERAuth, in a runspace with no try around the command, so what
+    # the transports do with a renewal -- and with one that fails -- is seen as it happens at a prompt.
+    # A command signs in in its begin block, and its token enters the renewal window after that, while
+    # it runs: the scenario moves the state's expiry into the window in the module scope, so it is the
+    # TRANSPORT's renewal that is tested, not the command's own start. The renewal calls Get-AzToken
+    # without -Force, so AzAuth may answer with the credential it already holds.
+    #
+    # The stand-in has the shape of a public cmdlet: Initialize-OERAuth called directly in its begin
+    # block, the requests in its process block, each caught and written as an error. With -NoTry it
+    # makes its request with no try anywhere, under -ErrorAction SilentlyContinue: a command carries on
+    # past a nested terminating error when no try is active up the call stack, and only that preference
+    # keeps a gate's plain throw from ending the whole script, so this is the shape in which a failed
+    # renewal must still send nothing.
+    BeforeAll {
+        # Runs one scenario in a runspace with no try, against the real Initialize-OERAuth. Every
+        # transport it and the two wrappers reach is a MODULE-scope stub, so no call reaches the
+        # tripwire's global functions; each has a hang guard (exit past a bound no scenario reaches)
+        # and each is removed again below, unqualified from the module scope, before the runspace
+        # check reads the module scope.
+        #   Get-AzToken answers a token for exactly the tenant it was asked for, so neither
+        #     TenantMismatch check refuses it, and records 'TOKEN: <graph|arm> <tenant> force=<True|False>'.
+        #     Each token lasts an hour and carries its call's number (NOT-A-REAL-TOKEN-arm-3), never a
+        #     real token. The call numbered $global:OERA11FailTokenCall writes a terminating error
+        #     instead, as a refused prompt does.
+        #   Connect-MgGraph records a session naming the tenant of the last Graph token, and
+        #     Get-MgContext returns it, so after each sign-in the A18 session gate finds the module's
+        #     own session.
+        #   Invoke-MgGraphRequest records 'GRAPH: <uri>' and Invoke-WebRequest 'ARM: <uri> | token <n>'
+        #     (the number of the token it was handed, never the token). Each answers one item named
+        #     after its request number, and a next link while that number is below
+        #     $global:OERA11GraphPages or $global:OERA11ArmPages. After the request numbered
+        #     $global:OERA11ExpireAfterGraphRequest (or ...ArmRequest) it moves the state's expiry into
+        #     the window. The first $global:OERA11GraphRejections Graph requests are answered as a
+        #     rejected token (InvalidAuthenticationToken), and the first $global:OERA11ArmRejections ARM
+        #     requests with a 401. All of these start at 0.
+        # -Scenario runs in the module scope, in the same block that defines the stand-in, so it can
+        # call private functions; a script block it assigns to $global:OERA11BeforeRequest is created
+        # there too, and the stand-in runs it at the start of its process block, after its sign-in.
+        # The tenant is invented: A is 4444....
+        function script:Invoke-RenewalProbe {
+            param([Parameter(Mandatory)][scriptblock]$Scenario)
+            $Text = @'
+Import-Module Omnicit.EntraRBAC
+$global:OERA11Context = $null
+$global:OERA11GraphTenant = $null
+$global:OERA11ConnectCalls = 0
+$global:OERA11ContextCalls = 0
+$global:OERA11TokenCalls = 0
+$global:OERA11GraphCalls = 0
+$global:OERA11ArmCalls = 0
+$global:OERA11Log = [System.Collections.Generic.List[string]]::new()
+$global:OERA11Results = [System.Collections.Generic.List[string]]::new()
+$global:OERA11FailTokenCall = 0
+$global:OERA11GraphPages = 0
+$global:OERA11ArmPages = 0
+$global:OERA11ExpireAfterGraphRequest = 0
+$global:OERA11ExpireAfterArmRequest = 0
+$global:OERA11GraphRejections = 0
+$global:OERA11ArmRejections = 0
+$global:OERA11BeforeRequest = $null
+& (Get-Module Omnicit.EntraRBAC) {
+    function script:Get-AzToken {
+        [CmdletBinding()]
+        param([string]$Tenant, [string]$Resource, [string[]]$Scope, [string]$ClientId, [string]$Claim,
+            [switch]$Interactive, [switch]$DeviceCode, [switch]$ManagedIdentity, [switch]$Force,
+            $ClientCertificate, [string]$ClientCertificatePath)
+        $global:OERA11TokenCalls++
+        if ($global:OERA11TokenCalls -gt 10) { exit }
+        $Kind = if ($Resource -like '*graph*') { 'graph' } else { 'arm' }
+        $global:OERA11Log.Add(('TOKEN: {0} {1} force={2}' -f $Kind, $Tenant, [bool]$Force))
+        if ($global:OERA11TokenCalls -eq $global:OERA11FailTokenCall) {
+            $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('AADSTS50076: interaction required.'), 'OERA11TokenRefused',
+                    [System.Management.Automation.ErrorCategory]::AuthenticationError, $Tenant))
+        }
+        if ($Kind -eq 'graph') { $global:OERA11GraphTenant = $Tenant }
+        [pscustomobject]@{
+            Token     = 'NOT-A-REAL-TOKEN-{0}-{1}' -f $Kind, $global:OERA11TokenCalls
+            ExpiresOn = [System.DateTimeOffset]::UtcNow.AddHours(1)
+            Identity  = 'oer-a11-probe'
+            TenantId  = $Tenant
+        }
+    }
+    function script:Connect-MgGraph {
+        [CmdletBinding()]
+        param($AccessToken, [switch]$NoWelcome, $Environment)
+        $global:OERA11ConnectCalls++
+        if ($global:OERA11ConnectCalls -gt 10) { exit }
+        $global:OERA11Context = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = $global:OERA11GraphTenant
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+    }
+    function script:Get-MgContext {
+        $global:OERA11ContextCalls++
+        if ($global:OERA11ContextCalls -gt 100) { exit }
+        $global:OERA11Context
+    }
+    function script:Invoke-MgGraphRequest {
+        [CmdletBinding()]
+        param($Method, $Uri, $Body)
+        $global:OERA11GraphCalls++
+        if ($global:OERA11GraphCalls -gt 10) { exit }
+        $global:OERA11Log.Add(('GRAPH: {0}' -f [string]$Uri))
+        if ($global:OERA11GraphCalls -eq $global:OERA11ExpireAfterGraphRequest) {
+            $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+        }
+        if ($global:OERA11GraphRejections -gt 0) {
+            $global:OERA11GraphRejections--
+            throw [System.Exception]::new('InvalidAuthenticationToken: token is expired')
+        }
+        $Page = @{ value = @(('item-{0}' -f $global:OERA11GraphCalls)) }
+        if ($global:OERA11GraphCalls -lt $global:OERA11GraphPages) {
+            $Page['@odata.nextLink'] = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=page{0}' -f ($global:OERA11GraphCalls + 1)
+        }
+        $Page
+    }
+    function script:Invoke-WebRequest {
+        [CmdletBinding()]
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+        $global:OERA11ArmCalls++
+        if ($global:OERA11ArmCalls -gt 10) { exit }
+        [string]$Bearer = [string]$Headers['Authorization']
+        [string]$Label = if ($Bearer -match 'NOT-A-REAL-TOKEN-arm-(\d+)$') { 'token ' + $Matches[1] } else { 'other' }
+        $global:OERA11Log.Add(('ARM: {0} | {1}' -f [string]$Uri, $Label))
+        if ($global:OERA11ArmCalls -eq $global:OERA11ExpireAfterArmRequest) {
+            $script:_OERAuthState.ArmTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+        }
+        if ($global:OERA11ArmRejections -gt 0) {
+            $global:OERA11ArmRejections--
+            return [pscustomobject]@{ StatusCode = 401; Content = ''; Headers = @{} }
+        }
+        $Content = @{ value = @(('item-{0}' -f $global:OERA11ArmCalls)) }
+        if ($global:OERA11ArmCalls -lt $global:OERA11ArmPages) {
+            $Content.nextLink = 'https://management.azure.com/subscriptions?api-version=2022-12-01&page={0}' -f ($global:OERA11ArmCalls + 1)
+        }
+        [pscustomobject]@{ StatusCode = 200; Content = ($Content | ConvertTo-Json -Compress); Headers = @{} }
+    }
+}
+$Error.Clear()
+$Output = @(& (Get-Module Omnicit.EntraRBAC) {
+    function Invoke-LongProbe {
+        [CmdletBinding()]
+        param([Parameter(ValueFromPipeline)]$InputObject, [string]$TenantId, [string]$AuthMethod = 'Interactive',
+            [string]$ClientId, $Certificate, [switch]$IncludeARM, [string]$GraphUri, [string]$ArmPath,
+            [switch]$All, [switch]$NoTry)
+        begin {
+            $AuthParams = @{ TenantId = $TenantId; AuthMethod = $AuthMethod }
+            if ($ClientId) { $AuthParams.ClientId = $ClientId }
+            if ($Certificate) { $AuthParams.Certificate = $Certificate }
+            if ($IncludeARM) { $AuthParams.IncludeARM = $true }
+            Initialize-OERAuth @AuthParams
+        }
+        process {
+            if ($global:OERA11BeforeRequest) { & $global:OERA11BeforeRequest }
+            if ($GraphUri) {
+                $Result = $null
+                if ($NoTry) {
+                    $Result = Invoke-OERGraphRequest -Method GET -Uri $GraphUri -All:$All -ErrorAction SilentlyContinue
+                }
+                else {
+                    try { $Result = Invoke-OERGraphRequest -Method GET -Uri $GraphUri -All:$All } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
+                }
+                if ($null -ne $Result) { $global:OERA11Results.Add(('GRAPH RESULT: {0}' -f (@($Result.value) -join ','))) }
+            }
+            if ($ArmPath) {
+                $Result = $null
+                if ($NoTry) {
+                    $Result = Invoke-OERArmRequest -Path $ArmPath -All:$All -ErrorAction SilentlyContinue
+                }
+                else {
+                    try { $Result = Invoke-OERArmRequest -Path $ArmPath -All:$All } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
+                }
+                if ($null -ne $Result) { $global:OERA11Results.Add(('ARM RESULT: {0}' -f (@($Result.value) -join ','))) }
+            }
+            $InputObject
+        }
+    }
+__MODULE_SCENARIO__
+})
+# Oldest first: $Error holds the newest record first.
+$Records = @($Error)
+[array]::Reverse($Records)
+$RecordLines = foreach ($Record in $Records) {
+    'ERROR: {0} | {1}' -f [string]$Record.FullyQualifiedErrorId, [string]$Record.TargetObject
+}
+# The session-uncertain marker, read through its owner with a round trip that puts back what it found.
+$Marker = & (Get-Module Omnicit.EntraRBAC) {
+    $Was = Set-OERSessionUncertain -Value $true
+    $null = Set-OERSessionUncertain -Value $Was
+    $Was
+}
+# Unqualified, from the module scope: removes the nearest definition, which is the stub.
+& (Get-Module Omnicit.EntraRBAC) {
+    Remove-Item -Path function:Get-AzToken
+    Remove-Item -Path function:Connect-MgGraph
+    Remove-Item -Path function:Get-MgContext
+    Remove-Item -Path function:Invoke-MgGraphRequest
+    Remove-Item -Path function:Invoke-WebRequest
+}
+$Restored = foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest', 'Invoke-WebRequest') {
+    $Resolved = & (Get-Module Omnicit.EntraRBAC) { param($N) Get-Command -Name $N -CommandType Function -ErrorAction Ignore } $Name
+    [bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE')
+}
+'TRIPWIRE RESTORED: {0}' -f (@($Restored) -notcontains $false)
+'CONTEXT STUB REMOVED: {0}' -f ($null -eq (& (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Get-MgContext -CommandType Function -ErrorAction Ignore }))
+'OUTPUT COUNT: {0}' -f $Output.Count
+'MARKER: {0}' -f $Marker
+$global:OERA11Log
+$global:OERA11Results
+$RecordLines
+'END OF SCRIPT REACHED'
+'@
+            $Text = $Text.Replace('__MODULE_SCENARIO__', $Scenario.ToString())
+            Invoke-OERWithConfirmAnswer -Answer '&No' -Script ([scriptblock]::Create($Text))
+        }
+
+        # The text after a probe line's prefix, for every line that carries it.
+        function script:Get-RenewalProbeLine {
+            param([Parameter(Mandatory)]$Probe, [Parameter(Mandatory)][string]$Prefix)
+            @($Probe.Output | Where-Object { "$_".StartsWith($Prefix) } | ForEach-Object { "$_".Substring($Prefix.Length) })
+        }
+
+        # Every token call and request, in the order they were made.
+        function script:Get-RenewalProbeEvent {
+            param([Parameter(Mandatory)]$Probe)
+            @($Probe.Output | Where-Object { "$_" -match '^(TOKEN|GRAPH|ARM): ' } | ForEach-Object { "$_" })
+        }
+    }
+
+    It 'E1: an Interactive command whose Microsoft Graph token enters the window while it runs renews it with Get-AzToken without -Force, sends, and is not superseded' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-RenewalProbe -Scenario {
+            # After the sign-in: the token enters the window, and the session is uncertain (a sign-in
+            # elsewhere failed), which the transport's renewal must leave as it is.
+            $global:OERA11BeforeRequest = {
+                $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+                $null = Set-OERSessionUncertain -Value $true
+            }
+            'item' | Invoke-LongProbe -TenantId '44444444-4444-4444-4444-444444444444' -GraphUri 'v1.0/groups?probe=E1'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The sign-in, then the renewal, both without Force, and then the request.
+        Get-RenewalProbeEvent -Probe $R | Should -Be @(
+            'TOKEN: graph 44444444-4444-4444-4444-444444444444 force=False'
+            'TOKEN: graph 44444444-4444-4444-4444-444444444444 force=False'
+            'GRAPH: v1.0/groups?probe=E1')
+        Get-RenewalProbeLine -Probe $R -Prefix 'GRAPH RESULT: ' | Should -Be @('item-1')
+        # No record at all: the renewal kept the identity the command signed in as, so no SignInSuperseded.
+        Get-RenewalProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        # The marker as the scenario left it: the transport's renewal does not clear it.
+        $R.Output | Should -Contain 'MARKER: True'
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'E2: an -All read that crosses the expiry renews once between the pages, without -Force, and reads every page' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-RenewalProbe -Scenario {
+            # Three pages; the token enters the window while page 1 is read.
+            $global:OERA11GraphPages = 3
+            $global:OERA11ExpireAfterGraphRequest = 1
+            'item' | Invoke-LongProbe -TenantId '44444444-4444-4444-4444-444444444444' -GraphUri 'v1.0/groups?probe=E2' -All
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        Get-RenewalProbeEvent -Probe $R | Should -Be @(
+            'TOKEN: graph 44444444-4444-4444-4444-444444444444 force=False'
+            'GRAPH: v1.0/groups?probe=E2'
+            'TOKEN: graph 44444444-4444-4444-4444-444444444444 force=False'
+            'GRAPH: https://graph.microsoft.com/v1.0/groups?$skiptoken=page2'
+            'GRAPH: https://graph.microsoft.com/v1.0/groups?$skiptoken=page3')
+        Get-RenewalProbeLine -Probe $R -Prefix 'GRAPH RESULT: ' | Should -Be @('item-1,item-2,item-3')
+        Get-RenewalProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'MARKER: False'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'E3: an Azure command whose ARM token enters the window renews it with -IncludeARM, Get-AzToken without -Force, and sends' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-RenewalProbe -Scenario {
+            $global:OERA11BeforeRequest = { $script:_OERAuthState.ArmTokenExpiry = [DateTime]::UtcNow.AddMinutes(2) }
+            'item' | Invoke-LongProbe -TenantId '44444444-4444-4444-4444-444444444444' -IncludeARM -ArmPath '/subscriptions?api-version=2022-12-01&probe=E3'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The sign-in's two tokens, the renewal of the ARM token alone (the Microsoft Graph token is
+        # still outside the window), and the request, sent with the renewed token, the third.
+        Get-RenewalProbeEvent -Probe $R | Should -Be @(
+            'TOKEN: graph 44444444-4444-4444-4444-444444444444 force=False'
+            'TOKEN: arm 44444444-4444-4444-4444-444444444444 force=False'
+            'TOKEN: arm 44444444-4444-4444-4444-444444444444 force=False'
+            'ARM: https://management.azure.com/subscriptions?api-version=2022-12-01&probe=E3 | token 3')
+        Get-RenewalProbeLine -Probe $R -Prefix 'ARM RESULT: ' | Should -Be @('item-1')
+        Get-RenewalProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'MARKER: False'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'E4: a Microsoft Graph renewal that fails, outside any try, sends nothing: SignInRefused, and the session is left uncertain' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-RenewalProbe -Scenario {
+            # The renewal's token call, the second, is refused.
+            $global:OERA11FailTokenCall = 2
+            $global:OERA11BeforeRequest = { $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2) }
+            'item' | Invoke-LongProbe -TenantId '44444444-4444-4444-4444-444444444444' -GraphUri 'v1.0/groups?probe=E4' -NoTry
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The sign-in and the refused renewal, and no request.
+        Get-RenewalProbeEvent -Probe $R | Should -Be @(
+            'TOKEN: graph 44444444-4444-4444-4444-444444444444 force=False'
+            'TOKEN: graph 44444444-4444-4444-4444-444444444444 force=False')
+        Get-RenewalProbeLine -Probe $R -Prefix 'GRAPH RESULT: ' | Should -BeNullOrEmpty
+        # The renewal's own failure, then the latch gate's refusal of the request: the failed renewal
+        # latched the transport's own function, which carried on past it with no try up the stack.
+        Get-RenewalProbeLine -Probe $R -Prefix 'ERROR: ' | Should -Be @(
+            'GraphTokenAcquisitionFailed,Initialize-OERAuth | 44444444-4444-4444-4444-444444444444'
+            'SignInRefused | Invoke-GraphSingle')
+        $R.Output | Should -Contain 'MARKER: True'
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'E5: an ARM renewal that fails, outside any try, sends nothing: SignInRefused, and the session is left uncertain' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-RenewalProbe -Scenario {
+            # The renewal's ARM token call, the third, is refused.
+            $global:OERA11FailTokenCall = 3
+            $global:OERA11BeforeRequest = { $script:_OERAuthState.ArmTokenExpiry = [DateTime]::UtcNow.AddMinutes(2) }
+            'item' | Invoke-LongProbe -TenantId '44444444-4444-4444-4444-444444444444' -IncludeARM -ArmPath '/subscriptions?api-version=2022-12-01&probe=E5' -NoTry
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        Get-RenewalProbeEvent -Probe $R | Should -Be @(
+            'TOKEN: graph 44444444-4444-4444-4444-444444444444 force=False'
+            'TOKEN: arm 44444444-4444-4444-4444-444444444444 force=False'
+            'TOKEN: arm 44444444-4444-4444-4444-444444444444 force=False')
+        Get-RenewalProbeLine -Probe $R -Prefix 'ARM RESULT: ' | Should -BeNullOrEmpty
+        # ArmTokenAcquisitionFailed is non-terminating, so both records appear: the renewal's, then the
+        # latch gate's refusal, naming the transport's function the failed renewal latched.
+        Get-RenewalProbeLine -Probe $R -Prefix 'ERROR: ' | Should -Be @(
+            'ArmTokenAcquisitionFailed,Initialize-OERAuth | 44444444-4444-4444-4444-444444444444'
+            'SignInRefused | Invoke-ArmCallWithRefresh')
+        $R.Output | Should -Contain 'MARKER: True'
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'E6: an app-only session whose token is within the window makes no token call within the command and sends with the token it holds' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-RenewalProbe -Scenario {
+            # A certificate that exists only in memory, made here, never a real one: the token call is a stub.
+            $Rsa = [System.Security.Cryptography.RSA]::Create(2048)
+            $CertificateRequest = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+                'CN=oer-a11-probe', $Rsa, [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+                [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+            $Certificate = $CertificateRequest.CreateSelfSigned([System.DateTimeOffset]::UtcNow, [System.DateTimeOffset]::UtcNow.AddDays(1))
+            $global:OERA11BeforeRequest = { $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2) }
+            'item' | Invoke-LongProbe -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod ClientCertificate `
+                -ClientId 'cccccccc-cccc-cccc-cccc-cccccccccccc' -Certificate $Certificate -GraphUri 'v1.0/groups?probe=E6'
+            $Certificate.Dispose()
+            $Rsa.Dispose()
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The certificate sign-in's one token call, and none after it: the request went out with the
+        # token the session holds.
+        Get-RenewalProbeEvent -Probe $R | Should -Be @(
+            'TOKEN: graph 44444444-4444-4444-4444-444444444444 force=False'
+            'GRAPH: v1.0/groups?probe=E6')
+        Get-RenewalProbeLine -Probe $R -Prefix 'GRAPH RESULT: ' | Should -Be @('item-1')
+        Get-RenewalProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+}

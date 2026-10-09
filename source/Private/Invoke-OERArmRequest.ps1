@@ -35,6 +35,16 @@ function Invoke-OERArmRequest {
     or the @nextLink property (management group lists use @nextLink); absolute next-page URLs are
     converted back to paths via Uri.PathAndQuery.
 
+    Before every call -- the first, each throttled retry, and so every page under -All -- a delegated or
+    managed identity session's (Interactive, DeviceCode or ManagedIdentity) Azure Resource Manager token
+    that expires within the renewal window (Get-OERTokenRenewalThreshold, five minutes) is renewed
+    through Initialize-OERAuth -IncludeARM -Renewal, with the session's tenant, method and client id and
+    without -ForceRefresh, so Get-AzToken is called without Force. The renewal does not spend the 401
+    refresh budget. An app-only session (ClientSecret or ClientCertificate) is not renewed within a
+    command, since the module keeps no secret or certificate. A renewal that fails sends no request:
+    inside a try its error is the call's, and otherwise the latch gate refuses the request with
+    SignInRefused.
+
     A 429, and a 503 that carries a Retry-After header, are retried with a bounded backoff: the
     Retry-After value is honoured in either RFC 9110 form (delta-seconds or an HTTP-date), with an
     exponential fallback when the header is absent or unparseable, each single wait clamped to
@@ -367,6 +377,38 @@ function Invoke-OERArmRequest {
     # -All walk against a genuinely broken token into a refresh storm.
     $RefreshBudget = [ref]$false
     function Invoke-ArmCallWithRefresh ([string]$CallPath, [string]$CallMethod, [hashtable]$CallBody, [string]$BaseUrl, [ref]$RefreshBudget) {
+        # A11 (BL-105): renew the session's Azure Resource Manager token before it expires -- before
+        # every call (the first and each throttled retry), and so before every page of an -All read.
+        # Initialize-OERAuth renews only when a command begins, so a long command used to run into its
+        # token's expiry and refresh only after ARM answered 401, with -ForceRefresh. Only a session
+        # that can be renewed without key material: Interactive, DeviceCode and ManagedIdentity. An
+        # app-only session (ClientSecret, ClientCertificate) is not renewed within a command, since the
+        # module never keeps its secret or certificate; a token whose expiry the state does not record
+        # is not renewed here either. The window is Get-OERTokenRenewalThreshold's, the one
+        # Initialize-OERAuth's cached return reads, so a token due here is never answered from the cache.
+        # No -ForceRefresh, so Get-AzToken is called without Force; -Renewal keeps a success from
+        # clearing the session-uncertain marker (A10). The renewal does not touch $RefreshBudget: the
+        # 401 retry below keeps its one forced refresh for the whole call. ARM's gates live in
+        # Invoke-ArmCall, so here the renewal stands ahead of all of them and never between a gate and
+        # the request (gate 10). A renewal that fails latches this function -- or, refused under a
+        # command whose own sign-in was refused (BL-74), leaves that command latched on the call stack --
+        # so Invoke-ArmCall's latch gate refuses the request with SignInRefused, outside any try too; an
+        # ArmTokenAcquisitionFailed is non-terminating, so its record and the gate's SignInRefused both
+        # appear. Inside a try, a terminating renewal error is the call's.
+        [bool]$RenewalDue = ($script:_OERAuthState.AuthMethod -in @('Interactive', 'DeviceCode', 'ManagedIdentity')) -and
+            $null -ne $script:_OERAuthState.ArmTokenExpiry -and
+            $script:_OERAuthState.ArmTokenExpiry -le (Get-OERTokenRenewalThreshold)
+        if ($RenewalDue) {
+            Write-Verbose '[Invoke-OERArmRequest] The Azure Resource Manager token expires within the renewal window. Renewing it before the request...'
+            $RenewalParams = @{
+                TenantId   = $script:_OERAuthState.TenantId
+                AuthMethod = $script:_OERAuthState.AuthMethod
+                IncludeARM = $true
+                Renewal    = $true
+            }
+            if ($script:_OERAuthState.ClientId) { $RenewalParams.ClientId = $script:_OERAuthState.ClientId }
+            Initialize-OERAuth @RenewalParams
+        }
         $CallResult = Invoke-ArmCall -CallPath $CallPath -CallMethod $CallMethod -CallBody $CallBody -BaseUrl $BaseUrl
         if ([int]$CallResult.StatusCode -ne 401 -or -not $script:_OERAuthState -or $RefreshBudget.Value) {
             return $CallResult
