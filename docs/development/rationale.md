@@ -4704,8 +4704,12 @@ release would have landed on that commit while the log named `GITHUB_SHA`, and t
 branch would even have turned the run green. So after `-Compare` the step asks
 `git/matching-refs/tags/<tag>` -- a PREFIX match, so the answer is filtered to the exact ref; an
 annotated tag names a tag object, which is peeled once to the commit it names -- and refuses when
-the tag names another commit, or when the lookup itself fails. The message names
-`git push origin :refs/tags/<tag>` and a re-run. A tag that names `GITHUB_SHA` goes on as before.
+the tag names another commit, or when the lookup itself fails or answers nothing (an empty answer
+refuses like a failed one, since an answer that says nothing is not evidence the tag is absent).
+The message names `git push origin :refs/tags/<tag>` and a re-run. A tag that names `GITHUB_SHA`
+goes on as before. A tag set by that commit's own run, whose build is the same package, needs no
+repair: the message says so, and that run may stay red. When the run's build is not the package,
+the comparison refuses first, and its repair text names a tag in the way as well.
 
 **The shapes, offline.** `tests/Workflow/PublishJob.Tests.ps1` runs the publish job's own step
 text in `pwsh`, wrapped the way `shell: pwsh` wraps it, against a fake Gallery and a fake GitHub:
@@ -4715,11 +4719,11 @@ text in `pwsh`, wrapped the way `shell: pwsh` wraps it, against a fake Gallery a
 | An ordinary merge | publishes and tags its commit | publishes, compares, tags its commit |
 | Re-run of the failed job in the same run, after a 500 whose upload arrived | skips the publish, tags its commit | skips the publish, matches, tags its commit |
 | The next merge, after a tag step that failed or a 500 nobody re-ran | skips the publish and tags ITS OWN commit over the previous commit's package | refused when its build differs, nothing tagged, the repair in the message |
-| The next merge, byte-identical build | skips the publish, tags that commit too | tagged its commit (its build IS the package) |
+| The next merge, byte-identical build | skips the publish, tags that commit too | tags its commit (its build IS the package) |
 | Re-run of only the failed jobs after that | (the tag was already wrong) | refused again, also after the repair tag, also with a release made by hand |
 | Repair tag on the publishing commit, then all jobs re-run | -- | counts up, publishes and tags the refused commit |
 | Re-run after a preview tag was pushed by hand onto another commit | attached the release to that commit | refused, nothing created, the repair in the message |
-| A rebuild of the published commit on a later day | -- | refused; the tag by hand on that commit is the whole repair |
+| A rebuild of the published commit on a later day | tagged the right commit with another build's package | refused; the tag by hand on that commit is the whole repair |
 | A read of the Gallery that fails | (no read) | refused, then tags on a re-run that can read |
 | A `v` tag run | attaches the release to the existing tag | unchanged: no comparison |
 
@@ -4742,8 +4746,9 @@ tags.
   produces different bytes and is refused. Re-run only its failed jobs, which reuse the tested
   artefact; or, if all were re-run already, the tag by hand on that commit is the whole repair.
 - **A later merge whose build is byte-identical is tagged.** A merge that changes nothing under
-  `source/` or in `CHANGELOG.md`, built the same day, produces the published bytes exactly, so its
-  commit is tagged. That is what A16 asks: its build IS the package.
+  `source/` or in `CHANGELOG.md`, built the same day, normally produces the published bytes exactly
+  (the build resolves its tools and dependencies afresh, so a change there makes it another build,
+  which is refused), so its commit is tagged. That is what A16 asks: its build IS the package.
 - **The read is a single attempt.** The Confirm step polls until the version is indexed, but a
   transient failure of the read itself refuses, and a re-run of the job reads again. Left without
   a retry on purpose, so a refusal is never delayed into a timeout.

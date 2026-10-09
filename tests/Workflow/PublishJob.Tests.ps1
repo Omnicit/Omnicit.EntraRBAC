@@ -45,6 +45,9 @@ BeforeAll {
           publish-answers-500  the next publish arrives, and the call fails with a 500 (one-shot)
           gh-create-fails      the next gh release create fails (one-shot)
           gh-api-fails         every gh api call except the compare fails with exit 1 (standing)
+          gh-api-empty         every gh api call except the compare prints nothing and exits 0 (standing)
+          gh-peel-fails        only the gh api call that peels an annotated tag (git/tags/<sha>) fails
+                               with exit 1; matching-refs still answers (standing)
           save-fails           every Save-PSResource fails with a 503 (standing)
           save-nothing         every Save-PSResource returns without saving anything (standing)
     #>
@@ -166,6 +169,12 @@ function gh
             return
         }
 
+        if (Test-Path -LiteralPath (Join-Path -Path $env:OER_FAKE_ROOT -ChildPath 'gh-api-empty'))
+        {
+            # An answer of nothing at all, with a success exit code.
+            return
+        }
+
         $Annotated = @{}
 
         if ($GitHub.ContainsKey('annotated'))
@@ -199,6 +208,13 @@ function gh
 
         if ($Path -match '/git/tags/(.+)$')
         {
+            if (Test-Path -LiteralPath (Join-Path -Path $env:OER_FAKE_ROOT -ChildPath 'gh-peel-fails'))
+            {
+                'gh: Bad Gateway (HTTP 502)'
+                $global:LASTEXITCODE = 1
+                return
+            }
+
             $TagObjectSha = $Matches[1]
 
             foreach ($Name in @($Annotated.Keys))
@@ -712,6 +728,7 @@ Describe 'PublishArtefact.ps1 -Compare' {
         $Message | Should -BeLike '*the SHA-256 of 3 file(s) differs from the tested build: en-US/about_Omnicit.EntraRBAC.help.txt, Omnicit.EntraRBAC.psd1, Omnicit.EntraRBAC.psm1*'
         $Message | Should -BeLike '*NOTHING has been tagged and no release was created.*'
         $Message | Should -BeLike '*git tag v1.1.4-preview0003 <commit>, then git push origin v1.1.4-preview0003*'
+        $Message | Should -BeLike '*If v1.1.4-preview0003 already exists on another commit*git push origin :refs/tags/v1.1.4-preview0003*'
         $Message | Should -BeLike '*re-run ALL jobs of this run, not only the failed ones*'
         $Message | Should -BeLike '*re-run all jobs of the newest one only*'
         @(Get-FakeLog -World $script:World -Name 'save').Count | Should -Be 1 -Because 'the refusal comes from the comparison, after the read'
@@ -827,6 +844,7 @@ Describe 'The publish job, run step by step against a fake Gallery and a fake Gi
         $JobStart.Count | Should -Be 1
 
         $Names = [System.Collections.Generic.List[string]]::new()
+        $StepItems = [System.Collections.Generic.List[string]]::new()
 
         for ($Index = $JobStart[0] + 1; $Index -lt $Lines.Count; $Index++)
         {
@@ -835,11 +853,19 @@ Describe 'The publish job, run step by step against a fake Gallery and a fake Gi
                 break
             }
 
+            if ($Lines[$Index] -cmatch '^      - ')
+            {
+                $StepItems.Add($Lines[$Index])
+            }
+
             if ($Lines[$Index] -cmatch '^      - name: (.+)$')
             {
                 $Names.Add($Matches[1])
             }
         }
+
+        $Unnamed = @($StepItems | Where-Object -FilterScript { $_ -cnotmatch '^      - name: ' })
+        $Unnamed | Should -BeNullOrEmpty -Because ('every publish step must start with its name so this guard and Invoke-PublishJob can see it; these do not: {0}' -f ($Unnamed -join ' | '))
 
         $Names.ToArray() | Should -Be @(
             'Check out the verification script'
@@ -887,7 +913,7 @@ Describe 'The publish job, run step by step against a fake Gallery and a fake Gi
         $GitHub['releases']["v$script:V3"]['Commit'] | Should -Be $script:ShaA
     }
 
-    It 'refuses to tag the next merge when the version is already there from another commit, after <Case>' -ForEach @(
+    It 'refuses to tag the next merge whose build differs, when the version is already there from another commit, after <Case>' -ForEach @(
         @{ Case = 'a tag step that failed'; Fault = 'gh-create-fails'; FailedStep = 'Tag the published commit and create the release'; ReleaseCreates = 1 }
         @{ Case = 'a 500 nobody re-ran (the near miss of 2026-10-08)'; Fault = 'publish-answers-500'; FailedStep = 'Publish to the PowerShell Gallery'; ReleaseCreates = 0 }
     ) {
@@ -979,6 +1005,7 @@ Describe 'The publish job, run step by step against a fake Gallery and a fake Gi
         Assert-Refused -Job $Refused -World $World -ReleaseCreates 1
         $Refused.Output | Should -BeLike "*The tag v$($script:V3) already exists and names commit $($script:ShaB), not $($script:ShaA)*"
         $Refused.Output | Should -BeLike "*git push origin :refs/tags/v$($script:V3)*"
+        $Refused.Output | Should -BeLike '*nothing needs repairing*'
         (Get-FakeGitHub -World $World)['releases'].Count | Should -Be 0
 
         # A release made elsewhere by hand never turns the run green.
@@ -1054,6 +1081,46 @@ Describe 'The publish job, run step by step against a fake Gallery and a fake Gi
 
         $Rerun.Failed | Should -BeNullOrEmpty -Because ('the re-run runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Rerun.Output)
         (Get-FakeGitHub -World $World)['tags']["v$script:V3"] | Should -Be $script:ShaA
+    }
+
+    It 'refuses when the tag lookup answers nothing, and tags once it answers' {
+        $World = New-FakeWorld
+        $Fault = Join-Path -Path $World -ChildPath 'gh-api-empty'
+        $null = New-Item -ItemType File -Path $Fault
+
+        $First = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        Assert-Refused -Job $First -World $World -ReleaseCreates 0
+        $First.Output | Should -BeLike '*gh api returned nothing*'
+        (Get-FakeGitHub -World $World)['tags'].Count | Should -Be 0
+
+        Remove-Item -LiteralPath $Fault
+        $Rerun = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        $Rerun.Failed | Should -BeNullOrEmpty -Because ('the re-run runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Rerun.Output)
+        (Get-FakeGitHub -World $World)['tags']["v$script:V3"] | Should -Be $script:ShaA
+    }
+
+    It 'refuses when it cannot peel an annotated tag, and tags once it can' {
+        $World = New-FakeWorld
+        $null = New-Item -ItemType File -Path (Join-Path -Path $World -ChildPath 'gh-create-fails')
+        $First = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+        $First.Failed | Should -Be $script:Tag
+
+        Set-FakeGitHub -World $World -Tag "v$script:V3" -Sha $script:ShaA -Annotated
+        $Fault = Join-Path -Path $World -ChildPath 'gh-peel-fails'
+        $null = New-Item -ItemType File -Path $Fault
+
+        $Refused = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        Assert-Refused -Job $Refused -World $World -ReleaseCreates 1
+        $Refused.Output | Should -BeLike "*The tag v$($script:V3) is an annotated tag, and gh api exited with 1*"
+
+        Remove-Item -LiteralPath $Fault
+        $Rerun = Invoke-PublishJob -Build $script:JobA -Sha $script:ShaA -World $World
+
+        $Rerun.Failed | Should -BeNullOrEmpty -Because ('the re-run runs green; its log follows:{0}{1}' -f [System.Environment]::NewLine, $Rerun.Output)
+        (Get-FakeGitHub -World $World)['releases']["v$script:V3"]['Commit'] | Should -Be $script:ShaA
     }
 
     It 'tags a later merge whose build is byte-identical to the package, since that build IS the package' {

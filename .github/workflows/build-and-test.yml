@@ -533,8 +533,8 @@ jobs:
         #     and tags, as the re-run after the Gallery's 500 on 2026-10-08 did;
         #   - a later merge whose build differs -- any change to the module or to its release
         #     notes, or a build on another day -- is refused, and so is a re-run of only its failed
-        #     jobs; a later merge whose build is byte-identical (no change under source/ or in
-        #     CHANGELOG.md, built the same day) IS the package, and is tagged;
+        #     jobs; a later merge whose build is byte-identical (normally: no change under source/
+        #     or in CHANGELOG.md, built the same day) IS the package, and is tagged;
         #   - the repair is the tag pushed by hand onto the commit that published the version,
         #     then a re-run of ALL jobs of the newest refused run, which counts up and publishes it.
         #
@@ -576,7 +576,11 @@ jobs:
                   $Detail = (@($Answer | ForEach-Object { "$_".Trim() }) -join ' ').Trim()
                   throw "REFUSING TO TAG. Expected GitHub to say whether the tag $Tag exists, and gh api exited with $ExitCode instead ($Detail). NOTHING has been tagged and no release was created. If the failure was transient, re-run this job."
               }
-              $TagRefs = @(@((@($Answer | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n") | ConvertFrom-Json) | Where-Object { $_.ref -ceq "refs/tags/$Tag" })
+              $TagJson = (@($Answer | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n").Trim()
+              if ([string]::IsNullOrEmpty($TagJson)) {
+                  throw "REFUSING TO TAG. Expected GitHub to answer whether the tag $Tag exists, and gh api returned nothing. NOTHING has been tagged and no release was created. If the failure was transient, re-run this job."
+              }
+              $TagRefs = @(@($TagJson | ConvertFrom-Json) | Where-Object { $_.ref -ceq "refs/tags/$Tag" })
 
               if ($TagRefs.Count -gt 0) {
                   $TagObject = $TagRefs[0].object
@@ -590,7 +594,7 @@ jobs:
                       $TagObject = ((@($Peeled | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n") | ConvertFrom-Json).object
                   }
                   if ($TagObject.type -cne 'commit' -or $TagObject.sha -cne $env:GITHUB_SHA) {
-                      throw "REFUSING TO TAG. The tag $Tag already exists and names $($TagObject.type) $($TagObject.sha), not $env:GITHUB_SHA, whose build IS the package on the Gallery. gh release create would attach the release to the tag where it stands, so NOTHING has been tagged and no release was created. If that tag was pushed by hand onto a commit whose build is not this package, delete it with: git push origin :refs/tags/$Tag -- then re-run this job."
+                      throw "REFUSING TO TAG. The tag $Tag already exists and names $($TagObject.type) $($TagObject.sha), not $env:GITHUB_SHA, whose build IS the package on the Gallery. gh release create would attach the release to the tag where it stands, so NOTHING has been tagged and no release was created. If that tag was pushed by hand onto a commit whose build is not this package, delete it with: git push origin :refs/tags/$Tag -- then re-run this job. If it was set by that commit's own run, whose build is this same package, nothing needs repairing and this run may stay red."
                   }
                   Write-Host "The tag $Tag already exists on $env:GITHUB_SHA."
               }

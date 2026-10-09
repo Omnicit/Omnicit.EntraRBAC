@@ -370,9 +370,10 @@ publish it.
     whose build is byte-identical IS the package and is tagged): push the missing tag by hand onto
     the commit that published the version, then re-run ALL jobs of the newest refused run, which
     counts up from that tag and publishes it. A re-run of only its failed jobs reuses its own
-    build and is refused again. The refusal message names the steps. A tag pushed onto the wrong
-    commit is refused too, and named in the message: delete it with
-    `git push origin :refs/tags/v<version>` and re-run.
+    build and is refused again. The refusal message names the steps. A preview tag pushed onto the
+    wrong commit is named in either refusal -- by the tag check when the run's own build is the
+    package, and in the comparison's repair text otherwise: delete it with
+    `git push origin :refs/tags/v<version>` before tagging the right commit.
   - **Never loosen the comparison to turn a refused run green.** A rebuild of the published commit
     on a later day is a different build too (the release notes carry the build date), so
     re-running ALL jobs of the run that published is refused as well; re-run only its failed jobs

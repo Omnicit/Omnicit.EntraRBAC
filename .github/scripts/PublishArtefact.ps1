@@ -488,6 +488,7 @@ if ($Differences.Count -gt 0)
         ('{0} {1} {2} on {3} is not the build this run tested for {4}: {5}.' -f $Refusal, $ModuleName, $Version, $Repository, $Sha, ($Differences -join '; '))
         ('So it was published from another commit, or from another build of this one, and tagging {0} as v{1} would name a package that does not hold this commit''s build. {2}' -f $Sha, $Version, $Nothing)
         ("To repair: find the run on main that published {0} -- its 'Publish to the PowerShell Gallery' step logged 'Publishing {1} {0}', not 'SKIPPING THE PUBLISH' -- and push the tag onto that run's commit by hand: git tag v{0} <commit>, then git push origin v{0}." -f $Version, $ModuleName)
+        ("If v{0} already exists on another commit -- pushed there by mistake -- delete it first with git push origin :refs/tags/v{0}." -f $Version)
         ('Then re-run ALL jobs of this run, not only the failed ones: the new build counts up from that tag and publishes {0} as the next preview. Re-running only the failed jobs reuses this run''s build, which carries {1}, and is refused again. If several runs were refused, re-run all jobs of the newest one only: it carries the older ones'' changes, and an older one re-run after it is refused against the newer package.' -f $Sha, $Version)
         ('If the commit that published {0} is {1} itself, the tag by hand is the whole repair.' -f $Version, $Sha)
     ) -join ' '
