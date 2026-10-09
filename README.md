@@ -596,7 +596,8 @@ Access review definitions and instances for access packages.
 
 Requires an ARM token: connect with `Connect-OER -IncludeARM`, or let the cmdlet acquire one.
 
-- `Get-OERManagementGroup`, `Get-OERSubscription`
+- `Get-OERManagementGroup`, `Get-OERSubscription` -- list management groups with the parent of
+  each, or read one by `-Name`, with its children through `-Expand`/`-Recurse` (both need `-Name`)
 - `Get-OERRoleDefinition` -- read built-in and custom role definitions
 - `Get-OERRoleAssignment`, `New-OERRoleAssignment`, `Set-OERRoleAssignment`,
   `Remove-OERRoleAssignment` -- `Set-OERRoleAssignment` edits description, condition and

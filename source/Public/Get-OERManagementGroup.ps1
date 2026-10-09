@@ -13,6 +13,19 @@ function Get-OERManagementGroup {
     they pipe into Get-OERSubscription and the RBAC cmdlets. Requires an ARM token; authentication
     is ensured at entry via Initialize-OERAuth -IncludeARM.
 
+    Every listed management group carries its parent in ParentId, ParentName and ParentDisplayName.
+    The management-group list itself carries no parent, so the parents are read with one further
+    call per list -- Entities - List (POST getEntities, api-version 2020-05-01) -- not one read per
+    group. Only the tenant root group has no parent: its three parent properties are empty and no
+    error is written for it. A parent that cannot be read, because the Entities - List call failed
+    or its answer has no parent for that group, leaves that group's three parent properties empty;
+    after every group has been written, the command writes ONE non-terminating error,
+    ManagementGroupParentReadFailed (category ReadError), whose target object is the names of those
+    groups and whose message names them and says why. So an empty parent means "no parent" only for
+    the tenant root group. A caller that can read no management group at all is refused by the list
+    itself (AuthorizationFailed), not answered with an empty list, and no parent is read then. A
+    group read by -Name takes its parent from that read's own answer.
+
     A management group created in the last few minutes can be missing from the management-group
     list, although a -Name read already finds it, and an Export-OERInventory run in that window does
     not walk it, because it cannot know it exists. Measured live: sending 'Cache-Control: no-cache'
@@ -21,14 +34,21 @@ function Get-OERManagementGroup {
     .PARAMETER Name
     The management group name (its id segment, not the display name). Also bindable as
     -ManagementGroup, the name every RBAC and PIM cmdlet uses for the same scope target, or as
-    -ManagementGroupName. Binds from the pipeline by property name. When omitted, all management
-    groups are listed.
+    -ManagementGroupName. Positional (the first position), and binds from the pipeline by property
+    name. When omitted, all management groups are listed. -Expand and -Recurse require it. An empty
+    name, given or piped, is refused at parameter binding instead of being read as a request for
+    the list.
 
     .PARAMETER Expand
     Include the direct children (child management groups and subscriptions) in the response.
+    Requires -Name: without it PowerShell refuses the call at parameter binding, before anything
+    is sent. Where the host cannot prompt -- a script run with pwsh -NonInteractive, a job, CI --
+    the refusal is a MissingMandatoryParameter error; an interactive console asks for -Name
+    instead.
 
     .PARAMETER Recurse
-    Include the entire hierarchy below the management group. Implies -Expand.
+    Include the entire hierarchy below the management group. Implies -Expand. Requires -Name,
+    exactly as -Expand does: without it the call is refused at parameter binding.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -36,6 +56,10 @@ function Get-OERManagementGroup {
     .EXAMPLE
     Get-OERManagementGroup
     Lists all management groups visible to the caller.
+
+    .EXAMPLE
+    Get-OERManagementGroup | Format-Table ManagementGroupName, DisplayName, ParentName
+    Lists every management group with its parent.
 
     .EXAMPLE
     Get-OERManagementGroup -Name 'mg-platform' -Recurse
@@ -65,7 +89,7 @@ function Get-OERManagementGroup {
     }
     process {
         if ($PSCmdlet.ParameterSetName -eq 'ByName') {
-            $Path ="/providers/Microsoft.Management/managementGroups/$([uri]::EscapeDataString($Name))?api-version=2020-05-01"
+            $Path = "/providers/Microsoft.Management/managementGroups/$([uri]::EscapeDataString($Name))?api-version=2020-05-01"
             if ($Expand -or $Recurse) { $Path += '&$expand=children' }
             if ($Recurse) { $Path += '&$recurse=true' }
             try {
