@@ -5705,6 +5705,23 @@ the cmdlet's own record.
 `Test-OERAmbiguousNameError`, so they publish the same ids and messages as before. Their existing
 tests pass without a change, which is the proof.
 
+**BL-97 (F1): approvers that name nobody fail in the plan too.** For an Azure role management policy
+the diff sends both approver sides whenever either differs, since Azure Resource Manager replaces the
+whole approver list, the side the document does not declare seeded from the live policy. A declared
+empty side beside an other side that is empty too -- declared, or seeded empty from the live policy
+-- is therefore exactly the call `Set-OERRoleManagementPolicy` refuses with `ApproverRequired`
+before anything is sent. Before Sprint 10 step 5 the `-WhatIf` plan reported that entry as "would
+update" while every run reported it `Failed`. Now `Resolve-OERRoleManagementPolicyChange` flags it,
+in its `ApproverRequired` property (the Azure shape only, never with `-SendDeclaredApproverSideOnly`,
+where the directory-role cmdlet carries the undeclared side from the live rule), and
+`Sync-OERStructureRoleManagementPolicy` reports the entry `Failed` with that same ErrorId before its
+`ShouldProcess` gate: the plan and the run report the same row, and nothing is sent, the other
+declared fields of the entry included. The condition is exactly the cmdlet's own (ruling R1): an
+approver parameter is bound and the non-blank values of both name nobody. A document that turns
+approval on over an empty live approver list sends no approver parameter, so it is not flagged:
+nothing refuses it before Azure Resource Manager, and the plan and the run already agree. The
+cmdlet's own refusal stays in place as the backstop.
+
 ## failed-schedule-request
 
 Sprint 9 step 5 (BL-33) made a PIM schedule request that Microsoft Graph or Azure Resource Manager

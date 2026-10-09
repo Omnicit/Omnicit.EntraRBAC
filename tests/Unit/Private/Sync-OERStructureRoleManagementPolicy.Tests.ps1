@@ -524,4 +524,121 @@ Describe 'Sync-OERStructureRoleManagementPolicy' {
             }
         }
     }
+
+    Context 'approvers that name nobody: the plan says what the run does (BL-97, F1)' {
+        # One live state for both modes: approval required, approvers one user and one group. A
+        # document that declares both approver sides empty is the call Set-OERRoleManagementPolicy
+        # refuses with ApproverRequired before anything is sent, so the run reported Failed while the
+        # -WhatIf plan said "would update". The handler now reports it Failed before ShouldProcess in
+        # both modes. Set-OERRoleManagementPolicy is deliberately NOT mocked in the first two Its: it
+        # is the backstop the run reaches when the handler's guard is removed. Invoke-OERArmRequest
+        # records every call and refuses a PATCH, so no write can get past unseen.
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncRmpViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureRoleManagementPolicy -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                $script:RmpArmCalls = [System.Collections.Generic.List[object]]::new()
+                Mock Initialize-OERAuth {}
+                Mock Get-OERRoleManagementPolicy {
+                    [PSCustomObject]@{
+                        RequireApproval    = $true
+                        ActivationMaxHours = 8
+                        Approvers          = @(
+                            [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; UserType = 'User'; DisplayName = 'Person One' }
+                            [PSCustomObject]@{ Id = '33333333-3333-3333-3333-333333333333'; UserType = 'Group'; DisplayName = 'Approvers' }
+                        )
+                        Scope              = '/subscriptions/sub-1'
+                        RoleName           = 'Reader'
+                    }
+                }
+                Mock Resolve-OERDeclaredApprover { param($Declared) $Declared }
+                Mock Invoke-OERArmRequest {
+                    param($Method, $Path, $Body)
+                    $script:RmpArmCalls.Add([PSCustomObject]@{ Method = $Method; Path = $Path })
+                    if ($Method -eq 'PATCH') { throw 'no ARM write expected' }
+                }
+            }
+        }
+
+        It 'reports the same Failed row with ApproverRequired under -WhatIf and in the run, and sends nothing' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{
+                    scope = 'subscription:Prod'; role = 'Reader'
+                    approvers = [PSCustomObject]@{ users = @(); groups = @() }
+                }
+                $Plan = @(Invoke-SyncRmpViaCaller -Item $Item -WhatIf -ErrorAction SilentlyContinue -ErrorVariable PlanErr)
+                # Reached: the plan read the live policy once.
+                Should -Invoke Get-OERRoleManagementPolicy -Times 1 -Exactly
+                $Run = @(Invoke-SyncRmpViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable RunErr)
+                # Reached: the run read it once more.
+                Should -Invoke Get-OERRoleManagementPolicy -Times 2 -Exactly
+
+                $Plan.Count | Should -Be 1
+                $Plan[0].Action | Should -Be 'Failed'
+                $Plan[0].Detail | Should -Match 'ApproverRequired'
+                $Run.Count | Should -Be 1
+                $Run[0].Action | Should -Be 'Failed'
+                $Run[0].Detail | Should -Match 'ApproverRequired'
+                $Run[0].Detail | Should -BeExactly $Plan[0].Detail
+                [string]$Plan[0].Error.FullyQualifiedErrorId | Should -Match '^ApproverRequired'
+                [string]$Run[0].Error.FullyQualifiedErrorId | Should -Match '^ApproverRequired'
+
+                # One ApproverRequired record per mode, the handler's own: the real
+                # Set-OERRoleManagementPolicy was never entered, so it published none of its own.
+                foreach ($Captured in @(@{ Mode = 'plan'; Err = $PlanErr }, @{ Mode = 'run'; Err = $RunErr })) {
+                    $Own = @($Captured.Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverRequired*' })
+                    $Own.Count | Should -Be 1 -Because "the $($Captured.Mode) publishes one record"
+                    $Own[0].FullyQualifiedErrorId | Should -BeExactly 'ApproverRequired,Invoke-SyncRmpViaCaller'
+                    $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+                    $Own[0].TargetObject | Should -Be 'Reader @ subscription:Prod'
+                    $Own[0].Exception.Message | Should -BeLike "Approval would be required with no approver for 'Reader' at 'subscription:Prod': *"
+                }
+
+                # Nothing was sent: no Azure Resource Manager call of any kind.
+                Should -Invoke Invoke-OERArmRequest -Times 0
+                $script:RmpArmCalls.Count | Should -Be 0
+            }
+        }
+
+        It 'fails the whole entry when another declared field differs too, and sends nothing' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{
+                    scope = 'subscription:Prod'; role = 'Reader'; activationMaxHours = 4
+                    approvers = [PSCustomObject]@{ users = @(); groups = @() }
+                }
+                $Plan = @(Invoke-SyncRmpViaCaller -Item $Item -WhatIf -ErrorAction SilentlyContinue)
+                $Run = @(Invoke-SyncRmpViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                Should -Invoke Get-OERRoleManagementPolicy -Times 2 -Exactly
+                @($Plan.Action) | Should -Be @('Failed')
+                @($Run.Action) | Should -Be @('Failed')
+                $Run[0].Detail | Should -Match 'ApproverRequired'
+                $Run[0].Detail | Should -BeExactly $Plan[0].Detail
+                Should -Invoke Invoke-OERArmRequest -Times 0
+                $script:RmpArmCalls.Count | Should -Be 0
+            }
+        }
+
+        It 'does not fail an empty users side whose seeded group side names the live group' {
+            InModuleScope $script:moduleName {
+                Mock Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'p-1' } }
+                $Item = [PSCustomObject]@{
+                    scope = 'subscription:Prod'; role = 'Reader'
+                    approvers = [PSCustomObject]@{ users = @() }
+                }
+                $Plan = @(Invoke-SyncRmpViaCaller -Item $Item -WhatIf -ErrorAction SilentlyContinue -ErrorVariable PlanErr)
+                $Run = @(Invoke-SyncRmpViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable RunErr)
+                @($Plan.Action) | Should -Be @('Skipped')
+                @($Run.Action) | Should -Be @('Updated')
+                @($PlanErr).Count | Should -Be 0
+                @($RunErr).Count | Should -Be 0
+                Should -Invoke Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
+                    @($ApproverUser).Count -eq 0 -and
+                    @($ApproverGroup).Count -eq 1 -and @($ApproverGroup) -contains '33333333-3333-3333-3333-333333333333'
+                }
+            }
+        }
+    }
 }

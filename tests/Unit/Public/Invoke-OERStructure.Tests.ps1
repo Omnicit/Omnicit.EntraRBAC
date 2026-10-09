@@ -1033,6 +1033,77 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
     }
 }
 
+Describe 'Invoke-OERStructure roleManagementPolicies approvers that name nobody (BL-97, F1)' {
+    # The engine, Sync-OERStructureRoleManagementPolicy, its diff and Set-OERRoleManagementPolicy run
+    # for REAL here, in the shape of the ambiguous-scope test above: only the live policy read, the
+    # approver resolution and the transports are mocked. One live state for the plan and the run:
+    # approval required, approvers one user and one group. A document that declares both approver
+    # sides empty is the call Set-OERRoleManagementPolicy refuses with ApproverRequired, so the -WhatIf
+    # plan must report the same Failed row as the run, and neither may send anything.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:RmpArmCalls = [System.Collections.Generic.List[object]]::new()
+            Mock Initialize-OERAuth {}
+            Mock Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+            Mock Invoke-OERArmRequest {
+                param($Method, $Path, $Body)
+                $script:RmpArmCalls.Add([PSCustomObject]@{ Method = $Method; Path = $Path })
+                if ($Method -eq 'PATCH') { throw 'no ARM write expected' }
+            }
+            Mock Get-OERRoleManagementPolicy {
+                [PSCustomObject]@{
+                    RequireApproval    = $true
+                    ActivationMaxHours = 8
+                    Approvers          = @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; UserType = 'User'; DisplayName = 'Person One' }
+                        [PSCustomObject]@{ Id = '33333333-3333-3333-3333-333333333333'; UserType = 'Group'; DisplayName = 'Approvers' }
+                    )
+                    Scope              = '/subscriptions/sub-1'
+                    RoleName           = 'Reader'
+                }
+            }
+            Mock Resolve-OERDeclaredApprover { param($Declared) $Declared }
+        }
+    }
+
+    It 'reports the same Failed row with ApproverRequired under -WhatIf and in the run, and sends no PATCH' {
+        $Json = '{ "version":"1.0", "roleManagementPolicies":[{"scope":"sub:Prod","role":"Reader","approvers":{"users":[],"groups":[]}}] }'
+        $PlanErr = $null
+        $RunErr = $null
+        $Plan = @(Invoke-OERStructure -InputObject ($Json | ConvertFrom-Json) -WhatIf `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable PlanErr)
+        # Reached: the plan read the live policy once.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly
+        $Run = @(Invoke-OERStructure -InputObject ($Json | ConvertFrom-Json) -Confirm:$false `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable RunErr)
+        # Reached: the run read it once more.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 2 -Exactly
+
+        $Plan.Count | Should -Be 1
+        $Plan[0].Section | Should -Be 'roleManagementPolicies'
+        $Plan[0].Item | Should -BeExactly 'Reader @ sub:Prod'
+        $Plan[0].Action | Should -Be 'Failed'
+        $Plan[0].Detail | Should -Match 'ApproverRequired'
+        $Run.Count | Should -Be 1
+        $Run[0].Section | Should -Be 'roleManagementPolicies'
+        $Run[0].Item | Should -BeExactly 'Reader @ sub:Prod'
+        $Run[0].Action | Should -Be 'Failed'
+        $Run[0].Detail | Should -Match 'ApproverRequired'
+        $Run[0].Detail | Should -BeExactly $Plan[0].Detail
+
+        # One ApproverRequired record per mode, published by the engine's handler and no other.
+        @($PlanErr | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverRequired*' }).FullyQualifiedErrorId |
+            Should -Be @('ApproverRequired,Invoke-OERStructure')
+        @($RunErr | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverRequired*' }).FullyQualifiedErrorId |
+            Should -Be @('ApproverRequired,Invoke-OERStructure')
+
+        # Nothing was sent: no PATCH, and no Azure Resource Manager call of any kind.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        InModuleScope $script:moduleName { $script:RmpArmCalls.Count } | Should -Be 0
+    }
+}
+
 Describe 'Invoke-OERStructure roleAssignments grouped on the resolved scope' {
     # Two entries that spell one Azure scope differently must form ONE group with ONE prune pass.
     # Grouped on the text instead, each group's pass removed the other group's declared assignment

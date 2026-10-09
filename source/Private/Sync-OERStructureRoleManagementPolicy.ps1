@@ -47,6 +47,11 @@ function Sync-OERStructureRoleManagementPolicy {
     handler emits Skipped instead of calling Set-OERRoleManagementPolicy. Reads always execute even
     under -WhatIf so the diff/plan is available.
 
+    An entry whose change would send approvers naming nobody (the diff's ApproverRequired flag) is
+    reported Failed, with the ApproverRequired error Set-OERRoleManagementPolicy publishes for the
+    same refusal, before the ShouldProcess gate: the -WhatIf plan and the run report the same row,
+    and nothing is sent. Name at least one approver, or declare requireApproval false.
+
     -Prune and -TenantAlias are accepted for a uniform Sync-OERStructure* signature but are no-ops
     in this handler.
 
@@ -154,6 +159,29 @@ function Sync-OERStructureRoleManagementPolicy {
         if (-not $Change.Changed) {
             ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Unchanged' `
                 -Detail "policy already matches for '$($Item.role)' at '$($Item.scope)'"
+            return
+        }
+
+        # -- Approvers that name nobody: Failed before the gate (BL-97, F1) ------------------
+        # Set-OERRoleManagementPolicy refuses this change with ApproverRequired before anything is
+        # sent, so the run reported Failed while the -WhatIf plan said "would update". The diff flags
+        # it (Resolve-OERRoleManagementPolicyChange owns the condition); refusing it here, before
+        # ShouldProcess, gives the plan and the run the same Failed row, and nothing is sent. The
+        # ErrorId is the one Set-OERRoleManagementPolicy publishes for the same refusal.
+        if ($Change.ApproverRequired) {
+            $Message = "Approval would be required with no approver for '$($Item.role)' at '$($Item.scope)': " +
+                'the declared approvers, with any side the document does not declare kept from the live policy, ' +
+                'name nobody, and Azure Resource Manager replaces the whole approver list. Name at least one ' +
+                'approver, or declare requireApproval false. The policy was not changed.'
+            $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new($Message),
+                'ApproverRequired',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $Label)
+            $Caller.WriteError($ErrRec)
+            ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
+                -Detail "approval would be required with no approver (ApproverRequired): the declared approvers, with any side the document does not declare kept from the live policy, name nobody; the policy was not changed" `
+                -ErrorRecord $ErrRec
             return
         }
 
