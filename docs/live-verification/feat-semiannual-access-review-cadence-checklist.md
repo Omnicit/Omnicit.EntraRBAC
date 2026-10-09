@@ -11,7 +11,8 @@ not leave it blank and do not tick it. A check that could not run for a stated r
 creates a catalog `oer-s106-catalog`, a hidden access package `oer-s106-ap` in it with no resource,
 and an assignment policy `oer-s106-policy` on the package that only an administrator can assign
 through (no requestor, no approval, no expiration). Check 1.1 creates the access review
-`oer-s106-review` on that package and policy with `New-OERAccessReviewDefinition`, and section 3
+`oer-s106-review` on that package and policy with `New-OERAccessReviewDefinition`, check 2.3 applies
+a document to it that must write nothing, and section 3
 changes its cadence with `Set-OERAccessReviewDefinition` and with `Invoke-OERStructure`. Check 4.1
 creates a second review, `oer-s106-review-doc`, through `Invoke-OERStructure`. Check 5.1 writes one
 raw pattern the module cannot express onto `oer-s106-review`. Both reviews start two weeks after
@@ -58,12 +59,21 @@ before it merges.
   "docs: correct the access review cadence rationale" and "docs: tighten the access review cadence
   rationale"): the help of the cmdlets and helpers that list the cadences, the rationale section
   `access-review-cadence` and the release note.
+- **C. An older export never makes a semi-annual review monthly** (round 1, decision A19: "fix: leave
+  a semi-annual access review untouched when an older export says Monthly" and "docs: say that an
+  older export leaves a semi-annual review untouched"). Every export before 1.1.4 wrote a live
+  absoluteMonthly interval 6 as `Monthly`. Applying such a document no longer makes the review
+  monthly: `Resolve-OERAccessReviewChange` leaves the recurrence, start date and range untouched and
+  reports why, and `Invoke-OERStructure` shows it as one `Skipped` row with that reason, in the plan
+  and in the run alike, with nothing written for the recurrence.
 
 A live tenant is needed for A because the claim is about what Microsoft Graph stores and returns:
 that `-Recurrence SemiAnnually` creates a definition whose live pattern is absoluteMonthly interval 6,
 that the module reads that live pattern back as `SemiAnnually`, and that the round trip through
 `Invoke-OERStructure` converges on a real definition. A pattern the module still cannot express is
-shown live in 5.1 by writing it raw.
+shown live in 5.1 by writing it raw. C needs it because the claim is that nothing is sent to a real
+definition: 2.3 applies the document an older export would have written and reads the live pattern
+afterwards.
 
 ## What this file does not check, and why
 
@@ -488,6 +498,37 @@ Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 ```text
 Verdict: cannot be verified, and therefore we do not know: not run live, since check 0.2 stopped the run (oer-live-cc does not hold AccessReview.ReadWrite.All; a new permission is the operator's decision, G11.7). Nothing was created or written. Held meanwhile by Sync-OERStructureAccessReview.Tests.ps1 'reports Unchanged and sends no write when a live interval 6 review is declared SemiAnnually' and the absoluteMonthly/6 row of Resolve-OERAccessReviewChange.Tests.ps1 'maps every live recurrence pattern back to its declared cadence', in the branch's gate run on 74a5d16 (./build.ps1 -Tasks build, then -Tasks test, after -ResolveDependency -UseModuleFast): 8,889 passed, 0 failed, 0 skipped, coverage 94.97% of 18,711 commands.
 ```
+
+### 2.3. A document declaring Monthly for the semi-annual review (what an export before 1.1.4 wrote): Skipped with the reason in the plan and in the runs, nothing written (A19)
+
+- [ ] **2.3** With the live review at absoluteMonthly interval 6, a document declaring `Monthly` for it gives one `Skipped` row with the A19 reason in the plan and in two runs, 0 writes, and the live pattern is still absoluteMonthly interval 6 with the same start date.
+
+```powershell
+Connect-OerLive -Arm
+Start-S106NoPrompt
+Write-S106Pattern -Label '2.3 before' -Definition (Wait-S106Pattern -Name $Review -Type 'absoluteMonthly' -Interval 6)
+$Entry = @((Get-S106Export).Reviews | Where-Object { $_.displayName -ceq $Review })[0]
+# What every export before 1.1.4 wrote for a live absoluteMonthly interval 6.
+$Entry.recurrence = 'Monthly'
+$Doc = New-S106Document -Reviews @($Entry)
+Write-OerLiveStep "2.3 the document declares recurrence Monthly: $($Doc.Contains('"recurrence": "Monthly"'))"
+Invoke-S106Apply -Label '2.3 plan' -Json $Doc -Plan
+Invoke-S106Apply -Label '2.3 run 1' -Json $Doc
+Invoke-S106Apply -Label '2.3 run 2' -Json $Doc
+Write-S106Pattern -Label '2.3 after' -Definition (Get-S106Definition -Name $Review)
+Disconnect-OerLive
+```
+
+**Expect:** `2.3 before live pattern: type absoluteMonthly; interval 6`; `the document declares
+recurrence Monthly: True`; in the plan and in both runs exactly one row,
+`accessReviews | oer-s106-review | Skipped | the live review is semi-annual (absoluteMonthly interval 6), which an export made before 1.1.4 wrote as 'Monthly'; the recurrence, start date and range were left untouched so the review is not made monthly. Declare 'SemiAnnually' to keep it, or run Set-OERAccessReviewDefinition with -Recurrence Monthly and a -StartDate to make it monthly on purpose`,
+with the same text in a warning before it, `errors of Invoke-OERStructure: 0` and `writes: 0`; `2.3
+after live pattern: type absoluteMonthly; interval 6`, with the start date of `2.3 before`.
+**Failure looks like:** the plan's row `Skipped` with a detail naming `recurrence=Monthly`, or a run
+`Updated` with one write (`PUT`) and `2.3 after` interval 1 -- the branch before round 1 (R4 of step
+6), which made the review monthly.
+
+Result:
 
 ## 3. Changing the cadence
 
