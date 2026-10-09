@@ -6147,9 +6147,11 @@ removed, so the case does not arise. A delegated user removing themselves throug
 possible before this fix and still is; this change does not touch it.
 
 **The six kinds of withheld prune `ConvertTo-OERPruneWithheldResult` builds.** One parameter set per
-kind, each a `Skipped` row whose Detail starts `prune withheld:` and carries no warning and no
-ShouldProcess prompt: a declared entry that could not be resolved, which withholds every candidate of
-its collection (`-Unresolved`); an entry whose scope could not be resolved, which withholds every
+kind, each a `Skipped` row whose Detail starts `prune withheld:` and carries no warning of the
+helper's own and no ShouldProcess prompt (the sixth kind is an `Extra` row without `-Prune`, as the
+`-ObjectType` kind is, and under `-Prune` its group handler writes the one item warning, R6 under
+[#synced-groups](#synced-groups), where the helper writes none): a declared entry that could not be
+resolved, which withholds every candidate of its collection (`-Unresolved`); an entry whose scope could not be resolved, which withholds every
 candidate of the section (`-UnresolvedScope`, A12 under [#role-assignment-key](#role-assignment-key));
 a live administrative unit scoped role whose name the directory role list did not give, beside a
 role the document declares by a name no live role of that principal matches, which is neither added

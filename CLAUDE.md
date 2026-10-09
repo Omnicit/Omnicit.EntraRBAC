@@ -1058,7 +1058,10 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `onPremisesSynced` only as true, and `Export-OERInventory` the roster flag (a boolean on every row)
   from the same predicate; the key is information only and never sent.
   Never read `OnPremisesSyncEnabled` anywhere else -- the cohort check in
-  `tests/Unit/Private/Test-OERGroupOnPremisesSynced.Tests.ps1` holds it.
+  `tests/Unit/Private/Test-OERGroupOnPremisesSynced.Tests.ps1` holds the member-access form
+  (`.OnPremisesSyncEnabled` spelled as a constant member name, outside `ConvertTo-OERGroup` and the
+  helper); it does NOT hold a read through `Select-Object`, `Where-Object` or
+  `PSObject.Properties[...]`, which keeps by review.
   `Why: docs/development/rationale.md#synced-groups`
 - **`Resolve-OERTenantDomain` is the single owner of the module's one network call outside the
   Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID

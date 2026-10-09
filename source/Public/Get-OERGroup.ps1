@@ -21,7 +21,8 @@ function Get-OERGroup {
     OnPremisesSyncEnabled, Microsoft Graph's own value: True for a group synchronized from
     on-premises Active Directory, which is managed there and read-only in the cloud
     (Invoke-OERStructure writes nothing to it), False for a group that was synchronized and no longer
-    is, and empty for a group that never was. Nothing is filtered out on it.
+    is, and empty for a group that never was, or whose source of authority was converted to the
+    cloud. Nothing is filtered out on it.
 
     .PARAMETER Group
     The group to act on, given as either its object id (GUID) or its display name -- the same

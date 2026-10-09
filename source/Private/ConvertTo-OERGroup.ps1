@@ -9,8 +9,9 @@ function ConvertTo-OERGroup {
     apply. A friendly GroupType is derived: RoleEnabled when isAssignableToRole is true, Dynamic when
     groupTypes contains DynamicMembership, otherwise Regular. OnPremisesSyncEnabled carries Graph's
     onPremisesSyncEnabled as it is: True for a group synchronized from on-premises, False for one that
-    no longer is, empty for one that never was. This private converter is the single owner
-    of the group output shape and is used by New-OERGroup, Get-OERGroup, and Set-OERGroup.
+    no longer is, empty for one that never was, or whose source of authority was converted to the
+    cloud. This private converter is the single owner of the group output shape and is used by
+    New-OERGroup, Get-OERGroup, and Set-OERGroup.
 
     .PARAMETER InputObject
     The raw Graph group object (hashtable or PSObject) to convert into a tagged group object.
