@@ -250,6 +250,35 @@ Describe 'Invoke-OERArmRequest' {
         }
     }
 
+    # Entities - List (Get-OERManagementGroupParent) is a POST that pages: each later page must go
+    # out as the first request did, with POST and here no body, never as a GET.
+    It 'sends every page of a POST -All with POST and no body, as the first request, and aggregates both pages' {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:ArmCallCount = 0
+            Mock Invoke-WebRequest {
+                $script:ArmCallCount++
+                if ($script:ArmCallCount -eq 1) {
+                    [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"mg-a"}],"nextLink":"https://management.azure.com/providers/Microsoft.Management/getEntities?api-version=2020-05-01&$view=GroupsOnly&$skiptoken=t3"}' }
+                } else {
+                    [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"mg-b"}],"nextLink":null}' }
+                }
+            }
+
+            $Result = Invoke-OERArmRequest -Method POST -Path '/providers/Microsoft.Management/getEntities?api-version=2020-05-01&$view=GroupsOnly' -All
+
+            @($Result.value.id) | Should -Be @('mg-a', 'mg-b')
+            Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+            Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'https://management.azure.com/providers/Microsoft.Management/getEntities?api-version=2020-05-01&$view=GroupsOnly' -and
+                $Method -eq 'POST' -and $null -eq $Body -and $null -eq $ContentType
+            }
+            Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'https://management.azure.com/providers/Microsoft.Management/getEntities?api-version=2020-05-01&$view=GroupsOnly&$skiptoken=t3' -and
+                $Method -eq 'POST' -and $null -eq $Body -and $null -eq $ContentType
+            }
+        }
+    }
+
     It 'force-refreshes and retries once when a PAGE fetch 401s, and does not refresh twice' {
         InModuleScope Omnicit.EntraRBAC {
             $script:_OERAuthState = @{
