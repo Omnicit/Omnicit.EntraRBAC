@@ -517,7 +517,7 @@ BeforeAll {
         Reuses the already-read $script:hygieneFiles text (a TEXT scan, like Pass 4 above, not an AST
         walk -- an ARM path is routinely built as "$Scope?api-version=..." with the version the only
         literal fragment, so a comment-based-help example carries the same literal shape a live call
-        site does, and rationale.md's own count of 43 hits -- "40 real request-path sites... plus 3
+        site does, and rationale.md's own count of 44 hits -- "41 real request-path sites... plus 3
         more that appear only inside Invoke-OERArmRequest's own comment-based help" -- already prices
         that in).
         =====================================================================================
@@ -3143,7 +3143,7 @@ Describe 'ARM api-version documentation hygiene' -Tags 'SourceHygiene' {
 
     It 'scans a meaningful number of ARM api-version literals' {
         # Same non-vacuous-scan proof as the other Describes in this file. rationale.md itself
-        # records 43 as the measured total (grep -rno 'api-version=[0-9-]*' source/) -- 40 real
+        # records 44 as the measured total (grep -rno 'api-version=[0-9-]*' source/) -- 41 real
         # request-path sites plus 3 inside Invoke-OERArmRequest's own comment-based help.
         $script:armApiVersionSiteCount | Should -BeGreaterThan 35 -Because (
             'source/**/*.ps1 carried 43 api-version=... literals when this gate was written; a scan that drops below 35 has broken detection, not found fewer pinned versions')

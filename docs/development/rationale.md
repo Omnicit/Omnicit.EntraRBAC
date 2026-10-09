@@ -964,8 +964,9 @@ Verified 2026-10-09 by grepping the whole tree (`grep -rno 'api-version=[0-9-]*'
 managementGroups 5 real call sites, Entities - List (getEntities) 1, the Azure PIM surface 13,
 roleDefinitions/roleAssignments 10, subscriptions 3, resources/resourceGroups 9 -- 41 real
 request-path sites in total, plus 3 more that appear only inside `Invoke-OERArmRequest`'s own
-comment-based help (`.PARAMETER Path`/`.EXAMPLE` strings, not live call sites). Regenerate this table with the same grep whenever a new ARM endpoint
-is pinned or an existing api-version is bumped -- do not hand-edit the counts without re-running it.
+comment-based help (`.PARAMETER Path`/`.EXAMPLE` strings, not live call sites). Regenerate this
+table with the same grep whenever a new ARM endpoint is pinned or an existing api-version is
+bumped -- do not hand-edit the counts without re-running it.
 
 ## management-group-parents
 
@@ -1012,10 +1013,11 @@ management group) and a second identity with no Azure role at all.
 
 **What the measurement does not show.** The live-verification identity's list was refused, so the
 parent read was never measured on a LISTED group, and no answer held a group more than one level
-below the root. That a listed group, at any depth, gets the right parent is proved by unit tests
-(`tests/Unit/Private/Get-OERManagementGroupParent.Tests.ps1` and the Context
-`the parent of every listed group (A10)` in `tests/Unit/Public/Get-OERManagementGroup.Tests.ps1`)
-and is left for the operator to confirm in a tenant where the groups can be listed. Not verified
+below the root. That the answer is mapped to the right parent on several levels (three, in mocked
+answers) is proved by unit tests (`tests/Unit/Private/Get-OERManagementGroupParent.Tests.ps1` and
+the Context `the parent of every listed group (A10)` in
+`tests/Unit/Public/Get-OERManagementGroup.Tests.ps1`) and is left for the operator to confirm in a
+tenant where the groups can be listed. Not verified
 live either: an Entities - List answer of more than one page (the test tenant's is one page; see
 the paging bullet under [#arm-transport](#arm-transport)), and anything about caching or delay in
 Entities - List. The list's own delay for a new group stays as
@@ -1024,10 +1026,10 @@ Entities - List. The list's own delay for a new group stays as
 **Why Entities - List, once per list.** It gives the parent of every group the caller can reach in
 one call, and needs no role of its own. The alternatives:
 
-- The root group with `$expand=children&$recurse=true`, or the root's `/descendants`, would walk the
-  tree in one call as well, but both need read on the ROOT group -- measured `403` without it -- so a
-  caller with Reader on a subtree only would lose every parent. The same measurement confirms, for
-  an identity without read on the root, the reason given under
+- The root group with `$expand=children&$recurse=true`, or the root's `/descendants`, would walk
+  the tree in one call as well, but both need read on the ROOT group -- measured `403` without it --
+  so a caller with Reader on a subtree only would lose every parent. The same measurement
+  confirms, for an identity without read on the root, the reason given under
   [#inventory-azure-eligibility](#inventory-azure-eligibility) for not enumerating from the root.
 - A GET per listed group reads `properties.details.parent`, as `-Name` does, but costs one call per
   group.
@@ -1068,9 +1070,9 @@ unread, never shown as an empty one. A failed LIST is reported as before, as its
 (`AuthorizationFailed` for a caller that can read no group), and no parent read follows.
 
 **The tenant root group is recognised, not looked up.** A listed item whose `name` equals its
-`properties.tenantId` -- compared case-insensitively, and never for a blank name -- is the tenant root
-group (Learn: its id is the tenant id; measured: the root entity's name equals the tenant id and it
-has no parent). Its parent properties stay empty with no error, and when it is the only group
+`properties.tenantId` -- compared case-insensitively, and never for a blank name -- is the tenant
+root group (Learn: its id is the tenant id; measured: the root entity's name equals the tenant id
+and it has no parent). Its parent properties stay empty with no error, and when it is the only group
 listed, no Entities - List call is sent. A root that came back under another name, or without a
 `tenantId`, would be named in `ManagementGroupParentReadFailed` -- visible, never silent.
 
@@ -1095,19 +1097,24 @@ documented, not that the two calls agree.
 sets: `List`, the default, and `ByName`, to which `-Expand` and `-Recurse` belong and in which
 `-Name` is mandatory at position 0; `-TenantId` is at position 1 in every set and keeps
 `[ValidateNotNullOrEmpty()]`. A call with `-Expand` or `-Recurse` and no `-Name` can bind only
-`ByName`, whose mandatory `-Name` is missing. Where the host cannot prompt -- a script under
-`pwsh -NonInteractive`, a job, CI -- it fails with `MissingMandatoryParameter` before `begin` runs,
-so nothing is signed in or sent; an interactive console asks for `-Name` instead, the standard
-PowerShell behaviour for a missing mandatory parameter.
+`ByName`, whose mandatory `-Name` is missing. What happens then depends on whether the host can
+prompt. MEASURED on a plain stand-in function with the same param block (2026-10-09): where it
+cannot -- a host-less runspace, `pwsh -NonInteractive`, `pwsh -File` with stdin redirected from an
+empty file, and a `Start-ThreadJob` job -- the call fails with `MissingMandatoryParameter`; where it
+can, PowerShell asks for `-Name` instead: an interactive console prompts, and a `Start-Job` job is
+blocked, waiting for input. A real CI runner was not measured. The refusal comes before `begin`
+runs, so nothing is signed in or sent, for a call with no pipeline input; in a pipeline `-Name`
+binds per object, so `begin` signs in first and an object without a name fails
+`InputObjectNotBound`, as in 1.1.3.
 
-MEASURED on a plain stand-in function with the same param block (2026-10-09): parameter sets drop
-PowerShell's automatic positions -- `X mg1` failed with `PositionalParameterNotFound` -- so
-`Position = 0` and `Position = 1` are declared explicitly, which restores 1.1.3's positional binding
-exactly (`X mg1`, `X mg1 t1`). Also measured there: `-Recurse`, `-Expand`, `-Expand -Recurse` and
-`-TenantId t -Recurse` without `-Name` fail with `MissingMandatoryParameter` in a host-less
-runspace; piped objects carrying `ManagementGroupName`, `ManagementGroup` or `Name` bind `-Name` as
-before, and an object with none of them fails `InputObjectNotBound`, as before. The unit tests prove
-the refusals in a fresh host-less runspace (the Context `parameter sets (A10)` in
+Also measured on that stand-in: parameter sets drop PowerShell's automatic positions -- `X mg1`
+failed with `PositionalParameterNotFound` -- so `Position = 0` and `Position = 1` are declared
+explicitly, which restores 1.1.3's positional binding exactly (`X mg1`, `X mg1 t1`); `-Recurse`,
+`-Expand`, `-Expand -Recurse` and `-TenantId t -Recurse` without `-Name` fail with
+`MissingMandatoryParameter` in a host-less runspace; and piped objects carrying
+`ManagementGroupName`, `ManagementGroup` or `Name` bind `-Name` as before, while an object with
+none of them fails `InputObjectNotBound`, as before. The unit tests prove the refusals in a fresh
+host-less runspace (the Context `parameter sets (A10)` in
 `tests/Unit/Public/Get-OERManagementGroup.Tests.ps1`), never in the Pester host itself, where a
 missing mandatory parameter can prompt.
 

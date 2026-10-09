@@ -14,17 +14,19 @@ function Get-OERManagementGroup {
     is ensured at entry via Initialize-OERAuth -IncludeARM.
 
     Every listed management group carries its parent in ParentId, ParentName and ParentDisplayName.
-    The management-group list itself carries no parent, so the parents are read with one further
-    call per list -- Entities - List (POST getEntities, api-version 2020-05-01) -- not one read per
-    group. Only the tenant root group has no parent: its three parent properties are empty and no
-    error is written for it. A parent that cannot be read, because the Entities - List call failed
-    or its answer has no parent for that group, leaves that group's three parent properties empty;
-    after every group has been written, the command writes ONE non-terminating error,
-    ManagementGroupParentReadFailed (category ReadError), whose target object is the names of those
-    groups and whose message names them and says why. So an empty parent means "no parent" only for
-    the tenant root group. A caller that can read no management group at all is refused by the list
-    itself (AuthorizationFailed), not answered with an empty list, and no parent is read then. A
-    group read by -Name takes its parent from that read's own answer.
+    The management-group list itself carries no parent, so the parents are read with at most one
+    further call per list -- Entities - List (POST getEntities, api-version 2020-05-01) -- not one
+    read per group; none is sent when the list holds no group but the tenant root group, or when
+    the list itself fails. Only the tenant root group has no parent: its three parent properties
+    are empty and no error is written for it. A parent that cannot be read, because the
+    Entities - List call failed or its answer has no parent for that group, leaves that group's
+    three parent properties empty; after every group has been written, the command writes ONE
+    non-terminating error, ManagementGroupParentReadFailed (category ReadError), whose target
+    object is the names of those groups and whose message names them and says why. So an empty
+    parent means "no parent" only for the tenant root group. A caller that can read no management
+    group at all is refused by the list itself (AuthorizationFailed), not answered with an empty
+    list, and no parent is read then. A group read by -Name takes its parent from that read's own
+    answer.
 
     A management group created in the last few minutes can be missing from the management-group
     list, although a -Name read already finds it, and an Export-OERInventory run in that window does
@@ -41,14 +43,17 @@ function Get-OERManagementGroup {
 
     .PARAMETER Expand
     Include the direct children (child management groups and subscriptions) in the response.
-    Requires -Name: without it PowerShell refuses the call at parameter binding, before anything
-    is sent. Where the host cannot prompt -- a script run with pwsh -NonInteractive, a job, CI --
-    the refusal is a MissingMandatoryParameter error; an interactive console asks for -Name
-    instead.
+    Requires -Name. Where the host cannot prompt (pwsh -NonInteractive, redirected input, a thread
+    job), a call without it fails at parameter binding with MissingMandatoryParameter; where it
+    can, PowerShell asks for -Name instead (an interactive console prompts, and a Start-Job job is
+    blocked waiting for input). That refusal comes before anything is signed in or sent for a call
+    with no pipeline input; in a pipeline -Name binds per object, so the command signs in first and
+    an object without a name fails with InputObjectNotBound.
 
     .PARAMETER Recurse
     Include the entire hierarchy below the management group. Implies -Expand. Requires -Name,
-    exactly as -Expand does: without it the call is refused at parameter binding.
+    exactly as -Expand does: without it the call fails at parameter binding, or PowerShell asks for
+    -Name where the host can prompt.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
