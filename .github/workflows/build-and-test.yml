@@ -457,9 +457,12 @@ jobs:
           # IDEMPOTENCE. A re-run after a partial failure must be able to carry on instead of dying
           # on a version that is already out there: a publish that succeeded while the tag step did
           # not, or an upload the Gallery accepted while answering with an error -- on 2026-10-08 it
-          # answered 500 to an upload that had arrived, and this step failed. Find-PSResource
-          # -Version takes NuGet RANGE syntax, so a bare version means "at least this one"; the
-          # brackets are what make it exact.
+          # answered 500 to an upload that had arrived, and this step failed. "[$Version]" asks for
+          # exactly this version, and so would the bare version: PSResourceGet reads a bare version
+          # as exact, not as "at least this one" (measured on 2026-10-09). Find answered the
+          # bracketed form here in run 37913219972, and under PSResourceGet 1.2.0 when measured;
+          # Save did not, which is why PublishArtefact.ps1 -Compare names the version bare. See
+          # docs/development/rationale.md#publish-on-merge.
           #
           # A version that is already there is NOT proof that this commit published it. When no tag
           # follows a publish, nothing moves GitVersion's base, so the NEXT merge to main computes

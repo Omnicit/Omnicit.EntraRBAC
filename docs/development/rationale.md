@@ -4665,8 +4665,10 @@ tagged the right commit. Had the next merge come first, `0fc48ac` would have bee
 **The mechanism: the package is read back and compared with the tested artefact.** On every run
 but a `v` tag run, the tag step first runs `PublishArtefact.ps1 -Compare`. It verifies the
 downloaded artefact exactly as `-Verify` does, saves the package the Gallery serves under the
-recorded version with `Save-PSResource` (exact version, `-Prerelease`, `-TrustRepository`,
-`-SkipDependencyCheck`) into an empty directory, and compares the two version folders file by file
+recorded version with `Save-PSResource` (the exact version, named bare -- see "The read names the
+version bare" below -- with `-Prerelease`, `-TrustRepository` and `-SkipDependencyCheck`) into an
+empty directory, refuses the package unless its manifest carries exactly that version, and compares
+the two version folders file by file
 and SHA-256 by SHA-256, in both directions, through the same `Compare-FileHashSet` that `-Verify`
 uses. Same build: the step goes on as before. A package that differs: it throws, naming what
 differs and the repair. (An artefact that fails the `-Verify` half throws `-Verify`'s own
@@ -4680,6 +4682,62 @@ module installed from the Gallery on the maintainer's machine holds only its own
 `PSGetModuleInfo.xml` the installer writes, which `Save-PSResource` does not write without
 `-IncludeXml`. So the whole version folder is compared with no exemption list, and since the
 manifest is one of the files, a package of another version cannot match either.
+
+**The read names the version bare, never as a bracketed range (2026-10-09).** As merged in PR #40,
+`-Compare` asked for `-Version '[<version>]'`, the NuGet range form of one exact version, and the
+2026-10-09 measurement above saved from a LOCAL repository only. Against PSGallery that form fails:
+the merge of PR #40 published `1.1.4-preview0006` from `c140939` (run 37913219972), and its tag step
+then refused three times with "Package(s) 'Omnicit.EntraRBAC' could not be installed from repository
+'PSGallery'." Nothing was tagged wrongly -- the guard failed closed -- but no publish could be tagged
+until the read worked. Which PSResourceGet the publish job read with was not logged; it is
+inferred. The run's `ubuntu-latest` leg ran PowerShell 7.6.6 on the same runner image as the
+publish job, `ubuntu-24.04` version `20261004.327.1` (its test result files are named
+`...PSv.7.6.6.xml`), and PowerShell 7.6.6 bundles PSResourceGet 1.2.0. The publish job
+behaved as 1.2.0 does in the table below: its `Find` of the bracketed form answered and its `Save`
+failed. `-Compare` now writes the version it read with to the log ("Read back with PSResourceGet
+..."). Measured the same day on a workstation against PSGallery, saving
+`Omnicit.EntraRBAC 1.1.4-preview0006` into an empty directory and asking `Find-PSResource` with
+`-Prerelease`:
+
+| PSResourceGet | `Save` of `[1.1.4-preview0006]` | `Save` of `1.1.4-preview0006` | `Find` of `[1.1.4-preview0006]` |
+|---|---|---|---|
+| 1.2.0 (PowerShell 7.6) | fails, with the message above | the four files, the manifest `1.1.4` / `preview0006` | finds it |
+| 1.0.1 | fails, with the same message | the four files, the same SHA-256s | finds NOTHING |
+| 0.5.22 | the four files | the four files | finds it |
+
+**A bare version is exact in PSResourceGet, not "at least".** In all three, `Find` of
+`1.1.4-preview0005` returned only that version and `Find` of `1.0.1` returned only `1.0.1`, where
+"at least" would have returned every later one; and `1.1.4-preview0000`, which is not on the Gallery
+while later previews are, was not found by `Find` nor saved by `Save`. So `-Compare` names the
+version bare, which reads no more widely than the brackets meant to.
+
+**And it checks the version anyway.** Directly after the read, before the files are compared, the
+saved manifest's `ModuleVersion` and prerelease label must equal those of the tested artefact's own
+manifest exactly, case included, or the step refuses with its own message ("Asked PSGallery for ...
+and the package it saved carries ..."). The file comparison would refuse such a package as well,
+since the manifest is one of the files, but it would name a changed file and send the reader looking
+for another build; this names the read. A later PSResourceGet that answered a bare version with
+another version would be refused here, never compared as if it were the version asked for. A saved
+package with no manifest at all is left to the file comparison, which names the missing file, as it
+did before this check existed.
+
+**The publish step's idempotence check and the Confirm step keep `Find-PSResource "[$Version]"`.**
+The runner answered that form (run 37913219972 logged "SKIPPING THE PUBLISH" and "Confirmed on the
+Gallery"), and so did PSResourceGet 1.2.0 when measured, so they were left as they are. Under
+PSResourceGet 1.0.1 the same `Find` answers nothing: on a runner carrying 1.0.1 every publish would
+time out in the Confirm step after ten minutes, and a re-run would then try to publish a version that
+is already there, which the Gallery does not accept. Both would fail red, not silently. The bare
+form answers in all three versions measured.
+
+**The offline suite plays PSGallery under PSResourceGet 1.2.0.** Its `Save-PSResource` stand-in
+refuses a bracketed prerelease with the measured message and saves the bare version, and three tests
+of the stand-in itself hold that model. With the brackets put back in `-Compare`, 27 of the suite's
+42 tests go red, every shape that tags among them. With the version check removed, or moved after
+the file comparison, the four version-check cases go red: the file comparison still refuses those
+packages, but with its own message, so the tests pin which check refused. Removing either half of
+the check, or comparing without regard to case, turns the cases that half covers red. Reading the
+manifest of a package that has none, or checking a version that was not read, turns the
+missing-manifest test red.
 
 **What was not chosen, and why.**
 
