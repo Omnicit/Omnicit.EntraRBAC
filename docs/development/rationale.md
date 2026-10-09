@@ -1254,7 +1254,11 @@ composed from friendly parts, which is the job the friendly properties already d
 ## guid-predicate
 
 `Test-OERGuid` is the single GUID predicate. Never re-implement the canonical
-`^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$` regex inline.
+`^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\z` regex inline.
+
+Since Sprint 10 step 5 (BL-101) the predicate ends in `\z`. With `$`, a value followed by one line
+feed passed, while the schema's ECMA-262 pattern refused it, so the offline validator and the schema
+disagreed on a `tenantId` read from a file or a here-string with a stray line break.
 
 The deliberate exception is the wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup`,
 which intentionally also accepts braced, parenthesised and dash-less forms that `Test-OERGuid`

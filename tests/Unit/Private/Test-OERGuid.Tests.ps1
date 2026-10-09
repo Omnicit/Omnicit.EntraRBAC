@@ -39,6 +39,36 @@ Describe 'Test-OERGuid' {
             Test-OERGuid -Value ('aaaa0000-0000-0000-0000-000000000001' -replace '-', '') | Should -BeFalse
         }
     }
+    It 'returns false for a canonical GUID followed by a line feed (BL-101)' {
+        InModuleScope Omnicit.EntraRBAC {
+            Test-OERGuid -Value ('aaaa0000-0000-0000-0000-000000000001' + "`n") | Should -BeFalse
+        }
+    }
+    It 'returns false for a canonical GUID followed by a carriage return and line feed (BL-101)' {
+        InModuleScope Omnicit.EntraRBAC {
+            Test-OERGuid -Value ('aaaa0000-0000-0000-0000-000000000001' + "`r`n") | Should -BeFalse
+        }
+    }
+    It 'returns false for a canonical GUID preceded by a line feed (BL-101)' {
+        InModuleScope Omnicit.EntraRBAC {
+            Test-OERGuid -Value ("`n" + 'aaaa0000-0000-0000-0000-000000000001') | Should -BeFalse
+        }
+    }
+    It 'returns false for a canonical GUID followed by a space (BL-101)' {
+        InModuleScope Omnicit.EntraRBAC {
+            Test-OERGuid -Value 'aaaa0000-0000-0000-0000-000000000001 ' | Should -BeFalse
+        }
+    }
+    It 'returns false for null (BL-101)' {
+        InModuleScope Omnicit.EntraRBAC {
+            Test-OERGuid -Value $null | Should -BeFalse
+        }
+    }
+    It 'returns true for a canonical upper-case GUID (BL-101)' {
+        InModuleScope Omnicit.EntraRBAC {
+            Test-OERGuid -Value 'AAAA0000-0000-0000-0000-00000000000A' | Should -BeTrue
+        }
+    }
 }
 
 Describe 'Test-OERGuid is the single GUID predicate' {
@@ -84,10 +114,11 @@ Describe 'Test-OERGuid is the single GUID predicate' {
     # returns and compared with Test-OERGuid's verdict for each value, so a change to either side
     # that the other does not follow turns this red.
     #
-    # A trailing line feed is deliberately NOT in the set: Test-OERGuid uses -match with a final
-    # dollar anchor, which also accepts a single trailing line feed, while the ECMA-262 dollar of a
-    # JSON Schema validator does not. That difference is a recorded finding, out of scope for the
-    # branch that added the tenantId property.
+    # A trailing line feed is deliberately NOT in the set. Test-OERGuid now ends its pattern in \z
+    # and refuses a trailing line feed, as the ECMA-262 dollar of a JSON Schema validator does
+    # (BL-101). The value stays out of this parity set because [regex]::IsMatch is .NET, whose
+    # dollar accepts it, so it cannot stand in for an ECMA-262 validator on that one value -- the
+    # first Describe asserts Test-OERGuid's verdict for it directly.
     It 'keeps the tenantId schema pattern in step with Test-OERGuid: <Name>' -ForEach @(
         @{ Name = 'canonical lower-case GUID'; Value = 'aaaa0000-0000-0000-0000-000000000001' }
         @{ Name = 'canonical upper-case GUID'; Value = 'AAAA0000-0000-0000-0000-00000000000A' }
