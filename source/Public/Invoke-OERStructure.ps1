@@ -95,13 +95,13 @@ function Invoke-OERStructure {
     next piped document is tried on its own. The document's tenant is only compared, never signed in
     to, so name it with -TenantId to apply the document there. A document without tenantId is applied
     as before, with no tenant check: to use an export as a template for another tenant, change its
-    tenantId to that tenant's ID or remove the key. A tenantId that is not a canonical GUID fails
-    validation (StructureValidationFailed). Called inside a script block or a function in a pipeline
-    (ForEach-Object { Invoke-OERStructure ... }), the command begins after every other command in
-    the pipeline has begun and takes the session they left for its own, which the pipeline session
-    rule above cannot see: a document that names its tenant is still refused in any other tenant,
-    while a document without tenantId is applied in whatever tenant that session holds, so name
-    -TenantId there.
+    tenantId to that tenant's ID or remove the key. A tenantId that is not a string holding a
+    canonical GUID fails validation (StructureValidationFailed). Called inside a script block or a
+    function in a pipeline (ForEach-Object { Invoke-OERStructure ... }), the command begins after
+    every other command in the pipeline has begun and takes the session they left for its own, which
+    the pipeline session rule above cannot see: a document that names its tenant is still refused in
+    any other tenant, while a document without tenantId is applied in whatever tenant that session
+    holds, so name -TenantId there.
 
     RoleAssignments scope grouping: before the first role assignment item is dispatched, the engine
     resolves every item's scope once (Resolve-OERStructureRoleAssignmentScope) and groups the items on

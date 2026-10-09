@@ -6,9 +6,9 @@ function Test-OERStructureSchema {
     .DESCRIPTION
     Performs the shared, tenant-free schema validation used by both Test-OERStructure and
     Invoke-OERStructure. Checks the required version key, checks that a top-level tenantId, when
-    present, is a canonical GUID (an explicit null or any other value is an Error; a document without
-    the key is valid), rejects unknown top-level keys, requires each
-    present section to be an array, and validates the per-item shape of every section (required fields,
+    present, is a string holding a canonical GUID (an explicit null, a value that is not a string, such
+    as an array, or any other value is an Error; a document without the key is valid), rejects
+    unknown top-level keys, requires each present section to be an array, and validates the per-item shape of every section (required fields,
     enum values (including eligibility accessType member/owner and membershipRuleProcessingState On/Paused, shared by administrative units and groups), mutually exclusive displayName/template, numeric ranges). A catalog's externallyVisible must be a boolean. A roleAssignments
     item's conditionVersion without a condition is an Error (a version alone has no effect); a condition
     without a conditionVersion is a Warning (Azure Resource Manager defaults it to 2.0). A catalog
@@ -307,12 +307,22 @@ function Test-OERStructureSchema {
     # therefore be a canonical GUID: an explicit null, an empty string, a domain or any other value names
     # no tenant the engine could compare with, and is refused here rather than read as "no tenantId" --
     # a document that is meant to carry no tenant check omits the key. Test-OERGuid is the predicate.
+    # A value that is not a string -- a JSON array holding one GUID, a number, an object -- is refused
+    # too, as the schema's "type": "string" refuses it; cast to a string, a one-element array read as
+    # its element and passed (BL-101).
     if ($Document.PSObject.Properties.Name -contains 'tenantId' -and
-        -not (Test-OERGuid -Value ([string]$Document.tenantId))) {
+        ($Document.tenantId -isnot [string] -or -not (Test-OERGuid -Value $Document.tenantId))) {
+        $TenantIdFound = if ($Document.tenantId -is [string]) {
+            "found '$($Document.tenantId)'"
+        } elseif ($null -eq $Document.tenantId) {
+            'found null'
+        } else {
+            "found a value that is not a string ($($Document.tenantId.GetType().Name))"
+        }
         Add-Finding -Section '(root)' -Item 'tenantId' -Path 'tenantId' `
-            -Message ("'tenantId' must be the tenant ID the document was exported from, in the canonical " +
-                "GUID form (8-4-4-4-12 hexadecimal digits); found '$([string]$Document.tenantId)'. Omit " +
-                'the key to apply the document without a tenant check.')
+            -Message ("'tenantId' must be the tenant ID the document was exported from, a string in the " +
+                "canonical GUID form (8-4-4-4-12 hexadecimal digits); $TenantIdFound. Omit the key to " +
+                'apply the document without a tenant check.')
     }
 
     # Rule 2: unknown top-level keys

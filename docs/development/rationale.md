@@ -3334,13 +3334,18 @@ cmdlet or a pipeline neighbour switched to by the time the document is assembled
 `Get-OERInventory` returns, and passes it to both of its converter calls. The bundle folder's name
 and the summary's `TenantId` keep the tenant as named, as before; only `inventory.json` carries the
 granted tenant. The validator (`Test-OERStructureSchema`, Rule 1b) and the schema
-(`Get-OERStructureSchemaJson`) know the key: a present `tenantId` must be a canonical GUID, and an
-explicit `null`, an empty string or any other value is an Error (Ruling R3), which
-`Invoke-OERStructure` reports as `StructureValidationFailed` before either comparison. A `null` is
-refused rather than read as no key, since an LLM that wrote one would otherwise drop the check
-silently; a document meant to carry no check omits the key. If wrong: treat an explicit `null` as
-absent, one condition. A document without the key is valid as before. The prompt template tells an
-LLM to keep `tenantId` exactly as exported and never to invent, change or remove one.
+(`Get-OERStructureSchemaJson`) know the key: a present `tenantId` must be a string holding a
+canonical GUID, and an explicit `null`, an empty string, a value that is not a string or any other
+value is an Error (Ruling R3), which `Invoke-OERStructure` reports as `StructureValidationFailed`
+before either comparison. A `null` is refused rather than read as no key, since an LLM that wrote one
+would otherwise drop the check silently; a document meant to carry no check omits the key. If wrong:
+treat an explicit `null` as absent, one condition. Until Sprint 10 step 5 (BL-101) the validator
+accepted two shapes the schema refused: a GUID followed by a line feed, through the predicate's `$`,
+and a one-GUID array, through Rule 1b's string cast, which reads a one-element array as its element.
+Both are now refused, the first by the predicate's `\z` and the second by Rule 1b's own check that
+the value is a string, as the schema's `type: string` does. A document without the key is valid as
+before. The prompt template tells an LLM to keep `tenantId` exactly as exported and never to invent,
+change or remove one.
 
 **The two comparisons, and their order.** `Get-OERDocumentTenantMismatch` is the single owner of
 the comparison and of the `DocumentTenantMismatch` id and message. It returns nothing for a document
@@ -3463,12 +3468,6 @@ rule.
   document declares, nothing to remove; applied anywhere else it is refused. Read in the code, not
   tested. The capture stays in `begin` (R7, and the reason under "The export"). If wrong: the
   exported `tenantId` can name the previous session's tenant for an empty bundle.
-- `Test-OERGuid` matches with `$`, which .NET lets match before a final line feed, so the validator
-  accepts a `tenantId` of a GUID followed by a line feed, which the schema's pattern refuses; the
-  comparison then never finds that value equal to a token tenant, so the document is refused (fails
-  closed). A one-element array holding a GUID passes the validator's `[string]` cast while the
-  schema's `type: string` refuses it; the comparison reads it as that GUID, so it names no other
-  tenant. This step's review found both and left them as they are.
 - Nothing machine-checks who calls `Get-OERInventoryTenantId`; gate 10 holds only the comparison.
   `tests/Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` runs with no state, so its
   export-to-apply round trip carries no `tenantId` and never reaches the comparison.
@@ -3477,8 +3476,8 @@ rule.
 paragraph of its own beside its pipeline session rule, and its `-TenantId` and `-InputObject` point
 at it; `Get-OERInventory`'s and `Export-OERInventory`'s help say what `tenantId` names, that it is
 not the tenant as named, and when it is left out; `Test-OERStructure`'s help that the key is
-checked offline as a canonical GUID and compared only by the apply. The README and the about topic
-carry it in the clause and the short paragraph described under "The user-facing texts" of
+checked offline as a string holding a canonical GUID and compared only by the apply. The README and
+the about topic carry it in the clause and the short paragraph described under "The user-facing texts" of
 [A command sends nothing under a sign-in a later command replaced](#a-command-sends-nothing-under-a-sign-in-a-later-command-replaced),
 and the copy example removes the key. CLAUDE.md carries the closed and open halves in its
 Authentication Architecture rule and the two owners in a Code Style rule.

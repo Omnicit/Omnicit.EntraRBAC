@@ -4392,6 +4392,10 @@ Describe 'Test-OERStructureSchema tenantId (BL-88, A14)' {
         @{ Label = 'a braced GUID'; Fragment = '"{44444444-4444-4444-4444-444444444444}"' }
         @{ Label = 'a dash-less GUID'; Fragment = '"44444444444444444444444444444444"' }
         @{ Label = 'a number'; Fragment = '5' }
+        @{ Label = 'a one-GUID array'; Fragment = '["44444444-4444-4444-4444-444444444444"]' }
+        @{ Label = 'a boolean'; Fragment = 'true' }
+        @{ Label = 'an object'; Fragment = '{ "id": "44444444-4444-4444-4444-444444444444" }' }
+        @{ Label = 'a GUID ending in a line feed'; Fragment = '"44444444-4444-4444-4444-444444444444\n"' }
     ) {
         $V = Invoke-TenantIdValidation -Json ('{ "version": "1.0", "tenantId": ' + $Fragment + ' }')
         $V.Valid | Should -BeFalse
@@ -4409,5 +4413,13 @@ Describe 'Test-OERStructureSchema tenantId (BL-88, A14)' {
         $Message = @($V.Errors | Where-Object Path -eq 'tenantId')[0].Message
         $Message | Should -BeLike "*found 'contoso.onmicrosoft.com'*"
         $Message | Should -BeLike '*Omit the key*'
+    }
+
+    It 'says a one-GUID array is not a string (BL-101)' {
+        $V = Invoke-TenantIdValidation -Json '{ "version": "1.0", "tenantId": ["44444444-4444-4444-4444-444444444444"] }'
+        $Finding = @($V.Errors | Where-Object Path -eq 'tenantId')
+        $Finding.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Finding[0].Message | Should -BeLike '*not a string*'
+        $Finding[0].Message | Should -BeLike '*Omit the key*'
     }
 }
