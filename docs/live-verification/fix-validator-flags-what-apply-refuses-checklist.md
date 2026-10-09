@@ -260,7 +260,7 @@ function Invoke-S105Apply {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -282,13 +282,27 @@ True; B: True; C: True; D: True; E: True`.
 clone; a `False` on the last line -- build the worktree first (`./build.ps1 -Tasks build`), never
 while the gate runs.
 
-Result: not run yet.
+Result: 2026-10-09 05:30 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main at 6817b33, never switched; the worktree on this branch at 580a157 with 0 tracked changes (every later commit changes only this checklist), and its build carries A, B, C, D and E.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s105] The module loads from a worktree that is not the main clone: True
+[oer-s105] Main clone: branch main; HEAD 6817b33
+[oer-s105] Worktree: branch fix/validator-flags-what-apply-refuses; HEAD 580a157 docs: add the live checklist for flagging in validation and plan what an apply run refuses; tracked changes: 0
+[oer-s105] The worktree's build carries A: True; B: True; C: True; D: True; E: True
+RUNNER: check S.1 exit code 0; started 2026-10-09T05:29:11Z; took 3 s.
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -303,13 +317,34 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not enabled
 for this run; never sign in another way.
 
-Result: not run yet.
+Result: 2026-10-09 05:30 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only certificate session, app name, test tenant, the service principal and the token's signed-in object, organization, verified domain, ARM token from the certificate, test subscription Enabled); identity check passed; the module is the worktree's build (1.1.4).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s105] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg5\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s105] The module is the worktree's build: True
+RUNNER: check 0.1 exit code 0; started 2026-10-09T05:29:32Z; took 6 s.
+```
 
 ## 1. A value that ends in a line feed, or is not a string (B and C)
 
 ### 1.1. A tenantId that ends in a line feed, or is a one-GUID array, is refused; the plain GUID passes
 
-- [ ] **1.1** `Test-OERStructure` refuses a `tenantId` whose string ends in a line feed and a `tenantId` that is an array holding one GUID, each with exactly one Error at `tenantId`, and accepts the same GUID as a plain string.
+- [x] **1.1** `Test-OERStructure` refuses a `tenantId` whose string ends in a line feed and a `tenantId` that is an array holding one GUID, each with exactly one Error at `tenantId`, and accepts the same GUID as a plain string.
 
 ```powershell
 Import-S105Module
@@ -333,11 +368,27 @@ message that says `a value that is not a string (Object[])`; the plain string `V
 **Failure looks like:** `Valid True` for either of the first two -- the old predicate or the old
 Rule 1b is in the build; a finding for the plain string -- the fix refuses too much.
 
-Result: not run yet.
+Result: 2026-10-09 05:30 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Offline against the worktree's build: a tenantId string ending in a line feed and a tenantId that is an array holding one GUID are each refused with exactly one Error at tenantId; the array's message says it is not a string (Object[]); the same GUID as a plain string is valid with no finding; nothing signed in. The line-feed message quotes the value as it is, so the line feed breaks the message across two lines (cosmetic).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s105] The module is the worktree's build: True
+[oer-s105] a GUID string ending in a line feed (JSON \n): Valid False; findings 1; at tenantId 1; severity Error; message: 'tenantId' must be the tenant ID the document was exported from, a string in the canonical GUID form (8-4-4-4-12 hexadecimal digits); found '00000000-0000-0000-0000-000000000040
+'. Omit the key to apply the document without a tenant check.
+[oer-s105] an array holding one GUID: Valid False; findings 1; at tenantId 1; severity Error; message: 'tenantId' must be the tenant ID the document was exported from, a string in the canonical GUID form (8-4-4-4-12 hexadecimal digits); found a value that is not a string (Object[]). Omit the key to apply the document without a tenant check.
+[oer-s105] the same GUID as a plain string: Valid True; findings 0; at tenantId 0
+[oer-s105] Signed in: False
+RUNNER: check 1.1 exit code 0; started 2026-10-09T05:29:47Z; took 2 s.
+```
 
 ### 1.2. A tenant id followed by a line feed is no tenant ID: refused before any token request
 
-- [ ] **1.2** In a session signed in as `oer-live-cc`, a command that names the test tenant's ID followed by a line feed as `-TenantId` is no longer taken for a GUID (B): `Initialize-OERAuth` looks it up as a name, the lookup fails, and the command is refused with `TenantResolutionFailed` before any token request, sending nothing.
+- [x] **1.2** In a session signed in as `oer-live-cc`, a command that names the test tenant's ID followed by a line feed as `-TenantId` is no longer taken for a GUID (B): `Initialize-OERAuth` looks it up as a name, the lookup fails, and the command is refused with `TenantResolutionFailed` before any token request, sending nothing.
 
 ```powershell
 Connect-OerLive -Arm
@@ -365,13 +416,42 @@ no Azure Resource Manager or Microsoft Graph request.
 **Failure looks like:** a token request, or a row -- the value was still taken for the tenant's ID;
 a `TenantMismatch` -- a token was requested and compared.
 
-Result: not run yet.
+Result: 2026-10-09 05:30 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, on the second run. The first run printed 'rows: 1' for a command that returned none: the refusal left the row variable unassigned and @($null).Count is 1, a checklist bug corrected in commit 'docs: count no rows as none in the live checklist'. Second run: in a session signed in as oer-live-cc, Get-OERGroup -TenantId naming the test tenant's ID followed by a line feed was refused with TenantResolutionFailed (the authority answered 400 to the lookup); 0 rows, 0 token requests, 1 tenant lookup, no Azure Resource Manager or Microsoft Graph request. The record appears twice (caught and in -ErrorVariable); the message quotes the value with its line feed.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2 ===
+[oer-s105] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg5\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s105] rows: 0; caught a terminating error: True (TenantResolutionFailed)
+[oer-s105] line feed error [1]: TenantResolutionFailed,Initialize-OERAuth (AuthenticationError): Could not resolve tenant '00000000-0000-0000-0000-000000000003
+' to its tenant ID: The Microsoft Entra ID authority 'https://login.microsoftonline.com/' did not resolve '00000000-0000-0000-0000-000000000003
+' to a tenant: Response status code does not indicate success: 400 (Bad Request). Omnicit.EntraRBAC checks the tenant every token is issued for, and a tenant named by domain is checked through its tenant ID, so no token was requested. Check the domain and the cloud (-Environment), or name the tenant by its tenant ID (a GUID).
+[oer-s105] line feed error [2]: TenantResolutionFailed,Initialize-OERAuth (AuthenticationError): Could not resolve tenant '00000000-0000-0000-0000-000000000003
+' to its tenant ID: The Microsoft Entra ID authority 'https://login.microsoftonline.com/' did not resolve '00000000-0000-0000-0000-000000000003
+' to a tenant: Response status code does not indicate success: 400 (Bad Request). Omnicit.EntraRBAC checks the tenant every token is issued for, and a tenant named by domain is checked through its tenant ID, so no token was requested. Check the domain and the cloud (-Environment), or name the tenant by its tenant ID (a GUID).
+[oer-s105] line feed records with the ids TenantResolutionFailed, SignInRefused: 2; other items in -ErrorVariable (counted, not printed): 11
+[oer-s105] token requests during the command: 0; token requests: 0; tenant lookups: 1; Azure Resource Manager requests: 0, writes: 0; Microsoft Graph requests: 0, writes: 0
+RUNNER: check 1.2 exit code 0; started 2026-10-09T05:30:32Z; took 5 s.
+```
 
 ## 2. Approvers that name nobody: the plan and the run agree (A)
 
 ### 2.1. The Reader policy at oer-s105-rg requires approval by oer-s105-approver
 
-- [ ] **2.1** After the prerequisite script, `Set-OERRoleManagementPolicy` makes the Reader policy at `oer-s105-rg` require approval with `oer-s105-approver` as its only approver, and the policy reads back that way. This is the one write section 2 makes on purpose.
+- [x] **2.1** After the prerequisite script, `Set-OERRoleManagementPolicy` makes the Reader policy at `oer-s105-rg` require approval with `oer-s105-approver` as its only approver, and the policy reads back that way. This is the one write section 2 makes on purpose.
 
 ```powershell
 Connect-OerLive -Arm
@@ -392,11 +472,35 @@ approver is oer-s105-approver: True`, and `Set-OERRoleManagementPolicy changed r
 **Failure looks like:** a refused PATCH (a 403 is a stop); the policy not converging -- the rest of
 section 2 cannot run, since the live policy would not have the approver it needs.
 
-Result: not run yet.
+Result: 2026-10-09 05:32 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Before: the Reader policy at oer-s105-rg required no approval and had no approver (Azure Resource Manager reported no last change). Set-OERRoleManagementPolicy changed Approval_EndUser_Assignment; the policy then read back, after one read, as approval required with oer-s105-approver as its only approver (0 user approvers, 1 group approver).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s105] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg5\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s105] Before policy: approval required: False; user approvers: 0; group approvers: 0; the only approver is oer-s105-approver: False; last change reported: no
+[oer-s105] Set-OERRoleManagementPolicy changed rules: Approval_EndUser_Assignment
+[oer-s105] The Reader policy at oer-s105-rg requires approval by oer-s105-approver: converged after 1 read(s), 3.9 s.
+[oer-s105] After policy: approval required: True; user approvers: 0; group approvers: 1; the only approver is oer-s105-approver: True; last change reported: yes
+RUNNER: check 2.1 exit code 0; started 2026-10-09T05:31:32Z; took 26 s.
+```
 
 ### 2.2. The plan of a document whose approvers name nobody: Failed with ApproverRequired, nothing written
 
-- [ ] **2.2** `Invoke-OERStructure -WhatIf` with `"approvers": { "users": [], "groups": [] }` reports exactly one `roleManagementPolicies` row, `Failed`, whose Detail is the `ApproverRequired` text, writes one `ApproverRequired` error, sends no write, and leaves the policy as it was.
+- [x] **2.2** `Invoke-OERStructure -WhatIf` with `"approvers": { "users": [], "groups": [] }` reports exactly one `roleManagementPolicies` row, `Failed`, whose Detail is the `ApproverRequired` text, writes one `ApproverRequired` error, sends no write, and leaves the policy as it was.
 
 ```powershell
 Connect-OerLive -Arm
@@ -416,11 +520,40 @@ Graph, and token requests 0; `rules differing: 0; the same last change: True`.
 **Failure looks like:** a `Skipped` row saying "would update" -- the plan still disagrees with the run
 (BL-97 not fixed in the build); any write.
 
-Result: not run yet.
+Result: 2026-10-09 05:32 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Live policy as 2.1 left it. Invoke-OERStructure -WhatIf with approvers users [] and groups [] reported exactly one roleManagementPolicies row, Failed, whose Detail is the expected ApproverRequired text, and wrote one ApproverRequired error (ending with the expected advice) and nothing else; it sent 2 Azure Resource Manager reads, 0 writes, no Microsoft Graph request and no token request; the policy's rules are as they were and Azure Resource Manager reports the same last change.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.2 ===
+[oer-s105] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg5\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s105] Live policy: approval required: True; user approvers: 0; group approvers: 1; the only approver is oer-s105-approver: True; last change reported: yes
+[oer-s105] plan rows: 1
+[oer-s105] plan row: roleManagementPolicies | Failed | approval would be required with no approver (ApproverRequired): the declared approvers, with any side the document does not declare kept from the live policy, name nobody; the policy was not changed
+[oer-s105] plan row Detail is the expected text: True
+[oer-s105] plan error [1]: ApproverRequired,Invoke-OERStructure (InvalidArgument): Approval would be required with no approver for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s105-rg': the declared approvers, with any side the document does not declare kept from the live policy, name nobody, and Azure Resource Manager replaces the whole approver list. Name at least one approver, or declare requireApproval false. The policy was not changed.
+[oer-s105] plan error [1] ends with the expected advice: True
+[oer-s105] plan records with the ids ApproverRequired: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s105] plan sent: token requests: 0; tenant lookups: 0; Azure Resource Manager requests: 2, writes: 0; Microsoft Graph requests: 0, writes: 0
+[oer-s105] The policy as it was: rules differing: 0; the same last change: True
+RUNNER: check 2.2 exit code 0; started 2026-10-09T05:32:08Z; took 18 s.
+```
 
 ### 2.3. The run of the same document, twice: the same row, nothing written, the policy as it was
 
-- [ ] **2.3** The same document without `-WhatIf`, run twice, reports the same `Failed` row with the same Detail and one `ApproverRequired` error each time, sends no write, and leaves the policy as it was.
+- [x] **2.3** The same document without `-WhatIf`, run twice, reports the same `Failed` row with the same Detail and one `ApproverRequired` error each time, sends no write, and leaves the policy as it was.
 
 ```powershell
 Connect-OerLive -Arm
@@ -442,11 +575,47 @@ for both transports; `rules differing: 0; the same last change: True`.
 reached `Set-OERRoleManagementPolicy` (the old path; it still sends nothing, but the plan and the run
 differ); any write.
 
-Result: not run yet.
+Result: 2026-10-09 05:33 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The same document without -WhatIf, run twice, reported each time exactly one roleManagementPolicies row, Failed, with the same Detail as the plan in 2.2 (the expected ApproverRequired text), and one ApproverRequired error ending with the expected advice; each run sent 2 Azure Resource Manager reads and 0 writes, no Microsoft Graph request and no token request; the policy's rules are as they were and Azure Resource Manager reports the same last change. The run never reached Set-OERRoleManagementPolicy (no 'failed to update' Detail).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.3 ===
+[oer-s105] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg5\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s105] Live policy: approval required: True; user approvers: 0; group approvers: 1; the only approver is oer-s105-approver: True; last change reported: yes
+[oer-s105] run 1 rows: 1
+[oer-s105] run 1 row: roleManagementPolicies | Failed | approval would be required with no approver (ApproverRequired): the declared approvers, with any side the document does not declare kept from the live policy, name nobody; the policy was not changed
+[oer-s105] run 1 row Detail is the expected text: True
+[oer-s105] run 1 error [1]: ApproverRequired,Invoke-OERStructure (InvalidArgument): Approval would be required with no approver for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s105-rg': the declared approvers, with any side the document does not declare kept from the live policy, name nobody, and Azure Resource Manager replaces the whole approver list. Name at least one approver, or declare requireApproval false. The policy was not changed.
+[oer-s105] run 1 error [1] ends with the expected advice: True
+[oer-s105] run 1 records with the ids ApproverRequired: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s105] run 1 sent: token requests: 0; tenant lookups: 0; Azure Resource Manager requests: 2, writes: 0; Microsoft Graph requests: 0, writes: 0
+[oer-s105] run 2 rows: 1
+[oer-s105] run 2 row: roleManagementPolicies | Failed | approval would be required with no approver (ApproverRequired): the declared approvers, with any side the document does not declare kept from the live policy, name nobody; the policy was not changed
+[oer-s105] run 2 row Detail is the expected text: True
+[oer-s105] run 2 error [1]: ApproverRequired,Invoke-OERStructure (InvalidArgument): Approval would be required with no approver for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s105-rg': the declared approvers, with any side the document does not declare kept from the live policy, name nobody, and Azure Resource Manager replaces the whole approver list. Name at least one approver, or declare requireApproval false. The policy was not changed.
+[oer-s105] run 2 error [1] ends with the expected advice: True
+[oer-s105] run 2 records with the ids ApproverRequired: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s105] run 2 sent: token requests: 0; tenant lookups: 0; Azure Resource Manager requests: 2, writes: 0; Microsoft Graph requests: 0, writes: 0
+[oer-s105] The policy as it was: rules differing: 0; the same last change: True
+RUNNER: check 2.3 exit code 0; started 2026-10-09T05:32:37Z; took 21 s.
+```
 
 ### 2.4. Through the side the document leaves out: only groups declared empty, while the live approver is a group
 
-- [ ] **2.4** With `"approvers": { "groups": [] }` the user side is kept from the live policy, which has no user approver, so the approvers again name nobody: the plan and the run both report the same `Failed` row with `ApproverRequired`, nothing is written, and the policy is as it was.
+- [x] **2.4** With `"approvers": { "groups": [] }` the user side is kept from the live policy, which has no user approver, so the approvers again name nobody: the plan and the run both report the same `Failed` row with `ApproverRequired`, nothing is written, and the policy is as it was.
 
 ```powershell
 Connect-OerLive -Arm
@@ -467,11 +636,47 @@ Disconnect-OerLive
 **Failure looks like:** a `Skipped` plan row or an `Updated` run row -- the flag does not see the side
 kept from the live policy.
 
-Result: not run yet.
+Result: 2026-10-09 05:33 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With approvers groups [] only, against a live policy whose only approver is the group oer-s105-approver (0 user approvers), the user side kept from the live policy is empty too: the plan and the run each reported one roleManagementPolicies row, Failed, with the expected ApproverRequired Detail and one ApproverRequired error; each sent 2 Azure Resource Manager reads and 0 writes; the policy is as it was (rules and last change).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.4 ===
+[oer-s105] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg5\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s105] Live policy: approval required: True; user approvers: 0; group approvers: 1; the only approver is oer-s105-approver: True; last change reported: yes
+[oer-s105] plan rows: 1
+[oer-s105] plan row: roleManagementPolicies | Failed | approval would be required with no approver (ApproverRequired): the declared approvers, with any side the document does not declare kept from the live policy, name nobody; the policy was not changed
+[oer-s105] plan row Detail is the expected text: True
+[oer-s105] plan error [1]: ApproverRequired,Invoke-OERStructure (InvalidArgument): Approval would be required with no approver for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s105-rg': the declared approvers, with any side the document does not declare kept from the live policy, name nobody, and Azure Resource Manager replaces the whole approver list. Name at least one approver, or declare requireApproval false. The policy was not changed.
+[oer-s105] plan error [1] ends with the expected advice: True
+[oer-s105] plan records with the ids ApproverRequired: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s105] plan sent: token requests: 0; tenant lookups: 0; Azure Resource Manager requests: 2, writes: 0; Microsoft Graph requests: 0, writes: 0
+[oer-s105] run rows: 1
+[oer-s105] run row: roleManagementPolicies | Failed | approval would be required with no approver (ApproverRequired): the declared approvers, with any side the document does not declare kept from the live policy, name nobody; the policy was not changed
+[oer-s105] run row Detail is the expected text: True
+[oer-s105] run error [1]: ApproverRequired,Invoke-OERStructure (InvalidArgument): Approval would be required with no approver for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s105-rg': the declared approvers, with any side the document does not declare kept from the live policy, name nobody, and Azure Resource Manager replaces the whole approver list. Name at least one approver, or declare requireApproval false. The policy was not changed.
+[oer-s105] run error [1] ends with the expected advice: True
+[oer-s105] run records with the ids ApproverRequired: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s105] run sent: token requests: 0; tenant lookups: 0; Azure Resource Manager requests: 2, writes: 0; Microsoft Graph requests: 0, writes: 0
+[oer-s105] The policy as it was: rules differing: 0; the same last change: True
+RUNNER: check 2.4 exit code 0; started 2026-10-09T05:33:08Z; took 21 s.
+```
 
 ### 2.5. No over-fire: documents that match the live approvers stay Unchanged, twice
 
-- [ ] **2.5** `"approvers": { "users": [] }` (the live user side is already empty, the group side is kept) and `"approvers": { "groups": [ "oer-s105-approver" ] }` (the live group side, by name) are each `Unchanged` in the plan and in two runs: no `ApproverRequired`, nothing written, the policy as it was.
+- [x] **2.5** `"approvers": { "users": [] }` (the live user side is already empty, the group side is kept) and `"approvers": { "groups": [ "oer-s105-approver" ] }` (the live group side, by name) are each `Unchanged` in the plan and in two runs: no `ApproverRequired`, nothing written, the policy as it was.
 
 ```powershell
 Connect-OerLive -Arm
@@ -498,26 +703,85 @@ the same last change: True`.
 **Failure looks like:** a `Failed` row with `ApproverRequired` -- the flag fires where the run would
 not refuse; an `Updated` row -- the documents do not converge.
 
-Result: not run yet.
+Result: 2026-10-09 05:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Both documents that match the live approvers stayed Unchanged in the plan and in two runs each: approvers users [] (the live user side is already empty, the group side kept) and approvers groups ['oer-s105-approver'] (the live group side by name, resolved with one Microsoft Graph read). No ApproverRequired record, 0 writes to either service, no token request; the policy is as it was (rules and last change). The guard does not fire where the run would not refuse, and both documents converge.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.5 ===
+[oer-s105] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg5\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s105] Live policy: approval required: True; user approvers: 0; group approvers: 1; the only approver is oer-s105-approver: True; last change reported: yes
+[oer-s105] users empty, plan rows: 1
+[oer-s105] users empty, plan row: roleManagementPolicies | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s105-rg'
+[oer-s105] users empty, plan records with the ids ApproverRequired: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s105] users empty, plan sent: token requests: 0; tenant lookups: 0; Azure Resource Manager requests: 2, writes: 0; Microsoft Graph requests: 0, writes: 0
+[oer-s105] users empty, run 1 rows: 1
+[oer-s105] users empty, run 1 row: roleManagementPolicies | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s105-rg'
+[oer-s105] users empty, run 1 records with the ids ApproverRequired: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s105] users empty, run 1 sent: token requests: 0; tenant lookups: 0; Azure Resource Manager requests: 2, writes: 0; Microsoft Graph requests: 0, writes: 0
+[oer-s105] users empty, run 2 rows: 1
+[oer-s105] users empty, run 2 row: roleManagementPolicies | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s105-rg'
+[oer-s105] users empty, run 2 records with the ids ApproverRequired: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s105] users empty, run 2 sent: token requests: 0; tenant lookups: 0; Azure Resource Manager requests: 2, writes: 0; Microsoft Graph requests: 0, writes: 0
+[oer-s105] the approver group, plan rows: 1
+[oer-s105] the approver group, plan row: roleManagementPolicies | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s105-rg'
+[oer-s105] the approver group, plan records with the ids ApproverRequired: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s105] the approver group, plan sent: token requests: 0; tenant lookups: 0; Azure Resource Manager requests: 2, writes: 0; Microsoft Graph requests: 1, writes: 0
+[oer-s105] the approver group, run 1 rows: 1
+[oer-s105] the approver group, run 1 row: roleManagementPolicies | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s105-rg'
+[oer-s105] the approver group, run 1 records with the ids ApproverRequired: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s105] the approver group, run 1 sent: token requests: 0; tenant lookups: 0; Azure Resource Manager requests: 2, writes: 0; Microsoft Graph requests: 1, writes: 0
+[oer-s105] the approver group, run 2 rows: 1
+[oer-s105] the approver group, run 2 row: roleManagementPolicies | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s105-rg'
+[oer-s105] the approver group, run 2 records with the ids ApproverRequired: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s105] the approver group, run 2 sent: token requests: 0; tenant lookups: 0; Azure Resource Manager requests: 2, writes: 0; Microsoft Graph requests: 1, writes: 0
+[oer-s105] The policy as it was: rules differing: 0; the same last change: True
+RUNNER: check 2.5 exit code 0; started 2026-10-09T05:33:39Z; took 34 s.
+```
 
 ## 3. The texts (class B)
 
 ### 3.1. The three BL-100 texts and the BL-104 help are held by unit tests
 
-- [ ] **3.1** Each text is proved by a unit test in this branch, run by the gate on every runner; none needs a tenant.
+- [x] **3.1** Each text is proved by a unit test in this branch, run by the gate on every runner; none needs a tenant.
 
 - **The schema's `administrativeUnit` description** (`Get-OERStructureSchemaJson`): `tests/Unit/Private/Get-OERStructureSchemaJson.Tests.ps1` asserts it says a GUID-shaped value is compared as a GUID and no longer says "matches this value (ignoring case)".
 - **The withheld prune of a group the run created or found already existing** (`ConvertTo-OERPruneWithheldResult`): `tests/Unit/Private/ConvertTo-OERPruneWithheldResult.Tests.ps1`, `tests/Unit/Private/Sync-OERStructureAdministrativeUnit.Tests.ps1` and `tests/Unit/Public/Invoke-OERStructure.Tests.ps1` pin the new Detail exactly, and one assertion holds that it no longer claims "which this run created into this unit".
 - **The `NotDirectAssignment` example**: `tests/Unit/Public/Remove-OERActiveDirectoryRoleAssignment.Tests.ps1` and `tests/Unit/Public/Remove-OEREligibleDirectoryRoleAssignment.Tests.ps1` parse the example for a role name holding each of the five PowerShell single-quote characters and assert that it parses with no error and gives back the role name exactly.
 - **The `Remove-OERGroupMember` help**: `tests/Unit/Public/Remove-OERGroupMember.Tests.ps1` asserts the description names a display name or object id for `-User`, `-GroupPrincipal` and `-ServicePrincipal`.
 
-Result: not run yet.
+Result: 2026-10-09 05:35 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (class B, G9). The texts change what a message or the help says, not what is sent, so they are proved by unit tests: every file named above passes against this branch (below), and the full gate on the PR head passed 8870 of 8870 with 94.93% coverage. Each text test was mutation-proven in its task: the old administrativeUnit clause, the old withheld Detail (and its 'which this run created into this unit' claim), the old single-quote doubling (red for U+2018, U+2019, U+201A and U+201B: 2 parse errors each) and the old Remove-OERGroupMember sentence each turn its test red. No tenant was used.
+
+=== CHECK 3.1 (class B: unit tests, run with Pester 6.2.0 against this branch's source, mocked) ===
+Get-OERStructureSchemaJson.Tests.ps1: RESULT: Passed=84 Failed=0 Skipped=0 NotRun=0 Total=84
+ConvertTo-OERPruneWithheldResult.Tests.ps1: RESULT: Passed=31 Failed=0 Skipped=0 NotRun=0 Total=31
+Sync-OERStructureAdministrativeUnit.Tests.ps1: RESULT: Passed=85 Failed=0 Skipped=0 NotRun=0 Total=85
+Invoke-OERStructure.Tests.ps1: RESULT: Passed=99 Failed=0 Skipped=0 NotRun=0 Total=99
+Remove-OERActiveDirectoryRoleAssignment.Tests.ps1: RESULT: Passed=36 Failed=0 Skipped=0 NotRun=0 Total=36
+Remove-OEREligibleDirectoryRoleAssignment.Tests.ps1: RESULT: Passed=32 Failed=0 Skipped=0 NotRun=0 Total=32
+Remove-OERGroupMember.Tests.ps1: RESULT: Passed=19 Failed=0 Skipped=0 NotRun=0 Total=19
+```
 
 ## Teardown
 
 ### T.1. The Reader policy back at its baseline, nothing left with the prefix
 
-- [ ] **T.1** `Initialize-OerS105Prereq.ps1 -Teardown -Unattended` puts the Reader policy at `oer-s105-rg` back to its baseline before anything is deleted, removes `oer-s105-approver`, deletes `oer-s105-rg`, and the sweep finds nothing with the prefix; the group count equals the baseline's.
+- [x] **T.1** `Initialize-OerS105Prereq.ps1 -Teardown -Unattended` puts the Reader policy at `oer-s105-rg` back to its baseline before anything is deleted, removes `oer-s105-approver`, deletes `oer-s105-rg`, and the sweep finds nothing with the prefix; the group count equals the baseline's.
 
 ```powershell
 & pwsh -NoProfile -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS105Prereq.ps1') -Teardown -Unattended
@@ -538,4 +802,68 @@ unread collections 0, `oer-s105-rg exists: False`.
 policy is restored by hand from the baseline before anything else; a residue line; an object with
 the prefix left.
 
-Result: not run yet.
+Result: 2026-10-09 05:36 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Initialize-OerS105Prereq.ps1 -Teardown -Unattended put the Reader policy at oer-s105-rg back to its baseline first (1 rule differed: Approval_EndUser_Assignment; converged after one read), then deleted oer-s105-approver (removed 1, residue 0, unreadable 0) and oer-s105-rg; the group count equals the baseline's (97); exit code 0. The read-back afterwards: 0 objects with the prefix oer-s105-, 0 unread collections, oer-s105-rg does not exist. The 2 residue rows of another prefix (opim-s1-) were counted and not touched.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s105] Transcript (redacted): raw\s105\teardown-20261009-053558Z.log; OerLive 1.0.3.
+[oer-s105] Mode: REMOVE. Prefix 'oer-s105-'. Objects (fixed): oer-s105-approver (security group, no member); oer-s105-rg (tagged, empty, its Reader policy baselined). OerLive 1.0.3.
+[oer-s105] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg5\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s105] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s105] Residue: raw\residue.json holds 2 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s105] The scope lists its role management policy: converged after 1 read(s), 3.7 s.
+[oer-s105] The policy listed at the scope is the scope's own: True
+[oer-s105] Azure role policy at the scope: rules differing from the baseline: 1 (Approval_EndUser_Assignment)
+[oer-s105] The scope lists its role management policy: converged after 1 read(s), 2.7 s.
+[oer-s105] The policy listed at the scope is the scope's own: True
+[oer-s105] Azure role policy back at its baseline: converged after 1 read(s), 4.2 s.
+[oer-s105] Teardown A: Reader policy at oer-s105-rg at its baseline: True (rules differing before: 1: Approval_EndUser_Assignment).
+[oer-s105] Teardown of 'oer-s105-': users 0, groups 1, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s105] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s105] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s105] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s105] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s105] Teardown 5/6: the prefixed groups.
+[oer-s105] Deleted: group oer-s105-approver (204).
+[oer-s105] Teardown 6/6: the prefixed users.
+[oer-s105] Teardown of 'oer-s105-': removed 1, residue 0, unreadable 0.
+[oer-s105] oer-s105-rg is gone: not yet (read 1, 0.5 s, likely replication delay) -- reading again in 2 s.
+[oer-s105] oer-s105-rg is gone: not yet (read 2, 2.5 s, likely replication delay) -- reading again in 4 s.
+[oer-s105] oer-s105-rg is gone: converged after 3 read(s), 6.8 s.
+[oer-s105] Teardown C: deleted oer-s105-rg.
+[oer-s105] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s105-' is left.
+[oer-s105] Resource group oer-s105-rg exists after the teardown: False
+[oer-s105] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s105] Done.
+[oer-s105] Teardown exit code: 0
+[oer-s105] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg5\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s105] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s105] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s105-' is left.
+[oer-s105] objects with the prefix: 0; unread collections: 0
+[oer-s105] oer-s105-rg exists: False
+RUNNER: check T.1 exit code 0; started 2026-10-09T05:35:56Z; took 38 s.
+```
