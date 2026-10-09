@@ -14,8 +14,8 @@ through (no requestor, no approval, no expiration). Check 1.1 creates the access
 `oer-s106-review` on that package and policy with `New-OERAccessReviewDefinition`, check 2.3 applies
 a document to it that must write nothing, and section 3
 changes its cadence with `Set-OERAccessReviewDefinition` and with `Invoke-OERStructure`. Check 4.1
-creates a second review, `oer-s106-review-doc`, through `Invoke-OERStructure`. Check 5.1 writes one
-raw pattern the module cannot express onto `oer-s106-review`. Both reviews start two weeks after
+creates a second review, `oer-s106-review-doc`, through `Invoke-OERStructure`. Checks 5.1 and 5.2
+each write one raw pattern the module cannot express onto `oer-s106-review`. Both reviews start two weeks after
 the run and review a package with no assignment, so no review instance starts and nobody is asked
 to review anything. The teardown deletes the two reviews first, then the policy, the package and the
 catalog. No other object, policy or role is touched.
@@ -699,6 +699,49 @@ Result: 2026-10-09 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 ```text
 Verdict: Not run live: check 0.2 stopped the run, and writing the pattern needs the missing AccessReview.ReadWrite.All. Class B, as this check provides: Resolve-OERAccessReviewChange.Tests.ps1 'does not rewrite an unrepresentable live interval when another field changes' (absoluteMonthly interval 2, refused into NotApplied naming 'interval 2') and 'reports an unrepresentable weekly interval as not applied', and Get-OERInventory.Tests.ps1 'warns rather than silently collapsing an unrepresentable recurrence interval' (absoluteMonthly interval 2 exported as Monthly with the unchanged warning naming the true interval), all green in the branch's gate run on 74a5d16 (./build.ps1 -Tasks build, then -Tasks test, after -ResolveDependency -UseModuleFast): 8,889 passed, 0 failed, 0 skipped, coverage 94.97% of 18,711 commands.
 ```
+
+### 5.2. A live absoluteMonthly interval 2: exported with the same warning, and refused on apply
+
+- [ ] **5.2** A raw write makes `oer-s106-review` absoluteMonthly interval 2; the export says `Monthly` with the unchanged warning naming `absoluteMonthly interval 2`; a document declaring `SemiAnnually` is refused for it in the plan and in the run with 0 writes, and the live pattern stays absoluteMonthly interval 2.
+
+Added in round 1, after 5.1 measured that Microsoft Graph refuses a weekly interval other than 1 on
+an access review definition. An absoluteMonthly interval other than 1, 3, 6 or 12 is the other shape
+outside the vocabulary, and the one the unit tests use first.
+
+```powershell
+Connect-OerLive -Arm
+Start-S106NoPrompt
+# A raw full-object PUT, built the way Set-OERAccessReviewDefinition builds it, with only the pattern changed.
+$Cur = Get-S106Definition -Name $Review
+$Settings = @{}; foreach ($K in $Cur['settings'].Keys) { $Settings[$K] = $Cur['settings'][$K] }
+$Settings['recurrence'] = @{ pattern = @{ type = 'absoluteMonthly'; interval = 2; dayOfMonth = $Start.Day }; range = $Cur['settings']['recurrence']['range'] }
+$Body = @{ displayName = $Cur['displayName']; descriptionForAdmins = $Cur['descriptionForAdmins']; descriptionForReviewers = $Cur['descriptionForReviewers']; scope = $Cur['scope']; settings = $Settings; reviewers = @($Cur['reviewers']) }
+foreach ($K in 'fallbackReviewers', 'instanceEnumerationScope', 'additionalNotificationRecipients') { if ($null -ne $Cur[$K]) { $Body[$K] = $Cur[$K] } }
+Assert-OerLivePrefix -Name $Cur['displayName']
+$Put = Invoke-OerLiveGraph -Method PUT -Uri "$Ar/$([string]$Cur['id'])" -Body $Body
+Assert-OerLiveOk -Response $Put -Activity "Writing absoluteMonthly interval 2 onto $Review" | Out-Null
+Write-S106Pattern -Label '5.2 raw' -Definition (Wait-S106Pattern -Name $Review -Type 'absoluteMonthly' -Interval 2)
+$X = Get-S106Export
+Write-S106Export -Label '5.2' -Export $X
+$Entry = @($X.Reviews | Where-Object { $_.displayName -ceq $Review })[0]
+$Entry.recurrence = 'SemiAnnually'
+$Doc = New-S106Document -Reviews @($Entry)
+Invoke-S106Apply -Label '5.2 plan' -Json $Doc -Plan
+Invoke-S106Apply -Label '5.2 run' -Json $Doc
+Write-S106Pattern -Label '5.2 after' -Definition (Get-S106Definition -Name $Review)
+Disconnect-OerLive
+```
+
+**Expect:** `5.2 raw live pattern: type absoluteMonthly; interval 2`; `5.2 exported: oer-s106-review
+| recurrence Monthly`, and one cadence warning naming `absoluteMonthly interval 2`; in the plan and
+in the run exactly one row for `oer-s106-review`, `Skipped`, whose detail says `the live recurrence
+pattern (absoluteMonthly interval 2) cannot be expressed by the module's cadence vocabulary`, and
+`writes: 0`; `5.2 after live pattern: type absoluteMonthly; interval 2`.
+**Failure looks like:** a run `Updated` with one write (`PUT`) and `5.2 after` interval 6 -- the
+module rewrote a pattern it cannot reproduce. If Microsoft Graph refuses the raw write as it refused
+5.1's, the check is class B like 5.1.
+
+Result:
 
 ## 6. The texts (class B)
 
