@@ -28,10 +28,10 @@ approvers would name nobody: both report it `Failed` with `ApproverRequired` and
 line break. The `NotDirectAssignment` example now parses for a role name with a curly apostrophe.
 
 `SemiAnnually` (every six months) is a new access review cadence for `New-OERAccessReviewDefinition`,
-`Set-OERAccessReviewDefinition` and the `recurrence` of a structure document. A live review with a
-six-month interval now exports as `SemiAnnually`, without a warning, and applies as `Unchanged`. An
-older export's `Monthly` only approximated it, so applying it leaves the review semi-annual,
-reported as skipped.
+`Set-OERAccessReviewDefinition` and a structure document's `recurrence`. A live six-month review now
+exports as `SemiAnnually` without a warning and applies as `Unchanged`; older exports approximated
+it as `Monthly`, so applying one skips the recurrence with a warning and leaves the review
+semi-annual.
 
 ## [1.1.3] - 2026-10-07
 
