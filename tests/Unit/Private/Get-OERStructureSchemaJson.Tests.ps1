@@ -721,16 +721,16 @@ Describe 'Get-OERStructureSchemaJson nullable accessReviews recurrence' {
         }
     }
 
-    It 'carries a null member in the recurrence enum alongside the five canonical values' {
+    It 'carries a null member in the recurrence enum alongside the six canonical values' {
         InModuleScope $script:moduleName {
             # draft-07 applies "type" and "enum" independently against the same instance, so widening
             # only "type" leaves the enum rejecting null. Measured: with null in "type" but not in
             # "enum", Test-Json reports 'Value should match one of the values specified by the enum'.
             $Props = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessReviews.items.properties
             $Enum  = @($Props.recurrence.enum)
-            $Enum.Count | Should -Be 6 -Because 'the five canonical spellings plus one JSON null'
+            $Enum.Count | Should -Be 7 -Because 'the six canonical spellings plus one JSON null'
             @($Enum | Where-Object { $null -ne $_ }) |
-                Should -Be @('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'Annually')
+                Should -Be @('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'SemiAnnually', 'Annually')
         }
     }
 
@@ -748,6 +748,8 @@ Describe 'Get-OERStructureSchemaJson nullable accessReviews recurrence' {
             $Base = '{ "version": "1", "accessReviews": [ { "displayName": "R", "accessPackage": "AP", "assignmentPolicy": "P", "recurrence": %V% } ] }'
             # Positive identity first: the canonical value validates, so the fixture itself is sound.
             Test-Json -Json ($Base -replace '%V%', '"Quarterly"') -Schema $Schema | Should -BeTrue
+            Test-Json -Json ($Base -replace '%V%', '"SemiAnnually"') -Schema $Schema |
+                Should -BeTrue -Because 'the semi-annual cadence is part of the vocabulary'
             Test-Json -Json ($Base -replace '%V%', 'null') -Schema $Schema |
                 Should -BeTrue -Because 'an explicit null is the one-time default, not a validation failure'
             # The null member must not have neutered the enum for strings.

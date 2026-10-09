@@ -88,7 +88,8 @@ function Set-OERAccessReviewDefinition {
     Replace stageSettings with these pre-built stage objects from New-OERAccessReviewStage.
 
     .PARAMETER Recurrence
-    New recurrence cadence: OneTime, Weekly, Monthly, Quarterly, or Annually.
+    New recurrence cadence: OneTime, Weekly, Monthly, Quarterly, SemiAnnually (every six months),
+    or Annually.
     Must be supplied together with -StartDate.
 
     .PARAMETER StartDate
@@ -157,7 +158,7 @@ function Set-OERAccessReviewDefinition {
 
         [PSCustomObject[]]$Stage,
 
-        [ValidateSet('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'Annually')]
+        [ValidateSet('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'SemiAnnually', 'Annually')]
         [string]$Recurrence,
 
         [datetime]$StartDate,

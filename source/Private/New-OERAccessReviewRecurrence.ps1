@@ -6,13 +6,14 @@ function New-OERAccessReviewRecurrence {
     .DESCRIPTION
     Maps a friendly recurrence cadence and start/end window to the v1.0 patternedRecurrence shape.
     OneTime returns nothing (the caller omits the recurrence key, producing a single review instance).
-    Weekly emits a weekly pattern; Monthly, Quarterly and Annually emit an absoluteMonthly pattern with
-    interval 1, 3 and 12 respectively and a dayOfMonth taken from the start date. The range is noEnd by
-    default, endDate when -EndDate is supplied, or numbered when -Occurrences is supplied. Dates are
-    emitted as invariant yyyy-MM-dd strings. This is a pure builder and makes no Graph call.
+    Weekly emits a weekly pattern; Monthly, Quarterly, SemiAnnually and Annually emit an
+    absoluteMonthly pattern with interval 1, 3, 6 and 12 respectively and a dayOfMonth taken from the
+    start date. The range is noEnd by default, endDate when -EndDate is supplied, or numbered when
+    -Occurrences is supplied. Dates are emitted as invariant yyyy-MM-dd strings. This is a pure
+    builder and makes no Graph call.
 
     .PARAMETER Recurrence
-    The cadence: OneTime, Weekly, Monthly, Quarterly, or Annually.
+    The cadence: OneTime, Weekly, Monthly, Quarterly, SemiAnnually, or Annually.
 
     .PARAMETER StartDate
     The date the first review instance starts. Also supplies dayOfMonth for monthly cadences.
@@ -32,7 +33,7 @@ function New-OERAccessReviewRecurrence {
     [OutputType([hashtable])]
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'Annually')]
+        [Parameter(Mandatory)][ValidateSet('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'SemiAnnually', 'Annually')]
         [string]$Recurrence,
         [Parameter(Mandatory)][datetime]$StartDate,
         [datetime]$EndDate,
@@ -49,7 +50,7 @@ function New-OERAccessReviewRecurrence {
         [ordered]@{ type = 'weekly'; interval = 1 }
     }
     else {
-        $Interval = switch ($Recurrence) { 'Monthly' { 1 } 'Quarterly' { 3 } 'Annually' { 12 } }
+        $Interval = switch ($Recurrence) { 'Monthly' { 1 } 'Quarterly' { 3 } 'SemiAnnually' { 6 } 'Annually' { 12 } }
         [ordered]@{ type = 'absoluteMonthly'; interval = $Interval; dayOfMonth = $StartDate.Day }
     }
 

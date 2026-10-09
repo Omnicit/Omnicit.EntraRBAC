@@ -99,13 +99,17 @@ function Get-OERInventory {
     schema does not model -- and the top-level reviewers collection Graph returns for it is
     empty by construction, which would otherwise be misreported as a configured self review. A
     live recurrence interval outside the module's cadence vocabulary (for example an
-    absoluteMonthly interval other than 1, 3 or 12) is exported as the nearest coarser cadence
-    with a warning naming the true pattern, rather than silently. durationInDays is emitted only
-    when the live settings.instanceDurationInDays is an integer the apply schema accepts (1-365):
-    Graph reports 0 when that field does not drive the review's duration, and exporting the 0 made
-    the bundle fail the schema.json written beside it. An omitted durationInDays means "leave
-    untouched" on apply, which is the correct reading of that sentinel; a positive value above 365
-    is dropped with a warning, because that is real configuration the schema cannot carry.
+    absoluteMonthly interval other than 1, 3, 6 or 12) is exported as the nearest coarser cadence
+    with a warning naming the true pattern, rather than silently. A live absoluteMonthly interval 6
+    is exported as SemiAnnually; an export made before 1.1.4 wrote it as Monthly, and when a
+    document declares such a review Monthly, Invoke-OERStructure leaves its recurrence, start date
+    and range untouched (reported as skipped, with the reason) rather than make it monthly.
+    durationInDays is emitted only when the live settings.instanceDurationInDays is an integer the
+    apply schema accepts (1-365): Graph reports 0 when that field does not drive the review's
+    duration, and exporting the 0 made the bundle fail the schema.json written beside it. An
+    omitted durationInDays means "leave untouched" on apply, which is the correct reading of that
+    sentinel; a positive value above 365 is dropped with a warning, because that is real
+    configuration the schema cannot carry.
     A review's accessPackage and assignmentPolicy are written under their display names, read by
     id. A package or policy that no longer exists is written by its id: that is a fact about the
     review, so nothing is reported for it. A name that could not be read -- a refused, throttled
@@ -1618,13 +1622,13 @@ function Get-OERInventory {
                     $PType = [string]$Rec.pattern.type
                     $Interval = [int]$Rec.pattern.interval
                     # New-OERAccessReviewRecurrence can only emit weekly interval 1 and absoluteMonthly
-                    # interval 1/3/12 (mirrors Resolve-OERAccessReviewChange's representable check), so
+                    # interval 1/3/6/12 (mirrors Resolve-OERAccessReviewChange's representable check), so
                     # every other live interval collapses onto a coarser cadence below. Warn before the
-                    # collapse rather than exporting a semi-annual or n-weekly review as Monthly/Weekly
+                    # collapse rather than exporting a bi-monthly or n-weekly review as Monthly/Weekly
                     # with no sign anything was lost.
                     $PatternRepresentable = switch ($PType) {
                         'weekly'          { $Interval -eq 1 }
-                        'absoluteMonthly' { $Interval -in 1, 3, 12 }
+                        'absoluteMonthly' { $Interval -in 1, 3, 6, 12 }
                         default           { $false }
                     }
                     if (-not $PatternRepresentable) {
@@ -1632,7 +1636,7 @@ function Get-OERInventory {
                     }
                     $Cadence = switch ($PType) {
                         'weekly' { 'Weekly' }
-                        'absoluteMonthly' { switch ($Interval) { 1 { 'Monthly' } 3 { 'Quarterly' } 12 { 'Annually' } default { 'Monthly' } } }
+                        'absoluteMonthly' { switch ($Interval) { 1 { 'Monthly' } 3 { 'Quarterly' } 6 { 'SemiAnnually' } 12 { 'Annually' } default { 'Monthly' } } }
                         default { 'OneTime' }
                     }
                 }

@@ -75,8 +75,13 @@ function Sync-OERStructureAccessReview {
 
     Recurrence mapping (case-insensitive):
     The document recurrence value is mapped to the ValidateSet values accepted by
-    New-OERAccessReviewDefinition: OneTime, Weekly, Monthly, Quarterly, Annually.
+    New-OERAccessReviewDefinition: OneTime, Weekly, Monthly, Quarterly, SemiAnnually, Annually.
     An unrecognised recurrence value emits a Failed record without calling the cmdlet.
+    A live review with an absoluteMonthly interval of 6 (SemiAnnually) that the document declares
+    Monthly -- what an export made before 1.1.4 wrote for it -- keeps its recurrence, start date and
+    range: the diff reports that unit as not applied, so the handler writes a warning and a Skipped
+    record before the ShouldProcess gate, the same in a -WhatIf plan and in a real run, and sends no
+    recurrence change. A field outside that unit that differs is still written.
 
     Recurrence range and review settings:
     - endDate (an end-date range) or occurrences (a numbered range) -- at most one; if a hand-built
@@ -138,11 +143,11 @@ function Sync-OERStructureAccessReview {
         # Validated BEFORE the existence check so both the create and the update branch see a
         # cadence in the exact ValidateSet spelling, and an unrecognised value costs no Graph call.
         $RecurrenceInput = if (Test-OERDeclaredProperty -Node $Item -Name 'recurrence') { $Item.recurrence } else { 'OneTime' }
-        $ValidRecurrenceValues = @('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'Annually')
+        $ValidRecurrenceValues = @('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'SemiAnnually', 'Annually')
         $MappedRecurrence = $ValidRecurrenceValues | Where-Object { $_ -ieq $RecurrenceInput } | Select-Object -First 1
         if (-not $MappedRecurrence) {
             ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
-                -Detail "unrecognised recurrence value '$RecurrenceInput'; expected OneTime, Weekly, Monthly, Quarterly, or Annually"
+                -Detail "unrecognised recurrence value '$RecurrenceInput'; expected OneTime, Weekly, Monthly, Quarterly, SemiAnnually, or Annually"
             return
         }
         # Normalize the declared cadence to the exact ValidateSet spelling before either branch runs,

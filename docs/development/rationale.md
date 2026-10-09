@@ -1119,6 +1119,121 @@ documented self-review shape. Collapsing the two writes `SelfReview` over live n
 
 Note also that PIM-for-groups rejects an eligible duration of `P1Y`; use `P365D`.
 
+## access-review-cadence
+
+An access review's `recurrence` is a closed vocabulary of six cadences, and each one is a fixed Graph
+pattern type and interval:
+
+- `OneTime` is no recurrence object on the definition at all: a single instance.
+- `Weekly` is pattern type `weekly`, interval 1.
+- `Monthly`, `Quarterly`, `SemiAnnually` and `Annually` are pattern type `absoluteMonthly` with
+  interval 1, 3, 6 and 12. The module sends a `dayOfMonth` taken from the start date with them. Read
+  back in the test tenant on 2026-10-09 (Sprint 10 step 6 round 1), Graph returned `dayOfMonth` 0
+  for every such review the module created or updated, and the module neither compares nor exports
+  `dayOfMonth`.
+
+`New-OERAccessReviewRecurrence` is the only builder of that pattern. The order OneTime, Weekly,
+Monthly, Quarterly, SemiAnnually, Annually is canonical: `Resolve-OERStructureEnumCasing` owns it
+(`accessReviewRecurrence`), and every other list repeats it in that order.
+
+**Where the vocabulary stands.** The canonical list is `accessReviewRecurrence` in
+`Resolve-OERStructureEnumCasing`. Six more places spell the names out: the `-Recurrence`
+`ValidateSet` of `New-OERAccessReviewRecurrence`, of `New-OERAccessReviewDefinition` and of
+`Set-OERAccessReviewDefinition`; the `$ValidRecurrenceValues` array in
+`Sync-OERStructureAccessReview`; the `recurrence` list of the exported prompt template; and the
+`accessReviews[].recurrence` enum of the structure schema. The "access review recurrence vocabulary
+cohort" in `tests/Unit/Private/Resolve-OERStructureEnumCasing.Tests.ps1` compares each of those six
+with the canonical list, order included, so a cadence missing from any one of them fails the build.
+It reads the four code lists (the three `-Recurrence` `ValidateSet` attributes and the
+`$ValidRecurrenceValues` array) out of the source tree with the PowerShell parser, and the other two
+from the module's own output, through `InModuleScope`: the prompt list from the exported prompt
+template and the enum from the structure schema. For the array it reads only the string literals of
+the `$ValidRecurrenceValues` assignment. The refusal text beside it in
+`Sync-OERStructureAccessReview` (the `unrecognised recurrence value` message, which ends in the list
+of accepted cadences) is one more spelling that the cohort does not read; a test in
+`Sync-OERStructureAccessReview.Tests.ps1` pins it verbatim.
+
+The interval numbers (1, 3, 6 and 12) stand in three more places, each written out on its own and
+held by behaviour tests, not by the cohort: the cadence-to-interval `switch` of
+`New-OERAccessReviewRecurrence` (`New-OERAccessReviewRecurrence.Tests.ps1`), and the
+interval-to-cadence `switch` with the set of representable intervals, in the export in
+`Get-OERInventory` (`Get-OERInventory.Tests.ps1`) and in the live-state diff in
+`Resolve-OERAccessReviewChange` (`Resolve-OERAccessReviewChange.Tests.ps1`). A change to the
+vocabulary therefore touches the canonical list, the six lists the cohort reads, the refusal text,
+those three interval sites, and the help texts that enumerate the cadences.
+
+**Why `SemiAnnually` was added** (Sprint 10 step 6, BL-108, decision A12 of 2026-10-08). A live run
+showed three reviews with `absoluteMonthly` interval 6. Graph stores and returns that pattern: check
+5.5 of `docs/live-verification/pr53-checklist.md` (2026-08-24) created a semi-annual review in the
+portal and it existed, and check 5.6 then saw the module name its pattern as interval 6. The pattern
+shape the module writes (`type`, `interval`, `dayOfMonth`) is the documented one: the
+`accessReviewScheduleSettings` resource type says "Only dayOfMonth, interval, and type (weekly,
+absoluteMonthly) properties are supported"
+(https://learn.microsoft.com/graph/api/resources/accessreviewschedulesettings).
+The portals offer the cadence under two names, "Semi-annually" on the PIM access review page
+(https://learn.microsoft.com/entra/id-governance/privileged-identity-management/pim-create-roles-and-resource-roles-review)
+and "Bi-annually" on the entitlement management access package review page
+(https://learn.microsoft.com/entra/id-governance/entitlement-management-access-reviews-create).
+Without a name for it the module exported such a review lossily, as `Monthly` with a warning, and
+refused to rewrite its recurrence, start date and range on apply (check 5.6, same run), while its
+other fields applied as usual. So the cadence and schedule of those reviews could never be managed
+from a document. The name is `SemiAnnually`, one word, matching `Quarterly` and `Annually`.
+
+**What is still outside the vocabulary.** Any other live pattern is exported under a cadence the
+module can name -- an `absoluteMonthly` interval other than 1, 3, 6 or 12 as `Monthly`, a `weekly`
+interval other than 1 as `Weekly`, any other pattern type as `OneTime` -- with a warning that names
+the true pattern. `Resolve-OERAccessReviewChange` refuses to rebuild it: the recurrence, start date
+and range unit is suppressed and reported in `NotApplied`, never written, since rebuilding it from
+the collapsed cadence would downgrade a live review while reporting `Updated`. None of that
+changed, and no new ErrorId or parameter came with `SemiAnnually`, nor any value other than
+`SemiAnnually` itself (A8).
+
+What is new is a measurement of what Graph accepts. In the test tenant on 2026-10-09 (Sprint 10 step
+6 round 1), Microsoft Graph v1.0 refused a raw definition PUT of `weekly` interval 2 (400, "Invalid
+interval passed for recurrence pattern type weekly. Only 1 is supported") and of `absoluteMonthly`
+interval 2 (400, "Invalid interval passed for recurrence pattern type absoluteMonthly. Only 1,3,6
+and 12 are supported"), and nothing was written. With `SemiAnnually`, then, the vocabulary covers
+every `weekly` and `absoluteMonthly` interval those answers name as accepted on a definition write,
+and the documentation quoted above names no other pattern type, so no pattern outside the
+vocabulary could be produced live by a definition write in that test. The export warning and the
+refusal stay for a definition that carries one anyway.
+
+**The consequence for an older document.** An export made before this change recorded a live
+semi-annual review as `Monthly`, with the warning. Applied literally, that document would change the
+review to monthly (interval 1): an overwrite in the tenant that the document's author never chose,
+since the `Monthly` was only the old export's nearest approximation of a pattern it had no name for.
+The first version of this change, before decision A19, did exactly that and told the operator to
+re-export before applying. Decision A19 (2026-10-09, Sprint 10 step 6 round 1) reverses it:
+`Resolve-OERAccessReviewChange` never changes a live `absoluteMonthly` interval 6 to `Monthly`. It
+leaves the whole recurrence unit -- recurrence, start date, end date and occurrences -- untouched and
+reports it in `NotApplied`, with a reason that names the remedy: declare `SemiAnnually` to keep the
+review, or run `Set-OERAccessReviewDefinition` with `-Recurrence Monthly` and a `-StartDate` to make
+it monthly on purpose. `Sync-OERStructureAccessReview` writes that entry as a warning and a `Skipped`
+record before its `ShouldProcess` gate, as it does for every `NotApplied` entry, so a `-WhatIf` plan
+and a real run report the same about the unit and send nothing for it. A field outside the unit that
+differs, for example a description, is still written, and the PUT keeps interval 6.
+
+The rule has a cost: a document that really means to make a semi-annual review monthly cannot do it
+by declaring `Monthly`, since the diff cannot tell that document from an old export. That change
+takes the cmdlet. Every other transition is unaffected: a live interval 6 declared `SemiAnnually` is
+`Unchanged` when its start date and range also match (an ordinary write otherwise), one declared
+`Quarterly`, `Annually`, `Weekly` or `OneTime` is an ordinary recurrence write, and a live interval
+1 or 3 declared `Monthly` is not touched by the rule. The two `(A19)` Contexts hold it: Context
+`a live interval 6 declared Monthly (A19)` in `Resolve-OERAccessReviewChange.Tests.ps1` and Context
+`a live interval 6 review declared Monthly (A19)` in `Sync-OERStructureAccessReview.Tests.ps1`.
+Three of their tests carry it. In `Resolve-OERAccessReviewChange.Tests.ps1`: "leaves a live interval
+6 declared Monthly (what an export before 1.1.4 wrote) untouched and says why (A19)". In
+`Sync-OERStructureAccessReview.Tests.ps1`: "plans and runs a live interval 6 review declared Monthly
+the same way: one Skipped with the A19 reason and no write", and "writes a field outside the
+recurrence unit of a live interval 6 review declared Monthly, and the PUT keeps interval 6".
+
+Live check 2.3 of the step's checklist
+(`docs/live-verification/feat-semiannual-access-review-cadence-checklist.md`) ran the rule in the
+test tenant on 2026-10-09: with a live `absoluteMonthly` interval 6 review, the exported entry with
+recurrence `Monthly` gave, in a `-WhatIf` plan and in two real runs, exactly one `Skipped` row with
+the reason word for word, the same text as a warning before it, and no write; the live pattern
+stayed interval 6.
+
 ## declared-property
 
 `Test-OERDeclaredProperty`/`Test-OERDeclaredNull` are the single owners of the apply engine's

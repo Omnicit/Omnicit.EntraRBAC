@@ -27,6 +27,12 @@ approvers would name nobody: both report it `Failed` with `ApproverRequired` and
 `Test-OERStructure` refuses a `tenantId` that is not a string, as the schema does, or that ends in a
 line break. The `NotDirectAssignment` example now parses for a role name with a curly apostrophe.
 
+`SemiAnnually` (every six months) is a new access review cadence for `New-OERAccessReviewDefinition`,
+`Set-OERAccessReviewDefinition` and a structure document's `recurrence`. A live six-month review now
+exports as `SemiAnnually` without a warning and applies as `Unchanged`; older exports approximated
+it as `Monthly`, so applying one skips the recurrence with a warning and leaves the review
+semi-annual.
+
 ## [1.1.3] - 2026-10-07
 
 `Invoke-OERStructure` without `-TenantId`, and the builders that look up a name

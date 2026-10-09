@@ -7,7 +7,8 @@ function New-OERAccessReviewDefinition {
     Creates a v1.0 accessReviewScheduleDefinition via Microsoft Graph, scoped to the assignments
     of one access package under one assignment policy. Supports both single-stage (inline reviewer
     parameters) and multi-stage (pre-built stage objects from New-OERAccessReviewStage) reviews.
-    Recurrence cadences OneTime through Annually are supported; OneTime produces a single instance.
+    Recurrence cadences OneTime, Weekly, Monthly, Quarterly, SemiAnnually (every six months) and
+    Annually are supported; OneTime produces a single instance.
     Scope, reviewer, and catalog ids are resolved from friendly display names or GUIDs. Supports
     -WhatIf and -Confirm.
 
@@ -56,7 +57,8 @@ function New-OERAccessReviewDefinition {
     supplied, top-level reviewers are omitted; each stage carries its own reviewer collection.
 
     .PARAMETER Recurrence
-    The review cadence: OneTime, Weekly, Monthly, Quarterly, or Annually. OneTime schedules a
+    The review cadence: OneTime, Weekly, Monthly, Quarterly, SemiAnnually, or Annually.
+    SemiAnnually repeats every six months (Graph absoluteMonthly, interval 6). OneTime schedules a
     single review instance with no recurrence object on the definition.
 
     .PARAMETER StartDate
@@ -113,6 +115,13 @@ function New-OERAccessReviewDefinition {
         -DescriptionForReviewers 'r' -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard' `
         -Stage $s1,$s2 -Recurrence Monthly -StartDate (Get-Date '2026-07-01')
     Creates a two-stage monthly access review where stage 2 escalates unresolved items from stage 1.
+
+    .EXAMPLE
+    New-OERAccessReviewDefinition -DisplayName 'Half-yearly AP Review' -DescriptionForAdmins 'Six-monthly review' `
+        -DescriptionForReviewers 'Please review access' -AccessPackage 'AP-Sales' `
+        -AssignmentPolicy 'Standard' -Reviewer 'manager@contoso.com' `
+        -Recurrence SemiAnnually -StartDate (Get-Date '2027-01-01')
+    Creates a single-stage access review that repeats every six months, starting on 1 January 2027.
     #>
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'SingleStage')]
     [OutputType([PSCustomObject])]
@@ -156,7 +165,7 @@ function New-OERAccessReviewDefinition {
         [PSCustomObject[]]$Stage,
 
         [Parameter(Mandatory)]
-        [ValidateSet('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'Annually')]
+        [ValidateSet('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'SemiAnnually', 'Annually')]
         [string]$Recurrence,
 
         [Parameter(Mandatory)]
