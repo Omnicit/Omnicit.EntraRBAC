@@ -105,7 +105,9 @@ $GroupName = 'oer-s107b-cloud'
 function Start-S107bFence {
     # Get-AzToken forwards only a request that carries the certificate, so nothing can prompt. In the
     # module's own scope, Invoke-OERGraphRequest is wrapped once: each request's method is recorded, and
-    # whether its body names onPremisesSynced (True/False) -- never the body, the path or a value.
+    # whether its body names onPremisesSynced (True/False), and whether a POST is one of the directory
+    # object reads Graph answers to a POST (getByIds and the member checks) -- never the body, the path or
+    # a value.
     $global:S107bToken = [System.Collections.Generic.List[string]]::new()
     $Meta = [System.Management.Automation.CommandMetadata]::new((Get-Command -Name Get-AzToken -CommandType Cmdlet))
     $Body = 'end { $global:S107bToken.Add(((@($PSBoundParameters.Keys) | Sort-Object) -join '','')); if (-not $PSBoundParameters.ContainsKey(''ClientCertificate'')) { throw ''S107b fence: a token request without the certificate was refused; nothing prompts.'' }; AzAuth\Get-AzToken @PSBoundParameters }'
@@ -115,7 +117,7 @@ function Start-S107bFence {
     & (Get-Module -Name Omnicit.EntraRBAC) {
         if (-not $script:S107bOriginalGraph) { $script:S107bOriginalGraph = (Get-Command -Name Invoke-OERGraphRequest -CommandType Function).ScriptBlock }
         $Meta = [System.Management.Automation.CommandMetadata]::new((Get-Command -Name Invoke-OERGraphRequest -CommandType Function))
-        $Body = 'end { $M = if ($PSBoundParameters.ContainsKey(''Method'')) { [string]$PSBoundParameters[''Method''] } else { ''GET'' }; $K = $PSBoundParameters.ContainsKey(''Body'') -and ((ConvertTo-Json -InputObject $PSBoundParameters[''Body''] -Depth 20 -Compress) -match ''onPremisesSynced''); $global:S107bGraph.Add([PSCustomObject]@{ Method = $M.ToUpperInvariant(); BodyNamesKey = [bool]$K }); & $script:S107bOriginalGraph @PSBoundParameters }'
+        $Body = 'end { $M = if ($PSBoundParameters.ContainsKey(''Method'')) { [string]$PSBoundParameters[''Method''] } else { ''GET'' }; $K = $PSBoundParameters.ContainsKey(''Body'') -and ((ConvertTo-Json -InputObject $PSBoundParameters[''Body''] -Depth 20 -Compress) -match ''onPremisesSynced''); $R = ($M -eq ''POST'') -and ([string]$PSBoundParameters[''Uri''] -match ''/(getByIds|getMemberGroups|getMemberObjects|checkMemberGroups|checkMemberObjects)$''); $global:S107bGraph.Add([PSCustomObject]@{ Method = $M.ToUpperInvariant(); ReadPost = [bool]$R; BodyNamesKey = [bool]$K }); & $script:S107bOriginalGraph @PSBoundParameters }'
         $Text = "$([System.Management.Automation.ProxyCommand]::GetCmdletBindingAttribute($Meta))`nparam($([System.Management.Automation.ProxyCommand]::GetParamBlock($Meta)))`n$Body"
         Set-Item -Path function:script:Invoke-OERGraphRequest -Value ([scriptblock]::Create($Text))
     }
@@ -126,11 +128,11 @@ function Start-S107bFence {
 function Reset-S107bRequests { $global:S107bToken.Clear(); $global:S107bGraph.Clear() }
 
 function Write-S107bRequests {
-    # The counts since the last reset: token requests, Graph requests by method, and how many bodies
+    # The counts since the last reset: token requests, Graph requests by method (a read POST counted apart, not as a write), and how many bodies
     # named onPremisesSynced.
     if ($null -eq $global:S107bGraph) { Write-OerLiveStep 'requests: not fenced in this block'; return }
-    $Writes = @($global:S107bGraph | Where-Object { $_.Method -ne 'GET' })
-    Write-OerLiveStep ("requests: token {0}; Graph {1} (GET {2}; writes {3}: POST {4}, PATCH {5}, DELETE {6}); bodies naming onPremisesSynced: {7}" -f $global:S107bToken.Count, $global:S107bGraph.Count, @($global:S107bGraph | Where-Object Method -eq 'GET').Count, $Writes.Count, @($Writes | Where-Object Method -eq 'POST').Count, @($Writes | Where-Object Method -eq 'PATCH').Count, @($Writes | Where-Object Method -eq 'DELETE').Count, @($global:S107bGraph | Where-Object BodyNamesKey).Count)
+    $Writes = @($global:S107bGraph | Where-Object { $_.Method -ne 'GET' -and -not $_.ReadPost })
+    Write-OerLiveStep ("requests: token {0}; Graph {1} (GET {2}; read POST {8}; writes {3}: POST {4}, PATCH {5}, DELETE {6}); bodies naming onPremisesSynced: {7}" -f $global:S107bToken.Count, $global:S107bGraph.Count, @($global:S107bGraph | Where-Object Method -eq 'GET').Count, $Writes.Count, @($Writes | Where-Object Method -eq 'POST').Count, @($Writes | Where-Object Method -eq 'PATCH').Count, @($Writes | Where-Object Method -eq 'DELETE').Count, @($global:S107bGraph | Where-Object BodyNamesKey).Count, @($global:S107bGraph | Where-Object ReadPost).Count)
 }
 
 function Write-S107bRows {
@@ -371,7 +373,7 @@ Result:
 
 ### 2.4. Every group in detail: each cloud entry is exactly what 666a4c7 exported
 
-- [ ] **2.4** `Export-OERInventory -Include Groups -AllGroupsDetailed` with this branch writes a `groups.json` equal entry for entry to 2.1's; its roster is 2.1's with `onPremisesSynced` False added to each row.
+- [ ] **2.4** `Export-OERInventory -Include Groups -AllGroupsDetailed` with this branch writes a `groups.json` equal entry for entry to 2.1's once each `members`, `owners` and `eligibility` list is sorted (Graph lists members and owners in no fixed order, 2.5); its roster is 2.1's with `onPremisesSynced` False added to each row.
 
 ```powershell
 Connect-OerLive -Arm
@@ -379,7 +381,10 @@ Start-S107bFence
 $Out = Export-OERInventory -OutputPath (Join-Path $Raw 'bundle-all') -Include Groups -AllGroupsDetailed -Force -ErrorAction Continue -ErrorVariable ExErr
 $Now = @(Get-S107bSorted -Path (Join-Path $Out.BundlePath 'groups.json'))
 $Was = @(Get-S107bSorted -Path (Join-Path $Raw 'before\groups.json'))
-Write-OerLiveStep "groups.json equals 666a4c7's entry for entry: $(($Now.Count -eq $Was.Count) -and -not (Compare-Object $Now $Was -SyncWindow 0)) ($($Now.Count) and $($Was.Count))"
+Write-OerLiveStep "groups.json equals 666a4c7's entry for entry, as written: $(($Now.Count -eq $Was.Count) -and -not (Compare-Object $Now $Was -SyncWindow 0)) ($($Now.Count) and $($Was.Count))"
+$Norm = { param($Path) @(Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $null -ne $_ } | ForEach-Object { foreach ($K in 'members', 'owners', 'eligibility') { if ($null -ne $_.$K) { $_.$K = @(@($_.$K) | Sort-Object { ConvertTo-Json -InputObject $_ -Depth 30 -Compress }) } }; $_ } | Sort-Object displayName | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 30 -Compress }) }
+$NNow = @(& $Norm (Join-Path $Out.BundlePath 'groups.json')); $NWas = @(& $Norm (Join-Path $Raw 'before\groups.json'))
+Write-OerLiveStep "groups.json equals 666a4c7's entry for entry, each members, owners and eligibility list sorted: $(($NNow.Count -eq $NWas.Count) -and -not (Compare-Object $NNow $NWas -SyncWindow 0))"
 $RosterNow = @(Get-Content -LiteralPath (Join-Path $Out.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
 $Stripped = @($RosterNow | ForEach-Object { $C = $_.PSObject.Copy(); $C.PSObject.Properties.Remove('onPremisesSynced'); $C } | Sort-Object displayName | ForEach-Object { ConvertTo-Json -InputObject $_ -Compress })
 $RWas = @(Get-S107bSorted -Path (Join-Path $Raw 'before\groupsRoster.json'))
@@ -391,14 +396,43 @@ Write-S107bRequests
 Disconnect-OerLive
 ```
 
-**Expect:** `groups.json equals 666a4c7's entry for entry: True`; the roster equal without the flag
+**Expect:** `groups.json equals 666a4c7's entry for entry, each members, owners and eligibility list sorted: True` (the line before it, as written, may be `False`: 2.5 shows Graph's member order varying between two exports of the same build, and an owners list varied the same way in this run); the roster equal without the flag
 and the flag False on every row; the step's group present; reads only.
-**Failure looks like:** an entry that differs from what `666a4c7` exported (R4: a cloud group's entry
+**Failure looks like:** an entry that differs, with its lists sorted, from what `666a4c7` exported (R4: a cloud group's entry
 must stay exactly as before), or a write. A group created or changed by another process between 2.1
 and 2.4 shows as a difference: re-run 2.1 and 2.4 back to back before calling it a failure.
 
 Result:
 
+### 2.5. Control: Graph's member order varies between two exports of the same build
+
+- [ ] **2.5** A second `Export-OERInventory -Include Groups -AllGroupsDetailed` with the kept `666a4c7` build: its `groups.json` can differ from 2.1's as written, and equals both 2.1's and 2.4's once each `members` list is sorted -- so a difference in 2.4 as written is Graph's order, not this branch.
+
+```powershell
+$Mod = Get-ChildItem -Path (Join-Path $Before 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psd1') | Select-Object -First 1
+$Req = Join-Path $Cfg.Repo 'output\RequiredModules'
+$env:PSModulePath = (Resolve-Path $Req).Path + [System.IO.Path]::PathSeparator + $env:PSModulePath
+Import-Module -Name $Mod.FullName -Force -Global
+Connect-OerLive -Arm
+Write-OerLiveStep "module loaded from the kept build: $((Get-Module -Name Omnicit.EntraRBAC).ModuleBase.StartsWith($Before, [System.StringComparison]::OrdinalIgnoreCase))"
+Start-S107bFence
+$Out = Export-OERInventory -OutputPath (Join-Path $Raw 'bundle-before2') -Include Groups -AllGroupsDetailed -Force -ErrorAction Continue -ErrorVariable ExErr
+$One = @(Get-S107bSorted -Path (Join-Path $Raw 'before\groups.json'))
+$Two = @(Get-S107bSorted -Path (Join-Path $Out.BundlePath 'groups.json'))
+Write-OerLiveStep "control: two exports with the SAME 666a4c7 build, groups.json equal entry for entry: $(($One.Count -eq $Two.Count) -and -not (Compare-Object $One $Two -SyncWindow 0)) ($($One.Count) and $($Two.Count))"
+$Norm = { param($Path) @(Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { $null -ne $_ } | ForEach-Object { if ($null -ne $_.members) { $_.members = @(@($_.members) | Sort-Object) }; $_ } | Sort-Object displayName | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 30 -Compress }) }
+$N1 = @(& $Norm (Join-Path $Raw 'before\groups.json')); $N2 = @(& $Norm (Join-Path $Out.BundlePath 'groups.json')); $N4 = @(& $Norm (Join-Path $Raw 'all\groups.json'))
+Write-OerLiveStep "with each members list sorted: 666a4c7 run 1 equals 666a4c7 run 2: $(-not (Compare-Object $N1 $N2 -SyncWindow 0)); 666a4c7 run 1 equals this branch (2.4): $(-not (Compare-Object $N1 $N4 -SyncWindow 0)); 666a4c7 run 2 equals this branch (2.4): $(-not (Compare-Object $N2 $N4 -SyncWindow 0))"
+Write-S107bOwn -Records $ExErr -Command 'Export-OERInventory'
+Write-S107bRequests
+Disconnect-OerLive
+```
+
+**Expect:** the module loaded from the kept build; the first comparison may be `False` (Graph lists
+members in no fixed order); with each members list sorted all three comparisons `True`; reads only.
+**Failure looks like:** a sorted comparison `False` (a real difference in content), or a write.
+
+Result:
 ## 3. The apply engine on a cloud group (D, G8)
 
 ### 3.1. The exported document of the step's group converges: Unchanged twice
