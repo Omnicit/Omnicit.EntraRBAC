@@ -515,11 +515,12 @@ Transport is detected from `CommandAst.GetCommandName()`, **never a text grep**:
 ownership scan uses too, so the two gates cannot disagree about what a transport call is: a
 module-qualified name (`Microsoft.PowerShell.Utility\Invoke-RestMethod`), `irm` for
 `Invoke-RestMethod`, and `iwr`, `curl` or `wget` for `Invoke-WebRequest` mark a file as reaching
-transport, in any letter case, and a known-answer `It` holds the resolver to each of them -- the
-resolver itself: no file under `source/` calls a transport command by an alias or a module-qualified
-name, so the real tree holds no positive control of the scan's own use of it. Before,
-gate 2 matched the literal name only, so `irm` in a file whose catch did not scrub passed it. The
-census did not move: 151 transport-reaching files and 408 catches, before and after. What it still
+transport, in any letter case. A known-answer `It` runs Pass 1's own test,
+`Test-OERCallsTransportDirectly`, on parsed miniatures of each shape, checks that Pass 1 classified
+every source file through it, and holds the resolver to each name; no file under `source/` calls a
+transport command by an alias or a module-qualified name, so those miniatures are the scan's only
+positive control. Before, gate 2 matched the literal name only, so `irm` in a file whose catch did
+not scrub passed it. The census did not move: 151 transport-reaching files and 408 catches, before and after. What it still
 does not see: a command name built at run time, any other alias, and a module-qualified call of a
 module function outside the transport set (`Omnicit.EntraRBAC\Resolve-OERGroupId`), which creates
 no call edge, since the closure below matches a module function's literal name only.
@@ -696,7 +697,9 @@ step 10 (BL-93) a shorter prefix of it written as a key of a hashtable splatted 
 an abbreviated parameter: a key the calling function writes into the splat variable as a hashtable
 literal (`$P = @{ Recl = $true }`, or `+=`), by a member or an index assignment, or with `.Add`. And
 no file under `source/` may call `Connect-OER`, which passes the switch on its own, so a call of it is
-a second reclaim caller that no name scan sees. A known-answer table of twenty-six miniatures runs the
+a second reclaim caller that no name scan sees. Parsed miniatures run the scan's own function,
+`Get-OERConnectOerCallerReport`, with exact counts, since the real tree has no caller. A known-answer
+table of twenty-six miniatures runs the
 name and splat-key scans in every run, and the splat-key scan must read more than 85 splatted
 `Initialize-OERAuth` calls and 100 keys written into them on the real tree (92 and 114 when it was
 written). A pairing rule, read from
@@ -3357,9 +3360,11 @@ that step (A13) a renewal of the Graph token carries the cached ARM token only f
 token's tenant -- both under
 [Requested tenant vs granted tenant](#requested-tenant-vs-granted-tenant). One tenant named by GUID
 on one command and by domain on another, or not named at all, is then ONE identity to the
-supersession gate and to the snapshot, and P18 below pins the measured pipeline sending. What did not
-change is the session cache, still keyed on the tenant as named: a command that names its tenant
-differently from the session inherits nothing from it and signs in again, with the default
+supersession gate and to the snapshot, and P18 and P18c below pin the measured pipeline sending --
+P18 for a tenant named by its ID on one command and by its domain on the other, P18c for the command
+that names no tenant. What did not change is the session cache, still keyed on the tenant as named:
+a command that names its tenant differently from the session inherits nothing from it and signs in
+again, with the default
 interactive method when it names no credential -- on an app-only session, a browser prompt, and then
 an identity that differs in its method, which the gate does refuse. So the rule to name the tenant
 explicitly and consistently (the README's Sovereign Clouds section, the about topic's SOVEREIGN
@@ -4185,7 +4190,8 @@ a script with no `try`, for two documents piped to `Invoke-OERStructure -WhatIf`
 from a process that holds no session: the first document's token call fails, the one token call made
 is that one, the second document's sign-in is refused for the uncertain session before any token
 call, nothing connects, and neither document's group read is sent. H4, the same pipeline with
-`-TenantId`, is its control: there the second document signs in again and is applied.
+`-TenantId`, is its control: there the second document signs in again, reads its group and is
+planned (`would create`), since H4 runs under `-WhatIf` too and nothing is applied.
 Mutation-proved on a copy of the built module: the condition of the session-uncertain refusal made
 `$false` turns H13 red -- the second document signs in, connects, reads its group and plans its
 creation -- and leaves H4 green.
@@ -5287,8 +5293,8 @@ publish happens on a runner, from a verified artefact, or it does not happen.
 
 `GitVersion.yml` runs `mode: ContinuousDelivery`, and in that mode the preview counter does NOT
 advance per commit -- it advances when a tag gives the next build a new base. Two merges in a row
-with no tag between them therefore compute the SAME version, and the second publish is refused by
-the Gallery.
+with no tag between them therefore compute the SAME version, and the second run's publish step finds
+it already on the Gallery and skips the upload, since a version cannot be published twice.
 
 Measured on 2026-09-22 with GitVersion 5.12.0 -- the release CI pins -- in a throwaway clone of
 this repository, starting from `main` at `838c55f` with `v1.0.0` reachable:
@@ -7040,8 +7046,9 @@ decide what a failed request is, and fourteen places to drift apart on case, on 
 twelve cmdlets and the two waits all ask it.
 
 What holds that is the cohort check in `tests/Unit/Private/Test-OERScheduleRequestFailed.Tests.ps1`,
-and only that much of it: the twelve cmdlet files call the owner, and no other file under `source/`
-compares a status to a `Failed` literal in the shapes the check scans, which are a status-named
+and only that much of it: every cmdlet under `source/Public` with a string that matches
+`ScheduleRequests` calls the owner (the twelve senders of BL-33, today), and no other file under
+`source/` compares a status to a `Failed` literal in the shapes the check scans, which are a status-named
 operand against a literal that starts with `Failed`, in either order, with `-eq`, `-ne`, `-like`,
 `-notlike`, `-match` or `-notmatch` (and their case-sensitive and explicitly case-insensitive forms).
 A comparison written in another shape, such as `-in`, `-contains`, a `switch`, `StartsWith` or a
@@ -7049,6 +7056,16 @@ pattern anchored with a caret, is not seen by it and stays a matter for review. 
 hold that the two engine waits call the owner. The behaviour tests in
 `tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` do, by driving each wait with `FAILED` and
 `FailedAsResourceIsLocked` answers.
+
+Until Sprint 10 step 10 (BL-99) the twelve were a hand-kept list, so a thirteenth sender was held
+only if someone added it. The cohort is now derived from the files, and the twelve known senders are
+kept by hand once, as a control: the derived set must still contain every one of them, so a
+derivation that stops matching cannot shrink the cohort and leave the checks green on the smaller
+set. The derivation does NOT see a path assembled at run time from pieces, a path held in a Private
+helper (`Send-OERNewGroupEligibilityRequest` is one) or a file outside `source/Public`. It can also be
+too wide: a cmdlet that only reads a schedule request resource would join the cohort and fail the
+owner check, and the repair is then to narrow the derivation to senders, never to hand-list an
+exemption.
 
 **The engine's two waits.** They are the replication waits of `Sync-OERStructureGroup` for a group
 created in the same run, where Graph can take an eligibility request and fail it at once because the
@@ -7321,9 +7338,18 @@ access type, that value stands in for the read's: true plans no warning, false p
 policy is listed (R10). Whether the policy is listed always comes from the read. Once the warning is
 planned for an access type, that access type counts as open, so a later permanent entry of it plans
 none: in a real run the first entry's `Add-OERGroupEligibility` opens the policy and the later ones
-find it open (R11). Each access type is decided on its own. The plan assumes the open succeeds; if it
-fails (`PolicyOpenFailed`), a real run warns again for the next entry of that access type, which the
-plan cannot know.
+find it open (R11). Each access type is decided on its own. A read that fails or lists no policy
+plans no warning and records nothing, so the next entry of that access type is decided by its own
+read, as the real run's next `Add-OERGroupEligibility` is. The record belongs to one group item: the
+handler is called once per item, so a second group's policy is decided by its own read. The plan
+assumes the open succeeds; if it fails (`PolicyOpenFailed`), a real run warns again for the next
+entry of that access type, which the plan cannot know. The Context `a permanent eligibility after
+step 4 of the same item changes the permanent-eligibility setting` in
+`tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` holds R10 and R11 as plan and real run from one
+live state: a step-4 change of either access type, several entries of one access type, entries of
+both access types in either order, a first entry whose policy read fails or lists no policy, and two
+group items of one document through `Invoke-OERStructure` (BL-100). It does not hold the
+`PolicyOpenFailed` divergence above, which the plan cannot know.
 
 **What the engine rule does not cover.** A handler decides from the inputs the cmdlet's warning uses,
 not from every refusal the cmdlet can make before it. Where the real cmdlet refuses first --

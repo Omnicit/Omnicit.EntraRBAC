@@ -27,6 +27,12 @@ BeforeAll {
     #      either document and the one a reader acts on. Both copies must say the same thing, word
     #      for word once formatting is normalised away.
     #
+    #   3. THE CMDLET COUNT. Every sentence in either document that says "all N cmdlets" or
+    #      "all N exported cmdlets" states N as FunctionsToExport counts it. README's introduction
+    #      said 92 while the manifest exported 98, because only the sentence under
+    #      '## Available Cmdlets' was ever kept current. The count is read from the manifest,
+    #      never kept as a second number here.
+    #
     # WHAT THIS GATE DOES NOT DO, stated so it is not mistaken for more than it is: it does not bind
     # the prose around either structure. The SOVEREIGN CLOUDS, TENANT PROFILE and PERMISSIONS
     # sections are deliberately rewritten for their medium and are NOT held equal -- measured, they
@@ -421,6 +427,29 @@ Describe 'README and about topic stay in step' -Tags 'helpQuality' {
 
         $Total | Should -Be $script:ExportedNames.Count -Because (
             'the cohort counts partition the exported set, so they must sum to FunctionsToExport ({0}); they sum to {1}' -f $script:ExportedNames.Count, $Total)
+    }
+
+    It 'Should state the number of exported cmdlets as the manifest counts them, in README and the about topic' {
+        <#
+            README's introduction said "All 92 cmdlets" while the manifest exported 98: the count
+            under '## Available Cmdlets' was kept current and this one was not, and nothing bound
+            either to the manifest. This reads EVERY "all N cmdlets" / "all N exported cmdlets"
+            sentence in each whole document, not one section, and holds N to FunctionsToExport.
+
+            It does NOT see a count written another way ("98 cmdlets" with no "all", a spelled-out
+            number, or a count in a table cell), and it reads no file but these two. The two floors
+            below keep it from passing over documents it has stopped matching in.
+        #>
+        $Pattern = '(?i)\ball\s+(\d+)\s+(?:exported\s+)?cmdlets\b'
+        $Readme = [regex]::Matches((Get-Content -LiteralPath $script:ReadmePath -Raw), $Pattern)
+        $About = [regex]::Matches((Get-Content -LiteralPath $script:AboutPath -Raw), $Pattern)
+
+        $Readme.Count | Should -BeGreaterOrEqual 2 -Because 'README states the count in its introduction and under Available Cmdlets; fewer matches means the pattern stopped matching'
+        $About.Count | Should -BeGreaterOrEqual 1 -Because 'the about topic states the count in its LONG DESCRIPTION; zero means the pattern stopped matching'
+
+        foreach ($Match in @($Readme) + @($About)) {
+            [int]$Match.Groups[1].Value | Should -Be $script:ExportedNames.Count -Because ('every sentence that states how many cmdlets the module exports must equal FunctionsToExport: "{0}"' -f $Match.Value)
+        }
     }
 
     It 'Should give the same tenant-switch verdict for every sign-in type in both documents' {

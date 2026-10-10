@@ -177,7 +177,8 @@ addresses and credentials out of every tracked file under `docs/`, `specs/`, `so
 the placeholder register in `docs/live-verification/README.md`, failing on a register at odds
 with itself or a placeholder used without a row; and also checks that tracked Markdown under
 `docs/`, `specs/`, `README.md` and `CHANGELOG.md` holds no angle bracket GitHub would render as a tag),
-`docsync.tests.ps1` (binds `README.md` to the about topic), and `testhygiene.tests.ps1` (every unit
+`docsync.tests.ps1` (binds `README.md` to the about topic, and both to the manifest's cmdlet
+count), and `testhygiene.tests.ps1` (every unit
 test file that imports the module installs, checks and uninstalls the transport tripwire; read
 statically, importing nothing).
 
@@ -226,9 +227,13 @@ its own "names every exported cmdlet" check, but both matched the whole FILE, so
 only in a Quick Start snippet passed while missing from the roster. This gate scopes the roster to
 `## Available Cmdlets` and `COMMAND COHORTS`, checks each `### Cohort (N)` count against the cmdlets
 that cohort is the FIRST to name, and requires the two documents to agree word for word on the
-tenant-switch verdict per sign-in type and on the device-code known limitation. It deliberately does
-NOT bind the surrounding prose -- the sovereign-cloud, tenant-profile and permissions sections are
-rewritten per medium on purpose.
+tenant-switch verdict per sign-in type and on the device-code known limitation. It also holds every
+sentence in either whole document that says "all N cmdlets" or "all N exported cmdlets" -- README's
+introduction and `## Available Cmdlets`, the about topic's LONG DESCRIPTION -- to the count of
+`FunctionsToExport`, with a floor on the matches so a reworded sentence cannot make it vacuous; a
+count written another way ("98 cmdlets" with no "all", a spelled-out number) is not seen. It
+deliberately does NOT bind the surrounding prose -- the sovereign-cloud, tenant-profile and
+permissions sections are rewritten per medium on purpose.
 
 **Test files named after no single function.** Ten cross-cutting suites exist. Do **NOT** delete
 any of them as an orphan when auditing the one-test-file-per-function invariant:
@@ -355,8 +360,10 @@ publish it.
   that never reports stays Pending forever.
 - **The publish job tags every publish, and the tag is load-bearing.** `GitVersion.yml` runs
   `mode: ContinuousDelivery`, where the preview counter advances on a TAG and not per commit:
-  measured, two merges with no tag between them build the SAME version and the second publish is
-  refused by the Gallery. `Why: docs/development/rationale.md#publish-on-merge`
+  measured, two merges with no tag between them build the SAME version: the second run finds that
+  version already on the Gallery and skips its publish, since a version cannot be published twice,
+  and its tag step tags it only when its tested build is the package already there (below).
+  `Why: docs/development/rationale.md#publish-on-merge`
 - **The tag step tags only the commit whose tested build IS the package on the Gallery (A16,
   BL-114).** On every run but a `v` tag run it first runs `PublishArtefact.ps1 -Compare`, which
   reads the package back with `Save-PSResource` and compares it with the run's tested artefact,
@@ -1034,9 +1041,15 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `AssignmentRequestFailed` (active assignment, activation and deactivation requests), so a caller
   under `-ErrorAction Stop` still receives the object. Never compare a status to a `Failed` literal
   anywhere else. The cohort check in `tests/Unit/Private/Test-OERScheduleRequestFailed.Tests.ps1`
-  holds that the twelve cmdlet files call the owner and that no other file under `source/` compares a
-  status to a `Failed` literal in the shapes it scans; it does NOT hold the two engine waits, whose
-  behaviour tests in `tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` do.
+  derives its cohort from the files -- every `source/Public` cmdlet with a string that matches
+  `ScheduleRequests`, the twelve above today, which are also kept as a control the derivation must
+  still find -- and holds that each of them calls the owner, and that no other file under `source/`
+  compares a status to a `Failed` literal in the shapes it scans. The derivation does NOT see a path
+  built at run time, a path held in a Private helper (`Send-OERNewGroupEligibilityRequest`) or a file
+  outside `source/Public`, and a cmdlet that only reads a schedule request resource would join the
+  cohort and fail it (narrow the derivation then, never hand-list an exemption); the check does NOT
+  hold the two engine waits, whose behaviour tests in
+  `tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` do.
   `Why: docs/development/rationale.md#failed-schedule-request`
 - **`Get-OERCloudEndpoint` is the single owner of the cloud-to-endpoint table.** Every Graph
   resource/audience, Graph service root, ARM resource/host and authority (STS) host for a sovereign
@@ -1508,7 +1521,10 @@ Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses 
 3. **If public, update the surrounding cohorts and gates the new export joins:**
    - README's `## Available Cmdlets` cohort (its `(N)` count and the "All NN exported cmdlets"
      sentence) and the about topic's `COMMAND COHORTS` entry, held against each other by
-     `docsync.tests.ps1`/`about.tests.ps1`.
+     `docsync.tests.ps1`/`about.tests.ps1`. The same number is stated twice more -- README's
+     introduction ("All NN cmdlets carry the `OER` command prefix") and the about topic's
+     LONG DESCRIPTION ("list all NN cmdlets") -- and `docsync.tests.ps1` holds all three sentences
+     to `FunctionsToExport`, so a new export moves them all.
    - A `Get-OERRequiredScopeMap` row naming the LEAST-privilege scope the new cmdlet needs, gated by
      `requiredscope.tests.ps1` -- a new Graph path may also need a new endpoint rule there.
    - A `Set-OER*` cmdlet joins `NothingToUpdate.Cohort.Tests.ps1`.
