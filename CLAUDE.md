@@ -728,6 +728,10 @@ no `-TenantId` keeps it. The `(BL-96)` Contexts of
 internal call passes `-TenantId` on only when it is set (`if ($TenantId) { ... }`), never an empty
 value -- except `Connect-OER`'s own call of `Initialize-OERAuth`, which passes `''` when neither
 `-TenantId` nor `-TenantAlias` is bound, and which `Initialize-OERAuth` reads as no tenant named.
+Gate 10 of `tests/QA/sourcehygiene.tests.ps1` holds it (BL-96) for a `-TenantId` parameter, or a
+`TenantId` key the calling function writes into a hashtable it splats, on a call of a command that
+signs in, with `Connect-OER`'s call and the two transports' refreshes as its named exemptions; what
+it cannot see is listed in `docs/development/rationale.md#static-source-gates`.
 `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 
 | Parameter set | Key parameters | Use case |
@@ -1402,7 +1406,12 @@ bug.
   new send path cannot escape the scan; and every `Initialize-OERAuth` call standing directly in
   its file's own function (in the two wrappers, in `Invoke-GraphSingle` and
   `Invoke-ArmCallWithRefresh`) and never in a nested function or a scriptblock inside it, since the
-  sign-in latch is keyed on the frame that calls it.
+  sign-in latch is keyed on the frame that calls it; and every `-TenantId` an internal call passes
+  on to a command that signs in (`Initialize-OERAuth` and every module function that reaches it) --
+  a parameter whose name is a prefix of it, or a `TenantId` key the calling function writes into a
+  hashtable it splats -- a non-empty literal or a variable written under an `if` on that same
+  variable, with `Connect-OER`'s call and the three transport refreshes as named exemptions that
+  must each match exactly one site.
   Two further gates in the
   same file check rules stated only in
   `docs/development/rationale.md` (every ARM api-version is documented under `#arm-transport`) or in

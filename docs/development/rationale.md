@@ -489,9 +489,9 @@ state. They all run off one shared `BeforeAll` that enumerates and parses the tr
 first six gates; the seventh, eighth and ninth each run their own additional parse pass, kept
 deliberately separate from that shared walk so a mistake in new detection logic cannot perturb the
 other gates' proven reachability closure or catch-clause scan. The tenth reads the command names
-that shared walk already collected for its ownership checks and the `Initialize-OERAuth` call nodes
-it keeps for its call-site check, and parses the two wrapper files again, from the text that walk
-read, for its structural check.
+that shared walk already collected for its ownership checks, the `Initialize-OERAuth` call nodes
+it keeps for its call-site check and the file trees it keeps for its tenant-forward check, and
+parses the two wrapper files again, from the text that walk read, for its structural check.
 
 **1. Encoding.** Every authored `.ps1`/`.psd1`/`.psm1`/`.ps1xml` under `source/` and `tests/` must
 be ASCII-only and carry no UTF-8 BOM. It is a byte-level check because PSScriptAnalyzer cannot do
@@ -625,8 +625,8 @@ so a matcher that stopped matching cannot pass by finding nothing to complain ab
 
 **10. Transport gate hygiene** (Sprint 8 step 4b, A18, A19 and A20; two owner lists widened in
 Sprint 9 step 2; the tenant lookup, the session-uncertain marker and the session reclaim added in
-Sprint 9 step 3; the document tenant comparison added in Sprint 9 step 6b; the reclaim splat key and
-the `Connect-OER` caller rule added in Sprint 10 step 10). The
+Sprint 9 step 3; the document tenant comparison added in Sprint 9 step 6b; the reclaim splat key,
+the `Connect-OER` caller rule and the tenant-forward rule added in Sprint 10 step 10). The
 gates that stand in front of every request -- the Graph SDK session gate in the Graph transport, and
 the sign-in latch gate and the sign-in supersession gate in both transports, all described under
 [#auth-state](#auth-state) -- are only as good as the claim that no request can go around them, and
@@ -733,6 +733,56 @@ variable (`$P += $Other`), a hashtable literal wrapped in a cast or `[ordered]`,
 the splat variable outside the function that calls `Initialize-OERAuth`, a key that reaches the
 splat through parameter binding (a parameter named with a prefix of the switch, forwarded with
 `@PSBoundParameters`), or a call of `Connect-OER` through a name built at run time.
+
+**The tenant-forward rule** (Sprint 10 step 10, BL-96), held until then by review alone. An internal
+call passes `-TenantId` on to a command that signs in only when it is set (CLAUDE.md, A10):
+`Initialize-OERAuth` reads an empty `-TenantId` as no tenant named and acts on the current session's
+tenant, and every public `-TenantId` but `Connect-OER`'s carries `[ValidateNotNullOrEmpty()]`, which
+stops the cmdlet at binding. The commands that sign in are `Initialize-OERAuth` and every module
+function that calls it, by a name that resolves to it (module-qualified included), or that reaches
+such a function along the shared walk's call edges -- found by the same kind of boolean fixed point
+that decides which files reach transport, and 150 of the module's 282 functions when the rule was
+written. A site is a parameter whose name is a prefix of `TenantId` on a call of one of them
+(`-TenantId`, `-Tenant`, `-TenantId:$X`; no shorter prefix stood on any such call when it was
+measured), or a `TenantId` key, in any letter case, that the call's own function writes into a
+variable it splats into the call, in the four shapes `Find-OERSplatKeyWrite` reads for the reclaim
+rule: a member or an index assignment, a hashtable literal assigned with `=` or `+=`, and `.Add`. A
+site is guarded when its value is a non-empty string literal, or a variable and the site lies in the
+body of an `if` or `elseif` clause -- never an `else` -- whose condition is that variable alone, at any
+depth: `if ($TenantId) { $AuthParams.TenantId = $TenantId }`. Any other site is a violation unless
+an exemption names it by its file, its splat variable and the exact text of its value, and each of
+the four exemptions must match exactly one site, so none can cover a second site of its file or
+outlive the code it names. `Connect-OER`'s `@AuthParams` with `$ResolvedTenant` is the documented exception: it
+is empty only when neither `-TenantId` nor `-TenantAlias` is bound, since a bound blank `-TenantId`
+is refused with `InvalidTenantId` and `Get-OERConfiguration` returns a profile only when its
+`TenantId` is set. The three transport refreshes -- the Graph claims step-up's `@ClaimsParams` with
+`$TenantId`, assigned from the state's tenant label directly above it, and the Graph and ARM
+`@RefreshParams` with `$script:_OERAuthState.TenantId` -- renew the session's own sign-in with the
+state's tenant label, which a state `Initialize-OERAuth` built never holds empty (the tenant named,
+the label of the session it inherited, or `organizations`). The two `@RefreshParams` refreshes run
+only with a state; the claims step-up has no state check of its own, and with no state it would pass
+`$null`, read as no tenant named, for a request sent on a call stack where no command has signed in
+or been refused a sign-in, since the latch and supersession gates refuse every other request made
+with no state. On the real tree the rule judged 97 sites in 94 files when it was written, every one
+a splatted `TenantId` key, and its non-vacuity is asserted as more than 80 commands that sign in and
+more than 80 sites, `Invoke-OERStructure.ps1` among the files with a site, every file that calls
+`Initialize-OERAuth` among the files read, and `ConvertTo-OERInventory`, which takes a `-TenantId`
+of its own and signs in nowhere, outside the set. A known-answer table of twenty miniatures runs
+the checker in every run, each with the sites and violations it must report: every write shape
+unguarded (a member, an index, a hashtable literal with `=` and with `+=`, and `.Add`) and the member
+write guarded, a direct parameter guarded and not, the colon form, an abbreviated parameter, a
+literal tenant and an empty one, a guard on another variable, a write in an `else`, a public cmdlet
+and a private helper that sign in, a module-qualified call, and three shapes that are no site at
+all. Its limits: it judges the variable a guard tests, not what was assigned to it, so a variable
+reassigned between the `if` and the write passes, and an exemption names the text of its value, not
+where a variable it names got its value; it cannot see a splat built outside the function that
+calls the command (in another function, or handed in as a parameter), a key merged in from another
+variable (`$A += $Other`), a hashtable literal wrapped in a cast or `[ordered]`, a key or a
+parameter name built at run time, an abbreviated key in a splat (`@{ Tenant = $T }`; an abbreviated
+parameter is seen), a tenant forwarded with `@PSBoundParameters` or `@args`, or a call through a
+name built at run time; and a function that reaches a sign-in only through a module-qualified call
+of another module function gets no call edge for that call, so the fixed point leaves it out of the
+set.
 
 Every gate asserts its own non-vacuity (per-root file counts, named control files, catch-clause and
 token counts, region-content checks) so a detection bug fails loudly instead of passing over an
@@ -4050,7 +4100,9 @@ cleared the marker. The two halves of the rule split on where the refusal must s
   `ConvertTo-OERTenantConfiguration`. The one deliberate exception is `Connect-OER`, which always
   passes `TenantId` to `Initialize-OERAuth`, as `''` when neither `-TenantId` nor `-TenantAlias` is
   bound: `Initialize-OERAuth` reads emptiness, not presence, as "no tenant named", and that is the
-  case A12 leaves as it was. Nothing machine-checks the forwarding; the cohort below holds the
+  case A12 leaves as it was. Since Sprint 10 step 10 (BL-96) gate 10 of
+  [#static-source-gates](#static-source-gates) machine-checks the forwarding, with `Connect-OER`'s
+  call and the three transport refreshes as its named exemptions; the cohort below holds the
   attribute, which fails closed at binding whatever a caller forwards.
 
 `tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds the rule from the source: it reads every
