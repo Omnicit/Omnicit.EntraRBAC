@@ -253,7 +253,7 @@ function Get-S108KeptNames {
 
 ### S.1. The module loads from this branch's build, and the 9761434 build is kept
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch; the main clone is on `main`, never switched; the kept `9761434` build carries none of this branch's changes.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch; the main clone is on `main`, never switched; the kept `9761434` build carries none of this branch's changes.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -278,13 +278,28 @@ this branch: 4 of 4`; `9761434 build: ... marks of this branch: 0 of 4`.
 **Failure looks like:** `False` on the first line (`OER_LIVE_REPO` unset), fewer than 4 marks in this
 branch's build (build it first, never while the gate runs), or any mark in the `9761434` build.
 
-Result: not yet run.
+Result: 2026-10-10 06:07 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree on this branch at 9d98406 with 0 tracked changes; this branch's build carries all 4 marks of the change, the kept build of 9761434 none of them (it was built in this worktree from 9761434's source before the branch's first commit).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s108] The module loads from a worktree that is not the main clone: True
+[oer-s108] Main clone: branch main
+[oer-s108] Worktree: branch feat/export-groups-in-large-tenants; HEAD 9d98406 docs: name the export folder in the live checklist without a placeholder; tracked changes: 0
+[oer-s108] this branch build: version 1.1.4 feat; marks of this branch: 4 of 4
+[oer-s108] 9761434 build: version 1.1.4 feat; marks of this branch: 0 of 4
+RUNNER: check S.1 exit code 0; started 2026-10-10T06:06:53Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, is app-only, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, is app-only, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -298,11 +313,32 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not
 enabled for this run; never sign in another way.
 
-Result: not yet run.
+Result: 2026-10-10 06:08 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only, certificate); identity check passed; the module is the worktree's build (1.1.4). The first two runs of this block were stopped by the runner's leak check before anything was written: it matched the tenant alias inside the module name, which OerLive keeps on purpose; the check now takes OerLive's protected strings out first and nothing else.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] The module is the worktree's build: True
+RUNNER: check 0.1 exit code 0; started 2026-10-10T06:08:21Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 0.2. The prerequisite: the user, four groups, the eligibility and the policy change, after a plan
 
-- [ ] **0.2** `Initialize-OerS108Prereq.ps1 -WhatIf` writes nothing and plans every object; the real run writes the baseline (users, groups) and creates the five objects, the memberships, the eligibility and the policy change; a second run finds every object and writes nothing.
+- [x] **0.2** `Initialize-OerS108Prereq.ps1 -WhatIf` writes nothing and plans every object; the real run writes the baseline (users, groups) and creates the five objects, the memberships, the eligibility and the policy change; a second run finds every object and writes nothing.
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS108Prereq.ps1'
@@ -320,11 +356,162 @@ changes the policy, each awaited until it is listed, exit code 0; the second rea
 object, `written to the tenant: False`, exit code 0.
 **Failure looks like:** a refusal, an exit code other than 0, or a second run that writes.
 
-Result: not yet run.
+Result: 2026-10-10 06:10 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The plan run wrote nothing (exit 0); the first real run wrote the baseline (users 23, groups 98), created oer-s108-user (disabled) and the four groups (201 each, each awaited until it resolved by name), added the five memberships (204 each, each awaited until listed), requested the member eligibility (201, Provisioned; listed at once) and changed the member policy of oer-s108-mod (200; read back as modified), exit 0; the second real run found every object and wrote nothing (written to the tenant: False), exit 0.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.2 ===
+[oer-s108] prereq run: -WhatIf
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s108\prereq-20261010-060843Z.log".
+[oer-s108] Mode: CREATE or complete. Prefix 'oer-s108-'. Objects (fixed): oer-s108-user (disabled user), oer-s108-ra (role-assignable), oer-s108-elig (eligibility), oer-s108-mod (modified policy), oer-s108-plain (plain). OerLive 1.0.3.
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] Residue: raw\residue.json holds 2 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s108] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s108-' is left.
+[oer-s108] Found: oer-s108-user exists: False; oer-s108-ra exists: False; oer-s108-elig exists: False; oer-s108-mod exists: False; oer-s108-plain exists: False
+[oer-s108] No baseline yet: it is written now, before the first write to the tenant (users 23, groups 98).
+What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s108\baseline-s108.json".
+What if: Performing the operation "Create a DISABLED test user with a random, unprinted password (Graph v1.0 POST users)" on target "oer-s108-user".
+What if: Performing the operation "Create a ROLE-ASSIGNABLE security group (Graph v1.0 POST groups: isAssignableToRole true, not mail-enabled, assigned membership)" on target "oer-s108-ra".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s108-elig".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s108-mod".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s108-plain".
+[oer-s108] No membership, eligibility or policy change: the user or a group does not exist (WhatIf).
+[oer-s108] Summary: oer-s108-user absent; oer-s108-ra absent; oer-s108-elig absent; oer-s108-mod absent; oer-s108-plain absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s108] WhatIf: nothing was created, removed or written.
+[oer-s108] Done.
+[oer-s108] prereq exit code: 0
+[oer-s108] prereq run: -Unattended
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s108] Transcript (redacted): raw\s108\prereq-20261010-060849Z.log; OerLive 1.0.3.
+[oer-s108] Mode: CREATE or complete. Prefix 'oer-s108-'. Objects (fixed): oer-s108-user (disabled user), oer-s108-ra (role-assignable), oer-s108-elig (eligibility), oer-s108-mod (modified policy), oer-s108-plain (plain). OerLive 1.0.3.
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s108] Residue: raw\residue.json holds 2 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s108] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s108-' is left.
+[oer-s108] Found: oer-s108-user exists: False; oer-s108-ra exists: False; oer-s108-elig exists: False; oer-s108-mod exists: False; oer-s108-plain exists: False
+[oer-s108] No baseline yet: it is written now, before the first write to the tenant (users 23, groups 98).
+[oer-s108] Wrote the baseline raw\s108\baseline-s108.json and read it back.
+[oer-s108] Created user oer-s108-user (disabled): 201.
+[oer-s108] Recorded the id of oer-s108-user under raw\s108 (not printed).
+[oer-s108] oer-s108-user resolves by its user principal name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s108] oer-s108-user resolves by its user principal name: not yet (read 2, 2.3 s, likely replication delay) -- reading again in 4 s.
+[oer-s108] oer-s108-user resolves by its user principal name: converged after 3 read(s), 6.3 s.
+[oer-s108] Created group oer-s108-ra: 201.
+[oer-s108] Recorded the id of oer-s108-ra under raw\s108 (not printed).
+[oer-s108] oer-s108-ra resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s108] oer-s108-ra resolves by its display name: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s108] oer-s108-ra resolves by its display name: converged after 3 read(s), 6.2 s.
+[oer-s108] Created group oer-s108-elig: 201.
+[oer-s108] Recorded the id of oer-s108-elig under raw\s108 (not printed).
+[oer-s108] oer-s108-elig resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s108] oer-s108-elig resolves by its display name: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s108] oer-s108-elig resolves by its display name: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s108] oer-s108-elig resolves by its display name: converged after 4 read(s), 14.3 s.
+[oer-s108] Created group oer-s108-mod: 201.
+[oer-s108] Recorded the id of oer-s108-mod under raw\s108 (not printed).
+[oer-s108] oer-s108-mod resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s108] oer-s108-mod resolves by its display name: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s108] oer-s108-mod resolves by its display name: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s108] oer-s108-mod resolves by its display name: converged after 4 read(s), 14.3 s.
+[oer-s108] Created group oer-s108-plain: 201.
+[oer-s108] Recorded the id of oer-s108-plain under raw\s108 (not printed).
+[oer-s108] oer-s108-plain resolves by its display name: not yet (read 1, 0 s, likely replication delay) -- reading again in 2 s.
+[oer-s108] oer-s108-plain resolves by its display name: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s108] oer-s108-plain resolves by its display name: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s108] oer-s108-plain resolves by its display name: converged after 4 read(s), 14.3 s.
+[oer-s108] Added oer-s108-user to the members of oer-s108-ra: 204.
+[oer-s108] oer-s108-user is listed in the members of oer-s108-ra: converged after 1 read(s), 0.1 s.
+[oer-s108] Added oer-s108-user to the owners of oer-s108-elig: 204.
+[oer-s108] oer-s108-user is listed in the owners of oer-s108-elig: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s108] oer-s108-user is listed in the owners of oer-s108-elig: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s108] oer-s108-user is listed in the owners of oer-s108-elig: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s108] oer-s108-user is listed in the owners of oer-s108-elig: converged after 4 read(s), 14.3 s.
+[oer-s108] Added oer-s108-user to the members of oer-s108-mod: 204.
+[oer-s108] oer-s108-user is listed in the members of oer-s108-mod: not yet (read 1, 0 s, likely replication delay) -- reading again in 2 s.
+[oer-s108] oer-s108-user is listed in the members of oer-s108-mod: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s108] oer-s108-user is listed in the members of oer-s108-mod: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s108] oer-s108-user is listed in the members of oer-s108-mod: converged after 4 read(s), 14.2 s.
+[oer-s108] Added oer-s108-user to the members of oer-s108-plain: 204.
+[oer-s108] oer-s108-user is listed in the members of oer-s108-plain: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s108] oer-s108-user is listed in the members of oer-s108-plain: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s108] oer-s108-user is listed in the members of oer-s108-plain: converged after 3 read(s), 6.2 s.
+[oer-s108] Added oer-s108-user to the owners of oer-s108-plain: 204.
+[oer-s108] oer-s108-user is listed in the owners of oer-s108-plain: not yet (read 1, 0 s, likely replication delay) -- reading again in 2 s.
+[oer-s108] oer-s108-user is listed in the owners of oer-s108-plain: converged after 2 read(s), 2.1 s.
+[oer-s108] Requested the member eligibility of oer-s108-user in oer-s108-elig: 201, status Provisioned; this onboarded the group.
+[oer-s108] the member eligibility of oer-s108-user in oer-s108-elig is listed: converged after 1 read(s), 0.5 s.
+[oer-s108] the member PIM policy of oer-s108-mod is listed: converged after 1 read(s), 2 s.
+[oer-s108] Changed the member policy of oer-s108-mod (Expiration_EndUser_Assignment maximumDuration PT4H): 200; this onboarded the group.
+[oer-s108] a member PIM policy of oer-s108-mod reads as modified: converged after 1 read(s), 0.4 s.
+[oer-s108] Summary: oer-s108-user present; oer-s108-ra present; oer-s108-elig present; oer-s108-mod present; oer-s108-plain present; written to the tenant: True.
+[oer-s108] Done.
+[oer-s108] prereq exit code: 0
+[oer-s108] prereq run: -Unattended
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s108] Transcript (redacted): raw\s108\prereq-20261010-061035Z.log; OerLive 1.0.3.
+[oer-s108] Mode: CREATE or complete. Prefix 'oer-s108-'. Objects (fixed): oer-s108-user (disabled user), oer-s108-ra (role-assignable), oer-s108-elig (eligibility), oer-s108-mod (modified policy), oer-s108-plain (plain). OerLive 1.0.3.
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s108] Residue: raw\residue.json holds 2 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s108] Found: oer-s108-user exists: True; oer-s108-ra exists: True; oer-s108-elig exists: True; oer-s108-mod exists: True; oer-s108-plain exists: True
+[oer-s108] The baseline exists (users 23, groups 98 when it was written).
+[oer-s108] User oer-s108-user exists.
+[oer-s108] Group oer-s108-ra exists.
+[oer-s108] Group oer-s108-elig exists.
+[oer-s108] Group oer-s108-mod exists.
+[oer-s108] Group oer-s108-plain exists.
+[oer-s108] oer-s108-user is in the members of oer-s108-ra already.
+[oer-s108] oer-s108-user is in the owners of oer-s108-elig already.
+[oer-s108] oer-s108-user is in the members of oer-s108-mod already.
+[oer-s108] oer-s108-user is in the members of oer-s108-plain already.
+[oer-s108] oer-s108-user is in the owners of oer-s108-plain already.
+[oer-s108] The member eligibility of oer-s108-user in oer-s108-elig exists.
+[oer-s108] the member PIM policy of oer-s108-mod is listed: converged after 1 read(s), 0.4 s.
+[oer-s108] The member policy of oer-s108-mod already has maximumDuration PT4H.
+[oer-s108] Summary: oer-s108-user present; oer-s108-ra present; oer-s108-elig present; oer-s108-mod present; oer-s108-plain present; written to the tenant: False.
+[oer-s108] Done.
+[oer-s108] prereq exit code: 0
+RUNNER: check 0.2 exit code 0; started 2026-10-10T06:08:41Z; took 121 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 0.3. The step groups read as the export will see them
 
-- [ ] **0.3** Read through the module: `oer-s108-ra` is role-assignable; `oer-s108-elig` has one PIM eligibility; `oer-s108-mod` has none and `Test-OERGroupPimInUse` finds it in use (a modified policy); `oer-s108-plain` has none and is not found in use; each has one member or owner as the prerequisite made it.
+- [x] **0.3** Read through the module: `oer-s108-ra` is role-assignable; `oer-s108-elig` has one PIM eligibility; `oer-s108-mod` has none and `Test-OERGroupPimInUse` finds it in use (a modified policy); `oer-s108-plain` has none and is not found in use; each has one member or owner as the prerequisite made it.
 
 ```powershell
 Connect-OerLive -Arm
@@ -345,13 +532,37 @@ in use True (a PIM policy of the group has been modified)`; `oer-s108-plain: ...
 **Failure looks like:** another shape: the export's decisions below would then not be the ones this
 checklist expects (run 0.2 again, or wait for the listings to settle).
 
-Result: not yet run.
+Result: 2026-10-10 06:11 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Each step group reads as the checklist needs: oer-s108-ra role-assignable with 1 member, not in use; oer-s108-elig with 1 owner and 1 PIM eligibility, in use (eligibility); oer-s108-mod with 1 member, no eligibility, in use (a modified policy); oer-s108-plain with 1 member and 1 owner, no eligibility, not in use.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.3 ===
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] oer-s108-ra: role-assignable True; members 1; owners 0; PIM eligibility 0; PIM in use False (no PIM policy of the group has been modified and no PIM eligibility was counted)
+[oer-s108] oer-s108-elig: role-assignable False; members 0; owners 1; PIM eligibility 1; PIM in use True (the group has PIM eligibility)
+[oer-s108] oer-s108-mod: role-assignable False; members 1; owners 0; PIM eligibility 0; PIM in use True (a PIM policy of the group has been modified)
+[oer-s108] oer-s108-plain: role-assignable False; members 1; owners 1; PIM eligibility 0; PIM in use False (no PIM policy of the group has been modified and no PIM eligibility was counted)
+RUNNER: check 0.3 exit code 0; started 2026-10-10T06:10:58Z; took 9 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 1. The default export: the same document, fewer requests (A, B)
 
 ### 1.1. Export with the 9761434 build (the reference)
 
-- [ ] **1.1** `Export-OERInventory -Include Groups` with the kept `9761434` build writes a bundle under `raw\s108\before\` and a request log; every group is read in full.
+- [x] **1.1** `Export-OERInventory -Include Groups` with the kept `9761434` build writes a bundle under `raw\s108\before\` and a request log; every group is read in full.
 
 ```powershell
 Import-S108Before
@@ -372,11 +583,44 @@ groups in `inventory.json` and `oer-s108-plain` not; token requests 0.
 **Failure looks like:** an `InventoryPartial` (record which read failed), a token request, or a step
 group decided otherwise than 0.3 predicts.
 
-Result: not yet run.
+Result: 2026-10-10 06:13 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With the kept 9761434 build, Export-OERInventory -Include Groups wrote 14 groups in inventory.json and a roster of 102 rows; IncompleteReads 0; no own error; no token request. The request log holds 613 requests: 5 owned by no group (the group list, the roster, principal-name lookups), 116 for the 14 kept groups (6 to 12 each) and 492 for the 82 groups not kept, exactly 6 each (members 2, owners 2, eligibility 1, criterion 1). oer-s108-plain cost 6; the three kept step groups are in inventory.json and oer-s108-plain is not.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s108] module loaded from the kept 9761434 build: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] groups mapped for the request log: 102
+[oer-s108] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+[oer-s108] request log: 613 line(s) written to raw\s108\requests-before.log; token requests: 0
+[oer-s108] bundle before: groups 14; roster 102; IncompleteReads 0; warnings 0
+[oer-s108] Export-OERInventory own errors: 0
+[oer-s108] before: requests owned by no group: 5
+[oer-s108] before: kept groups: 14 group(s), 116 request(s), per group 6 to 12
+[oer-s108] before: groups not kept: 82 group(s), 492 request(s), per group 6 to 6
+[oer-s108] before: oer-s108-ra: 6 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 0, policy rules 0, other 0)
+[oer-s108] before: oer-s108-elig: 11 request(s) (members 2, owners 2, eligibility 1, criterion 0, policy ids 4, policy rules 2, other 0)
+[oer-s108] before: oer-s108-mod: 12 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 4, policy rules 2, other 0)
+[oer-s108] before: oer-s108-plain: 6 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 0, policy rules 0, other 0)
+[oer-s108] the step's kept groups are in inventory.json: 3 of 3; oer-s108-plain is not: True
+RUNNER: check 1.1 exit code 0; started 2026-10-10T06:11:19Z; took 135 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.2. Export with this branch: the same groups and content, two requests per group not kept, the roster count null for them
 
-- [ ] **1.2** `Export-OERInventory -Include Groups` with this branch writes a `groups.json` equal entry for entry to 1.1's once each members, owners and eligibility list is sorted; `inventory.json` keeps the same groups; every group not kept costs exactly 2 requests (eligibility 1, criterion 1) and every kept group as many as in 1.1; `groupsRoster.json` equals 1.1's except that `memberCount` is null for every group not kept.
+- [x] **1.2** `Export-OERInventory -Include Groups` with this branch writes a `groups.json` equal entry for entry to 1.1's once each members, owners and eligibility list is sorted; `inventory.json` keeps the same groups; every group not kept costs exactly 2 requests (eligibility 1, criterion 1) and every kept group as many as in 1.1; `groupsRoster.json` equals 1.1's except that `memberCount` is null for every group not kept.
 
 ```powershell
 Connect-OerLive -Arm
@@ -412,13 +656,52 @@ group not kept read in full; a kept group read differently. A group created or c
 process between 1.1 and 1.2 shows as a difference: run 1.1 and 1.2 again back to back before calling
 it a failure.
 
-Result: not yet run.
+Result: 2026-10-10 06:15 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With this branch, Export-OERInventory -Include Groups wrote the same 14 groups; groups.json equals 9761434's entry for entry once each members, owners and eligibility list is sorted, and inventory.json keeps the same groups. Requests fell from 613 to 285: the 82 groups not kept cost exactly 2 each now (eligibility 1, criterion 1; 164 requests against 492 before), the 14 kept groups cost exactly what they cost before (116), and the 5 shared requests are unchanged. The roster has the same 102 rows, equal apart from memberCount, which is equal for every kept group and null now for all 82 groups not kept (each had a number before); oer-s108-plain went from 1 to null. IncompleteReads 0, no own error, no token request. The whole block took 106 s against 1.1's 135 s (sign-in included).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2 ===
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] groups mapped for the request log: 102
+[oer-s108] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+[oer-s108] request log: 285 line(s) written to raw\s108\requests-after.log; token requests: 0
+[oer-s108] bundle after: groups 14; roster 102; IncompleteReads 0; warnings 0
+[oer-s108] Export-OERInventory own errors: 0
+[oer-s108] groups.json equals 9761434's entry for entry, each list sorted: True (14 and 14)
+[oer-s108] inventory.json keeps the same groups: True
+[oer-s108] after: requests owned by no group: 5
+[oer-s108] after: kept groups: 14 group(s), 116 request(s), per group 6 to 12
+[oer-s108] after: groups not kept: 82 group(s), 164 request(s), per group 2 to 2
+[oer-s108] after: oer-s108-ra: 6 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 0, policy rules 0, other 0)
+[oer-s108] after: oer-s108-elig: 11 request(s) (members 2, owners 2, eligibility 1, criterion 0, policy ids 4, policy rules 2, other 0)
+[oer-s108] after: oer-s108-mod: 12 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 4, policy rules 2, other 0)
+[oer-s108] after: oer-s108-plain: 2 request(s) (members 0, owners 0, eligibility 1, criterion 1, policy ids 0, policy rules 0, other 0)
+[oer-s108] every group not kept costs exactly 2 requests now: True (82 groups; before 492 requests, now 164)
+[oer-s108] every kept group costs what it cost before: True
+[oer-s108] roster: rows 102 and 102; every row equal apart from memberCount: True
+[oer-s108] roster: memberCount equal for every kept group: True; null now for every group not kept: True (82); a number before for 82 of them
+[oer-s108] oer-s108-plain memberCount: before 1, now null
+RUNNER: check 1.2 exit code 0; started 2026-10-10T06:13:52Z; took 106 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 2. -AllGroupsDetailed reads as before
 
 ### 2.1. Every group in detail with the 9761434 build (the reference)
 
-- [ ] **2.1** `Export-OERInventory -Include Groups -AllGroupsDetailed` with the kept `9761434` build writes `raw\s108\before-all\` and a request log.
+- [x] **2.1** `Export-OERInventory -Include Groups -AllGroupsDetailed` with the kept `9761434` build writes `raw\s108\before-all\` and a request log.
 
 ```powershell
 Import-S108Before
@@ -434,11 +717,43 @@ Disconnect-OerLive
 group in `inventory.json`; token requests 0.
 **Failure looks like:** an `InventoryPartial`, or a token request.
 
-Result: not yet run.
+Result: 2026-10-10 06:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With the kept 9761434 build, Export-OERInventory -Include Groups -AllGroupsDetailed wrote all 96 security groups and a roster of 102 rows; IncompleteReads 0; no own error; no token request; 613 requests (5 shared, 608 for the 96 groups, 6 to 12 each).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s108] module loaded from the kept 9761434 build: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] groups mapped for the request log: 102
+[oer-s108] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+[oer-s108] request log: 613 line(s) written to raw\s108\requests-before-all.log; token requests: 0
+[oer-s108] bundle before-all: groups 96; roster 102; IncompleteReads 0; warnings 0
+[oer-s108] Export-OERInventory own errors: 0
+[oer-s108] before-all: requests owned by no group: 5
+[oer-s108] before-all: kept groups: 96 group(s), 608 request(s), per group 6 to 12
+[oer-s108] before-all: groups not kept: 0 group(s)
+[oer-s108] before-all: oer-s108-ra: 6 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 0, policy rules 0, other 0)
+[oer-s108] before-all: oer-s108-elig: 11 request(s) (members 2, owners 2, eligibility 1, criterion 0, policy ids 4, policy rules 2, other 0)
+[oer-s108] before-all: oer-s108-mod: 12 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 4, policy rules 2, other 0)
+[oer-s108] before-all: oer-s108-plain: 6 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 0, policy rules 0, other 0)
+RUNNER: check 2.1 exit code 0; started 2026-10-10T06:15:56Z; took 116 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.2. Every group in detail with this branch: the same document and the same requests per group
 
-- [ ] **2.2** `Export-OERInventory -Include Groups -AllGroupsDetailed` with this branch writes a `groups.json` equal entry for entry to 2.1's (lists sorted), a roster equal row for row, and costs each group as many requests as 2.1.
+- [x] **2.2** `Export-OERInventory -Include Groups -AllGroupsDetailed` with this branch writes a `groups.json` equal entry for entry to 2.1's (lists sorted), a roster equal row for row, and costs each group as many requests as 2.1.
 
 ```powershell
 Connect-OerLive -Arm
@@ -464,13 +779,48 @@ Disconnect-OerLive
 own error, token requests 0.
 **Failure looks like:** any difference: `-AllGroupsDetailed` must read and write exactly as before.
 
-Result: not yet run.
+Result: 2026-10-10 06:20 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With this branch, Export-OERInventory -Include Groups -AllGroupsDetailed wrote the same 96 groups: groups.json equals 9761434's entry for entry (lists sorted), the roster equals it row for row (every memberCount present), and every group cost exactly what it cost before (613 requests in all, 608 for the 96 groups). IncompleteReads 0, no own error, no token request.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.2 ===
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] groups mapped for the request log: 102
+[oer-s108] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+[oer-s108] request log: 613 line(s) written to raw\s108\requests-after-all.log; token requests: 0
+[oer-s108] bundle after-all: groups 96; roster 102; IncompleteReads 0; warnings 0
+[oer-s108] Export-OERInventory own errors: 0
+[oer-s108] groups.json equals 9761434's entry for entry, each list sorted: True (96 and 96)
+[oer-s108] roster equals 9761434's row for row: True
+[oer-s108] after-all: requests owned by no group: 5
+[oer-s108] after-all: kept groups: 96 group(s), 608 request(s), per group 6 to 12
+[oer-s108] after-all: groups not kept: 0 group(s)
+[oer-s108] after-all: oer-s108-ra: 6 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 0, policy rules 0, other 0)
+[oer-s108] after-all: oer-s108-elig: 11 request(s) (members 2, owners 2, eligibility 1, criterion 0, policy ids 4, policy rules 2, other 0)
+[oer-s108] after-all: oer-s108-mod: 12 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 4, policy rules 2, other 0)
+[oer-s108] after-all: oer-s108-plain: 6 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 0, policy rules 0, other 0)
+[oer-s108] every group costs what it cost before: True (96 groups)
+RUNNER: check 2.2 exit code 0; started 2026-10-10T06:18:11Z; took 131 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 3. -GroupFilter narrows and never widens (C)
 
 ### 3.0. What Graph answers for a composed filter with an `or` (a read, no export)
 
-- [ ] **3.0** One Graph read of the groups with the filter the export composes from `startswith(displayName,'oer-s108-')) or (securityEnabled eq false`: its status, and how many groups it lists that are not security-enabled.
+- [x] **3.0** One Graph read of the groups with the filter the export composes from `startswith(displayName,'oer-s108-')) or (securityEnabled eq false`: its status, and how many groups it lists that are not security-enabled.
 
 ```powershell
 Connect-OerLive -Arm
@@ -487,11 +837,32 @@ group that is not security-enabled (the filter widened the read, which is what 3
 nothing, and the post-read check is class B).
 **Failure looks like:** a 401 or 403 (STOP).
 
-Result: not yet run.
+Result: 2026-10-10 06:20 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: MEASURED. Graph accepts the filter the export composes from startswith(displayName,'oer-s108-')) or (securityEnabled eq false: status 200, 10 groups listed -- the 4 step groups and 6 groups that are not security-enabled. The filter widens the READ; 3.2 shows the export keeps them out of inventory.json.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.0 ===
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] composed filter: status 200 ; groups listed 10; not security-enabled 6; step groups 4
+RUNNER: check 3.0 exit code 0; started 2026-10-10T06:20:37Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.1. A narrowing filter: only the step's groups are read, the roster stays whole
 
-- [ ] **3.1** `Export-OERInventory -Include Groups -GroupFilter "startswith(displayName,'oer-s108-')"` reads only the four step groups (the list request carries the composed filter in parentheses), keeps the three kept ones, and writes the whole roster.
+- [x] **3.1** `Export-OERInventory -Include Groups -GroupFilter "startswith(displayName,'oer-s108-')"` reads only the four step groups (the list request carries the composed filter in parentheses), keeps the three kept ones, and writes the whole roster.
 
 ```powershell
 Connect-OerLive -Arm
@@ -515,11 +886,47 @@ True`; the roster as many rows as 1.2's; `IncompleteReads 0`, no own error, no w
 **Failure looks like:** another group read or kept, a filter without the parentheses, or a roster
 narrowed by the filter.
 
-Result: not yet run.
+Result: 2026-10-10 06:21 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Export-OERInventory -Include Groups -GroupFilter startswith(displayName,'oer-s108-') sent the group list with the composed filter securityEnabled eq true and (startswith(displayName,'oer-s108-')), read only the four step groups (34 requests in all: 3 shared, 29 for the three kept groups, 2 for oer-s108-plain), kept exactly the three kept step groups in inventory.json, and wrote the whole roster (102 rows, as in 1.2). IncompleteReads 0, no own error, no warning, no token request; the block took 15 s.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.1 ===
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] groups mapped for the request log: 102
+[oer-s108] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+[oer-s108] request log: 34 line(s) written to raw\s108\requests-filter.log; token requests: 0
+[oer-s108] bundle filter: groups 3; roster 102; IncompleteReads 0; warnings 0
+[oer-s108] Export-OERInventory own errors: 0
+[oer-s108] the group list carries the composed filter: True
+[oer-s108] filter: requests owned by no group: 3
+[oer-s108] filter: kept groups: 3 group(s), 29 request(s), per group 6 to 12
+[oer-s108] filter: groups not kept: 1 group(s), 2 request(s), per group 2 to 2
+[oer-s108] filter: oer-s108-ra: 6 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 0, policy rules 0, other 0)
+[oer-s108] filter: oer-s108-elig: 11 request(s) (members 2, owners 2, eligibility 1, criterion 0, policy ids 4, policy rules 2, other 0)
+[oer-s108] filter: oer-s108-mod: 12 request(s) (members 2, owners 2, eligibility 1, criterion 1, policy ids 4, policy rules 2, other 0)
+[oer-s108] filter: oer-s108-plain: 2 request(s) (members 0, owners 0, eligibility 1, criterion 1, policy ids 0, policy rules 0, other 0)
+[oer-s108] groups read: only the step groups: True (4)
+[oer-s108] inventory.json keeps exactly the three kept step groups: True
+[oer-s108] roster rows: 102, as many as 1.2's: True
+RUNNER: check 3.1 exit code 0; started 2026-10-10T06:21:00Z; took 15 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.2. A filter that closes the parenthesis with an `or` widens nothing
 
-- [ ] **3.2** `Export-OERInventory -Include Groups -GroupFilter "startswith(displayName,'oer-s108-')) or (securityEnabled eq false"` keeps exactly the three kept step groups in `inventory.json`: a group the read returns although it is not security-enabled is left out, with one warning naming how many.
+- [x] **3.2** `Export-OERInventory -Include Groups -GroupFilter "startswith(displayName,'oer-s108-')) or (securityEnabled eq false"` keeps exactly the three kept step groups in `inventory.json`: a group the read returns although it is not security-enabled is left out, with one warning naming how many.
 
 ```powershell
 Connect-OerLive -Arm
@@ -543,13 +950,42 @@ never wider.
 **Failure looks like:** any group in `inventory.json` other than the three, or a group that is not
 security-enabled read in full.
 
-Result: not yet run.
+Result: 2026-10-10 06:21 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Graph accepted the composed filter (3.0) and returned the 4 step groups plus the 6 groups that are not security-enabled; the export left those 6 out with one warning naming the count (6), read none of them (groups read beyond the step groups: 0; 34 requests, the same as 3.1), and kept exactly the three kept step groups in inventory.json. The filter that closes the parenthesis widened the read, never the document. IncompleteReads 0, no own error, no token request.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.2 ===
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] groups mapped for the request log: 102
+[oer-s108] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+WARNING: -GroupFilter returned 6 group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out.
+[oer-s108] request log: 34 line(s) written to raw\s108\requests-filter-or.log; token requests: 0
+[oer-s108] bundle filter-or: groups 3; roster 102; IncompleteReads 0; warnings 1
+[oer-s108] Export-OERInventory own errors: 0
+[oer-s108] warning: -GroupFilter returned 6 group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out.
+[oer-s108] inventory.json keeps exactly the three kept step groups: True (3)
+[oer-s108] groups read beyond the step groups: 0
+RUNNER: check 3.2 exit code 0; started 2026-10-10T06:21:31Z; took 14 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 4. The exported document converges (G8)
 
 ### 4.1. The kept step groups from 1.2's inventory.json: Unchanged twice
 
-- [ ] **4.1** The three kept step groups' entries from 1.2's `inventory.json` (with its `tenantId`) pass `Test-OERStructure`, and `Invoke-OERStructure -Include Groups` applied twice gives only `Unchanged`, with no write.
+- [x] **4.1** The three kept step groups' entries from 1.2's `inventory.json` (with its `tenantId`) pass `Test-OERStructure`, and `Invoke-OERStructure -Include Groups` applied twice gives only `Unchanged`, with no write.
 
 ```powershell
 Connect-OerLive -Arm
@@ -579,7 +1015,60 @@ Unchanged: 0`, no own error, writes 0.
 written minutes earlier can still be settling (a PATCH needed about 30 s in step 7b): wait and run
 again before calling it a failure.
 
-Result: not yet run.
+Result: 2026-10-10 06:22 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (G8). The three kept step groups' entries from 1.2's inventory.json, with its tenantId, are valid, and Invoke-OERStructure -Include Groups applied twice gives the same 11 rows each time, all Unchanged: properties, the member of oer-s108-ra and oer-s108-mod, the owner and the member eligibility of oer-s108-elig, and the member and owner pimPolicy of oer-s108-elig and oer-s108-mod; no warning, no own error, 29 Graph requests and no write in each run.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 4.1 ===
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+[oer-s108] document: groups 3, every one with the prefix: True; carries tenantId: True
+[oer-s108] Test-OERStructure: valid True; errors 0
+[oer-s108] run 1:
+[oer-s108] row: groups | oer-s108-ra | Unchanged | group properties match
+[oer-s108] row: groups | oer-s108-ra | Unchanged | member 'oer-s108-user@example.com' already present
+[oer-s108] row: groups | oer-s108-elig | Unchanged | group properties match
+[oer-s108] row: groups | oer-s108-elig | Unchanged | owner 'oer-s108-user@example.com' already present
+[oer-s108] row: groups | oer-s108-elig | Unchanged | eligibility for 'oer-s108-user@example.com' (member) already matches
+[oer-s108] row: groups | oer-s108-elig | Unchanged | pimPolicy (member) already matches
+[oer-s108] row: groups | oer-s108-elig | Unchanged | pimPolicy (owner) already matches
+[oer-s108] row: groups | oer-s108-mod | Unchanged | group properties match
+[oer-s108] row: groups | oer-s108-mod | Unchanged | member 'oer-s108-user@example.com' already present
+[oer-s108] row: groups | oer-s108-mod | Unchanged | pimPolicy (member) already matches
+[oer-s108] row: groups | oer-s108-mod | Unchanged | pimPolicy (owner) already matches
+[oer-s108] rows: 11; not Unchanged: 0; warnings: 0
+[oer-s108] Invoke-OERStructure own errors: 0
+[oer-s108] requests: Graph 29; writes 0; token 0
+[oer-s108] run 2:
+[oer-s108] row: groups | oer-s108-ra | Unchanged | group properties match
+[oer-s108] row: groups | oer-s108-ra | Unchanged | member 'oer-s108-user@example.com' already present
+[oer-s108] row: groups | oer-s108-elig | Unchanged | group properties match
+[oer-s108] row: groups | oer-s108-elig | Unchanged | owner 'oer-s108-user@example.com' already present
+[oer-s108] row: groups | oer-s108-elig | Unchanged | eligibility for 'oer-s108-user@example.com' (member) already matches
+[oer-s108] row: groups | oer-s108-elig | Unchanged | pimPolicy (member) already matches
+[oer-s108] row: groups | oer-s108-elig | Unchanged | pimPolicy (owner) already matches
+[oer-s108] row: groups | oer-s108-mod | Unchanged | group properties match
+[oer-s108] row: groups | oer-s108-mod | Unchanged | member 'oer-s108-user@example.com' already present
+[oer-s108] row: groups | oer-s108-mod | Unchanged | pimPolicy (member) already matches
+[oer-s108] row: groups | oer-s108-mod | Unchanged | pimPolicy (owner) already matches
+[oer-s108] rows: 11; not Unchanged: 0; warnings: 0
+[oer-s108] Invoke-OERStructure own errors: 0
+[oer-s108] requests: Graph 29; writes 0; token 0
+RUNNER: check 4.1 exit code 0; started 2026-10-10T06:21:59Z; took 16 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## B. Proved offline (class B)
 
@@ -599,7 +1088,7 @@ Result: not yet run.
 
 ### T.1. The objects removed, nothing left, raw\s108 deleted
 
-- [ ] **T.1** `Initialize-OerS108Prereq.ps1 -Teardown -Unattended` removes the eligibility, the memberships, the four groups and the user; the sweep finds nothing with the prefix and no unread collection; the counts equal the baseline; no module or Graph SDK session remains; `raw\s108\` is deleted after the results are written.
+- [~] **T.1** `Initialize-OerS108Prereq.ps1 -Teardown -Unattended` removes the eligibility, the memberships, the four groups and the user; the sweep finds nothing with the prefix and no unread collection; the counts equal the baseline; no module or Graph SDK session remains; `raw\s108\` is deleted after the results are written.
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS108Prereq.ps1'
@@ -622,11 +1111,102 @@ False`; `raw\s108 deleted: True`.
 collection left, a session left, or the folder still there. The listings can lag a deletion: T.2
 reads back once they have settled.
 
-Result: not yet run.
+Result: 2026-10-10 06:30 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PARTIAL, settled by the own-residue run below and by T.2. The teardown removed the member eligibility of oer-s108-elig (201), the member assignments PIM for Groups listed for oer-s108-mod and oer-s108-plain (201), the member of oer-s108-ra (204) and the four groups (204 each); the owner assignments PIM for Groups listed for oer-s108-elig and oer-s108-plain answered 400 CannotDeleteLastAdminAssignment (the group's last owner) and the DELETE of oer-s108-user answered 403 Authorization_RequestDenied 0.7 s after it left the role-assignable group, so three residue rows were written and the user was disabled. The prereq script's wait for an empty sweep then ran out (the user was still listed) and it stopped with exit code 1; the script now waits for the sweep to list nothing but objects with a residue row, and gained -ClearOwnResidue, which retries only this step's rows. At 06:30 UTC that run dropped the two assignment rows (both groups deleted, so their assignments are gone) and deleted oer-s108-user (204); 0 rows of this prefix are left, and the 2 rows of other prefixes were not touched. No module session and no Graph SDK session remain; raw\s108 is deleted.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s108] Transcript (redacted): raw\s108\teardown-20261010-062234Z.log; OerLive 1.0.3.
+[oer-s108] Mode: REMOVE. Prefix 'oer-s108-'. Objects (fixed): oer-s108-user (disabled user), oer-s108-ra (role-assignable), oer-s108-elig (eligibility), oer-s108-mod (modified policy), oer-s108-plain (plain). OerLive 1.0.3.
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s108] Residue: raw\residue.json holds 2 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s108] Teardown of 'oer-s108-': users 1, groups 4, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s108] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s108] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s108] Removed: oer-s108-elig: PIM for Groups member eligibility of a principal (201).
+[oer-s108] RESIDUE: PIM for Groups assignment 'oer-s108-elig: PIM for Groups owner assignment of a principal' is left, with a row in raw\residue.json: 400 CannotDeleteLastAdminAssignment Cannot delete the last admin assignment.
+[oer-s108] Removed: oer-s108-mod: PIM for Groups member assignment of a principal (201).
+[oer-s108] RESIDUE: PIM for Groups assignment 'oer-s108-plain: PIM for Groups owner assignment of a principal' is left, with a row in raw\residue.json: 400 CannotDeleteLastAdminAssignment Cannot delete the last admin assignment.
+[oer-s108] Removed: oer-s108-plain: PIM for Groups member assignment of a principal (201).
+[oer-s108] Unreadable for this identity: PIM for Groups assignment schedules of oer-s108-ra (PermissionScopeNotGranted). oer-live-cc cannot create such assignments; deleting the group removes any that exist.
+[oer-s108] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s108] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s108] Removed: oer-s108-user from oer-s108-ra (204).
+[oer-s108] Teardown 5/6: the prefixed groups.
+[oer-s108] Deleted: group oer-s108-elig (204).
+[oer-s108] Deleted: group oer-s108-mod (204).
+[oer-s108] Deleted: group oer-s108-plain (204).
+[oer-s108] Deleted: group oer-s108-ra (204).
+[oer-s108] Teardown 6/6: the prefixed users.
+[oer-s108] DELETE user oer-s108-user@example.com: 403 Authorization_RequestDenied after 1 attempt(s), 0.1 s; first attempt 0.7 s after its group membership was removed.
+[oer-s108] Residue: user 'oer-s108-user@example.com' disabled (accountEnabled false): 204 
+[oer-s108] RESIDUE: user 'oer-s108-user@example.com' is left (disabled), with a row in raw\residue.json: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s108] Teardown of 'oer-s108-': removed 8, residue 3, unreadable 1.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 1, 0.7 s, likely replication delay) -- reading again in 2 s.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 2, 3.3 s, likely replication delay) -- reading again in 4 s.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 3, 7.8 s, likely replication delay) -- reading again in 8 s.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 4, 16.2 s, likely replication delay) -- reading again in 16 s.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 5, 32.5 s, likely replication delay) -- reading again in 30 s.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 6, 62.9 s, likely replication delay) -- reading again in 30 s.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 7, 93.5 s, likely replication delay) -- reading again in 30 s.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 8, 124 s, likely replication delay) -- reading again in 30 s.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 9, 154.4 s, likely replication delay) -- reading again in 30 s.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 10, 184.9 s, likely replication delay) -- reading again in 30 s.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 11, 215.5 s, likely replication delay) -- reading again in 30 s.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 12, 245.9 s, likely replication delay) -- reading again in 30 s.
+[oer-s108] no 'oer-s108-' object is listed: not yet (read 13, 276.5 s, likely replication delay) -- reading again in 24 s.
+[oer-s108] no 'oer-s108-' object is listed: NOT converged after 14 read(s), 301 s (budget 300 s).
+[oer-s108] Stopped after this run had written to the tenant (see the lines above): OerLive: no 'oer-s108-' object is listed -- not converged within budget (300 s, 14 reads).
+[oer-s108] Stopped at: at Wait-OerLiveConverged, VAULT\OerLive\OerLive.psm1: line 764 <- at Invoke-S108Teardown, VAULT\Initialize-OerS108Prereq.ps1: line 464 <- at <ScriptBlock>, VAULT\Initialize-OerS108Prereq.ps1: line 493
+[oer-s108] teardown exit code: 1
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] Sweep: user 'oer-s108-user@example.com' (00000000-0000-0000-0000-000000000001) carries the prefix.
+[oer-s108] objects with the prefix: 1; unread collections: 0
+[oer-s108] module session cleared: True; Graph SDK session left: False
+[oer-s108] raw\s108 deleted: True
+RUNNER: check T.1 exit code 0; started 2026-10-10T06:22:32Z; took 331 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== OWN RESIDUE, 06:30 UTC: Initialize-OerS108Prereq.ps1 -ClearOwnResidue -Unattended (the redacted output, the sign-in lines left out) ===
+[oer-s108] Transcript (redacted): raw\s108\residue-20261010-063024Z.log; OerLive 1.0.3.
+[oer-s108] Mode: CLEAR OWN RESIDUE. Prefix 'oer-s108-'. Objects (fixed): oer-s108-user (disabled user), oer-s108-ra (role-assignable), oer-s108-elig (eligibility), oer-s108-mod (modified policy), oer-s108-plain (plain). OerLive 1.0.3.
+[oer-s108] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s108] Residue: raw\residue.json holds 5 row(s), 3 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s108] Own residue: PIM for Groups assignment 'oer-s108-elig: PIM for Groups owner assignment of a principal' -- its group is deleted, so the assignment is gone; row dropped.
+[oer-s108] Own residue: PIM for Groups assignment 'oer-s108-plain: PIM for Groups owner assignment of a principal' -- its group is deleted, so the assignment is gone; row dropped.
+[oer-s108] Own residue: DELETE user 'oer-s108-user@example.com': 204 .
+[oer-s108] Own residue: rows of this prefix 3, dropped 3, left 0; rows of other prefixes left untouched: 2.
+[oer-s108] Baseline: there is none to compare with.
+[oer-s108] Done.
+```
 
 ### T.2. Read-back once the listings have settled
 
-- [ ] **T.2** At least a minute after T.1, the sweep lists nothing with the prefix and no unread collection, and the tenant lists as many users and groups as the baseline of 0.2 recorded; `raw\s108\` (which H.1 creates again) is deleted afterwards.
+- [x] **T.2** At least a minute after T.1, the sweep lists nothing with the prefix and no unread collection, and the tenant lists as many users and groups as the baseline of 0.2 recorded; `raw\s108\` (which H.1 creates again) is deleted afterwards.
 
 ```powershell
 Connect-OerLive -Arm
@@ -645,4 +1225,28 @@ printed; `raw\s108 deleted: True`.
 **Failure looks like:** a step object still listed after several minutes (read back again later
 before calling it residue), another count than the baseline, or the folder still there.
 
-Result: not yet run.
+Result: 2026-10-10 06:31 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. After T.1 and the own-residue run, the sweep lists nothing with the prefix oer-s108- and no unread collection; the tenant lists 23 users and 98 groups, the counts the baseline of 0.2 recorded; raw\s108 (created again by H.1) is deleted. Nothing is left in the tenant from this run, and no residue row has this step's prefix.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.2 ===
+[oer-s108] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg8\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s108] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s108] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s108-' is left.
+[oer-s108] objects with the prefix: 0; unread collections: 0
+[oer-s108] users listed: 23; groups listed: 98
+[oer-s108] raw\s108 deleted: True
+RUNNER: check T.2 exit code 0; started 2026-10-10T06:30:57Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```

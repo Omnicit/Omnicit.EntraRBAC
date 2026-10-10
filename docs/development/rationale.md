@@ -6080,9 +6080,18 @@ adds a request per further page.
 | relevance could not be read (eligibility or criterion failed) | as before | 6 or more | as before (read in full, R2) |
 | any group under `-AllGroupsDetailed` | yes | as before | as before |
 
-The live counts from the test tenant are recorded in
-`docs/live-verification/feat-export-groups-in-large-tenants-checklist.md`, whose run follows this
-text; this section quotes none of them.
+**Measured live (2026-10-10, the test tenant, `oer-live-cc`).** The test tenant held 96 security
+groups. `Export-OERInventory -Include Groups` with the build of `9761434` and with this branch wrote
+the same 14 groups with the same content (members, owners and eligibility compared sorted, since
+Graph lists them in no fixed order) and made 613 and 285 requests: the 82 groups not kept cost 6
+requests each before and exactly 2 now (492 against 164), the 14 kept groups cost 116 both times,
+and 5 requests belonged to no group (the group list, the roster, principal-name lookups).
+`-AllGroupsDetailed` made 613 requests with both builds, group for group the same, and wrote the same
+document and roster. `groupsRoster.json` kept every row; `memberCount` was null for exactly the 82
+groups not kept. A `-GroupFilter` that closed the parenthesis with an `or` made Graph return 6 groups
+that are not security-enabled: the export left them out with the warning, read none of them, and
+kept the same three step groups as the narrowing filter. The record is
+`docs/live-verification/feat-export-groups-in-large-tenants-checklist.md`.
 
 **R1 (one reader, no hidden switch).** `Get-OERInventory`'s Groups section moved, unchanged, into
 the private `Get-OERInventoryGroup`. `Get-OERInventory` calls it in its full mode -- one
@@ -6161,8 +6170,8 @@ the bundle's `ShouldProcess`; `groupsRoster.json`, read unfiltered, still lists 
 are read before the check drops it, and a failed read of one is written to the verbose stream by the
 record loop and then removed from the causes by the group's id: the group is not in the document, so
 its failed read is no gap in it, and no causes clause names a group found nowhere else. Cost if
-wrong: drop them silently, with a verbose line only; and, for the cause, keep it in the list, where
-the partial message would name a failure in a group the document does not hold.
+wrong, for the groups: leave them out silently, with a verbose line only; for the cause: keep it in
+the list, where the partial message would name a failure in a group the document does not hold.
 
 **R7 (progress).** `Write-Progress` runs in the export's group read only (`-ProgressActivity`,
 activity `Export-OERInventory`): a status while the list is read, then one 'Group n of N' record
