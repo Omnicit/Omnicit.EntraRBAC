@@ -6404,10 +6404,15 @@ wrong: one such test in a follow-up.
   the safe direction -- more kept and named, nothing dropped -- and it is to be confirmed in the
   maintainer's own tenant.
 - The live checklist (`docs/live-verification/feat-export-role-policies-in-use-checklist.md`) compares
-  the exports of the build before this step and of this step, and an apply of the exported document;
-  it is written and not yet run, so until it is, everything after the measurement above is proved
-  offline only, by the unit tests and their mutation runs. A management-group scope and a failed read
-  are offline-only there too (the checklist says why).
+  the exports of the build before this step and of this step, and an apply of the exported document.
+  It was run as `oer-live-cc` on 2026-10-10, every check passed, and the teardown left nothing
+  (MEASURED): at the test subscription this step keeps the 4 policies the rule keeps out of 967, each
+  entry identical to the earlier build's; `-AllRolePolicies` writes the earlier build's file byte for
+  byte; at the step's own resource group the assigned role and the eligible role are kept, a role
+  assigned only above it is not, and a policy changed there through `Set-OERRoleManagementPolicy`
+  showed its change record on the list's first read afterwards and was kept from then on; the
+  exported document applied twice gave only `Unchanged`. A management-group scope and a failed read
+  are offline-only there (the checklist says why).
 
 ## typed-group-member-read
 

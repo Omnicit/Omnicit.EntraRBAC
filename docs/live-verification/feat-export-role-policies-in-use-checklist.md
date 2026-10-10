@@ -288,7 +288,7 @@ function Write-S109Kept {
 
 ### S.1. The module loads from this branch's build, and the 944976f build is kept
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch; the main clone is on `main`, never switched; the kept `944976f` build carries none of this branch's changes.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch; the main clone is on `main`, never switched; the kept `944976f` build carries none of this branch's changes.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -313,13 +313,28 @@ this branch: 4 of 4`; `944976f build: ... marks of this branch: 0 of 4`.
 **Failure looks like:** `False` on the first line (`OER_LIVE_REPO` unset), fewer than 4 marks in this
 branch's build (build it first, never while the gate runs), or any mark in the `944976f` build.
 
-Result: not run yet.
+Result: 2026-10-10 18:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree on this branch at 31f4f80 with 0 tracked changes; this branch's build carries all 4 marks of the change, the kept build of 944976f none of them (it was built in this worktree from 944976f's source before the branch's first commit).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s109] The module loads from a worktree that is not the main clone: True
+[oer-s109] Main clone: branch main
+[oer-s109] Worktree: branch feat/export-role-policies-in-use; HEAD 31f4f80 fix: prove the per-scope role selection guards and correct their texts; tracked changes: 0
+[oer-s109] this branch build: version 1.1.4 feat; marks of this branch: 4 of 4
+[oer-s109] 944976f build: version 1.1.4 feat; marks of this branch: 0 of 4
+RUNNER: check S.1 exit code 0; started 2026-10-10T18:49:56Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, is app-only, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, is app-only, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -333,11 +348,32 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not
 enabled for this run; never sign in another way.
 
-Result: not run yet.
+Result: 2026-10-10 10:54 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only, certificate); identity check passed; the module is the worktree's build (1.1.4).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] The module is the worktree's build: True
+RUNNER: check 0.1 exit code 0; started 2026-10-10T10:53:52Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 0.2. The prerequisite: the group, the resource group and the two grants, after a plan
 
-- [ ] **0.2** `Initialize-OerS109Prereq.ps1 -WhatIf` writes nothing and plans every object; the real run writes the baseline, creates the group and the resource group, records the Log Analytics Reader policy baseline, and creates the role assignment and the eligibility; a second run finds every object and writes nothing.
+- [x] **0.2** `Initialize-OerS109Prereq.ps1 -WhatIf` writes nothing and plans every object; the real run writes the baseline, creates the group and the resource group, records the Log Analytics Reader policy baseline, and creates the role assignment and the eligibility; a second run finds every object and writes nothing.
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS109Prereq.ps1'
@@ -355,11 +391,117 @@ listed, exit code 0; the second real run finds every object and both grants, `wr
 False`, exit code 0.
 **Failure looks like:** a refusal, an exit code other than 0, or a second run that writes.
 
-Result: not run yet.
+Result: 2026-10-10 10:55 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The plan run wrote nothing (exit 0); the first real run wrote the baseline (groups 98), created oer-s109-principal (201, awaited until it resolved by name) and oer-s109-rg, recorded the Log Analytics Reader policy baseline at oer-s109-rg (17 rules, activation maximum PT8H; the policy the resource group lists is its own), created the Reader role assignment for the group (200 after one PrincipalNotFound answer, a replication delay, retried after 5 s) and requested the Monitoring Reader eligibility (200, Provisioned), each listed at once, exit 0; the second real run found every object and both grants and wrote nothing (written to the tenant: False), exit 0.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.2 ===
+[oer-s109] prereq run: -WhatIf
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s109\prereq-20261010-105432Z.log".
+[oer-s109] Mode: CREATE or complete. Prefix 'oer-s109-'. Objects (fixed): oer-s109-principal (security group, no member); oer-s109-rg (tagged, empty); at oer-s109-rg: Reader assigned and Monitoring Reader eligible (P7D) for oer-s109-principal; the Log Analytics Reader policy there baselined. OerLive 1.0.3.
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] Residue: raw\residue.json holds 2 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s109] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s109-' is left.
+[oer-s109] Found: oer-s109-principal exists: False; oer-s109-rg exists: False.
+[oer-s109] No baseline yet: it is written now, before the first write to the tenant (groups 98; oer-s109-rg exists: False).
+What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s109\baseline-s109.json".
+What if: Performing the operation "Create a security group with no member (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s109-principal".
+What if: Performing the operation "Create the resource group in the test subscription (Azure Resource Manager PUT, location 'swedencentral', tag purpose 'Omnicit.EntraRBAC live verification (oer-s109)')" on target "oer-s109-rg".
+[oer-s109] No policy baseline: oer-s109-rg does not exist (WhatIf).
+[oer-s109] No role assignment or eligibility: the group or the resource group does not exist (WhatIf).
+[oer-s109] Summary: oer-s109-principal absent; oer-s109-rg absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s109] WhatIf: nothing was created, removed or written.
+[oer-s109] Done.
+[oer-s109] prereq exit code: 0
+[oer-s109] prereq run: -Unattended
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s109] Transcript (redacted): raw\s109\prereq-20261010-105439Z.log; OerLive 1.0.3.
+[oer-s109] Mode: CREATE or complete. Prefix 'oer-s109-'. Objects (fixed): oer-s109-principal (security group, no member); oer-s109-rg (tagged, empty); at oer-s109-rg: Reader assigned and Monitoring Reader eligible (P7D) for oer-s109-principal; the Log Analytics Reader policy there baselined. OerLive 1.0.3.
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s109] Residue: raw\residue.json holds 2 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s109] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s109-' is left.
+[oer-s109] Found: oer-s109-principal exists: False; oer-s109-rg exists: False.
+[oer-s109] No baseline yet: it is written now, before the first write to the tenant (groups 98; oer-s109-rg exists: False).
+[oer-s109] Wrote the baseline raw\s109\baseline-s109.json and read it back.
+[oer-s109] Created group oer-s109-principal: 201.
+[oer-s109] Recorded the id of oer-s109-principal under raw\s109 (not printed).
+[oer-s109] oer-s109-principal resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s109] oer-s109-principal resolves by its display name: converged after 2 read(s), 2.2 s.
+[oer-s109] Created resource group oer-s109-rg.
+[oer-s109] The scope lists its role management policy: converged after 1 read(s), 4.2 s.
+[oer-s109] The policy listed at the scope is the scope's own: True
+[oer-s109] Log Analytics Reader policy at oer-s109-rg: rules 17; activation maximum: PT8H
+[oer-s109] Wrote the baseline raw\s109\baseline-s109-rgpolicy.json and read it back.
+[oer-s109] Creating the role assignment of Reader: the principal is not known to Azure Resource Manager yet (PrincipalNotFound, likely replication delay) -- sending again in 5 s.
+[oer-s109] Recorded the id of roleAssignment under raw\s109 (not printed).
+[oer-s109] Created the role assignment of Reader at oer-s109-rg for oer-s109-principal: 200.
+[oer-s109] the role assignment is listed at oer-s109-rg: converged after 1 read(s), 3.1 s.
+[oer-s109] Recorded the id of eligibilityRequest under raw\s109 (not printed).
+[oer-s109] Requested the eligibility of Monitoring Reader at oer-s109-rg for oer-s109-principal: 200, status Provisioned.
+[oer-s109] the eligibility is listed at oer-s109-rg: converged after 1 read(s), 1.9 s.
+[oer-s109] Summary: oer-s109-principal present; oer-s109-rg present; written to the tenant: True.
+[oer-s109] Done.
+[oer-s109] prereq exit code: 0
+[oer-s109] prereq run: -Unattended
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s109] Transcript (redacted): raw\s109\prereq-20261010-105517Z.log; OerLive 1.0.3.
+[oer-s109] Mode: CREATE or complete. Prefix 'oer-s109-'. Objects (fixed): oer-s109-principal (security group, no member); oer-s109-rg (tagged, empty); at oer-s109-rg: Reader assigned and Monitoring Reader eligible (P7D) for oer-s109-principal; the Log Analytics Reader policy there baselined. OerLive 1.0.3.
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s109] Residue: raw\residue.json holds 2 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s109] Found: oer-s109-principal exists: True; oer-s109-rg exists: True.
+[oer-s109] Grants exactly at oer-s109-rg: role assignment of Reader for oer-s109-principal: True; eligibility of Monitoring Reader for oer-s109-principal: True
+[oer-s109] The baseline exists (groups 98 when it was written).
+[oer-s109] Group oer-s109-principal exists.
+[oer-s109] Resource group oer-s109-rg exists.
+[oer-s109] The Log Analytics Reader policy baseline at oer-s109-rg exists.
+[oer-s109] The role assignment of Reader at oer-s109-rg for oer-s109-principal exists.
+[oer-s109] The eligibility of Monitoring Reader at oer-s109-rg for oer-s109-principal exists.
+[oer-s109] Summary: oer-s109-principal present; oer-s109-rg present; written to the tenant: False.
+[oer-s109] Done.
+[oer-s109] prereq exit code: 0
+RUNNER: check 0.2 exit code 0; started 2026-10-10T10:54:30Z; took 54 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 0.3. What the lists say, read independently of the code under test
 
-- [ ] **0.3** Read through OerLive's transport: at the subscription, the policies listed, how many are changed, the roles assigned or eligible exactly there, and the policies the rule keeps; at `oer-s109-rg`, the same, with Reader assigned and Monitoring Reader eligible exactly there, Owner assigned above it only, and no policy changed yet.
+- [x] **0.3** Read through OerLive's transport: at the subscription, the policies listed, how many are changed, the roles assigned or eligible exactly there, and the policies the rule keeps; at `oer-s109-rg`, the same, with Reader assigned and Monitoring Reader eligible exactly there, Owner assigned above it only, and no policy changed yet.
 
 ```powershell
 Connect-OerLive -Arm
@@ -377,13 +519,47 @@ keeps exactly Monitoring Reader and Reader.
 **Failure looks like:** a grant not listed (replication: read again a minute later), a policy at
 `oer-s109-rg` already changed, or a step role listed other than once.
 
-Result: not run yet.
+Result: 2026-10-10 10:56 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Read through OerLive's transport, independently of the code under test. The subscription: 967 policies listed (all built in), 2 changed, none without a policy record; 3 roles assigned exactly there, none eligible there; the rule keeps 4 (Contributor, Owner, Reader, Storage Blob Data Contributor) -- the counts of the measurement. Monitoring Reader, Log Analytics Reader and Storage Blob Data Reader are neither assigned nor eligible there and not changed. oer-s109-rg: 965 policies listed, none changed; Reader assigned there (and above it), Monitoring Reader eligible there, Owner assigned above only; Log Analytics Reader and Storage Blob Data Reader untouched; the rule keeps exactly Monitoring Reader and Reader.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.3 ===
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] subscription: policies listed 967 (built in 967); changed 2; without a policy record 0; roles assigned exactly here 3; eligible exactly here 0
+[oer-s109] subscription: the rule keeps 4: Contributor, Owner, Reader, Storage Blob Data Contributor
+[oer-s109] subscription: Reader: assigned here True; eligible here False; assigned above False; changed True
+[oer-s109] subscription: Monitoring Reader: assigned here False; eligible here False; assigned above False; changed False
+[oer-s109] subscription: Log Analytics Reader: assigned here False; eligible here False; assigned above False; changed False
+[oer-s109] subscription: Storage Blob Data Reader: assigned here False; eligible here False; assigned above False; changed False
+[oer-s109] subscription: Owner: assigned here True; eligible here False; assigned above True; changed False
+[oer-s109] oer-s109-rg: policies listed 965 (built in 965); changed 0; without a policy record 0; roles assigned exactly here 1; eligible exactly here 1
+[oer-s109] oer-s109-rg: the rule keeps 2: Monitoring Reader, Reader
+[oer-s109] oer-s109-rg: Reader: assigned here True; eligible here False; assigned above True; changed False
+[oer-s109] oer-s109-rg: Monitoring Reader: assigned here False; eligible here True; assigned above False; changed False
+[oer-s109] oer-s109-rg: Log Analytics Reader: assigned here False; eligible here False; assigned above False; changed False
+[oer-s109] oer-s109-rg: Storage Blob Data Reader: assigned here False; eligible here False; assigned above False; changed False
+[oer-s109] oer-s109-rg: Owner: assigned here False; eligible here False; assigned above True; changed False
+RUNNER: check 0.3 exit code 0; started 2026-10-10T10:55:44Z; took 16 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 1. The test subscription: before and after (A, B)
 
 ### 1.1. Export with the 944976f build (the reference)
 
-- [ ] **1.1** `Export-OERInventory -Include RoleAssignments, RoleManagementPolicies` with the kept `944976f` build writes a bundle under `raw\s109\before-sub\` holding every policy at the subscription, and a request log.
+- [x] **1.1** `Export-OERInventory -Include RoleAssignments, RoleManagementPolicies` with the kept `944976f` build writes a bundle under `raw\s109\before-sub\` holding every policy at the subscription, and a request log.
 
 ```powershell
 Import-S109Before
@@ -402,11 +578,47 @@ listed at the subscription is in the file; `policy list 1`, no `single policy`, 
 **Failure looks like:** the module loaded from another build, a scope other than the management group
 level skipped, or a policy count other than 0.3's.
 
-Result: not run yet.
+Result: 2026-10-10 10:57 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The kept 944976f build is the module; the management group listing was refused (AuthorizationFailed, as measured in step 7), so that level is the one skipped scope and the run ends InventoryPartial for it; the subscription was read (1 of 1). roleManagementPolicies.json holds 967 entries, all at the subscription -- every policy 0.3 listed. ARM requests 11: one policy list, one role assignment list (unfiltered, with 6 role definition reads for the names), one eligibility list, the subscription and management group listings; no single-policy request, no write, no token request through the fence.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s109] module loaded from the kept 944976f build: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] fences in place (Get-AzToken is the proxy, the ARM wrapper records): True
+Export-OERInventory: SCRATCH\run-1.1.ps1:143
+Line |
+ 143 |      $Out = Export-OERInventory -OutputPath (Join-Path $Raw "bundle-$N ...
+     |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | This inventory bundle is PARTIAL: 1 level(s) of the Azure scope tree could not be listed, so none of their
+     | scopes was walked, and the missing data is absent from roleAssignments.json and roleManagementPolicies.json.
+     | Skipped: <management groups: the listing failed>. 1 level(s) of the Azure scope tree could not be listed, so
+     | none of their scopes was walked for azurePimEligibility.json, and their eligible assignments are absent from it.
+     | Skipped: <management groups: the listing failed>. Do not treat it as a full tenant snapshot.
+[oer-s109] request log: 11 ARM request(s) written to raw\s109\requests-before-sub.log; token requests: 0
+[oer-s109] bundle before-sub: roleManagementPolicies 967; roleAssignments 14; scopes read 1 of 1; skipped scopes 1 (<management groups: the listing failed>); IncompleteReads 0; warnings 1
+[oer-s109] warning: Could not list the management groups, so no management group is walked: AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000002' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s109] Export-OERInventory own errors: 1 -- InventoryPartial,Export-OERInventory
+[oer-s109] before-sub: ARM requests 11 (eligibility 1; management groups 1; policy list 1; role assignments 1; role definition 6; subscriptions 1); writes 0
+[oer-s109] before-sub: entries at the subscription 967; entries in all 967
+RUNNER: check 1.1 exit code 0; started 2026-10-10T10:56:19Z; took 17 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.2. Export with this branch: only the policies in use or changed, each the same as before
 
-- [ ] **1.2** The same export with this branch keeps at the subscription exactly the policies the independent rule keeps (0.3), each entry identical to 1.1's; Monitoring Reader (eligible only at `oer-s109-rg`) and Storage Blob Data Reader (untouched) are left out; the policies are still read with one list for the scope, plus one `atScope()` role assignment list, and nothing per policy; `IncompleteReads` names no role selection.
+- [x] **1.2** The same export with this branch keeps at the subscription exactly the policies the independent rule keeps (0.3), each entry identical to 1.1's; Monitoring Reader (eligible only at `oer-s109-rg`) and Storage Blob Data Reader (untouched) are left out; the policies are still read with one list for the scope, plus one `atScope()` role assignment list, and nothing per policy; `IncompleteReads` names no role selection.
 
 ```powershell
 Connect-OerLive -Arm
@@ -432,11 +644,61 @@ every kept entry identical to 1.1's; `roleAssignments.json identical to before-s
 **Failure looks like:** a role kept that the rule does not keep or the reverse, an entry that differs
 from 1.1's, a `single policy` request, or a role selection entry.
 
-Result: not run yet.
+Result: 2026-10-10 18:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. This branch kept 4 policies at the subscription -- exactly the roles the independent rule keeps (Contributor, Owner, Reader, Storage Blob Data Contributor: three assigned there, two changed, Reader both) -- and each entry is identical to 1.1's for the same role. Monitoring Reader (eligible only at oer-s109-rg), Log Analytics Reader and Storage Blob Data Reader (untouched) are left out; roleAssignments.json is identical to 1.1's. The policies were read with the one policy list for the scope, plus one atScope() role assignment list; no single-policy request, no write. IncompleteReads 0 (no role selection entry); the run ends InventoryPartial only for the refused management group listing, as 1.1 does. 967 entries before, 4 after.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2 ===
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] fences in place (Get-AzToken is the proxy, the ARM wrapper records): True
+[oer-s109] subscription: policies listed 967 (built in 967); changed 2; without a policy record 0; roles assigned exactly here 3; eligible exactly here 0
+[oer-s109] subscription: the rule keeps 4: Contributor, Owner, Reader, Storage Blob Data Contributor
+[oer-s109] subscription: Reader: assigned here True; eligible here False; assigned above False; changed True
+[oer-s109] subscription: Monitoring Reader: assigned here False; eligible here False; assigned above False; changed False
+[oer-s109] subscription: Log Analytics Reader: assigned here False; eligible here False; assigned above False; changed False
+[oer-s109] subscription: Storage Blob Data Reader: assigned here False; eligible here False; assigned above False; changed False
+[oer-s109] subscription: Owner: assigned here True; eligible here False; assigned above True; changed False
+Export-OERInventory: SCRATCH\run-1.2.ps1:143
+Line |
+ 143 |      $Out = Export-OERInventory -OutputPath (Join-Path $Raw "bundle-$N ...
+     |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | This inventory bundle is PARTIAL: 1 level(s) of the Azure scope tree could not be listed, so none of their
+     | scopes was walked, and the missing data is absent from roleAssignments.json and roleManagementPolicies.json.
+     | Skipped: <management groups: the listing failed>. 1 level(s) of the Azure scope tree could not be listed, so
+     | none of their scopes was walked for azurePimEligibility.json, and their eligible assignments are absent from it.
+     | Skipped: <management groups: the listing failed>. Do not treat it as a full tenant snapshot.
+[oer-s109] request log: 12 ARM request(s) written to raw\s109\requests-after-sub.log; token requests: 0
+[oer-s109] bundle after-sub: roleManagementPolicies 4; roleAssignments 14; scopes read 1 of 1; skipped scopes 1 (<management groups: the listing failed>); IncompleteReads 0; warnings 1
+[oer-s109] warning: Could not list the management groups, so no management group is walked: AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000002' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s109] Export-OERInventory own errors: 1 -- InventoryPartial,Export-OERInventory
+[oer-s109] after-sub: ARM requests 12 (eligibility 1; management groups 1; policy list 1; role assignments 1; role assignments atScope 1; role definition 6; subscriptions 1); writes 0
+[oer-s109] after-sub: kept 4; the independent rule keeps 4; the same roles: True
+[oer-s109] after-sub: Reader kept: True
+[oer-s109] after-sub: Monitoring Reader kept: False
+[oer-s109] after-sub: Log Analytics Reader kept: False
+[oer-s109] after-sub: Storage Blob Data Reader kept: False
+[oer-s109] after-sub: Owner kept: True
+[oer-s109] after-sub: kept entries identical to the same role's entry in before-sub: 4 of 4
+[oer-s109] roleAssignments.json identical to before-sub: True
+RUNNER: check 1.2 exit code 0; started 2026-10-10T18:50:13Z; took 23 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.3. -AllRolePolicies writes what the 944976f build wrote
 
-- [ ] **1.3** `-AllRolePolicies` with this branch writes `roleManagementPolicies.json` identical to 1.1's, in order and content, with the same count, and makes no `atScope()` role assignment request.
+- [x] **1.3** `-AllRolePolicies` with this branch writes `roleManagementPolicies.json` identical to 1.1's, in order and content, with the same count, and makes no `atScope()` role assignment request.
 
 ```powershell
 Connect-OerLive -Arm
@@ -456,13 +718,51 @@ Disconnect-OerLive
 `identical to before-sub, byte for byte: True`; no `role assignments atScope` request.
 **Failure looks like:** any difference from 1.1.
 
-Result: not run yet.
+Result: 2026-10-10 18:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With -AllRolePolicies this branch wrote 967 entries, the same count as 1.1; no role only on one side and none different; roleManagementPolicies.json identical to 1.1's byte for byte. The requests are 1.1's exactly (11: one policy list, no atScope() role assignment list, no single-policy request), no write.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.3 ===
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] fences in place (Get-AzToken is the proxy, the ARM wrapper records): True
+Export-OERInventory: SCRATCH\run-1.3.ps1:143
+Line |
+ 143 |      $Out = Export-OERInventory -OutputPath (Join-Path $Raw "bundle-$N ...
+     |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | This inventory bundle is PARTIAL: 1 level(s) of the Azure scope tree could not be listed, so none of their
+     | scopes was walked, and the missing data is absent from roleAssignments.json and roleManagementPolicies.json.
+     | Skipped: <management groups: the listing failed>. 1 level(s) of the Azure scope tree could not be listed, so
+     | none of their scopes was walked for azurePimEligibility.json, and their eligible assignments are absent from it.
+     | Skipped: <management groups: the listing failed>. Do not treat it as a full tenant snapshot.
+[oer-s109] request log: 11 ARM request(s) written to raw\s109\requests-all-sub.log; token requests: 0
+[oer-s109] bundle all-sub: roleManagementPolicies 967; roleAssignments 14; scopes read 1 of 1; skipped scopes 1 (<management groups: the listing failed>); IncompleteReads 0; warnings 1
+[oer-s109] warning: Could not list the management groups, so no management group is walked: AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000002' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s109] Export-OERInventory own errors: 1 -- InventoryPartial,Export-OERInventory
+[oer-s109] all-sub: ARM requests 11 (eligibility 1; management groups 1; policy list 1; role assignments 1; role definition 6; subscriptions 1); writes 0
+[oer-s109] all-sub: entries 967; before-sub: 967; the same count: True
+[oer-s109] before-sub against all-sub: left 967, right 967; only left 0; only right 0; same role, different content 0
+[oer-s109] roleManagementPolicies.json identical to before-sub, byte for byte: True
+RUNNER: check 1.3 exit code 0; started 2026-10-10T18:51:01Z; took 16 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 2. The test resource group: the grants and the change are this step's own
 
 ### 2.1. Export of oer-s109-rg with the 944976f build (the reference)
 
-- [ ] **2.1** `Export-OERInventory -Scope` (the resource group) `-Include RoleManagementPolicies` with the kept `944976f` build writes every policy listed at `oer-s109-rg`.
+- [x] **2.1** `Export-OERInventory -Scope` (the resource group) `-Include RoleManagementPolicies` with the kept `944976f` build writes every policy listed at `oer-s109-rg`.
 
 ```powershell
 Import-S109Before
@@ -478,11 +778,37 @@ Disconnect-OerLive
 `policy list 1`, writes 0.
 **Failure looks like:** a skipped scope, or another count than 0.3's.
 
-Result: not run yet.
+Result: 2026-10-10 10:57 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With the kept 944976f build, the export of oer-s109-rg alone (-Scope) read one scope, skipped none, and wrote 965 entries -- every policy 0.3 listed there; 2 ARM requests (one policy list, one eligibility list), no write, no error.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s109] module loaded from the kept 944976f build: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] fences in place (Get-AzToken is the proxy, the ARM wrapper records): True
+[oer-s109] request log: 2 ARM request(s) written to raw\s109\requests-before-rg.log; token requests: 0
+[oer-s109] bundle before-rg: roleManagementPolicies 965; roleAssignments 0; scopes read 1 of 1; skipped scopes 0; IncompleteReads 0; warnings 0
+[oer-s109] Export-OERInventory own errors: 0
+[oer-s109] before-rg: ARM requests 2 (eligibility 1; policy list 1); writes 0
+[oer-s109] before-rg: entries at oer-s109-rg 965
+RUNNER: check 2.1 exit code 0; started 2026-10-10T10:57:10Z; took 13 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.2. This branch at oer-s109-rg before the change: the assigned role and the eligible role only
 
-- [ ] **2.2** This branch keeps at `oer-s109-rg` exactly Reader (assigned there) and Monitoring Reader (eligible there), each identical to 2.1's entry; Owner, assigned only above the resource group, and the untouched Log Analytics Reader and Storage Blob Data Reader are left out.
+- [x] **2.2** This branch keeps at `oer-s109-rg` exactly Reader (assigned there) and Monitoring Reader (eligible there), each identical to 2.1's entry; Owner, assigned only above the resource group, and the untouched Log Analytics Reader and Storage Blob Data Reader are left out.
 
 ```powershell
 Connect-OerLive -Arm
@@ -504,11 +830,50 @@ writes 0.
 **Failure looks like:** Owner kept (an assignment above the scope counted), Monitoring Reader left out
 (the eligibility not counted), or any other role kept.
 
-Result: not run yet.
+Result: 2026-10-10 18:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. At oer-s109-rg, before the change, this branch kept exactly Reader (assigned there) and Monitoring Reader (eligible there) -- the independent rule's two -- each identical to 2.1's entry. Owner, assigned only above the resource group, is not counted; the untouched Log Analytics Reader and Storage Blob Data Reader are left out. 965 entries before, 2 after. Requests: one policy list, one atScope() role assignment list, one eligibility list; no single-policy request, no write, no error.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.2 ===
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] fences in place (Get-AzToken is the proxy, the ARM wrapper records): True
+[oer-s109] oer-s109-rg: policies listed 965 (built in 965); changed 0; without a policy record 0; roles assigned exactly here 1; eligible exactly here 1
+[oer-s109] oer-s109-rg: the rule keeps 2: Monitoring Reader, Reader
+[oer-s109] oer-s109-rg: Reader: assigned here True; eligible here False; assigned above True; changed False
+[oer-s109] oer-s109-rg: Monitoring Reader: assigned here False; eligible here True; assigned above False; changed False
+[oer-s109] oer-s109-rg: Log Analytics Reader: assigned here False; eligible here False; assigned above False; changed False
+[oer-s109] oer-s109-rg: Storage Blob Data Reader: assigned here False; eligible here False; assigned above False; changed False
+[oer-s109] oer-s109-rg: Owner: assigned here False; eligible here False; assigned above True; changed False
+[oer-s109] request log: 3 ARM request(s) written to raw\s109\requests-after-rg.log; token requests: 0
+[oer-s109] bundle after-rg: roleManagementPolicies 2; roleAssignments 0; scopes read 1 of 1; skipped scopes 0; IncompleteReads 0; warnings 0
+[oer-s109] Export-OERInventory own errors: 0
+[oer-s109] after-rg: ARM requests 3 (eligibility 1; policy list 1; role assignments atScope 1); writes 0
+[oer-s109] after-rg: kept 2; the independent rule keeps 2; the same roles: True
+[oer-s109] after-rg: Reader kept: True
+[oer-s109] after-rg: Monitoring Reader kept: True
+[oer-s109] after-rg: Log Analytics Reader kept: False
+[oer-s109] after-rg: Storage Blob Data Reader kept: False
+[oer-s109] after-rg: Owner kept: False
+[oer-s109] after-rg: kept entries identical to the same role's entry in before-rg: 2 of 2
+RUNNER: check 2.2 exit code 0; started 2026-10-10T18:51:29Z; took 18 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.3. The Log Analytics Reader policy at oer-s109-rg is changed once, and the list says so
 
-- [ ] **2.3** `Set-OERRoleManagementPolicy -Role 'Log Analytics Reader' -Scope` (the resource group) `-ActivationMaxHours 4` changes one rule; the policy-assignment list then shows that policy changed, and no other policy at `oer-s109-rg`.
+- [x] **2.3** `Set-OERRoleManagementPolicy -Role 'Log Analytics Reader' -Scope` (the resource group) `-ActivationMaxHours 4` changes one rule; the policy-assignment list then shows that policy changed, and no other policy at `oer-s109-rg`.
 
 ```powershell
 Connect-OerLive -Arm
@@ -532,11 +897,38 @@ write; `after the change: Log Analytics Reader changed: True; policies changed a
 **Failure looks like:** an error from the cmdlet, more than one write, or the list not showing the
 change within the budget (then the rule cannot see a change, and the result says so).
 
-Result: not run yet.
+Result: 2026-10-10 18:52 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Before the change the Log Analytics Reader policy at oer-s109-rg carried no change record (changed False; 0 changed policies there). Set-OERRoleManagementPolicy -ActivationMaxHours 4 changed one rule (Expiration_EndUser_Assignment) with one ARM write and no error; the policy-assignment list then showed that policy changed on the first read (5.1 s) and no other: 1 changed policy at oer-s109-rg. This is the controlled before/after of the change rule on the step's own test resource.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.3 ===
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] fences in place (Get-AzToken is the proxy, the ARM wrapper records): True
+[oer-s109] before the change: Log Analytics Reader changed: False; policies changed at oer-s109-rg: 0
+[oer-s109] Set-OERRoleManagementPolicy: changed rules Expiration_EndUser_Assignment; activation maximum hours 4
+[oer-s109] Set-OERRoleManagementPolicy own errors: 0
+[oer-s109] set: ARM requests 4 (policy list 1; role definition 1; single policy 2); writes 1
+[oer-s109] Log Analytics Reader shows the change at oer-s109-rg: converged after 1 read(s), 5.1 s.
+[oer-s109] after the change: Log Analytics Reader changed: True; policies changed at oer-s109-rg: 1
+RUNNER: check 2.3 exit code 0; started 2026-10-10T18:52:00Z; took 22 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.4. This branch at oer-s109-rg after the change: the changed policy is kept too
 
-- [ ] **2.4** After 2.3, this branch keeps at `oer-s109-rg` Reader, Monitoring Reader and Log Analytics Reader, exactly what the independent rule keeps.
+- [x] **2.4** After 2.3, this branch keeps at `oer-s109-rg` Reader, Monitoring Reader and Log Analytics Reader, exactly what the independent rule keeps.
 
 ```powershell
 Connect-OerLive -Arm
@@ -554,11 +946,50 @@ Disconnect-OerLive
 `kept: True` with `activationMaxHours: 4`; Storage Blob Data Reader and Owner `kept: False`.
 **Failure looks like:** the changed policy left out, or anything else kept.
 
-Result: not run yet.
+Result: 2026-10-10 18:53 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. After 2.3, this branch kept 3 policies at oer-s109-rg -- Reader (assigned), Monitoring Reader (eligible) and the changed Log Analytics Reader (activationMaxHours 4) -- exactly the independent rule's three; Storage Blob Data Reader and Owner left out. Same three requests as 2.2, no write.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.4 ===
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] fences in place (Get-AzToken is the proxy, the ARM wrapper records): True
+[oer-s109] oer-s109-rg: policies listed 965 (built in 965); changed 1; without a policy record 0; roles assigned exactly here 1; eligible exactly here 1
+[oer-s109] oer-s109-rg: the rule keeps 3: Log Analytics Reader, Monitoring Reader, Reader
+[oer-s109] oer-s109-rg: Reader: assigned here True; eligible here False; assigned above True; changed False
+[oer-s109] oer-s109-rg: Monitoring Reader: assigned here False; eligible here True; assigned above False; changed False
+[oer-s109] oer-s109-rg: Log Analytics Reader: assigned here False; eligible here False; assigned above False; changed True
+[oer-s109] oer-s109-rg: Storage Blob Data Reader: assigned here False; eligible here False; assigned above False; changed False
+[oer-s109] oer-s109-rg: Owner: assigned here False; eligible here False; assigned above True; changed False
+[oer-s109] request log: 3 ARM request(s) written to raw\s109\requests-after-rg-changed.log; token requests: 0
+[oer-s109] bundle after-rg-changed: roleManagementPolicies 3; roleAssignments 0; scopes read 1 of 1; skipped scopes 0; IncompleteReads 0; warnings 0
+[oer-s109] Export-OERInventory own errors: 0
+[oer-s109] after-rg-changed: ARM requests 3 (eligibility 1; policy list 1; role assignments atScope 1); writes 0
+[oer-s109] after-rg-changed: kept 3; the independent rule keeps 3; the same roles: True
+[oer-s109] after-rg-changed: Reader kept: True
+[oer-s109] after-rg-changed: Monitoring Reader kept: True
+[oer-s109] after-rg-changed: Log Analytics Reader kept: True
+[oer-s109] after-rg-changed: Storage Blob Data Reader kept: False
+[oer-s109] after-rg-changed: Owner kept: False
+[oer-s109] after-rg-changed: Log Analytics Reader activationMaxHours: 4
+RUNNER: check 2.4 exit code 0; started 2026-10-10T18:52:35Z; took 18 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.5. -AllRolePolicies at oer-s109-rg: every policy, as the 944976f build reads it
 
-- [ ] **2.5** `-AllRolePolicies` at `oer-s109-rg` writes as many entries as 2.1, and every entry is identical to 2.1's except Log Analytics Reader's, which 2.3 changed.
+- [x] **2.5** `-AllRolePolicies` at `oer-s109-rg` writes as many entries as 2.1, and every entry is identical to 2.1's except Log Analytics Reader's, which 2.3 changed.
 
 ```powershell
 Connect-OerLive -Arm
@@ -573,13 +1004,39 @@ Disconnect-OerLive
 `role assignments atScope` request.
 **Failure looks like:** a count other than 2.1's, or another role that differs.
 
-Result: not run yet.
+Result: 2026-10-10 18:53 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With -AllRolePolicies this branch wrote 965 entries at oer-s109-rg, as many as 2.1; no role only on one side; exactly one role differs in content, Log Analytics Reader, which 2.3 changed between the two exports. The requests are 2.1's (one policy list, one eligibility list; no atScope() role assignment list), no write.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.5 ===
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] fences in place (Get-AzToken is the proxy, the ARM wrapper records): True
+[oer-s109] request log: 2 ARM request(s) written to raw\s109\requests-all-rg.log; token requests: 0
+[oer-s109] bundle all-rg: roleManagementPolicies 965; roleAssignments 0; scopes read 1 of 1; skipped scopes 0; IncompleteReads 0; warnings 0
+[oer-s109] Export-OERInventory own errors: 0
+[oer-s109] all-rg: ARM requests 2 (eligibility 1; policy list 1); writes 0
+[oer-s109] before-rg against all-rg: left 965, right 965; only left 0; only right 0; same role, different content 1: Log Analytics Reader
+RUNNER: check 2.5 exit code 0; started 2026-10-10T18:53:04Z; took 14 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 3. The exported document converges (G8)
 
 ### 3.1. oer-s109-rg's document from 2.4: Unchanged twice
 
-- [ ] **3.1** 2.4's `inventory.json` (its `roleManagementPolicies`, all at `oer-s109-rg`, with its `tenantId`) passes `Test-OERStructure`, and `Invoke-OERStructure -Include RoleManagementPolicies` applied twice gives only `Unchanged`, with no write.
+- [x] **3.1** 2.4's `inventory.json` (its `roleManagementPolicies`, all at `oer-s109-rg`, with its `tenantId`) passes `Test-OERStructure`, and `Invoke-OERStructure -Include RoleManagementPolicies` applied twice gives only `Unchanged`, with no write.
 
 ```powershell
 Connect-OerLive -Arm
@@ -606,11 +1063,48 @@ Disconnect-OerLive
 in each run 3 rows, `not Unchanged: 0`, no own error, writes 0.
 **Failure looks like:** a row other than `Unchanged`, a write, or an error.
 
-Result: not run yet.
+Result: 2026-10-10 18:54 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (G8). 2.4's document -- 3 roleManagementPolicies entries, every one at oer-s109-rg, with tenantId -- is valid (0 errors), and Invoke-OERStructure -Include RoleManagementPolicies gave 3 rows Unchanged in each of two runs, no warning, no error, and no ARM write (each run: 3 policy lists and 3 role definition reads).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.1 ===
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] fences in place (Get-AzToken is the proxy, the ARM wrapper records): True
+[oer-s109] document: roleManagementPolicies 3, every one at oer-s109-rg: True; carries tenantId: True
+[oer-s109] Test-OERStructure: valid True; errors 0
+[oer-s109] run 1:
+[oer-s109] row: roleManagementPolicies | Monitoring Reader @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s109-rg | Unchanged | policy already matches for 'Monitoring Reader' at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s109-rg'
+[oer-s109] row: roleManagementPolicies | Log Analytics Reader @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s109-rg | Unchanged | policy already matches for 'Log Analytics Reader' at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s109-rg'
+[oer-s109] row: roleManagementPolicies | Reader @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s109-rg | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s109-rg'
+[oer-s109] rows: 3; not Unchanged: 0; warnings: 0
+[oer-s109] Invoke-OERStructure own errors: 0
+[oer-s109] apply run 1: ARM requests 6 (policy list 3; role definition 3); writes 0
+[oer-s109] run 2:
+[oer-s109] row: roleManagementPolicies | Monitoring Reader @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s109-rg | Unchanged | policy already matches for 'Monitoring Reader' at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s109-rg'
+[oer-s109] row: roleManagementPolicies | Log Analytics Reader @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s109-rg | Unchanged | policy already matches for 'Log Analytics Reader' at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s109-rg'
+[oer-s109] row: roleManagementPolicies | Reader @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s109-rg | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s109-rg'
+[oer-s109] rows: 3; not Unchanged: 0; warnings: 0
+[oer-s109] Invoke-OERStructure own errors: 0
+[oer-s109] apply run 2: ARM requests 6 (policy list 3; role definition 3); writes 0
+RUNNER: check 3.1 exit code 0; started 2026-10-10T18:53:30Z; took 32 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.2. The subscription's document from 1.2: a plan of Unchanged only (read-only)
 
-- [ ] **3.2** 1.2's `roleManagementPolicies` (the subscription's policies in use or changed) pass `Test-OERStructure`, and `Invoke-OERStructure -Include RoleManagementPolicies -WhatIf` plans only `Unchanged`, with no write. Nothing outside the prefix is written: this is a plan only.
+- [x] **3.2** 1.2's `roleManagementPolicies` (the subscription's policies in use or changed) pass `Test-OERStructure`, and `Invoke-OERStructure -Include RoleManagementPolicies -WhatIf` plans only `Unchanged`, with no write. Nothing outside the prefix is written: this is a plan only.
 
 ```powershell
 Connect-OerLive -Arm
@@ -636,7 +1130,37 @@ own error; writes 0.
 policy this step did not change would be an export round-trip gap of the entry itself -- the same
 entry `-AllRolePolicies` and the `944976f` build write -- reported as a finding, not fixed here.
 
-Result: not run yet.
+Result: 2026-10-10 18:54 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. 1.2's document -- the subscription's 4 policies in use or changed, the 2 changed ones included, with tenantId -- is valid (0 errors), and Invoke-OERStructure -Include RoleManagementPolicies -WhatIf planned 4 rows, every one Unchanged, no warning, no error, no ARM write. A plan only: nothing outside the prefix was written. So the 2 changed policies the export keeps round-trip as they are.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.2 ===
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] fences in place (Get-AzToken is the proxy, the ARM wrapper records): True
+[oer-s109] document: roleManagementPolicies 4; carries tenantId: True
+[oer-s109] Test-OERStructure: valid True; errors 0
+[oer-s109] row: roleManagementPolicies | Reader @ /subscriptions/00000000-0000-0000-0000-000000000003 | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000003'
+[oer-s109] row: roleManagementPolicies | Contributor @ /subscriptions/00000000-0000-0000-0000-000000000003 | Unchanged | policy already matches for 'Contributor' at '/subscriptions/00000000-0000-0000-0000-000000000003'
+[oer-s109] row: roleManagementPolicies | Owner @ /subscriptions/00000000-0000-0000-0000-000000000003 | Unchanged | policy already matches for 'Owner' at '/subscriptions/00000000-0000-0000-0000-000000000003'
+[oer-s109] row: roleManagementPolicies | Storage Blob Data Contributor @ /subscriptions/00000000-0000-0000-0000-000000000003 | Unchanged | policy already matches for 'Storage Blob Data Contributor' at '/subscriptions/00000000-0000-0000-0000-000000000003'
+[oer-s109] rows: 4; not Unchanged: 0; warnings: 0
+[oer-s109] Invoke-OERStructure own errors: 0
+[oer-s109] plan: ARM requests 8 (policy list 4; role definition 4); writes 0
+RUNNER: check 3.2 exit code 0; started 2026-10-10T18:54:14Z; took 18 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## B. Proved offline (class B)
 
@@ -661,7 +1185,7 @@ Result: not run yet.
 
 ### T.1. The policy put back, the objects removed, nothing left, raw\s109 deleted
 
-- [ ] **T.1** `Initialize-OerS109Prereq.ps1 -Teardown -Unattended` puts the Log Analytics Reader policy at `oer-s109-rg` back to its baseline, removes the eligibility and the role assignment, the group and the resource group; the sweep finds nothing with the prefix and no unread collection; the group count equals the baseline; no module or Graph SDK session remains; `raw\s109\` is deleted after the results are written.
+- [x] **T.1** `Initialize-OerS109Prereq.ps1 -Teardown -Unattended` puts the Log Analytics Reader policy at `oer-s109-rg` back to its baseline, removes the eligibility and the role assignment, the group and the resource group; the sweep finds nothing with the prefix and no unread collection; the group count equals the baseline; no module or Graph SDK session remains; `raw\s109\` is deleted after the results are written.
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS109Prereq.ps1'
@@ -688,11 +1212,86 @@ False`; `raw\s109 deleted: True`.
 object or the resource group left, a session left, or the folder still there. The listings can lag a
 deletion: T.2 reads back once they have settled.
 
-Result: not run yet.
+Result: 2026-10-10 18:55 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Teardown A put the Log Analytics Reader policy at oer-s109-rg back to its baseline (1 rule differed, Expiration_EndUser_Assignment; converged on the first read) before anything was removed; B removed the eligibility (AdminRemove, 200) and the role assignment (DELETE, 200), each no longer listed at the first read; C deleted oer-s109-principal (204; removed 1, residue 0); D deleted oer-s109-rg. The sweep lists nothing with the prefix and no unread collection, oer-s109-rg is not found, the group count equals the baseline (98), exit code 0; no module or Graph SDK session remains; raw\s109 is deleted. The 2 residue rows of other prefixes were counted and not touched.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s109] Transcript (redacted): raw\s109\teardown-20261010-185449Z.log; OerLive 1.0.3.
+[oer-s109] Mode: REMOVE. Prefix 'oer-s109-'. Objects (fixed): oer-s109-principal (security group, no member); oer-s109-rg (tagged, empty); at oer-s109-rg: Reader assigned and Monitoring Reader eligible (P7D) for oer-s109-principal; the Log Analytics Reader policy there baselined. OerLive 1.0.3.
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s109] Residue: raw\residue.json holds 2 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s109] The scope lists its role management policy: converged after 1 read(s), 3.6 s.
+[oer-s109] The policy listed at the scope is the scope's own: True
+[oer-s109] Azure role policy at the scope: rules differing from the baseline: 1 (Expiration_EndUser_Assignment)
+[oer-s109] The scope lists its role management policy: converged after 1 read(s), 3.1 s.
+[oer-s109] The policy listed at the scope is the scope's own: True
+[oer-s109] Azure role policy back at its baseline: converged after 1 read(s), 4.2 s.
+[oer-s109] Teardown A: Log Analytics Reader policy at oer-s109-rg at its baseline: True (rules differing before: 1: Expiration_EndUser_Assignment).
+[oer-s109] Grants exactly at oer-s109-rg: role assignment of Reader for oer-s109-principal: True; eligibility of Monitoring Reader for oer-s109-principal: True
+[oer-s109] Teardown B: AdminRemove of the eligibility of Monitoring Reader: 200 .
+[oer-s109] the eligibility is no longer listed at oer-s109-rg: converged after 1 read(s), 1.8 s.
+[oer-s109] Teardown B: DELETE of the role assignment of Reader: 200 .
+[oer-s109] the role assignment is no longer listed at oer-s109-rg: converged after 1 read(s), 2 s.
+[oer-s109] Teardown of 'oer-s109-': users 0, groups 1, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s109] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s109] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s109] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s109] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s109] Teardown 5/6: the prefixed groups.
+[oer-s109] Deleted: group oer-s109-principal (204).
+[oer-s109] Teardown 6/6: the prefixed users.
+[oer-s109] Teardown of 'oer-s109-': removed 1, residue 0, unreadable 0.
+[oer-s109] oer-s109-rg is gone: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s109] oer-s109-rg is gone: not yet (read 2, 2.4 s, likely replication delay) -- reading again in 4 s.
+[oer-s109] oer-s109-rg is gone: converged after 3 read(s), 6.5 s.
+[oer-s109] Teardown D: deleted oer-s109-rg.
+[oer-s109] no 'oer-s109-' object is listed: not yet (read 1, 0.5 s, likely replication delay) -- reading again in 2 s.
+[oer-s109] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s109-' is left.
+[oer-s109] no 'oer-s109-' object is listed: converged after 2 read(s), 3.1 s.
+[oer-s109] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s109-' is left.
+[oer-s109] Resource group oer-s109-rg exists after the teardown: False
+[oer-s109] Counts: groups now 98, at the baseline 98; equal: True
+[oer-s109] Removed the recorded ids.
+[oer-s109] Done.
+[oer-s109] teardown exit code: 0
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s109-' is left.
+[oer-s109] objects with the prefix: 0; unread collections: 0
+[oer-s109] oer-s109-rg found: False
+[oer-s109] module session cleared: True; Graph SDK session left: False
+[oer-s109] raw\s109 deleted: True
+RUNNER: check T.1 exit code 0; started 2026-10-10T18:54:47Z; took 47 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### T.2. Read-back once the listings have settled
 
-- [ ] **T.2** At least a minute after T.1, the sweep lists nothing with the prefix and no unread collection, the resource group is not found, and the tenant lists as many groups as the baseline of 0.2 recorded; `raw\s109\` (which H.1 creates again) is deleted afterwards.
+- [x] **T.2** At least a minute after T.1, the sweep lists nothing with the prefix and no unread collection, the resource group is not found, and the tenant lists as many groups as the baseline of 0.2 recorded; `raw\s109\` (which H.1 creates again) is deleted afterwards.
 
 ```powershell
 Connect-OerLive -Arm
@@ -712,4 +1311,29 @@ count 0.2 printed; `raw\s109 deleted: True`.
 **Failure looks like:** a step object still listed after several minutes (read back again later
 before calling it residue), another count than the baseline, or the folder still there.
 
-Result: not run yet.
+Result: 2026-10-10 18:57 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. 89 s after T.1 ended (two earlier read-backs, 18 s and 53 s after it, read the same), the sweep lists nothing with the prefix oer-s109- and no unread collection, oer-s109-rg is not found, and the tenant lists 98 groups, the count the baseline of 0.2 recorded; raw\s109 (created again by H.1) is deleted. Nothing is left in the tenant from this run, and no residue row has this step's prefix.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.2 ===
+[oer-s109] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg9\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s109] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s109] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s109-' is left.
+[oer-s109] objects with the prefix: 0; unread collections: 0
+[oer-s109] oer-s109-rg found: False
+[oer-s109] groups listed: 98
+[oer-s109] raw\s109 deleted: True
+RUNNER: check T.2 exit code 0; started 2026-10-10T18:57:03Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
