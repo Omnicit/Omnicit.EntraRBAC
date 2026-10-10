@@ -1252,11 +1252,24 @@ Describe 'Initialize-OERAuth sovereign clouds' {
             $script:PublicPathConnectEnvironment = $Environment
         }
 
-        InModuleScope $script:moduleName {
-            Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'Interactive' -IncludeARM
-            $script:_OERAuthState.Environment    | Should -Be 'Global'
-            $script:_OERAuthState.ArmResourceUrl | Should -Be 'https://management.azure.com/'
-        }
+        # The sentinel is not the commercial authority, so this Global sign-in warns about it, by design
+        # ('warns when AZURE_AUTHORITY_HOST is set to a non-commercial authority on a Global sign-in').
+        # Captured and pinned here, so it is asserted rather than printed into the test output.
+        $PublicPathWarnings = @(InModuleScope $script:moduleName {
+                Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'Interactive' -IncludeARM `
+                    -WarningVariable Captured -WarningAction SilentlyContinue
+                $script:_OERAuthState.Environment    | Should -Be 'Global'
+                $script:_OERAuthState.ArmResourceUrl | Should -Be 'https://management.azure.com/'
+                $Captured | ForEach-Object { [string]$_.Message }
+            })
+        $PublicPathWarnings.Count | Should -Be 1 -Because 'the Global sign-in writes exactly one warning, the one about the sentinel authority'
+        $PublicPathWarnings[0] | Should -BeExactly (
+            "AZURE_AUTHORITY_HOST is set to 'https://sentinel.invalid/' in this process, which is not the " +
+            "commercial-cloud authority 'https://login.microsoftonline.com/'. Microsoft Entra ID sign-in " +
+            "follows that variable, so this 'Global' sign-in will be sent to that authority instead. " +
+            'Omnicit.EntraRBAC does not change the variable on the Global cloud. If this is not what you ' +
+            'intended, clear it with Remove-Item Env:AZURE_AUTHORITY_HOST and sign in again; if you meant ' +
+            'to target a sovereign cloud, use Connect-OER -Environment instead.')
 
         Should -Invoke -ModuleName $script:moduleName Get-AzToken -Exactly -Times 1 -ParameterFilter {
             $Resource -eq 'https://graph.microsoft.com/'
@@ -3791,9 +3804,15 @@ Describe 'Initialize-OERAuth tenant-switch warnings' {
                 $AuthorityHostBefore = [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST')
 
                 $StopCaught = $null
+                $StopWarnings = 'not-run'
                 try {
+                    # -WarningVariable captures the warning, which is asserted below; 3>$null keeps it off
+                    # the console. Under Stop the warning is written, added to the variable and only then
+                    # turned into the stop, so both hold the record (measured: an assignment of a 3>&1
+                    # merge gets nothing under Stop, and -WarningVariable with 3>$null keeps the record
+                    # and the ActionPreferenceStopException alike).
                     Initialize-OERAuth -TenantId 'tenant-b.example.com' -AuthMethod 'ClientSecret' -ClientId 'app-client-1' `
-                        -ClientSecret $Secret -Environment $Environment -WarningAction Stop
+                        -ClientSecret $Secret -Environment $Environment -WarningAction Stop -WarningVariable StopWarnings 3>$null
                 }
                 catch {
                     $StopCaught = $PSItem
@@ -3803,6 +3822,17 @@ Describe 'Initialize-OERAuth tenant-switch warnings' {
                 $StopCaught.Exception | Should -BeOfType [System.Management.Automation.ActionPreferenceStopException]
                 $StopCaught.Exception.Message | Should -Match ([regex]::Escape(
                     "names tenant 'tenant-b.example.com', but the credential AzAuth holds for that application in this PowerShell session was built for tenant 'tenant-a.example.com'"))
+                @($StopWarnings).Count | Should -Be 1 -Because 'the stopped switch writes exactly one warning, the pre-call one it is stopped at'
+                $StopWarnings[0].Message | Should -BeExactly (
+                    "This client secret sign-in for application 'app-client-1' names tenant " +
+                    "'tenant-b.example.com', but the credential AzAuth holds for that application in this " +
+                    "PowerShell session was built for tenant 'tenant-a.example.com'. AzAuth reuses that " +
+                    "credential for the same application until it is told to rebuild it, so this sign-in " +
+                    "does not reach 'tenant-b.example.com': by default it fails with 'The current " +
+                    "credential is not configured to acquire tokens for tenant', and where multi-tenant " +
+                    "authentication is disabled (AZURE_IDENTITY_DISABLE_MULTITENANTAUTH) the token is " +
+                    "requested from 'tenant-a.example.com' instead. Run Connect-OER again with -Force to " +
+                    "rebuild the credential for 'tenant-b.example.com'. Disconnect-OER does not clear it.")
 
                 [object]::ReferenceEquals($script:_OERAuthState, $StateBefore) | Should -BeTrue
                 [object]::ReferenceEquals($script:_OERLastTokenRequest, $RequestBefore) | Should -BeTrue

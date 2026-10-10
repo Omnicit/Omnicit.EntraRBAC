@@ -651,9 +651,16 @@ one's owners) and a call by its owners found for every row's command. So a row a
 `It` of its own is enforced all the same. Before BL-101 each row was enforced only by its own `It`
 and nothing read the table as a whole, so a row without an `It` asserted nothing -- MEASURED in
 Sprint 9 step 6b: the `Get-OERDocumentTenantMismatch` row alone, with its owner list emptied, left
-the gate green, and it got its own `It` then. The thirteen-row floor is what sees a row deleted from
-the table: its own `It` then reads a key the scan never filled and stays green (measured, BL-101).
-A deletion made in the same edit as a new row keeps the count, and nothing sees it.
+the gate green, and it got its own `It` then. A row deleted from the table is seen by its own `It`
+only where that `It` also asserts the row's call count -- the `Get-MgContext`, `Lock-OERSignIn`,
+`Unlock-OERSignIn`, `Invoke-MgGraphRequest`, `Invoke-WebRequest` and `Invoke-RestMethod` rows --
+since that count then reads `$null` and fails. The `It`s of the other seven rows read those rows
+only through the violation and stale lists, where a missing key joins to an empty string, so they
+stay green: `Register-OERSignInIdentity`, `Get-OERSignInRefusal`, `Get-OERSignInSupersession`,
+`Get-OERSignInIdentity`, `Resolve-OERTenantDomain`, `Set-OERSessionUncertain` and
+`Get-OERDocumentTenantMismatch` (all thirteen measured, BL-101, each row deleted with a valid row
+added). For those seven the thirteen-row floor is what sees a deletion, and a deletion made in the
+same edit as a new row keeps the count, so nothing sees it.
 The per-row `It`s stay and carry each row's reason; a new row still gets one for its explanation,
 but no longer needs one to be enforced.
 `Initialize-OERAuth` reads the latch once, before `Lock-OERSignIn`, to refuse a SIGN-IN under a

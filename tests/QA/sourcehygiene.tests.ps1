@@ -4209,14 +4209,17 @@ rest on, so fix it rather than the case; a case is changed only when the rule it
             without an It of its own is enforced all the same. Measured in Sprint 9 step 6b, before this
             It existed: the Get-OERDocumentTenantMismatch row alone, with its owner list emptied, left
             the gate green, since nothing read the row. Non-vacuity: the table holds at least the
-            thirteen rows it held when this It was written -- a row deleted from the table leaves its
-            own It green, since that It then reads a key the scan never filled (measured, BL-101), so
-            only this count sees it, and not when a new row is added in the same edit -- one row per
-            command (a second row for a
-            command replaces the first one's owners in the scan above), and the owners of every row
-            really call its command, so no row is a rule over nothing. That last check is the only one
-            that sees a row with no owner at all for a command nothing calls: such a row reports
-            neither a foreign caller nor a stale owner.
+            thirteen rows it held when this It was written. A row deleted from the table is seen by its
+            own It only where that It also asserts the row's call count (Get-MgContext, Lock-OERSignIn,
+            Unlock-OERSignIn, Invoke-MgGraphRequest, Invoke-WebRequest, Invoke-RestMethod), which then
+            reads $null; the Its of the other seven rows read those rows only through the violation
+            and stale lists, whose missing key joins to an empty string, and stay green (all thirteen
+            measured, BL-101). For those seven only this count sees a deletion, and not when a new row
+            is added in the same edit. One row per command (a second row for a command replaces the
+            first one's owners in the scan above), and the owners of every row really call its
+            command, so no row is a rule over nothing. That last check is the only one that sees a row
+            with no owner at all for a command nothing calls: such a row reports neither a foreign
+            caller nor a stale owner.
         #>
         @($script:transportGateOwners).Count | Should -BeGreaterOrEqual 13 -Because (
             'the owner table held thirteen rows when this It was written; fewer means a rule was dropped, and a new row is enforced here without a further edit')
