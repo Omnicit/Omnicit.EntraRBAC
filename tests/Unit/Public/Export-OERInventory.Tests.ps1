@@ -2079,6 +2079,38 @@ Describe 'Export-OERInventory (a section whose list could not be read is partial
         @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' }).Count | Should -Be 1
     }
 
+    It 'shows progress while the real group reader reads, and ends it with one Completed' {
+        # The record of every call, in order. The reader is the real one, so this is what the export
+        # shows an operator: the list status, one record per group, then the end of the activity.
+        $script:ExportProgressLog = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName $script:moduleName Write-Progress {
+            param($Activity, $Status, $PercentComplete, [switch]$Completed)
+            $script:ExportProgressLog.Add($(if ($Completed) { "$Activity|completed" } else { "$Activity|$Status|$PercentComplete" }))
+        }
+        Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+        Mock -ModuleName $script:moduleName Get-OERGroup -ParameterFilter { -not $All } -MockWith {
+            foreach ($N in 1..2) {
+                [PSCustomObject]@{ Id = "g-$N"; DisplayName = "role_sec_$N"; GroupType = 'Assigned'; IsAssignableToRole = $true; SecurityEnabled = $true; Members = @(); Owners = @(); PimEligibility = @() }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERGroup -ParameterFilter { $All } -MockWith {
+            [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_1'; GroupType = 'Assigned'; IsAssignableToRole = $true }
+        }
+
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sec-progress') -Include Groups -AllGroupsDetailed -WhatIf `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        # Reach proof: the reader read both groups.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -ParameterFilter { -not $All }
+        $Bundle.Groups | Should -Be 2
+        @($script:ExportProgressLog) | Should -Be @(
+            'Export-OERInventory|Reading the groups in full|'
+            'Export-OERInventory|Group 1 of 2|50'
+            'Export-OERInventory|Group 2 of 2|100'
+            'Export-OERInventory|completed'
+        )
+    }
+
     It 'lists the groups section in the README, as written to disk, when the filtered group read fails' {
         # The same failure as the first row above, but written for real (no -WhatIf): the README is
         # only generated when the bundle is, and this is the one that proves the section reaches it.
@@ -2465,6 +2497,17 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
             Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-security-only') -Include Groups @Splat | Out-Null
             Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1
             Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter { $SecurityEnabledOnly -eq $true }
+        }
+
+        It 'asks the reader to show progress as Export-OERInventory in every mode' -ForEach @(
+            @{ Label = 'by default'; Splat = @{} }
+            @{ Label = 'under -AllGroupsDetailed'; Splat = @{ AllGroupsDetailed = $true } }
+            @{ Label = 'under -IncludeSyncedGroups'; Splat = @{ IncludeSyncedGroups = $true } }
+            @{ Label = 'with a -GroupFilter'; Splat = @{ GroupFilter = "startswith(displayName,'role_')" } }
+        ) {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-progress') -Include Groups @Splat | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter { $ProgressActivity -ceq 'Export-OERInventory' }
         }
 
         It 'asks for exactly the security-enabled filter without -GroupFilter' {

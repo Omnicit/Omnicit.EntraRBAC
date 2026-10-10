@@ -263,7 +263,9 @@ function Export-OERInventory {
         # default, so inventory.json covers the same groups it always did. -ExcludeSharedName leaves
         # out groups that share a name, the rule Get-OERInventory applies to its own groups section.
         # The reader never writes an error record: what it could not read comes back in its Unread
-        # and Causes lists, folded into IncompleteReads and the partial message below.
+        # and Causes lists, folded into IncompleteReads and the partial message below. It shows
+        # progress under this cmdlet's own activity while it reads ('Group n of N') and ends it when
+        # the read is done, also when it stops on an error, before the Azure scope walk starts its own.
         #
         # -GroupFilter narrows that scope and never widens it. It is ANDed to the security-enabled
         # filter inside parentheses, and it is the operator's OWN OData expression, so it is sent as
@@ -280,6 +282,7 @@ function Export-OERInventory {
                 IncludeId           = $true
                 ExcludeSharedName   = $true
                 SecurityEnabledOnly = $true
+                ProgressActivity    = 'Export-OERInventory'
             }
             if (-not $AllGroupsDetailed) {
                 $GroupReadParams.RelevantOnly = $true

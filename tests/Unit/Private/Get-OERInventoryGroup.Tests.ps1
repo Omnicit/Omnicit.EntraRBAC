@@ -15,7 +15,8 @@ BeforeAll {
             [switch]$RelevantOnly,
             [switch]$IncludeSyncedGroups,
             [switch]$ExcludeSharedName,
-            [switch]$SecurityEnabledOnly
+            [switch]$SecurityEnabledOnly,
+            [string]$ProgressActivity
         )
         $Arguments = @{
             Filter              = $Filter
@@ -25,6 +26,7 @@ BeforeAll {
             IncludeSyncedGroups = [bool]$IncludeSyncedGroups
             ExcludeSharedName   = [bool]$ExcludeSharedName
             SecurityEnabledOnly = [bool]$SecurityEnabledOnly
+            ProgressActivity    = $ProgressActivity
         }
         InModuleScope Omnicit.EntraRBAC -Parameters $Arguments {
             $Params = @{ Filter = $Filter }
@@ -34,6 +36,7 @@ BeforeAll {
             if ($IncludeSyncedGroups) { $Params.IncludeSyncedGroups = $true }
             if ($ExcludeSharedName) { $Params.ExcludeSharedName = $true }
             if ($SecurityEnabledOnly) { $Params.SecurityEnabledOnly = $true }
+            if ($ProgressActivity) { $Params.ProgressActivity = $ProgressActivity }
             $Stream = @(Get-OERInventoryGroup @Params -Verbose -ErrorVariable ReadErr -ErrorAction SilentlyContinue `
                     -WarningVariable ReadWarn -WarningAction SilentlyContinue 4>&1)
             [PSCustomObject]@{
@@ -177,12 +180,151 @@ Describe 'Get-OERInventoryGroup' {
             $Read.Errors.Count | Should -Be 0
         }
 
+        It 'keeps the cause of a failed collection read of a group it left out under a full read, and names no unread collection for it' {
+            # A full read has Get-OERGroup read the collections WITH the list, before the reader sees
+            # the group, so the failed members read of a group the switch then drops has already been
+            # reported. No error is dropped: its cause stays in Causes. The group is not projected, so
+            # nothing names it in Unread (that name is added where a group is projected).
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -Message "Could not read members for group 'g-m365': Too many requests (429)." `
+                    -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'g-m365' -ErrorAction $Ea
+                $script:SecurityListing[0]
+                [PSCustomObject]@{ Id = 'g-m365'; DisplayName = 'm365_team'; GroupType = 'Unified'; IsAssignableToRole = $false; SecurityEnabled = $false; Owners = @(); PimEligibility = @() }
+            }
+            $Read = Invoke-GroupRead -SecurityEnabledOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('sec_team')
+            $Read.Result.Unread.Count | Should -Be 0
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Read.Result.Causes[0].Cause | Should -Be "Could not read members for group 'g-m365': Too many requests (429)."
+            $Read.Result.Causes[0].Target | Should -Be 'g-m365'
+            # Non-vacuity: without the switch the same listing projects the group, which names the
+            # members it could not read, and the cause is the same single cause.
+            $Control = Invoke-GroupRead
+            @($Control.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('sec_team', 'm365_team')
+            @($Control.Result.Unread) | Should -Be @('groups/m365_team/members')
+            @($Control.Result.Causes).Count | Should -Be 1
+        }
+
         It 'sends the filter it is given exactly as given, and asks for nothing more' {
             $null = Invoke-GroupRead -SecurityEnabledOnly -Filter 'securityEnabled eq true and (x eq 1)'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERGroup -Exactly -Times 1 -ParameterFilter {
                 $Filter -eq 'securityEnabled eq true and (x eq 1)'
             }
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERGroup -Exactly -Times 1
+        }
+    }
+
+    Context 'progress (A13)' {
+        # Write-Progress is mocked in module scope and every call is recorded, in order, as a line of
+        # 'activity|status|percent' (or 'activity|completed'), so the sequence is asserted whole. The
+        # mock body reads and writes the TEST file's script scope, as the other mocks of this file do.
+        BeforeEach {
+            $script:ProgressLog = [System.Collections.Generic.List[string]]::new()
+            Mock -ModuleName Omnicit.EntraRBAC Write-Progress {
+                param($Activity, $Status, $PercentComplete, [switch]$Completed)
+                $script:ProgressLog.Add($(if ($Completed) { "$Activity|completed" } else { "$Activity|$Status|$PercentComplete" }))
+            }
+            $script:ProgressListing = @(
+                foreach ($N in 1..3) {
+                    [PSCustomObject]@{ Id = "g-$N"; DisplayName = "role_sec_$N"; GroupType = 'Assigned'; IsAssignableToRole = $false; SecurityEnabled = $true; Members = @(); Owners = @(); PimEligibility = @() }
+                }
+            )
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup { $script:ProgressListing }
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+        }
+
+        It 'writes the list status, one record per group with a percentage, then exactly one Completed' {
+            $Read = Invoke-GroupRead -ProgressActivity 'Export-OERInventory'
+            # Reach proof: all three groups were projected.
+            @($Read.Result.Groups).Count | Should -Be 3
+            @($script:ProgressLog) | Should -Be @(
+                'Export-OERInventory|Reading the groups in full|'
+                'Export-OERInventory|Group 1 of 3|33'
+                'Export-OERInventory|Group 2 of 3|67'
+                'Export-OERInventory|Group 3 of 3|100'
+                'Export-OERInventory|completed'
+            )
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Write-Progress -Exactly -Times 1 -ParameterFilter { $Completed }
+        }
+
+        It 'writes no progress at all without -ProgressActivity, which is how Get-OERInventory reads' {
+            $Read = Invoke-GroupRead
+            @($Read.Result.Groups).Count | Should -Be 3
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Write-Progress -Times 0
+            $script:ProgressLog.Count | Should -Be 0
+        }
+
+        It 'names the list read as the group list under -RelevantOnly' {
+            Mock -ModuleName Omnicit.EntraRBAC Read-OERGroupCollection {
+                param($GroupId, $Collection)
+                [PSCustomObject]@{ Collection = $Collection; Read = $true; Value = @(); ErrorId = $null; Message = $null; Exception = $null }
+            }
+            $null = Invoke-GroupRead -RelevantOnly -ProgressActivity 'Export-OERInventory'
+            $script:ProgressLog[0] | Should -Be 'Export-OERInventory|Reading the group list|'
+            $script:ProgressLog[-1] | Should -Be 'Export-OERInventory|completed'
+        }
+
+        It 'counts the groups -SecurityEnabledOnly kept, the ones the loop goes through' {
+            $script:ProgressListing = @(
+                $script:ProgressListing[0]
+                [PSCustomObject]@{ Id = 'g-x'; DisplayName = 'x_team'; GroupType = 'Unified'; IsAssignableToRole = $false; SecurityEnabled = $false; Members = @(); Owners = @(); PimEligibility = @() }
+                $script:ProgressListing[1]
+            )
+            $Read = Invoke-GroupRead -SecurityEnabledOnly -ProgressActivity 'Export-OERInventory'
+            @($Read.Result.Groups).Count | Should -Be 2
+            @($script:ProgressLog | Where-Object { $_ -like '*|Group *' }) | Should -Be @(
+                'Export-OERInventory|Group 1 of 2|50'
+                'Export-OERInventory|Group 2 of 2|100'
+            )
+        }
+
+        It 'writes the list status and Completed, and no group record, for an empty listing' {
+            $script:ProgressListing = @()
+            $Read = Invoke-GroupRead -ProgressActivity 'Export-OERInventory'
+            @($Read.Result.Groups).Count | Should -Be 0
+            @($script:ProgressLog) | Should -Be @(
+                'Export-OERInventory|Reading the groups in full|'
+                'Export-OERInventory|completed'
+            )
+        }
+
+        It 'writes Completed exactly once when the loop stops on an error nothing catches (Review Focus 5)' {
+            # The projection asks Test-OERGroupOnPremisesSynced for every group, outside any catch of
+            # the reader's own, so a throw there ends the read part-way. The reader is called inside
+            # try {} here, with no -ErrorAction, so the exception reaches the test and is observed.
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupOnPremisesSynced { throw [System.Exception]::new('stop') }
+            $Caught = InModuleScope Omnicit.EntraRBAC {
+                try {
+                    $null = Get-OERInventoryGroup -Filter 'securityEnabled eq true' -ProgressActivity 'Export-OERInventory'
+                    'did not stop'
+                } catch {
+                    [string]$PSItem.Exception.Message
+                }
+            }
+            # Reach proof: the loop stopped on the error, after the first group's record.
+            $Caught | Should -Be 'stop'
+            @($script:ProgressLog) | Should -Be @(
+                'Export-OERInventory|Reading the groups in full|'
+                'Export-OERInventory|Group 1 of 3|33'
+                'Export-OERInventory|completed'
+            )
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Write-Progress -Exactly -Times 1 -ParameterFilter { $Completed }
+        }
+
+        It 'writes nothing when the error stops it without -ProgressActivity' {
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupOnPremisesSynced { throw [System.Exception]::new('stop') }
+            $Caught = InModuleScope Omnicit.EntraRBAC {
+                try {
+                    $null = Get-OERInventoryGroup -Filter 'securityEnabled eq true'
+                    'did not stop'
+                } catch {
+                    [string]$PSItem.Exception.Message
+                }
+            }
+            $Caught | Should -Be 'stop'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Write-Progress -Times 0
         }
     }
 
@@ -989,6 +1131,47 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
                 @($Read.Result.Unread) | Should -Be @('groups/Admins')
                 $Read.Warned.Count | Should -Be 0
             }
+        }
+    }
+
+    Context 'progress (A13), driven through the transport' {
+        BeforeEach {
+            $script:ProgressLog = [System.Collections.Generic.List[string]]::new()
+            Mock -ModuleName Omnicit.EntraRBAC Write-Progress {
+                param($Activity, $Status, $PercentComplete, [switch]$Completed)
+                $script:ProgressLog.Add($(if ($Completed) { "$Activity|completed" } else { "$Activity|$Status|$PercentComplete" }))
+            }
+        }
+
+        It 'counts every listed group, the ones the relevance decision drops included' {
+            $Read = Invoke-GroupRead -RelevantOnly -ProgressActivity 'Export-OERInventory'
+            # Reach proof: the decision dropped three of the six groups, and still all six were counted.
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD')
+            @($script:ProgressLog) | Should -Be @(
+                'Export-OERInventory|Reading the group list|'
+                'Export-OERInventory|Group 1 of 6|17'
+                'Export-OERInventory|Group 2 of 6|33'
+                'Export-OERInventory|Group 3 of 6|50'
+                'Export-OERInventory|Group 4 of 6|67'
+                'Export-OERInventory|Group 5 of 6|83'
+                'Export-OERInventory|Group 6 of 6|100'
+                'Export-OERInventory|completed'
+            )
+        }
+
+        It 'writes the same records for a full read, with the list status of a full read' {
+            $Read = Invoke-GroupRead -ProgressActivity 'Export-OERInventory'
+            @($Read.Result.Groups).Count | Should -Be 6
+            $script:ProgressLog[0] | Should -Be 'Export-OERInventory|Reading the groups in full|'
+            @($script:ProgressLog | Where-Object { $_ -like '*|Group *' }).Count | Should -Be 6
+            $script:ProgressLog[-1] | Should -Be 'Export-OERInventory|completed'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Write-Progress -Exactly -Times 1 -ParameterFilter { $Completed }
+        }
+
+        It 'writes no progress without -ProgressActivity' {
+            $Read = Invoke-GroupRead -RelevantOnly
+            @($Read.Result.Groups).Count | Should -Be 3
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Write-Progress -Times 0
         }
     }
 
