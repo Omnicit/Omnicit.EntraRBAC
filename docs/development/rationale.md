@@ -728,7 +728,9 @@ already fallen behind by one -- `Get-OERListedGroupPimPolicy` -- before `Test-OE
 added the tenth. Sprint 7 step 3 added the eleventh, `Send-OERNewGroupEligibilityRequest`, the
 apply engine's own time-bound eligibility POST for a group created in the same run, which declares
 a 404 ResourceNotFound to the transport where `Add-OERGroupEligibility` cannot. The test below now
-lists every calling file and fails on one it does not name.)
+lists every calling file and fails on one it does not name.) Sprint 10 step 8 moved the eligibility
+call site from `Get-OERGroup` into `Read-OERGroupCollection`, which `Get-OERGroup` and the
+inventory's group reader both call; the counts above, sixteen sites in eleven files, are unchanged.
 
 The v1.0 API reference documents these operations as GA, but
 `learn.microsoft.com/graph/how-to-pim-update-rules` still states that PIM for groups APIs are
@@ -1254,14 +1256,17 @@ Deliberate exceptions that must NOT use it:
 | `New-OERAccessReviewScopeQuery` | The filter goes in a JSON request body, not a URL. |
 | `Get-OERCatalogResourceRole` | Its structural slashes and parentheses must survive unencoded. |
 | `Get-OERPimGroupPolicyId` | The value is a GUID and cannot carry reserved characters. |
-| `-Filter` passthrough branches | The caller supplies a whole filter expression, not one value. |
+| `-Filter` passthrough branches, and `Export-OERInventory -GroupFilter` | The caller supplies a whole filter expression, not one value. The export's `-GroupFilter` is composed into `securityEnabled eq true and (...)`, never escaped, and guarded by the post-read check that keeps only groups the read shows `securityEnabled` true. |
 
 The `-Filter` passthrough branches -- `Get-OERGroup`, `Get-OERAdministrativeUnit`,
 `Get-OERAccessReviewDefinition`, `Get-OERCatalog`, `Get-OERAccessPackage`, and the ARM sites --
 percent-encode the *entire* caller-supplied filter string with `[System.Uri]::EscapeDataString`
 rather than a single interpolated value. The last two were the outlier until commit `51ae59d` fixed
 them. Every passthrough branch is encoded now, so **a new one that is not is a bug, not the house
-style**.
+style**. `Export-OERInventory -GroupFilter` (Sprint 10 step 8) reaches `Get-OERGroup -Filter` and is
+encoded there, once. The parentheses around the operator's text are no guard, since the text can
+close them; the guard is the post-read `securityEnabled` check
+([#export-group-selection](#export-group-selection), R5).
 
 ## reviewer-scope-query
 
@@ -6032,6 +6037,163 @@ that read for a `pimPolicy`-only entry lets a 403 on the beta eligibility endpoi
 has no use for the answer. A group renamed through `previousDisplayName` takes the existing-group
 path and is asked like any other existing group.
 
+## export-group-selection
+
+Sprint 10 step 8 (decision A13) made `Export-OERInventory` decide which groups are RBAC-relevant
+before it reads any group in full. This anchor records the problem, the requests per group before
+and after, the design, and rulings R1-R9 each with its cost if wrong. `Get-OERInventoryGroup` is the
+single reader of the inventory's Groups section; `Read-OERGroupCollection` owns the three per-group
+collection reads `Get-OERGroup` attaches and that reader uses, and the wording of their failure,
+while `Get-OERGroupRelation` stays the single reader of the members and owners requests
+([#typed-group-member-read](#typed-group-member-read)) and `Get-OERGroupMember` calls it directly;
+`Format-OERUnreadCauseClause` and `Get-OERSharedNameCause` are the single owners of two texts
+(CLAUDE.md, Code Style).
+
+**The problem.** The export read the Groups section through `Get-OERInventory`, which reads every
+security group in full -- members, owners, PIM eligibility and the PIM-in-use criterion -- and only
+then dropped every group that was not RBAC-relevant. In a tenant with about 3,100 groups an export
+took nearly an hour, and most of the groups it had read were discarded. A13 rules out Microsoft
+Graph `$batch`, so the cost comes down by not making requests, not by grouping them.
+
+**Requests per group.** Counted from the source -- before on `9761434`, after on this step's code --
+for an export without `-AllGroupsDetailed`. Each collection is assumed to fit one page; a larger one
+adds a request per further page.
+
+| Read | Request | Owner | Every group before | After |
+|---|---|---|---|---|
+| group list | `GET v1.0/groups?$filter=securityEnabled eq true` (paged) | `Get-OERGroup -Filter` | shared, not per group | shared, not per group |
+| members | `GET v1.0/groups/{id}/members` and `.../members/microsoft.graph.servicePrincipal` | `Get-OERGroupRelation`, now through `Read-OERGroupCollection` | 2 | 2 only for a group read in full |
+| owners | `GET v1.0/groups/{id}/owners` and `.../owners/microsoft.graph.servicePrincipal` | `Get-OERGroupRelation`, now through `Read-OERGroupCollection` | 2 | 2 only for a group read in full |
+| PIM eligibility | `GET beta/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?$filter=groupId eq '{id}'` | was `Get-OERGroup -IncludePimEligibility`, now `Read-OERGroupCollection` | 1 | 1, the first relevance request |
+| PIM-in-use criterion | `GET beta/policies/roleManagementPolicies?$filter=scopeId eq '{id}' and scopeType eq 'Group'&$select=...` | `Test-OERGroupPimInUse` | 1 when the eligibility count is 0, else 0 | the same, asked once; the second relevance request |
+| policy-id pre-checks | `GET beta/policies/roleManagementPolicyAssignments?$filter=...` x2 (member, owner) | `Get-OERPimGroupPolicyId` | 2 only when in use | the same |
+| policy reads | `Get-OERGroupPimPolicy` x2: assignment lookup + `.../roleManagementPolicies/{policyId}/rules` | `Get-OERGroupPimPolicy` | 4 only when in use | the same |
+| eligible principal names | `POST v1.0/directoryObjects/getByIds` (ids not yet cached) | `Resolve-OERPrincipalName` | 0-1 only with eligibility | the same |
+
+| Group | Kept in `inventory.json`? | Requests before | Requests after |
+|---|---|---|---|
+| not role-assignable, no eligibility, policies untouched (the common case) | no | 6 (2+2+1+1) | **2** (eligibility + criterion) |
+| synchronized, without `-IncludeSyncedGroups` | no | 6 | **2** |
+| role-assignable, PIM not in use | yes | 6 | 6 |
+| with PIM eligibility | yes | 11 (+ getByIds) | 11 (+ getByIds) |
+| policy modified, no eligibility | yes, when its `pimPolicy` reads | 12 | 12 |
+| relevance could not be read (eligibility or criterion failed) | as before | 6 or more | as before (read in full, R2) |
+| any group under `-AllGroupsDetailed` | yes | as before | as before |
+
+**Measured live (2026-10-10, the test tenant, `oer-live-cc`).** The test tenant held 96 security
+groups. `Export-OERInventory -Include Groups` with the build of `9761434` and with this branch wrote
+the same 14 groups with the same content (members, owners and eligibility compared sorted, since
+Graph lists them in no fixed order) and made 613 and 285 requests: the 82 groups not kept cost 6
+requests each before and exactly 2 now (492 against 164), the 14 kept groups cost 116 both times,
+and 5 requests belonged to no group (the group list, the roster, principal-name lookups).
+`-AllGroupsDetailed` made 613 requests with both builds, group for group the same, and wrote the same
+document and roster. `groupsRoster.json` kept every row; `memberCount` was null for exactly the 82
+groups not kept. A `-GroupFilter` that closed the parenthesis with an `or` made Graph return 6 groups
+that are not security-enabled: the export left them out with the warning, read none of them, and
+kept the same three step groups as the narrowing filter. The record is
+`docs/live-verification/feat-export-groups-in-large-tenants-checklist.md`.
+
+**R1 (one reader, no hidden switch).** `Get-OERInventory`'s Groups section moved, unchanged, into
+the private `Get-OERInventoryGroup`. `Get-OERInventory` calls it in its full mode -- one
+`Get-OERGroup` call carrying the members, owners and eligibility switches, as before -- and its
+output did not change: the same inventory object, the same `InventoryPartial` record, the same
+warnings and verbose lines. `Export-OERInventory` calls the reader directly, with `-RelevantOnly`
+unless `-AllGroupsDetailed` is given, and `-ExcludeSharedName`, `-SecurityEnabledOnly` and
+`-ProgressActivity` always; it calls `Get-OERInventory` for the other Entra ID sections only.
+`Get-OERInventory` gained no parameter and no hidden switch. Cost if wrong: a module-scope selection
+that the export sets and `Get-OERInventory` reads -- a hidden channel into a public cmdlet.
+
+**R9 (one collection at a time).** `Get-OERGroup`'s three per-group collection reads moved into
+`Read-OERGroupCollection`, which returns the read or its failure -- the failure worded exactly as
+`Get-OERGroup` publishes it -- and never writes an error record. `Get-OERGroup` calls it for its
+three switches with unchanged output, and the reader calls it to read a group's eligibility, members
+and owners one at a time without reading the group again. Cost if wrong: `Get-OERGroup -Group` with
+the group's id and `-IncludeMembers -IncludeOwners` per kept group, one more request each.
+
+**The decision.** Under `-RelevantOnly` the reader lists the groups alone and reads each group's PIM
+eligibility first. A role-assignable group, a synchronized group under `-IncludeSyncedGroups`, and a
+group with eligibility are decided by that one request. Any other group is asked the criterion
+(`Test-OERGroupPimInUse`, one request), whose answer the projection reuses rather than asks again. A
+group found not relevant, and known not to be, costs exactly those two requests: no members, owners
+or policy request, and it is not returned. Every other group gets its members and owners and is
+projected as a full read projects it. The export's own relevance filter on the projections is
+unchanged and still has the final say.
+
+**R2 (relevance unread).** A group whose eligibility read failed, or whose criterion could not be
+read, and that is not kept on other evidence, is read in full exactly as before and decided by the
+same filter, so its document entry, its roster count and its unread entries are what they were. Such
+a group can never pass the export's filter -- it is neither role-assignable nor known to have
+eligibility or a used policy -- so the full read buys only its roster count and the unread entries
+the projection names; the spec asks for an undecided group to be treated as before, and nothing is
+guessed. Under a 403 on the beta eligibility endpoint for the whole tenant every group is undecided,
+and the export is no faster than before, which is correct. Cost if wrong: skip its full read and
+give it `memberCount` null -- fewer requests, one roster count lost.
+
+**R3 (the roster count).** `groupsRoster.json` gives `memberCount` null for a group the export did
+not read in full: a security group found not relevant, one outside `-GroupFilter`, one left out for
+a shared name, and every group that is not security-enabled. A one-request count
+(`groups/{id}/members/$count`) needs the `ConsistencyLevel: eventual` header, which the module's
+single Graph transport never sends, answers from an index that can lag behind recent changes
+(Microsoft Learn, List group members), and its treatment of service principals -- which the full
+read includes -- is not measured. The roster join is keyed on the object id alone: the display-name
+fallback it used to have gave a non-security group that shared a security group's name that group's
+count. Cost if wrong: add header support to `Invoke-OERGraphRequest` and a `$count` read, after
+measuring that it counts service principals.
+
+**R4 (the partial signal).** The export's group read has its own `IncompleteReads` entry, placed
+first, naming the same triples `Get-OERInventory` would have named; its causes, deduplicated and
+capped by `Format-OERUnreadCauseClause` under the same rule as `Get-OERInventory`'s, go into the
+export's own `InventoryPartial` message as 'Causes of the unread group reads'. `Get-OERInventory`'s
+record now covers the other Entra ID sections only. The decision's cost: the `IncompleteReads` count
+of a run with gaps in both is one higher than before. Cost if wrong: join the group read's names to
+the `Get-OERInventory` entry, so the count stays what it was and one entry mixes two reads, with the
+group causes still in the export's own message.
+
+**R5 (`-GroupFilter` and escaping).** `-GroupFilter` is an operator's whole OData expression, not a
+value interpolated into `eq '...'`, so it is never escaped through `ConvertTo-OERODataFilterValue`
+(escaping would break it); it joins the `-Filter` passthrough exemption of
+[#odata-escaping](#odata-escaping) and is percent-encoded whole, once, by `Get-OERGroup -Filter`. It
+is ANDed as `securityEnabled eq true and (...)` around the operator's text, and the parentheses are
+not the guard, since an expression can close them (`x eq 1) or (securityEnabled eq false` lists every
+group the second operand matches). The guard is the post-read check, `-SecurityEnabledOnly`: only a
+group whose `securityEnabled` the read shows as a boolean true stays, dropped straight after the list
+is read and before the shared names are counted and the relevance is decided. A blank or white-space
+filter is refused at binding (the BL-96 pattern). The parameter is declared last, since the
+cmdlet's parameters carry no `Position` and positional binding follows declaration order. It applies
+to the Groups section only. Cost if wrong: escape or parse the expression, which would refuse valid
+filters.
+
+**R6 (groups the filter widened to).** A group the composed filter returns although it is not
+security-enabled is left out of `inventory.json` with one warning naming the count, written before
+the bundle's `ShouldProcess`; `groupsRoster.json`, read unfiltered, still lists it. Under
+`-AllGroupsDetailed` the list is read with the collections attached, so such a group's collections
+are read before the check drops it, and a failed read of one is written to the verbose stream by the
+record loop and then removed from the causes by the group's id: the group is not in the document, so
+its failed read is no gap in it, and no causes clause names a group found nowhere else. Cost if
+wrong, for the groups: leave them out silently, with a verbose line only; for the cause: keep it in
+the list, where the partial message would name a failure in a group the document does not hold.
+
+**R7 (progress).** `Write-Progress` runs in the export's group read only (`-ProgressActivity`,
+activity `Export-OERInventory`): a status while the list is read, then one 'Group n of N' record
+per listed group in scope, and `-Completed` in a `finally`, so a progress bar never outlives a read
+that stops on an error. `Get-OERInventory` shows none. Cost if wrong: give `Get-OERInventory` the
+same progress.
+
+**R8 (names shared by two groups).** The export's group read leaves out every group whose display
+name another listed security group shares, letter case aside, and reports the name once with the
+same cause text as `Get-OERInventory` (now owned by `Get-OERSharedNameCause`), so the document
+matches what it was. The names are counted over every listed group in scope, before the relevance
+decision, so a relevant group whose namesake is not relevant is left out too, although that namesake
+is never read in full. Cost if wrong: a relevant group whose namesake is not relevant would reach the
+document, where the apply engine refuses the ambiguous name.
+
+**A reader that stops.** An error nothing in the reader catches ends the read, the reader's progress
+`finally` unwinds it, and the call returns nothing. Both callers catch that, scrub, warn
+`Could not read groups: ...` and report the groups section unread, so an unforeseen error inside the
+reader marks the whole Groups section unread, never empty. The cost: `Get-OERInventory` gained a
+catch on a path no known input reaches (its known output is unchanged), and the causes and unread
+names the reader had gathered before it stopped are lost; only `groups` survives.
+
 ## typed-group-member-read
 
 Sprint 9 step 1 (BL-13) made `Get-OERGroupRelation` the single reader of a group's `members` and
@@ -6895,14 +7057,17 @@ decides on it (`schema.json` types it as a boolean, and says so). If wrong: writ
 every exported group entry grows a key and the existing tests that pin entries change.
 
 **R5 (the export filter reads the projection key).** `Export-OERInventory -IncludeSyncedGroups` keeps
-a synchronized security group in full detail in `inventory.json`. `Export-OERInventory` receives only
-`Get-OERInventory`'s projection, so the filter reads its `onPremisesSynced` key (only a boolean
-`true` counts), which the predicate wrote: the rule still has one owner. The switch is on request
-because a default criterion that kept every synchronized security group would fill `inventory.json`,
-and an LLM's context, with groups no proposal can change. The Groups section is security-enabled
-only, so a synchronized distribution group stays in the roster alone; with `-AllGroupsDetailed` every
-group is kept already and the switch changes nothing. If wrong: the export would need the live
-objects, which Sprint 10 step 8 restructures anyway.
+a synchronized security group in full detail in `inventory.json`. `Export-OERInventory` receives the
+group reader's projection (`Get-OERInventoryGroup`, since Sprint 10 step 8; `Get-OERInventory`'s
+before it), so its keep filter reads the `onPremisesSynced` key (only a boolean `true` counts), which
+the predicate wrote; under `-RelevantOnly` the reader's relevance decision asks the same predicate,
+`Test-OERGroupOnPremisesSynced`, on the live group before any projection exists
+([#export-group-selection](#export-group-selection)). Either way the rule has one owner. The switch
+is on request because a default criterion that kept every synchronized security group would fill
+`inventory.json`, and an LLM's context, with groups no proposal can change. The Groups section is
+security-enabled only, so a synchronized distribution group stays in the roster alone; with
+`-AllGroupsDetailed` every group is kept already and the switch changes nothing. If wrong: the group
+reader, which holds the live group, hands the export the predicate's verdict instead of the key.
 
 **R6 (one warning per item).** The handler writes one warning for a synchronized group, before the
 first `Skipped` write and, under `-Prune`, before the first withheld prune, under `-WhatIf` too. A

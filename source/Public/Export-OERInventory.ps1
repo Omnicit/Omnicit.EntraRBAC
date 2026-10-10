@@ -11,28 +11,48 @@ function Export-OERInventory {
     azurePimEligibility.json), a formal
     JSON Schema (schema.json), a predefined LLM prompt (rbac-architect-prompt.md), and a README. The
     bundle is designed to be handed to any LLM to produce appliable RBAC proposals. Only
-    RBAC-relevant groups (role-assignable, carrying a pimPolicy block, or with eligibility) are kept
-    in full detail in inventory.json. Microsoft Graph lists PIM-for-groups policies for a group that
-    was never used with PIM for Groups as well, so Get-OERInventory exports a pimPolicy block only
-    for a group that uses PIM for Groups -- one with PIM eligibility, or one whose PIM-for-Groups
-    policy has been modified -- and a group whose policies Graph merely lists is not kept in full
-    detail on that account. -IncludeSyncedGroups also keeps the security groups synchronized from
-    on-premises Active Directory. -AllGroupsDetailed keeps every group inventory.json covers. The
-    cmdlet reads only -- no tenant state changes -- and authenticates at entry; an ARM token is
-    acquired only when -Include names RoleAssignments or RoleManagementPolicies, the two Azure
-    sections.
+    RBAC-relevant groups are kept in full detail in inventory.json: a role-assignable group, a group
+    with PIM eligibility, a group carrying a pimPolicy block, and, with -IncludeSyncedGroups, a
+    security group synchronized from on-premises Active Directory. Microsoft Graph lists
+    PIM-for-groups policies for a group that was never used with PIM for Groups as well, so the
+    export writes a pimPolicy block only for a group found to use PIM for Groups -- one with PIM
+    eligibility, or one whose PIM-for-Groups policy has been modified -- and a group whose policies
+    Graph merely lists is not kept in full detail on that account. -AllGroupsDetailed keeps every
+    group inventory.json covers. The cmdlet reads only -- no tenant state changes -- and
+    authenticates at entry; an ARM token is acquired only when -Include names RoleAssignments or
+    RoleManagementPolicies, the two Azure sections.
+
+    HOW THE GROUPS ARE READ. Without -AllGroupsDetailed the export decides which groups are relevant
+    BEFORE it reads any group in full, so in a tenant with very many groups a group that is not
+    relevant is never read in full. For each listed group it reads the PIM eligibility (one
+    request); a group that is role-assignable, has eligibility, or is synchronized under
+    -IncludeSyncedGroups is decided by that. Any other group costs one more request, a listing of
+    its PIM-for-Groups policies that tells whether it uses PIM for Groups. A group the two requests
+    find not relevant costs exactly those two: its members, owners and PIM policies are not read,
+    and it is not in inventory.json. Every other group is read in full exactly as before. A group
+    whose relevance could not be read -- its eligibility read or the policy listing failed -- is
+    read in full as before too, kept or left out by the same criteria, and what could not be read
+    about it is named in IncompleteReads; it is never dropped on a guess. -AllGroupsDetailed reads
+    every listed security group in full, as before. While it reads the groups the export shows
+    progress (Write-Progress, activity Export-OERInventory, one 'Group n of N' record per listed
+    security group) and ends it when the read is done, also when the read stops on an error.
 
     WHICH GROUPS INVENTORY.JSON COVERS, AND WHICH IT DOES NOT. The Groups section is read with the
-    'securityEnabled eq true' filter Get-OERInventory applies by default, so it carries the
+    'securityEnabled eq true' filter, the one Get-OERInventory applies by default, so it carries the
     SECURITY-ENABLED groups only -- a distribution group, and a Microsoft 365 group whose
     securityEnabled is false, are absent from it at every detail level, -AllGroupsDetailed
     included. That scope is deliberate: inventory.json is the apply-engine document, and widening
-    it widens what Invoke-OERStructure reconciles and, under -Prune, deletes. To widen it anyway,
-    read the inventory yourself with Get-OERInventory -GroupFilter and supply the filter you want.
-    groupsRoster.json is NOT filtered: it lists every group in the tenant, of every type, as
-    read-only context, so the gap between the two files is visible rather than silent. Each of its
-    rows carries onPremisesSynced, true for a group synchronized from on-premises Active Directory
-    and false otherwise.
+    it widens what Invoke-OERStructure reconciles and, under -Prune, deletes. -GroupFilter narrows
+    that scope and never widens it. To widen it anyway, read the inventory yourself with
+    Get-OERInventory -GroupFilter and supply the filter you want. groupsRoster.json is NOT
+    filtered: it lists every group in the tenant, of every type, as read-only context, so the gap
+    between the two files is visible rather than silent. Each of its rows carries onPremisesSynced,
+    true for a group synchronized from on-premises Active Directory and false otherwise, and
+    memberCount: the group's member count when the export read the group in full, and null
+    otherwise -- for a group the export found not relevant, one outside -GroupFilter, one left out
+    because another group shares its name, one whose members could not be read, and every group
+    that is not security-enabled. Null means not known, which is not zero: a count would cost a
+    request per group.
 
     Azure coverage is reported, not assumed. ScopesEnumerated is how many ARM scopes the walk found,
     ScopeCount is how many of them were actually read, and SkippedScopes names the ones that were
@@ -73,17 +93,21 @@ function Export-OERInventory {
     it carries nothing. A scope whose eligibility read fails is named in SkippedEligibilityScopes and
     folds into the same trailing InventoryPartial error as a failed role-assignment scope.
 
-    Entra ID coverage is reported the same way. IncompleteReads carries one entry per partial
-    report from Get-OERInventory, each naming the affected section/displayName/key triples -- so a
-    single run that lost three collections reports one entry listing all three, not three entries --
-    plus the entry groupsRoster when the group roster could not be read. A section whose whole list
-    could not be read appears in those entries by its own name alone, and is written as an empty
-    array that does not mean the tenant has none; the entry groupsRoster likewise means
-    groupsRoster.json is empty only because the roster read failed. Its Count is therefore the number
-    of partial reports from Get-OERInventory, plus one when the group roster could not be read, and
-    not the number of unread collections; read the entries themselves for that. The same
-    non-terminating InventoryPartial error is raised here when
-    IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty. A members,
+    Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
+    Groups read when it left anything unread, then one entry per partial report from
+    Get-OERInventory, which reads the other Entra ID sections. Each entry names the affected
+    section/displayName/key triples -- so a single read that lost three collections reports one
+    entry listing all three, not three entries -- and the entry groupsRoster is added when the group
+    roster could not be read. A section whose whole list could not be read appears in those entries
+    by its own name alone (groups also when the group read stops on an unforeseen error, with the
+    warning 'Could not read groups: ...'), and is written as an empty array that does not mean the
+    tenant has none; the entry groupsRoster likewise means groupsRoster.json is empty only because
+    the roster read failed. Its Count is therefore one for the Groups read when it left anything
+    unread, plus the number of partial reports from Get-OERInventory, plus one when the group roster
+    could not be read, and not the number of unread collections; read the entries for that. The same
+    non-terminating InventoryPartial error is raised here when IncompleteReads, SkippedScopes or
+    SkippedEligibilityScopes is non-empty, and its message gives the causes of the unread group
+    reads (Get-OERInventory's own InventoryPartial gives those of the other sections). A members,
     scopedRoles, resources or resourceRoles collection that could not be read, or that has an entry
     the export could name by nothing the apply engine accepts, is NOT written into inventory.json as
     an empty one or with an empty name: its key is an explicit null, which the apply engine reads as
@@ -132,19 +156,25 @@ function Export-OERInventory {
     and never acquire an ARM token by themselves.
 
     .PARAMETER AllGroupsDetailed
-    Keep every group the Groups section covers in full detail in inventory.json, not just the
-    RBAC-relevant ones. That section is security-enabled-scoped, so this switch does not reach a
-    distribution group or a Microsoft 365 group whose securityEnabled is false -- neither is in
-    inventory.json at any detail level. Use Get-OERInventory -GroupFilter to widen the scope
-    itself; groupsRoster.json already lists every group in the tenant unfiltered.
+    Read every group the Groups section covers in full, as earlier versions did, and keep each in
+    full detail in inventory.json, not just the RBAC-relevant ones. Without it the export decides
+    first which groups are relevant and reads only those in full (see HOW THE GROUPS ARE READ
+    above). With it, groupsRoster.json carries the member count of every security group the read
+    covers, null only for one whose members could not be read or that shares its name with another.
+    That section is security-enabled-scoped, so this switch does not reach a distribution group or a
+    Microsoft 365 group whose securityEnabled is false -- neither is in inventory.json at any detail
+    level. Use Get-OERInventory -GroupFilter to widen the scope itself; groupsRoster.json already
+    lists every group in the tenant unfiltered.
 
     .PARAMETER IncludeSyncedGroups
     Also keep, in full detail in inventory.json, every security group synchronized from on-premises
-    Active Directory (onPremisesSynced: true). Such a group is never RBAC-relevant by the default
-    criteria -- it cannot be role-assignable or managed in PIM for Groups -- so without this switch
-    it appears only in groupsRoster.json. It is managed on-premises: Invoke-OERStructure writes
-    nothing to it, and its onPremisesSynced key is information only. With -AllGroupsDetailed every
-    group is kept already and this switch changes nothing.
+    Active Directory (onPremisesSynced: true), and read its members and owners for that. Such a
+    group is never RBAC-relevant by the default criteria -- it cannot be role-assignable or managed
+    in PIM for Groups -- so without this switch it costs the two requests that decide it is not
+    relevant, appears only in groupsRoster.json, and has a null memberCount there. It is managed
+    on-premises: Invoke-OERStructure writes nothing to it, and its onPremisesSynced key is
+    information only. With -AllGroupsDetailed every group is read and kept already and this switch
+    changes nothing.
 
     .PARAMETER AllDirectoryRolePolicies
     For the DirectoryRoleManagementPolicies section, export the policy of every Microsoft Entra
@@ -168,9 +198,30 @@ function Export-OERInventory {
     The tenantId written into inventory.json is the tenant ID the session's Microsoft Graph token was
     issued for, not this value.
 
+    .PARAMETER GroupFilter
+    An OData filter that narrows the groups inventory.json is read from, for a tenant with very many
+    groups. It is ANDed to the security-enabled filter inside parentheses, so the groups are listed
+    with 'securityEnabled eq true and (your filter)', and it only narrows: the export also keeps only
+    the groups the read itself shows as securityEnabled (a boolean true), so a filter that closes the
+    parenthesis, for example 'x eq 1) or (securityEnabled eq false', cannot widen inventory.json to a
+    group that is not security-enabled. Such a group is left out, with one warning that names how
+    many were left out. With -AllGroupsDetailed a group the filter widens to is read in full before
+    it is left out; the default read reads nothing of it. The expression is yours: it is sent as
+    typed and never escaped, so double a single quote inside a quoted value yourself ('O''Brien'). It
+    applies to the Groups section only: it changes nothing when -Include leaves Groups out, and
+    groupsRoster.json is not filtered by it and still lists every group in the tenant, with a null
+    memberCount for a security group the filter left out, since that group was not read. An empty or
+    white space value is refused at binding.
+
     .EXAMPLE
     Export-OERInventory
     Reads the tenant and writes a bundle under the current directory.
+
+    .EXAMPLE
+    Export-OERInventory -GroupFilter "startswith(displayName,'role_')"
+    Reads inventory.json's groups from the security-enabled groups whose display name starts with
+    role_ only, so far fewer groups are read in a tenant with very many of them. groupsRoster.json
+    still lists every group in the tenant.
 
     .EXAMPLE
     Export-OERInventory -OutputPath C:\Temp -Include Groups,AdministrativeUnits,Catalogs,AccessPackages,RoleAssignments,RoleManagementPolicies
@@ -200,7 +251,19 @@ function Export-OERInventory {
         [string]$Scope,
         [switch]$Force,
         [ValidateNotNullOrEmpty()]
-        [string]$TenantId
+        [string]$TenantId,
+        # Declared LAST on purpose, as New-OERConfiguration's -Environment is. Positional binding
+        # follows DECLARATION order, so a parameter inserted above -ManagementGroup, -Scope or
+        # -TenantId would silently change what an existing positional argument binds to.
+        # A filter of white space only is refused here, at binding, as an empty one is (the same
+        # BL-96 pattern as New-OERConfiguration's -TenantId). The module supports PowerShell 7.2, which
+        # has no [ValidateNotNullOrWhiteSpace()] (7.4+), so the same test runs as a script. Declared
+        # ABOVE [ValidateNotNullOrEmpty()] on purpose: validation attributes run in reverse
+        # declaration order (measured), so an empty or null value still reads the NotNullOrEmpty
+        # message and white space reads this one.
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The GroupFilter consists only of white space. Pass an OData filter, or leave the parameter out.')]
+        [ValidateNotNullOrEmpty()]
+        [string]$GroupFilter
     )
     begin {
         $AuthParams = @{}
@@ -221,17 +284,76 @@ function Export-OERInventory {
     }
     process {
         # --- Gather the Entra ID sections (names only, for portability) ---
+        # The Groups section is read by the group reader directly, not through Get-OERInventory, so
+        # the export can ask it to decide RBAC relevance FIRST (A13): without -AllGroupsDetailed a
+        # group costs two requests (its PIM eligibility and the PIM-in-use criterion) before anything
+        # else is read, and only a group that is relevant -- or whose relevance could not be read --
+        # has its members, owners and PIM policy read. -AllGroupsDetailed reads every group in full,
+        # as before. The 'securityEnabled eq true' filter is the scope Get-OERInventory applies by
+        # default, so inventory.json covers the same groups it always did. -ExcludeSharedName leaves
+        # out groups that share a name, the rule Get-OERInventory applies to its own groups section.
+        # The reader never writes an error record: what it could not read comes back in its Unread
+        # and Causes lists, folded into IncompleteReads and the partial message below. It shows
+        # progress under this cmdlet's own activity while it reads ('Group n of N') and ends it when
+        # the read is done, also when it stops on an error, before the Azure scope walk starts its own.
+        #
+        # -GroupFilter narrows that scope and never widens it. It is ANDed to the security-enabled
+        # filter inside parentheses, and it is the operator's OWN OData expression, so it is sent as
+        # typed and never escaped through ConvertTo-OERODataFilterValue (that helper escapes a VALUE
+        # for a quoted literal, and applied to a whole expression it would break the expression);
+        # Get-OERGroup -Filter percent-encodes the whole expression once. The parentheses alone are
+        # not the guard, since an expression can close them ('x eq 1) or (securityEnabled eq false'
+        # lists every group the second operand matches). The guard is -SecurityEnabledOnly, which
+        # keeps only the groups the read itself shows as securityEnabled, whatever the filter listed.
+        $GroupRead = $null
+        if ($Include -contains 'Groups') {
+            $GroupReadParams = @{
+                Filter              = if ($GroupFilter) { "securityEnabled eq true and ($GroupFilter)" } else { 'securityEnabled eq true' }
+                IncludeId           = $true
+                ExcludeSharedName   = $true
+                SecurityEnabledOnly = $true
+                ProgressActivity    = 'Export-OERInventory'
+            }
+            if (-not $AllGroupsDetailed) {
+                $GroupReadParams.RelevantOnly = $true
+                if ($IncludeSyncedGroups) { $GroupReadParams.IncludeSyncedGroups = $true }
+            }
+            # The reader catches what it expects (a failed list read, a failed collection read) and
+            # names it in Unread and Causes. This catch is for the rest: an error nothing in the
+            # reader catches ends the read, and the reader's progress try/finally unwinds it -- a
+            # statement-terminating error as well as a throw -- so the call returns NOTHING. A
+            # $GroupRead of $null would be read below as zero groups with nothing unread, which is
+            # a failed read stated as an empty fact. So the stop is reported as what it is, the
+            # groups section unread, with the reader's own wording for a list that could not be read:
+            # the warning stands before the bundle's ShouldProcess (the read comes first), the cause
+            # reaches the InventoryPartial message, and the rest of the export carries on.
+            try {
+                $GroupRead = Get-OERInventoryGroup @GroupReadParams
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $GroupReadCause = "Could not read groups: $($PSItem.Exception.Message)"
+                Write-Warning $GroupReadCause
+                $GroupRead = [PSCustomObject]@{
+                    Groups = @()
+                    Unread = @('groups')
+                    Causes = @([PSCustomObject]@{ Cause = $GroupReadCause; Target = '' })
+                }
+            }
+        }
         # DirectoryRoleManagementPolicies and DirectoryRoleAssignments are Graph-only, same as the
-        # other five: they are deliberately absent from the ARM-triggering check above, so naming
+        # other four: they are deliberately absent from the ARM-triggering check above, so naming
         # either one alone never acquires an ARM token.
-        $EntraSections = @($Include | Where-Object { $_ -in @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments') })
-        # -IncludeId is threaded through PURELY to key the roster member-count join on object id
-        # instead of display name below (Entra permits duplicate group display names --
-        # Add-OERGroupMember.ps1:43-45 -- so a display-name join can attribute one group's member
-        # count to a different, same-named group). inventory.json staying id-free is a documented
-        # portability property of the export (Get-OERInventory's own .DESCRIPTION), so every id
-        # -IncludeId stamps is stripped back out below, before the canonical inventory and the
-        # per-area files are assembled and written.
+        $EntraSections = @($Include | Where-Object { $_ -in @('AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments') })
+        # The ids the roster member-count join below is keyed on come from the group reader alone:
+        # it is asked for -IncludeId above, PURELY to key that join on object id instead of display
+        # name (Entra permits duplicate group display names -- Add-OERGroupMember.ps1:43-45 -- so a
+        # display-name join can attribute one group's member count to a different, same-named
+        # group). Get-OERInventory below reads the other sections and is not asked for ids, since
+        # nothing here joins on them. inventory.json staying id-free is a documented portability
+        # property of the export (Get-OERInventory's own .DESCRIPTION), so the ids the reader
+        # stamped are stripped back out below, before the canonical inventory and the per-area files
+        # are assembled and written; the same strip also covers any other section that arrives with
+        # an id.
         $InventoryReadErrors = $null
         $Inv = if ($EntraSections.Count -gt 0) {
             # -ErrorAction Continue is PINNED here, not inherited, and deliberately not Stop.
@@ -255,7 +377,6 @@ function Export-OERInventory {
             # -ParameterFilter, so adding it only when true keeps every existing call site untouched.
             $InvParams = @{
                 Include       = $EntraSections
-                IncludeId     = $true
                 ErrorAction   = 'Continue'
                 ErrorVariable = 'InventoryReadErrors'
             }
@@ -265,6 +386,12 @@ function Export-OERInventory {
             ConvertTo-OERInventory -TenantId $DocumentTenantId
         }
         $IncompleteReads = [System.Collections.Generic.List[string]]::new()
+        # The Groups read is reported FIRST, as ONE entry naming everything it could not read: the
+        # same shape, and the same place, as the groups take in a Get-OERInventory report, which
+        # reads them first. The null-filter keeps a blank entry out, so an IncompleteReads count
+        # never stands for a gap that names nothing.
+        $GroupUnread = @(if ($GroupRead) { @($GroupRead.Unread) | Where-Object { $_ } })
+        if ($GroupUnread.Count -gt 0) { $IncompleteReads.Add(($GroupUnread -join ', ')) }
         foreach ($IErr in @($InventoryReadErrors)) {
             if ($null -eq $IErr) { continue }
             if ($IErr.FullyQualifiedErrorId -like 'InventoryPartial*') {
@@ -396,8 +523,11 @@ function Export-OERInventory {
         # The whole if/else is wrapped in @(...) because an empty 'else' result (no RBAC-relevant
         # groups) assigned straight from an if-statement collapses to $null, and a later @($null)
         # would inject a single null group that fails apply-schema validation. The null-item guard
-        # keeps a stray null out of the filtered set.
-        $AllGroups = @($Inv.Groups | Where-Object { $null -ne $_ })
+        # keeps a stray null out of the filtered set. $AllGroups is what the group reader returned:
+        # every group under -AllGroupsDetailed, otherwise the groups it found relevant and the ones
+        # whose relevance it could not read. The filter below stays the final say either way, so a
+        # group read in full only because its relevance was unknown is still not kept on that account.
+        $AllGroups = @(if ($GroupRead) { @($GroupRead.Groups) | Where-Object { $null -ne $_ } })
         $DetailedGroups = @(
             if ($AllGroupsDetailed) {
                 $AllGroups
@@ -412,20 +542,31 @@ function Export-OERInventory {
                     ($_.PSObject.Properties.Name -contains 'pimPolicy') -or
                     # A15: a group synchronized from on-premises is never kept by the three criteria
                     # above (it cannot be role-assignable or managed in PIM for Groups), so it is kept
-                    # only on request. Get-OERInventory writes onPremisesSynced as a boolean true for
+                    # only on request. The group reader writes onPremisesSynced as a boolean true for
                     # such a group and never otherwise; anything else is not taken for it.
                     ($IncludeSyncedGroups -and $_.onPremisesSynced -is [bool] -and $_.onPremisesSynced)
                 }
             }
         )
 
-        # Member-count map keyed on object id (from the -IncludeId-stamped projection gathered
-        # above), with a display-name map kept only as a fallback for a roster group the detailed
-        # projection did not include -- zero extra calls either way. id is the correct join key:
-        # Entra permits duplicate group display names (Add-OERGroupMember.ps1:43-45), so a
-        # display-name-only join silently attributes one same-named group's member count to another.
+        # Member-count map keyed on object id (from the -IncludeId-stamped projection the group
+        # reader returned): zero extra calls. id is the only join key: Entra permits duplicate group
+        # display names (Add-OERGroupMember.ps1:43-45), so a display-name join would attribute one
+        # same-named group's member count to another -- to a Microsoft 365 group the security-enabled
+        # listing never held, for one.
+        #
+        # R3: the map holds the groups the reader READ IN FULL and nothing else. A group it did not
+        # read in full -- every group of the roster that is not security-enabled, a security group
+        # found not relevant (without -AllGroupsDetailed: decided from two requests, its members
+        # never asked for), and a group left out for a shared name -- has no entry, so its roster
+        # row gets $null below: the roster's existing "not known" value. A count for those would
+        # cost a request per group, and the one-request form (groups/{id}/members/$count) needs the
+        # ConsistencyLevel: eventual header, which this module's single Graph transport never sends,
+        # answers from an index that can lag behind recent changes, and is not measured for service
+        # principals, which the full read counts. Never fill an absent entry with 0: that states an
+        # emptiness nothing measured. A group whose relevance could not be read IS read in full
+        # (R2), so it has its count here although inventory.json may not keep it.
         $CountById = @{}
-        $CountByName = @{}
         foreach ($G in $AllGroups) {
             # members is null when the live read failed (issue #76). @($null).Count is 1, so a bare
             # count would report a group whose membership is UNKNOWN as having exactly one member.
@@ -434,17 +575,17 @@ function Export-OERInventory {
             if ($G.PSObject.Properties.Name -contains 'id' -and $G.id) {
                 $CountById[[string]$G.id] = $MemberCount
             }
-            $CountByName[[string]$G.displayName] = $MemberCount
         }
 
         # inventory.json staying id-free is a documented portability property of the export
-        # (Get-OERInventory's own .DESCRIPTION) -- -IncludeId above exists purely to key the join,
-        # so every id it stamped is removed again here, before anything below reads from $Inv or
-        # the canonical inventory is assembled. -IncludeId stamps more than the top-level id: a
-        # Groups eligibility entry gets one too (Get-OERInventory.ps1's $EligProj.id), so the strip
-        # reaches that nested collection as well.
+        # (Get-OERInventory's own .DESCRIPTION) -- the reader's -IncludeId above exists purely to key
+        # the join, so every id it stamped is removed again here, from the groups the reader
+        # returned and, as a guard, from the other sections of $Inv, before the canonical inventory
+        # is assembled. -IncludeId stamps more than the top-level id: a Groups eligibility entry
+        # gets one too (Get-OERInventoryGroup.ps1's $EligProj.id), so the strip reaches that nested
+        # collection as well.
         $StampedSections = @(
-            $Inv.Groups, $Inv.AdministrativeUnits, $Inv.Catalogs,
+            $AllGroups, $Inv.AdministrativeUnits, $Inv.Catalogs,
             $Inv.AccessPackages, $Inv.AccessReviews,
             $Inv.DirectoryRoleManagementPolicies, $Inv.DirectoryRoleAssignments
         )
@@ -485,13 +626,8 @@ function Export-OERInventory {
             $Roster = @(foreach ($Rg in $RosterGroups) {
                 $RgId = [string]$Rg.Id
                 $RgName = [string]$Rg.DisplayName
-                $MemberCount = if ($CountById.ContainsKey($RgId)) {
-                    $CountById[$RgId]
-                } elseif ($CountByName.ContainsKey($RgName)) {
-                    $CountByName[$RgName]
-                } else {
-                    $null
-                }
+                # A roster group with no entry was not read in full: $null, not 0 (R3, above).
+                $MemberCount = if ($CountById.ContainsKey($RgId)) { $CountById[$RgId] } else { $null }
                 [PSCustomObject]@{
                     displayName      = $RgName
                     roleAssignable   = [bool]$Rg.IsAssignableToRole
@@ -698,13 +834,27 @@ function Export-OERInventory {
             }
             if ($IncompleteReads.Count -gt 0) {
                 # The count is of ENTRIES, not collections: one Get-OERInventory run raises one
-                # InventoryPartial error naming every triple it lost, so a single entry here can
-                # stand for seven unread collections, and the groupsRoster entry is this cmdlet's own
-                # and not a Get-OERInventory report at all. Saying "N collection read(s) failed" made
+                # InventoryPartial error naming every triple it lost, and the Groups read is one
+                # entry naming every group collection it lost, so a single entry here can stand for
+                # seven unread collections; the groupsRoster entry is this cmdlet's own and not a
+                # Get-OERInventory report at all. Saying "N collection read(s) failed" made
                 # this message disagree with the seven triples printed right after it, and with
                 # Get-OERInventory's own "7 collection(s)" on the same run. The help already states
                 # the entry-per-report rule; the message now agrees with it.
-                $PartialParts.Add("$($IncompleteReads.Count) partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle -- one entry can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched. A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read")
+                $IncompletePart = "$($IncompleteReads.Count) partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle -- one entry can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched. A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read"
+                # WHY the group collections are missing. The group reader writes no error record, so
+                # this message is the only error that carries its causes (the verbose stream shows
+                # each as it is seen, and Get-OERInventory's own partial message carries the causes of
+                # the other sections): the cause is what tells a 429 (retry the export) from a 403
+                # (grant a scope). Format-OERUnreadCauseClause owns the wording,
+                # the deduplication and the cap, and returns an empty string when there is none. Its
+                # clause ends with a period, which is trimmed here because the parts are joined with
+                # one below.
+                if ($GroupRead) {
+                    $GroupCauseClause = Format-OERUnreadCauseClause -Cause @($GroupRead.Causes) -Label 'Causes of the unread group reads'
+                    if ($GroupCauseClause) { $IncompletePart += '.' + $GroupCauseClause.TrimEnd('.') }
+                }
+                $PartialParts.Add($IncompletePart)
             }
             Write-CmdletError `
                 -Message ([System.Exception]::new(

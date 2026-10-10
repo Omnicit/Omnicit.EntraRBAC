@@ -533,16 +533,17 @@ function Invoke-OERGraphRequest {
     # softening. Graph named that failure Authorization_RequestDenied; when Graph has named the
     # failure, its name is the answer and the prose is not consulted.
     #
-    # Get-OERGroup carries the same TOKEN RULE inline, but for a DIFFERENT ARRIVAL SHAPE, and
-    # NEITHER GUARD BACKS UP THE OTHER. This gate answers a record that arrives as a MARKER, which
-    # is the only shape a live read produces once a code is declared here; the inline copy answers
-    # one that arrives THROWN, which happens when this wrapper is mocked or a frame between the two
-    # re-raises. Measured in both directions rather than reasoned: softening THIS gate to an
-    # unconditional match with the inline copy fully intact brought the defect back completely and
-    # SILENTLY -- PimEligibility present, Count 0, zero error records -- since a softened failure
-    # never throws and the inline copy therefore never runs. Softening only the inline copy instead
-    # leaves PimEligibility = @() with 5 records. This gate is the one that fires in production.
-    # Keep the two rules in step, and never delete either one on the strength of the other.
+    # Read-OERGroupCollection (the reader Get-OERGroup calls for PIM eligibility) carries the same
+    # TOKEN RULE inline, but for a DIFFERENT ARRIVAL SHAPE, and NEITHER GUARD BACKS UP THE OTHER.
+    # This gate answers a record that arrives as a MARKER, which is the only shape a live read
+    # produces once a code is declared here; the inline copy answers one that arrives THROWN, which
+    # happens when this wrapper is mocked or a frame between the two re-raises. Measured in both
+    # directions rather than reasoned: softening THIS gate to an unconditional match with the
+    # inline copy fully intact brought the defect back completely and SILENTLY -- PimEligibility
+    # present, Count 0, zero error records -- since a softened failure never throws and the inline
+    # copy therefore never runs. Softening only the inline copy instead leaves PimEligibility = @()
+    # with 5 records. This gate is the one that fires in production. Keep the two rules in step,
+    # and never delete either one on the strength of the other.
     function Get-ExpectedGraphErrorMatch ([System.Management.Automation.ErrorRecord]$Record, [string[]]$Expected) {
         if ($null -eq $Record -or -not $Expected) { return $null }
         [string[]]$IdSegment = @(([string]$Record.FullyQualifiedErrorId) -split ',') |
@@ -1256,8 +1257,9 @@ function Invoke-OERGraphRequest {
         # therefore a FAILURE and is raised.
         #
         # ITS ERROR ID IS DELIBERATELY NOT THE GRAPH CODE. Naming it 'ResourceTypeNotSupported'
-        # would let the caller's own last-line-of-defence test (Get-OERGroup's inline match) read it
-        # back as the expected answer and re-create the very loss this raise exists to report.
+        # would let the caller's own last-line-of-defence test (the inline match in
+        # Read-OERGroupCollection, the reader Get-OERGroup calls) read it back as the expected
+        # answer and re-create the very loss this raise exists to report.
         if (@($Page.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') {
             if ($PageNumber -eq 1) { return $Page }
             $PartialSnapshot = $AllValues.ToArray()

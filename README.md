@@ -769,6 +769,22 @@ nothing from it. It decides on the group as read live. The export marks such a g
 the synchronized security groups in full detail in `inventory.json`, where the key is information
 only.
 
+`Export-OERInventory` stays fast in a large tenant by deciding which security groups are
+RBAC-relevant before it reads any group in full: role-assignable groups, groups with PIM
+eligibility, groups found to use PIM for Groups and, with `-IncludeSyncedGroups`, synchronized
+groups. Each group costs one request for its PIM eligibility, and one more for its PIM-for-Groups
+policies when that does not decide it; a group found not relevant costs only those two, and its
+members, owners and policies are never read. A group whose relevance could not be read is read in
+full and what could not be read is named in `IncompleteReads`, so nothing is dropped on a guess;
+such a group is kept in `inventory.json` only on the same evidence as any other group, never because
+its relevance was unknown. The export shows progress while it reads the groups, and `-AllGroupsDetailed` reads every security
+group in full as before. In `groupsRoster.json`, a group the export did not read in full has
+`memberCount` `null`: not known, which is not zero. `-GroupFilter` narrows the groups `inventory.json`
+is read from and never widens them: it is sent as `securityEnabled eq true and (your filter)`, a
+group the read does not show as security-enabled is left out with one warning, and
+`groupsRoster.json` still lists every group. To widen the document beyond security-enabled groups,
+read it with `Get-OERInventory -GroupFilter` instead.
+
 ---
 
 ## Documentation

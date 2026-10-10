@@ -319,49 +319,23 @@ function Get-OERInventory {
         # is what tells an operator to retry (429) rather than grant a scope (403). Get-OERGroup and
         # Get-OERAdministrativeUnit compose it into their per-collection records, and -ErrorAction
         # SilentlyContinue below keeps those records off the caller's stream, so without this the
-        # cause would be discarded entirely. DEDUPLICATED: a throttle produces the identical message
-        # for every affected group, and repeating it once per group would bury the signal.
-        $UnreadCauses = [System.Collections.Generic.List[string]]::new()
-        # The dedupe KEYS for the list above, and the count of distinct causes the cap dropped.
-        # The dedupe used to compare whole messages and could therefore never fire: Get-OERGroup and
-        # Get-OERAdministrativeUnit both interpolate the failing object's id into the message, so
-        # seven units failing for one identical reason produced seven distinct strings (measured on a
-        # live tenant). The key normalises that id away; the list still stores the FIRST full message
-        # per key, so one concrete id survives as an example.
-        $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits
-        # twenty-three cause message shapes (group members, group owners, group PIM eligibility,
-        # group PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
-        # eligibility schedules, directory role assignment schedules, directory role policies,
-        # access package resource role bindings, catalog resources, the catalog resource-name map,
-        # the catalog list, a catalog's package list, an access package's assignment policies, an
-        # access review's access package name, an access review's assignment policy name, objects
-        # not written because two of them share a name, the group list, the administrative unit
-        # list, the access review list and an entry written as null because it has no name), so
-        # twenty-three admits one of each
-        # and a normal partial run is still reported in full; only a genuinely heterogeneous
-        # large-tenant failure is truncated, and the dropped count is stated rather than silently
-        # lost. Nothing is discarded either way -- every cause is written to the verbose stream as
-        # it is seen. Raise this with the shape count when a twenty-fourth cause message is added, or
-        # one shape starts crowding out another purely by ordering.
-        $UnreadCauseCap = 23
+        # cause would be discarded entirely. Kept RAW, in the order found, each with the id of the
+        # object it was about: Format-OERUnreadCauseClause deduplicates (a throttle produces the
+        # identical message for every affected group, and repeating it once per group would bury
+        # the signal), caps and words them where the partial message is built.
+        $UnreadCauses = [System.Collections.Generic.List[object]]::new()
 
-        # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
-        # rather than repeated at the group and administrative-unit call sites, so the normalisation
-        # rule has a single owner. -Target is the record's own TargetObject (the failing object's
-        # id), which is why the normalisation needs no id-shaped pattern matching. The suppressed
-        # count is derived at the end as $UnreadCauseKeys.Count - $UnreadCauses.Count, so this
-        # function never has to write back through the enclosing scope.
+        # Records one read-failure cause. Local to this cmdlet rather than repeated at the group and
+        # administrative-unit call sites, so a blank cause is refused in one place. -Target is the
+        # record's own TargetObject (the failing object's id), which Format-OERUnreadCauseClause
+        # needs to normalise the id out of the message, so it is stored beside the cause.
         function Add-UnreadCause {
             param(
                 [string]$Cause,
                 [string]$Target
             )
             if ([string]::IsNullOrWhiteSpace($Cause)) { return }
-            $Key = $Cause
-            if (-not [string]::IsNullOrWhiteSpace($Target)) { $Key = $Key.Replace($Target, '<id>') }
-            if (-not $UnreadCauseKeys.Add($Key)) { return }
-            if ($UnreadCauses.Count -lt $UnreadCauseCap) { $UnreadCauses.Add($Cause) }
+            $UnreadCauses.Add([PSCustomObject]@{ Cause = $Cause; Target = $Target })
         }
 
         # A section whose LIST could not be read at all is written as [] (a top-level section is never null),
@@ -413,8 +387,7 @@ function Get-OERInventory {
                         $ReportedName = if ($NameOf) { [string](& $NameOf $E) } else { $K }
                         $Unread = "$Section/$ReportedName"
                         $UnreadCollections.Add($Unread)
-                        $NameCause = "Two or more live objects share the name $Unread (compared without regard to letter case), " +
-                            'so none of them is written: the apply engine refuses an ambiguous name.'
+                        $NameCause = Get-OERSharedNameCause -Path $Unread
                         # Every cause is written to the verbose stream as it is seen, like at every other
                         # Add-UnreadCause site: this one is added last, so it is the first the cap drops.
                         Write-Verbose "Get-OERInventory: $NameCause"
@@ -481,356 +454,34 @@ function Get-OERInventory {
         }
 
         if ($Include -contains 'Groups') {
-            $GroupParams = @{ IncludeMembers = $true; IncludePimEligibility = $true; IncludeOwners = $true }
-            if ($GroupFilter) { $GroupParams.Filter = $GroupFilter } else { $GroupParams.Filter = 'securityEnabled eq true' }
-            $GroupItems = @()
-            # -ErrorAction SilentlyContinue + -ErrorVariable, not -ErrorAction Stop: Get-OERGroup now
-            # writes a non-terminating error per group whose members, owners or eligibility read
-            # failed, and Stop would abort the whole enumeration on the first one -- losing every
-            # remaining group instead of losing one collection. The errors are inspected below, so
-            # nothing is suppressed; SilentlyContinue here means "captured", not "ignored".
-            $GroupReadErrors = $null
-            # The try/catch still guards a genuinely TERMINATING failure of the whole read (auth,
-            # a dead transport, an -ErrorAction Stop upstream); the inner loop handles the
-            # NON-terminating per-group records. Both are needed: neither subsumes the other.
+            $GroupReadFilter = if ($GroupFilter) { $GroupFilter } else { 'securityEnabled eq true' }
+            # The reader catches what it expects and names it in Unread and Causes. This catch is for
+            # an error nothing in the reader catches: it ends the read, and the reader's try/finally
+            # unwinds it -- a statement-terminating error as well as a throw -- so the call returns
+            # nothing. Reading that as zero groups would state a failed read as an empty fact, so it
+            # is counted unread like a list that could not be read, with the same wording.
+            $GroupRead = $null
             try {
-                $GroupItems = @(Get-OERGroup @GroupParams -ErrorAction SilentlyContinue -ErrorVariable GroupReadErrors)
-                foreach ($GErr in @($GroupReadErrors)) {
-                    if ($null -eq $GErr) { continue }
-                    # No Remove-OERErrorRecord here: these records were WRITTEN deliberately by
-                    # Get-OERGroup (which already scrubbed the raw transport record behind each one),
-                    # not swallowed by a catch. Scrubbing a reported diagnostic would hide it.
-                    if ($GErr.FullyQualifiedErrorId -like 'GroupNotFound*') { continue }
-                    # Per-collection failures are accounted for at the projection below, where the
-                    # affected group is known by name; only anything else warrants a section warning.
-                    if ($GErr.FullyQualifiedErrorId -like 'GroupMemberReadFailed*' -or
-                        $GErr.FullyQualifiedErrorId -like 'GroupOwnerReadFailed*' -or
-                        $GErr.FullyQualifiedErrorId -like 'GroupPimEligibilityReadFailed*') {
-                        # Keep the CAUSE. Get-OERGroup composed the transport reason into this
-                        # message and it lives nowhere else once the record is dropped here.
-                        $GroupCause = [string]$GErr.Exception.Message
-                        Write-Verbose "Get-OERInventory: $GroupCause"
-                        Add-UnreadCause -Cause $GroupCause -Target ([string]$GErr.TargetObject)
-                        continue
-                    }
-                    # Warn only for a record Get-OERGroup itself PUBLISHED. -ErrorVariable is filled
-                    # by the ENGINE and also collects records raised inside nested calls -- the Graph
-                    # SDK's own, several of them empty, one of them the raw bearer-carrying request
-                    # record -- even when an inner catch swallowed them. Warning on those produced
-                    # eight spurious lines per failed read on a live tenant (about 72 in one run) and
-                    # buried the real signal. A published record carries the calling cmdlet's name as
-                    # a comma-separated segment of the FullyQualifiedErrorId; a stray does not.
-                    # Filtering on the error id instead would need widening for every id ever added
-                    # and would still admit every stray, so the test is the publisher, not the id.
-                    # Membership, not a suffix match: Write-Error appends a further name when a
-                    # record is republished, so the cmdlet's name is not always the last segment.
-                    if (@(([string]$GErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERGroup') {
-                        Write-Warning "Could not read groups: $($GErr.Exception.Message)"
-                        # The warning stays; the section is ALSO counted unread, since the groups array
-                        # below is [] whether the tenant has none or the list could not be read.
-                        Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($GErr.Exception.Message)"
-                    } else {
-                        # Routed to verbose rather than dropped: a stray is still evidence when a read
-                        # misbehaves, it just is not a section-level finding the operator must act on.
-                        Write-Verbose ("Get-OERInventory: ignoring a foreign error record seen while reading groups " +
-                            "($($GErr.FullyQualifiedErrorId)): $($GErr.Exception.Message)")
-                    }
-                }
+                $GroupRead = Get-OERInventoryGroup -Filter $GroupReadFilter -IncludeId:$IncludeId -PrincipalNameCache $PrincipalNameCache
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                if ($PSItem.FullyQualifiedErrorId -notlike 'GroupNotFound*') {
-                    Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
-                    Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($PSItem.Exception.Message)"
-                }
+                Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
+                Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($PSItem.Exception.Message)"
             }
-            # Project one access-type policy object from a Get-OERGroupPimPolicy result, or $null when
-            # the group carries no policy for that access type. The block is emitted whenever ANY
-            # meaningful field is present -- gating it on activationMaxHours alone used to discard a
-            # policy that was customized only for permanence, expiration, enablement or notifications.
-            function Convert-PimAccessProjection {
-                param([object]$Policy)
-                if (-not $Policy) { return $null }
-                $Block = [ordered]@{}
-                if ($null -ne $Policy.ActivationMaxHours) { $Block.activationMaxHours = $Policy.ActivationMaxHours }
-                if ($Policy.AuthenticationContextId) { $Block.authenticationContextId = $Policy.AuthenticationContextId }
-                # ConvertTo-OERGroupPimPolicy wraps ActivationEnabledRules/ActiveEnabledRules with a
-                # null-filter (its own comment at ConvertTo-OERGroupPimPolicy.ps1:67-73), so a rule
-                # the tenant never configured and a rule that is genuinely empty BOTH read back as
-                # @() here -- $null -ne cannot tell "unread" from "read and empty" on these two
-                # properties, and neither can Count -gt 0 alone. Fall back to the raw rule set
-                # carried on Rules: when the canonical rule id IS present the policy was actually
-                # read and the list is genuinely empty, so emit an explicit [] (security-relevant:
-                # no MFA, justification or ticket is required on activation). When the rule id is
-                # absent too, the policy never carried it -- omit, same as before.
-                $HasActivationRule = @($Policy.Rules |
-                    Where-Object { $_.id -eq 'Enablement_EndUser_Assignment' }).Count -gt 0
-                if (@($Policy.ActivationEnabledRules).Count -gt 0 -or $HasActivationRule) {
-                    $Block.activationEnablement = @($Policy.ActivationEnabledRules)
-                }
-                if ($null -ne $Policy.AllowPermanentEligibility) { $Block.allowPermanentEligibility = [bool]$Policy.AllowPermanentEligibility }
-                if ($Policy.EligibleDurationDays) { $Block.eligibleDurationDays = [int]$Policy.EligibleDurationDays }
-                if ($null -ne $Policy.AllowPermanentActive) { $Block.allowPermanentActive = [bool]$Policy.AllowPermanentActive }
-                if ($Policy.ActiveDurationDays) { $Block.activeDurationDays = [int]$Policy.ActiveDurationDays }
-                $HasActiveRule = @($Policy.Rules |
-                    Where-Object { $_.id -eq 'Enablement_Admin_Assignment' }).Count -gt 0
-                if (@($Policy.ActiveEnabledRules).Count -gt 0 -or $HasActiveRule) {
-                    $Block.activeEnablement = @($Policy.ActiveEnabledRules)
-                }
-                if ($null -ne $Policy.RequireApproval) { $Block.requireApproval = [bool]$Policy.RequireApproval }
-                # Approvers project as object ids, the same as the roleManagementPolicies projection:
-                # an id resolves verbatim through the apply engine's declared-approver resolution,
-                # whereas a display name may not. Exported only while approval is required, since the
-                # apply engine ignores declared approvers whenever requireApproval is false and
-                # Test-OERStructureSchema would otherwise warn about that combination on every
-                # exported document that carries an approval-gated policy.
-                if ($Policy.RequireApproval -eq $true) {
-                    $PimApproverUser  = @(@($Policy.Approvers) | Where-Object { $_ -and [string]$_.UserType -eq 'User' } | ForEach-Object { [string]$_.Id } | Where-Object { $_ })
-                    $PimApproverGroup = @(@($Policy.Approvers) | Where-Object { $_ -and [string]$_.UserType -eq 'Group' } | ForEach-Object { [string]$_.Id } | Where-Object { $_ })
-                    if ($PimApproverUser.Count -gt 0 -or $PimApproverGroup.Count -gt 0) {
-                        $PimApproverProj = [ordered]@{}
-                        if ($PimApproverUser.Count -gt 0)  { $PimApproverProj.users = $PimApproverUser }
-                        if ($PimApproverGroup.Count -gt 0) { $PimApproverProj.groups = $PimApproverGroup }
-                        $Block.approvers = [PSCustomObject]$PimApproverProj
-                    }
-                }
-                $Notif = [ordered]@{}
-                if ($Policy.Notifications) {
-                    if (@($Policy.Notifications.EligibleAlert).Count -gt 0)   { $Notif.eligibleAlert = @($Policy.Notifications.EligibleAlert) }
-                    if (@($Policy.Notifications.ActiveAlert).Count -gt 0)     { $Notif.activeAlert = @($Policy.Notifications.ActiveAlert) }
-                    if (@($Policy.Notifications.ActivationAlert).Count -gt 0) { $Notif.activationAlert = @($Policy.Notifications.ActivationAlert) }
-                }
-                if ($Notif.Count -gt 0) { $Block.notifications = [PSCustomObject]$Notif }
-                if ($Block.Count -eq 0) { return $null }
-                [PSCustomObject]$Block
-            }
-
-            foreach ($G in $GroupItems) {
-                $Proj = [ordered]@{
-                    displayName    = $G.DisplayName
-                    roleAssignable = [bool]$G.IsAssignableToRole
-                    dynamic        = ($G.GroupType -eq 'Dynamic')
-                    description    = $G.Description
-                }
-                # A15: information only. Written as true for a group synchronized from on-premises
-                # (Test-OERGroupOnPremisesSynced owns the rule) and never otherwise, so a cloud
-                # group's entry is exactly what earlier versions exported. Invoke-OERStructure never
-                # sends this key and decides nothing on it: it reads the group live.
-                if (Test-OERGroupOnPremisesSynced -Group $G) { $Proj.onPremisesSynced = $true }
-                if ($G.GroupType -eq 'Dynamic') {
-                    $Proj.membershipRule = $G.MembershipRule
-                    if ($G.MembershipRuleProcessingState) {
-                        $Proj.membershipRuleProcessingState = [string]$G.MembershipRuleProcessingState
-                    }
-                }
-                # mailNickname is writable on create AND diffed on update by the apply engine, so it
-                # must be readable here or a custom nickname is silently replaced by the Graph-generated
-                # one on the next round-trip. Emitted only when set, so a document for a group without
-                # one stays clean and the apply leaves it untouched.
-                if ($G.MailNickname) { $Proj.mailNickname = [string]$G.MailNickname }
-                if ($IncludeId) { $Proj.id = $G.Id }
-                # An OMITTED members key still reconciles in the apply engine and still prunes under
-                # -Prune (Get-OERStructureSchemaJson: "An omitted key still reconciles"), so omitting
-                # it here would leave issue #76's chain wide open. An EXPLICIT null is the schema's
-                # documented "leave membership untouched" signal, and that is what an unread
-                # membership has to be.
-                if ($G.PSObject.Properties.Name -contains 'Members') {
-                    # Project each member as a reference the apply engine can resolve back to its object id:
-                    # a user as its userPrincipalName (friendly and resolvable), and every other member type
-                    # (group, device, service principal, ...) as its object id, which Resolve-OERStructurePrincipal
-                    # returns verbatim. A member display name is NOT resolvable (it is not a UPN), so it is only a
-                    # last-resort fallback when neither a UPN nor an id is present.
-                    $Proj.members = @(foreach ($M in @($G.Members)) {
-                        if (-not $M) { continue }
-                        if ($M.userPrincipalName) { [string]$M.userPrincipalName }
-                        elseif ($M.id)            { [string]$M.id }
-                        else                      { [string]$M.displayName }
-                    })
-                } else {
-                    $Proj.members = $null
-                    $UnreadCollections.Add("groups/$($G.DisplayName)/members")
-                }
-                if ($G.PSObject.Properties.Name -contains 'Owners') {
-                    # Owners are writable through Add-/Remove-OERGroupMember -AccessType owner and a group
-                    # owner can add members, so an unprojected owner is a privilege path that disappears from
-                    # the captured posture. Emitted only when the group has any, so a document for an
-                    # owner-less group stays clean and the apply leaves owners untouched.
-                    $OwnerRefs = @(foreach ($O in @($G.Owners)) {
-                        if (-not $O) { continue }
-                        if ($O.userPrincipalName) { [string]$O.userPrincipalName }
-                        elseif ($O.id)            { [string]$O.id }
-                        else                      { [string]$O.displayName }
-                    })
-                    if ($OwnerRefs.Count -gt 0) { $Proj.owners = $OwnerRefs }
-                } else {
-                    # An omitted owners key is ALREADY never reconciled or pruned, so omission is the
-                    # correct hands-off form here -- no explicit null needed. The read failure is
-                    # still accounted for, so the document is not silently short an owner set.
-                    $UnreadCollections.Add("groups/$($G.DisplayName)/owners")
-                }
-                if ($G.PSObject.Properties.Name -contains 'PimEligibility') {
-                    $EligIds = @(@($G.PimEligibility) | ForEach-Object { [string]$_.principalId } | Where-Object { $_ })
-                    $MissingEligIds = @($EligIds | Where-Object { -not $PrincipalNameCache.ContainsKey($_) } | Select-Object -Unique)
-                    if ($MissingEligIds.Count -gt 0) {
-                        $Resolved = Resolve-OERPrincipalName -Id $MissingEligIds
-                        foreach ($K in $Resolved.Keys) { $PrincipalNameCache[$K] = $Resolved[$K] }
-                    }
-                    # Project each eligibility so a re-apply reproduces it faithfully: accessType is always
-                    # emitted (member or owner) and durationDays is emitted only for a time-bound window --
-                    # its absence is how the apply document expresses a permanent eligibility.
-                    $Proj.eligibility = @(foreach ($E in @($G.PimEligibility)) {
-                        if (-not $E) { continue }
-                        $PrincipalId = [string]$E.principalId
-                        $Name = if ($PrincipalNameCache.ContainsKey($PrincipalId)) { $PrincipalNameCache[$PrincipalId] } else { $PrincipalId }
-                        $EligProj = [ordered]@{ principal = $Name }
-                        $EligProj.accessType = $(if ($E.accessId) { [string]$E.accessId } else { 'member' })
-                        $EligDays = Resolve-OEREligibilityDuration -StartDateTime $E.startDateTime -EndDateTime $E.endDateTime
-                        if ($null -ne $EligDays) { $EligProj.durationDays = [int]$EligDays }
-                        if ($IncludeId) { $EligProj.id = $PrincipalId }
-                        [PSCustomObject]$EligProj
-                    })
-                } else {
-                    # Same as owners: an omitted OR explicitly null eligibility key is never reconciled
-                    # or pruned, so omission is already hands-off. No principal-name lookup is issued
-                    # for a collection that was never read.
-                    $UnreadCollections.Add("groups/$($G.DisplayName)/eligibility")
-                }
-
-                $MemberPim = $null
-                $OwnerPim  = $null
-                # ASK FIRST WHETHER THE GROUP USES PIM FOR GROUPS AT ALL. Microsoft Graph lists
-                # PIM-for-Groups policies for every group, including one never used with PIM for
-                # Groups (measured live 2026-09-28), so reading and exporting them used to put a
-                # default pimPolicy on EVERY group -- and a proposal that changes one of those blocks
-                # onboards the group on apply, which cannot be undone (Microsoft Graph documentation,
-                # "Onboarding groups to PIM for Groups"). Test-OERGroupPimInUse owns the rule: the
-                # eligibility this section already read, or one listing of the group's policies for a
-                # modified one (docs/development/rationale.md#pim-in-use-criterion, ruling R2). A group
-                # the criterion does not find in use gets no pimPolicy key and none of the four reads
-                # below. A criterion that could not be read is never guessed in either direction:
-                # pimPolicy is omitted AND the collection is reported unread, with its cause, exactly
-                # like a failed policy read. The null-filter on the count is load-bearing:
-                # @($null).Count is 1.
-                $EligibilityRead = $G.PSObject.Properties.Name -contains 'PimEligibility'
-                $EligCount = if ($EligibilityRead) {
-                    @($G.PimEligibility | Where-Object { $null -ne $_ }).Count
-                } else { 0 }
-                $Usage = $null
-                try {
-                    $Usage = Test-OERGroupPimInUse -GroupId $G.Id -EligibilityCount $EligCount
-                } catch {
-                    Remove-OERErrorRecord -Record $PSItem
-                    $CriterionCause = "Could not determine whether group '$($G.Id)' uses PIM for Groups: $($PSItem.Exception.Message)"
-                    Write-Verbose "Get-OERInventory: $CriterionCause"
-                    Add-UnreadCause -Cause $CriterionCause -Target ([string]$G.Id)
-                    $UnreadCollections.Add("groups/$($G.DisplayName)/pimPolicy")
-                    $Usage = $null
-                }
-                $PimInUse = ($null -ne $Usage -and [bool]$Usage.InUse)
-                if ($null -ne $Usage -and -not $PimInUse) {
-                    if ($EligibilityRead) {
-                        Write-Verbose "Get-OERInventory: group '$($G.DisplayName)': pimPolicy not exported -- $($Usage.Reason)."
-                    } else {
-                        # HALF AN ANSWER. The eligibility read failed, so the count above was 0 by
-                        # default, not by measurement: "not in use" was decided on the policies alone
-                        # and is a guess. pimPolicy is omitted and reported unread too. The eligibility
-                        # read's own cause is already on the cause list (it is what omitted
-                        # PimEligibility), so this adds the COLLECTION only, never a second cause. A
-                        # modified policy, by contrast, decides "in use" on its own and never gets here.
-                        Write-Verbose "Get-OERInventory: group '$($G.DisplayName)': pimPolicy not exported and not decided -- $($Usage.Reason), and its PIM eligibility could not be read."
-                        $UnreadCollections.Add("groups/$($G.DisplayName)/pimPolicy")
-                    }
-                }
-
-                # ASK NEXT WHETHER THERE IS A POLICY AT ALL, rather than reading one and swallowing
-                # the answer. For a group whose policy Graph does not list (an empty assignments
-                # collection, or 400 ResourceTypeNotSupported) Get-OERGroupPimPolicy correctly
-                # reports a non-terminating PimPolicyNotFound -- which -ErrorAction Stop turns into
-                # TWO records per call, four per group, in the CALLER's -ErrorVariable. That
-                # collection is filled by the ENGINE from the error stream, so neither the catch
-                # below nor any other catch in this module can reach those records: the only way not
-                # to have them is not to provoke them. Measured offline on 100 groups, 96 of them
-                # answering with no listed policy, driving the real wrapper and the real cmdlets with
-                # only the transport stubbed: 384 records for an entirely clean read -- it does not
-                # depend on whether the assignments call answers 200-empty or 400, since
-                # Get-OERPimGroupPolicyId returns $null either way. A group the criterion above does
-                # not find to use PIM for Groups (no PIM eligibility and no modified policy) never
-                # gets this far: Graph lists a group's policies before it is onboarded (measured live
-                # 2026-09-28), which is exactly why the criterion runs first, and a group it does not
-                # find in use -- or could not decide -- makes none of the four calls below and
-                # carries no pimPolicy. That finding is the criterion's, not a measured fact about
-                # the tenant: a group used only through PIM ACTIVE assignments, with untouched
-                # policies, is not found in use either (rationale.md#pim-in-use-criterion).
-                #
-                # NOT -ErrorAction Ignore on the reads below. That would silence a genuine 403 or 429
-                # along with the not-listed case and leave the operator with a document quietly
-                # missing PIM policy it had no permission to read. Get-OERPimGroupPolicyId declares
-                # ResourceTypeNotSupported to the transport, so it comes back as a silent $null with
-                # nothing raised anywhere, while every OTHER failure still throws.
-                # A throw here is therefore NOT an answer: the read runs anyway and reports through
-                # the path below. Only a confident $null skips it.
-                #
-                # AND THE PATH BELOW HAS TO TELL THE TWO APART, which is the whole point of the pair
-                # of ids Get-OERGroupPimPolicy now emits. Suppressing PimPolicyNotFound is right --
-                # a policy Graph does not list is not a finding -- but the same cmdlet used to
-                # answer PimPolicyNotFound for a refusal as well, so this suppression swallowed the
-                # refusal with it. Measured: a 403 on the policy-id lookup for 96 of 100 groups
-                # produced 0 error records, 0 warnings, and pimPolicy absent from all 96 -- an
-                # inventory that looked complete and was not, issue #76's defect class in a new
-                # place. A failure now arrives as PimPolicyReadFailed and is accounted for exactly
-                # like a failed members, owners or eligibility read: the CAUSE to verbose and the
-                # deduplicated cause list, the COLLECTION to $UnreadCollections, and the run ends in
-                # the InventoryPartial error that names it -- which Export-OERInventory in turn folds
-                # into the bundle's IncompleteReads. No per-group warning, for the reason stated at
-                # the enumeration loop above: a per-collection failure is reported at the projection,
-                # where the group is known by name, and 96 refused groups would otherwise print 192
-                # near-identical lines and bury the one signal an operator can act on.
-                #
-                # pimPolicy stays OMITTED for that access type either way, never present and empty --
-                # exactly as Get-OERGroup omits PimEligibility on a failed read.
-                $ReadMemberPim = $false
-                $ReadOwnerPim  = $false
-                if ($PimInUse) {
-                    $ReadMemberPim = $true
-                    $ReadOwnerPim  = $true
-                    try { $ReadMemberPim = [bool](Get-OERPimGroupPolicyId -GroupId $G.Id -AccessType member) }
-                    catch { Remove-OERErrorRecord -Record $PSItem; $ReadMemberPim = $true }
-                    try { $ReadOwnerPim = [bool](Get-OERPimGroupPolicyId -GroupId $G.Id -AccessType owner) }
-                    catch { Remove-OERErrorRecord -Record $PSItem; $ReadOwnerPim = $true }
-                }
-                foreach ($PimAccessType in @('member', 'owner')) {
-                    if ($PimAccessType -eq 'member' -and -not $ReadMemberPim) { continue }
-                    if ($PimAccessType -eq 'owner' -and -not $ReadOwnerPim) { continue }
-                    try {
-                        $PimRead = Get-OERGroupPimPolicy -Id $G.Id -AccessType $PimAccessType -ErrorAction Stop
-                        if ($PimAccessType -eq 'member') { $MemberPim = $PimRead } else { $OwnerPim = $PimRead }
-                    } catch {
-                        Remove-OERErrorRecord -Record $PSItem
-                        if ($PSItem.FullyQualifiedErrorId -like 'PimPolicyNotFound*') { continue }
-                        # Keep the CAUSE. Get-OERGroupPimPolicy composed the transport reason into
-                        # this message and it lives nowhere else once the record is dropped here.
-                        $PimCause = [string]$PSItem.Exception.Message
-                        Write-Verbose "Get-OERInventory: $PimCause"
-                        $UnreadCollections.Add("groups/$($G.DisplayName)/pimPolicy/$PimAccessType")
-                        Add-UnreadCause -Cause $PimCause -Target ([string]$G.Id)
-                    }
-                }
-                $MemberProj = Convert-PimAccessProjection -Policy $MemberPim
-                $OwnerProj  = Convert-PimAccessProjection -Policy $OwnerPim
-                if ($MemberProj -or $OwnerProj) {
-                    $PimProj = [ordered]@{}
-                    if ($MemberProj) { $PimProj.member = $MemberProj }
-                    if ($OwnerProj)  { $PimProj.owner = $OwnerProj }
-                    $Proj.pimPolicy = [PSCustomObject]$PimProj
-                }
-                $Groups.Add([PSCustomObject]$Proj)
+            # Groups is the first section read, so replaying in order leaves the cause list and the unread
+            # list exactly as the section used to leave them.
+            if ($GroupRead) {
+                foreach ($GroupCause in @($GroupRead.Causes)) { Add-UnreadCause -Cause $GroupCause.Cause -Target $GroupCause.Target }
+                foreach ($GroupUnread in @($GroupRead.Unread)) { $UnreadCollections.Add($GroupUnread) }
+                foreach ($GroupEntry in @($GroupRead.Groups)) { $Groups.Add($GroupEntry) }
             }
         }
 
         if ($Include -contains 'AdministrativeUnits') {
             $AuItems = @()
-            # Same shape as the group read above: Get-OERAdministrativeUnit now writes a
-            # non-terminating error per unit whose members or scoped-role read failed, and
-            # -ErrorAction Stop would abort the whole enumeration on the first one. The records
+            # Same shape as the group read in Get-OERInventoryGroup.ps1: Get-OERAdministrativeUnit
+            # now writes a non-terminating error per unit whose members or scoped-role read failed,
+            # and -ErrorAction Stop would abort the whole enumeration on the first one. The records
             # are inspected below rather than discarded.
             $AuReadErrors = $null
             try {
@@ -842,20 +493,21 @@ function Get-OERInventory {
                     # affected unit is known by name; only anything else warrants a section warning.
                     if ($AErr.FullyQualifiedErrorId -like 'AdministrativeUnitMemberReadFailed*' -or
                         $AErr.FullyQualifiedErrorId -like 'AdministrativeUnitScopedRoleReadFailed*') {
-                        # Keep the CAUSE, same reasoning as the group loop above.
+                        # Keep the CAUSE, same reasoning as the group record loop in Get-OERInventoryGroup.ps1.
                         $AuCause = [string]$AErr.Exception.Message
                         Write-Verbose "Get-OERInventory: $AuCause"
                         Add-UnreadCause -Cause $AuCause -Target ([string]$AErr.TargetObject)
                         continue
                     }
-                    # Same publisher test as the group loop above, and for the same measured reason:
-                    # seven failing units produced 56 section-level warnings, 49 of them foreign
-                    # records the engine had collected from nested calls. See that comment for why
-                    # the PUBLISHER named in the FullyQualifiedErrorId, not the error id, is the
-                    # discriminator.
+                    # Same publisher test as the group record loop in Get-OERInventoryGroup.ps1, and for
+                    # the same measured reason: seven failing units produced 56 section-level warnings,
+                    # 49 of them foreign records the engine had collected from nested calls. See the
+                    # matching comment there for why the PUBLISHER named in the FullyQualifiedErrorId,
+                    # not the error id, is the discriminator.
                     if (@(([string]$AErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERAdministrativeUnit') {
                         Write-Warning "Could not read administrative units: $($AErr.Exception.Message)"
-                        # Counted unread as well as warned, for the same reason as the groups read above.
+                        # Counted unread as well as warned, for the same reason as the group list read in
+                        # Get-OERInventoryGroup.ps1.
                         Add-UnreadSection -Key 'administrativeUnits' -Cause "Could not read administrative units: $($AErr.Exception.Message)"
                     } else {
                         Write-Verbose ("Get-OERInventory: ignoring a foreign error record seen while reading " +
@@ -892,7 +544,7 @@ function Get-OERInventory {
                 # the apply handler can only skip. Omit it, matching membershipRule above.
                 if (-not $Proj.dynamic) {
                     if ($Au.PSObject.Properties.Name -contains 'Members') {
-                        # Same rule as group members: a user as its UPN (resolvable + friendly), every other
+                        # Same rule as group members (Get-OERInventoryGroup.ps1): a user as its UPN (resolvable + friendly), every other
                         # member type as its object id (which the apply resolves verbatim); display name is
                         # not resolvable so it is only a last-resort fallback.
                         $Proj.members = @(foreach ($M in @($Au.Members)) {
@@ -1187,7 +839,8 @@ function Get-OERInventory {
                     # removes every binding of the package, and an omitted key still reconciles the
                     # same way. An explicit null is the documented "leave the bindings untouched"
                     # signal, so that is what an unread set is, and the gap is reported through
-                    # InventoryPartial like the group and administrative-unit collections above.
+                    # InventoryPartial like the group collections (Get-OERInventoryGroup.ps1) and the
+                    # administrative-unit collections above.
                     # -ErrorAction Stop inside try/catch, the shape the directory-role sections below
                     # use: one reader per package, so a failure is attributed to exactly this package,
                     # and a record a reader swallowed internally (a retried 429) never counts as one.
@@ -1462,13 +1115,15 @@ function Get-OERInventory {
                         Where-Object { $null -ne $_ })
                 foreach ($ArErr in @($ArReadErrors)) {
                     if ($null -eq $ArErr) { continue }
-                    # No Remove-OERErrorRecord here, same as the group and administrative-unit loops
-                    # above: a record Get-OERAccessReviewDefinition PUBLISHED was already scrubbed by
+                    # No Remove-OERErrorRecord here, same as the group record loop (Get-OERInventoryGroup.ps1)
+                    # and the administrative-unit loop above: a record Get-OERAccessReviewDefinition
+                    # PUBLISHED was already scrubbed by
                     # that cmdlet's own catch, and scrubbing a reported diagnostic again would only
                     # strip it from $global:Error.
                     if ($ArErr.FullyQualifiedErrorId -like 'AccessReviewDefinitionNotFound*') { continue }
                     # Warn only for a record Get-OERAccessReviewDefinition itself PUBLISHED. Same
-                    # publisher test, same measured reason, as the two loops above: -ErrorVariable is
+                    # publisher test, same measured reason, as the group record loop (Get-OERInventoryGroup.ps1)
+                    # and the administrative-unit loop above: -ErrorVariable is
                     # filled by the ENGINE and also collects records raised inside nested calls even
                     # when an inner catch swallowed them, and Invoke-OERGraphRequest swallows and
                     # retries a 429, a 503 carrying Retry-After, and an ACRS claims challenge -- one
@@ -1477,7 +1132,8 @@ function Get-OERInventory {
                     # Write-Error appends a further name when a record is republished.
                     if (@(([string]$ArErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERAccessReviewDefinition') {
                         Write-Warning "Could not read access reviews: $($ArErr.Exception.Message)"
-                        # Counted unread as well as warned, for the same reason as the groups read above.
+                        # Counted unread as well as warned, for the same reason as the group list read in
+                        # Get-OERInventoryGroup.ps1.
                         Add-UnreadSection -Key 'accessReviews' -Cause "Could not read access reviews: $($ArErr.Exception.Message)"
                     } else {
                         # Routed to verbose rather than dropped: a stray is still evidence when a read
@@ -1980,16 +1636,9 @@ function Get-OERInventory {
             # Appended, not substituted: the triples stay exactly as they are (Export-OERInventory
             # folds -TargetObject into IncompleteReads verbatim). This clause only adds the WHY, so
             # an operator can tell a 429 (retry the export) from a 403 (grant a scope).
-            # Capped, and the truncation is STATED. The causes are deduplicated on a normalised key
-            # (see Add-UnreadCause), so this clause only grows when the failures genuinely differ --
-            # but a large tenant can still differ in many ways, and an error message thousands of
-            # causes long is unreadable and unloggable. The suppressed count is derived rather than
-            # counted, so it can never disagree with what the list actually holds.
-            $SuppressedCauses = $UnreadCauseKeys.Count - $UnreadCauses.Count
-            $CauseClause = if ($UnreadCauses.Count -gt 0) {
-                $MoreClause = if ($SuppressedCauses -gt 0) { ", plus $SuppressedCauses more distinct cause(s) not shown -- rerun with -Verbose for all of them" } else { '' }
-                " Causes: $($UnreadCauses -join '; ')$MoreClause."
-            } else { '' }
+            # Deduplicated, capped, and the truncation STATED, all by Format-OERUnreadCauseClause,
+            # which owns the wording. It returns an empty string when there is no cause to give.
+            $CauseClause = Format-OERUnreadCauseClause -Cause $UnreadCauses.ToArray()
             Write-CmdletError `
                 -Message ([System.Exception]::new(
                     "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +

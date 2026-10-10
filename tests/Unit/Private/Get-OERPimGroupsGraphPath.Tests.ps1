@@ -46,12 +46,12 @@ Describe 'Get-OERPimGroupsGraphPath' {
                 'Public/Add-OERGroupEligibility.ps1'
                 'Public/Remove-OERGroupEligibility.ps1'
                 'Public/Set-OERGroupPimPolicy.ps1'
-                'Public/Get-OERGroup.ps1'
                 'Public/Get-OERGroupPimPolicy.ps1'
                 'Private/Enable-OERGroupPermanentEligibility.ps1'
                 'Private/Get-OERGroupPermanentEligibilityState.ps1'
                 'Private/Get-OERListedGroupPimPolicy.ps1'
                 'Private/Get-OERPimGroupPolicyId.ps1'
+                'Private/Read-OERGroupCollection.ps1'
                 'Private/Send-OERNewGroupEligibilityRequest.ps1'
                 'Private/Test-OERGroupPimInUse.ps1'
             ) | ForEach-Object { Join-Path $script:SourceRoot $_ }
