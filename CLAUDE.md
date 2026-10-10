@@ -257,7 +257,10 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 - `Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` -- exports the two directory sections
   (`directoryRoleManagementPolicies`, `directoryRoleAssignments`) from a mocked live state with
   `Get-OERInventory` and applies them back through `Invoke-OERStructure`, with and without `-Prune`,
-  asserting every row is `Unchanged`.
+  asserting every row is `Unchanged`. It runs with a session -- a state the test sets for one
+  tenant, `Initialize-OERAuth` mocked -- so the export names that tenant (`tenantId`) and the apply
+  compares it; the export applied under another tenant is refused with `DocumentTenantMismatch`,
+  reading and writing nothing.
 - `Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` -- AST-driven: asserts no
   `source/Public/*.ps1` file writes a `Write-Warning` after its first `$PSCmdlet.ShouldProcess`,
   except the warnings its allowlist names with a reason (an entry matching no warning, or two, fails

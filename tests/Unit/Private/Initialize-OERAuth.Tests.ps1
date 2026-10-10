@@ -2043,25 +2043,35 @@ Describe 'Initialize-OERAuth device-code instruction visibility' {
         # The public, non-device-code path staying byte-identical is the invariant this change must
         # not spend. An Interactive sign-in that warns keeps its warning on the WARNING stream and
         # writes nothing to the information stream.
+        # Module-qualified on purpose: a mock body resolves commands from the test's scope, where a build
+        # runner may define a Write-Warning of its own -- Invoke-Build does, and counts every message it
+        # carries as a build warning, whatever -WarningAction says. The cmdlet writes the same record.
         Mock -ModuleName $script:moduleName Get-AzToken {
-            Write-Warning 'some unrelated AzAuth warning'
+            Microsoft.PowerShell.Utility\Write-Warning 'some unrelated AzAuth warning'
             [pscustomobject]@{ Token = 'fake'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = 'contoso' }
         }
 
         $Captured = InModuleScope $script:moduleName {
             $InfoVar = $null
             $WarnVar = $null
-            Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'Interactive' `
-                -InformationVariable InfoVar -WarningVariable WarnVar `
-                -WarningAction SilentlyContinue 6>$null
+            # 3>&1 merges the warning stream into the output: the warning is asserted below as a record
+            # on that stream, and is not printed to the console. A mock body does not see the
+            # -WarningAction bound here (see the first test of this Describe), so -WarningAction
+            # SilentlyContinue alone never kept it off the console.
+            $Merged = @(Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'Interactive' `
+                    -InformationVariable InfoVar -WarningVariable WarnVar `
+                    -WarningAction SilentlyContinue 6>$null 3>&1)
             [pscustomobject]@{
                 Information = @($InfoVar | ForEach-Object { [string]$_.MessageData })
                 Warning     = @($WarnVar | ForEach-Object { [string]$_.Message })
+                Streamed    = @($Merged | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
                 Account     = $script:_OERAuthState.Account
             }
         }
 
         ($Captured.Warning -join "`n") | Should -Match 'some unrelated AzAuth warning'
+        $Captured.Streamed | Should -Be @('some unrelated AzAuth warning') -Because (
+            'the warning stays on the warning stream, exactly once, and is not turned into anything else')
         ($Captured.Information -join "`n") | Should -Not -Match 'some unrelated AzAuth warning'
         $Captured.Account | Should -Be 'admin@contoso.com'
         # And the splat itself is untouched: the device-code branch's -WarningAction Continue must
@@ -2101,7 +2111,9 @@ Describe 'Initialize-OERAuth device-code instruction visibility' {
                   $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
                   $Scope, $Force, $Claim)
             if ($Resource -match 'management') {
-                Write-Warning 'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code ARMCODE99 to authenticate.'
+                # Module-qualified, for the reason given in 'leaves every other credential type calling
+                # Get-AzToken with no pipeline in between'.
+                Microsoft.PowerShell.Utility\Write-Warning 'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code ARMCODE99 to authenticate.'
             }
             [pscustomobject]@{ Token = 'fake'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = 'contoso' }
         }

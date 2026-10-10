@@ -626,7 +626,8 @@ so a matcher that stopped matching cannot pass by finding nothing to complain ab
 **10. Transport gate hygiene** (Sprint 8 step 4b, A18, A19 and A20; two owner lists widened in
 Sprint 9 step 2; the tenant lookup, the session-uncertain marker and the session reclaim added in
 Sprint 9 step 3; the document tenant comparison added in Sprint 9 step 6b; the reclaim splat key,
-the `Connect-OER` caller rule and the tenant-forward rule added in Sprint 10 step 10). The
+the `Connect-OER` caller rule, the tenant-forward rule and the owner table read as a whole added in
+Sprint 10 step 10). The
 gates that stand in front of every request -- the Graph SDK session gate in the Graph transport, and
 the sign-in latch gate and the sign-in supersession gate in both transports, all described under
 [#auth-state](#auth-state) -- are only as good as the claim that no request can go around them, and
@@ -642,12 +643,19 @@ only in the ARM wrapper; `Invoke-RestMethod` only in `Resolve-OERTenantDomain`, 
 `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`; `Get-OERDocumentTenantMismatch` only in
 `Invoke-OERStructure` -- and every listed owner must really call its command, so a rule cannot hold
 over nothing and a stale owner is a failure. Two of those lists were widened by one owner each in
-Sprint 9 step 2, each widening justified in the gate's own text. Each row of the owner table is
-enforced only by its own `It`, which asserts that the command has no caller outside its owners and
-that its owners really call it: no assertion reads the table as a whole, so a row without an `It`
-asserts nothing. MEASURED in Sprint 9 step 6b: the `Get-OERDocumentTenantMismatch` row alone, with
-its owner list emptied, left the gate green, so it got its own `It`, and the gate's comment now
-says that a new row needs one.
+Sprint 9 step 2, each widening justified in the gate's own text. Every row of the owner table is
+enforced by one `It` that reads the table as a whole (Sprint 10 step 10, BL-101): for each row, no
+caller outside its owners and every owner really calling it, with at least thirteen rows, one row
+per command (the scan keys its counts on the command, so a second row would replace the first
+one's owners) and a call by its owners found for every row's command. So a row added without an
+`It` of its own is enforced all the same. Before BL-101 each row was enforced only by its own `It`
+and nothing read the table as a whole, so a row without an `It` asserted nothing -- MEASURED in
+Sprint 9 step 6b: the `Get-OERDocumentTenantMismatch` row alone, with its owner list emptied, left
+the gate green, and it got its own `It` then. The thirteen-row floor is what sees a row deleted from
+the table: its own `It` then reads a key the scan never filled and stays green (measured, BL-101).
+A deletion made in the same edit as a new row keeps the count, and nothing sees it.
+The per-row `It`s stay and carry each row's reason; a new row still gets one for its explanation,
+but no longer needs one to be enforced.
 `Initialize-OERAuth` reads the latch once, before `Lock-OERSignIn`, to refuse a SIGN-IN under a
 latched outer command (BL-74); it refuses no request, and the transports' latch gates, which this
 gate places, still do, so the reason a reader elsewhere is refused -- a gate no static check places
@@ -3832,7 +3840,9 @@ from an earlier sign-in, must not refuse it. A document with no Azure section un
 
 **The gate (Ruling R6).** The single owner is held by one row in gate 10's owner table --
 `Get-OERDocumentTenantMismatch` called only in `Invoke-OERStructure`, which must really call it --
-with an `It` of its own, since a row alone asserts nothing (measured, below). There is no rule on
+with an `It` of its own, since at the time a row alone asserted nothing (measured, below); since
+Sprint 10 step 10 (BL-101) the `It` that reads the owner table as a whole enforces the row too, and
+its own `It` carries the reason. There is no rule on
 the `DocumentTenantMismatch` literal or on a read of a document's `tenantId`. If wrong: a second
 comparison written inline, without calling the owner, is caught only by review and the CLAUDE.md
 rule.
@@ -3875,8 +3885,12 @@ rule.
   tested. The capture stays in `begin` (R7, and the reason under "The export"). If wrong: the
   exported `tenantId` can name the previous session's tenant for an empty bundle.
 - Nothing machine-checks who calls `Get-OERInventoryTenantId`; gate 10 holds only the comparison.
-  `tests/Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` runs with no state, so its
-  export-to-apply round trip carries no `tenantId` and never reaches the comparison.
+  Since Sprint 10 step 10 (BL-101) `tests/Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1`
+  runs with a session, so its export names the session's tenant and its apply compares it, and an
+  `It` of its own applies the export under another tenant and is refused with
+  `DocumentTenantMismatch`, reading and writing nothing. The session is a state the test sets, with
+  `Initialize-OERAuth` mocked, so the round trip proves the export and the comparison meeting, not a
+  sign-in.
 
 **The user-facing texts.** `Invoke-OERStructure`'s help states the document tenant rule in a
 paragraph of its own beside its pipeline session rule, and its `-TenantId` and `-InputObject` point

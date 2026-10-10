@@ -1483,9 +1483,13 @@ BeforeAll {
         Get-OERDocumentTenantMismatch, the single owner of the comparison of a document's tenantId
         (BL-88, A14), is called only by Invoke-OERStructure, so a second apply path cannot compare -- or
         skip comparing -- on rules of its own.
-        Each row of $script:transportGateOwners is enforced only by its own It below, which asserts that
-        the command has no caller outside its owners and that its owners really call it: no assertion
-        reads the table as a whole, so a new row needs its own It, and a row without one is inert.
+        Every row of $script:transportGateOwners is enforced by the It that reads the table as a whole
+        (BL-101): for each row, no caller outside its owners and every owner really calling it, with
+        at least thirteen rows, one row per command, and a call found for every row's command. So a
+        row added without an It of its own is enforced all the same -- before BL-101 such a row was
+        inert, since each row was asserted only by its own It. The per-row Its below still assert
+        their own row and carry that row's reason: a new row still gets one, for its explanation, but
+        no longer needs one to be enforced.
 
         WHO MAY NAME THE RECLAIM (Sprint 9 step 3, final review I2, Ruling F2). -ReclaimGraphSession
         is the one way past the session gate's refusal in Initialize-OERAuth (A18) and past the
@@ -3830,7 +3834,7 @@ Describe 'suffix.ps1 / psm1 mirror sync' -Tags 'SourceHygiene' {
 
     It 'keeps the whole mirrored region byte-identical between suffix.ps1 and the dev-mode psm1' {
         <#
-            CLAUDE.md:59-60 describes suffix.ps1 as "Update-TypeData -Force blocks +
+            CLAUDE.md ## Module Layout describes suffix.ps1 as "Update-TypeData -Force blocks +
             Register-ArgumentCompleter calls, each mirrored verbatim in the dev-mode psm1", and
             CLAUDE.md ## Argument Completion rule 4 repeats the requirement for the completers
             specifically ("Register in suffix.ps1 AND mirror it in the dev-mode psm1. Drift means
@@ -4103,6 +4107,48 @@ The transport gate checker no longer reaches the verdict a known-answer case req
 names the case and the count it expected. The checker is what the other assertions in this Describe
 rest on, so fix it rather than the case; a case is changed only when the rule it models changed.
 '@
+    }
+
+    It 'holds every row of the owner table: no caller outside its owners, and every owner really calls it' {
+        <#
+            The owner table read as a whole (BL-101). Each per-row It below asserts one row and carries
+            that row's reason; this one asserts every row, so a row added to $script:transportGateOwners
+            without an It of its own is enforced all the same. Measured in Sprint 9 step 6b, before this
+            It existed: the Get-OERDocumentTenantMismatch row alone, with its owner list emptied, left
+            the gate green, since nothing read the row. Non-vacuity: the table holds at least the
+            thirteen rows it held when this It was written -- a row deleted from the table leaves its
+            own It green, since that It then reads a key the scan never filled (measured, BL-101), so
+            only this count sees it, and not when a new row is added in the same edit -- one row per
+            command (a second row for a
+            command replaces the first one's owners in the scan above), and the owners of every row
+            really call its command, so no row is a rule over nothing. That last check is the only one
+            that sees a row with no owner at all for a command nothing calls: such a row reports
+            neither a foreign caller nor a stale owner.
+        #>
+        @($script:transportGateOwners).Count | Should -BeGreaterOrEqual 13 -Because (
+            'the owner table held thirteen rows when this It was written; fewer means a rule was dropped, and a new row is enforced here without a further edit')
+        $Commands = @($script:transportGateOwners | ForEach-Object { $_.Command })
+        $Duplicates = @($Commands | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+        $Duplicates -join ', ' | Should -BeNullOrEmpty -Because (
+            'each command has one row: the scan keys its counts on the command, so a second row replaces the owners of the first, and widening a rule is an edit of its one row')
+
+        $Failures = [System.Collections.Generic.List[string]]::new()
+        $NoCall = [System.Collections.Generic.List[string]]::new()
+        foreach ($Rule in $script:transportGateOwners) {
+            foreach ($Line in $script:transportOwnerViolations[$Rule.Command]) { $Failures.Add($Line) }
+            foreach ($Line in $script:transportOwnerStale[$Rule.Command]) { $Failures.Add($Line) }
+            if (-not ($script:transportOwnerSites[$Rule.Command] -gt 0)) { $NoCall.Add($Rule.Command) }
+        }
+        $Failures -join "`n" | Should -BeNullOrEmpty -Because @'
+Each command in the owner table may be called only in its owner files, and every owner listed must
+really call it (WHO MAY CALL WHAT in the Pass 9 comment, and CLAUDE.md ## Testing Conventions). Each
+line names a file that calls a command it does not own, or an owner that calls its command nowhere. The
+per-row It of that command, where there is one, gives the reason the rule exists. Route the call through
+an owner, or remove the stale owner from its row. A row is widened only deliberately, with the reason
+written into the gate's text, never to make this pass.
+'@
+        $NoCall -join ', ' | Should -BeNullOrEmpty -Because (
+            'the owners of every row must really call its command, or that row is a rule over nothing; a row listed here has no call by any owner')
     }
 
     It 'reads the Graph SDK session with Get-MgContext only in Get-OERGraphSessionFingerprint.ps1' {
