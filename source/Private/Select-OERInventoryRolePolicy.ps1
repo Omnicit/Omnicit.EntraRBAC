@@ -45,7 +45,7 @@ function Select-OERInventoryRolePolicy {
     .EXAMPLE
     Select-OERInventoryRolePolicy -Policy $Candidates -Assignment $Assignments -Eligibility $EligibilityScopes -UnreadScope @()
     Returns Kept, the entries of the kept policies in input order, and UnjudgedScopes, each scope
-    whose policies were kept without being judged, once, in the order first seen.
+    where at least one policy that could not be judged was kept, once, in the order first seen.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]

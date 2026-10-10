@@ -964,7 +964,8 @@ Describe 'Export-OERInventory (Azure role policy selection, BL-107)' {
         $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
         $Partial.Count | Should -Be 1
         $Partial[0].Exception.Message | Should -BeLike "*$script:BlUnjudged*"
-        $Partial[0].Exception.Message | Should -BeLike '*kept without being judged*'
+        $Partial[0].Exception.Message | Should -BeLike '*at 1 Azure scope(s) every role management policy that could not be judged was kept, none of them left out*'
+        $Partial[0].Exception.Message | Should -BeLike '*where a scope''s role assignment or eligibility read failed, that is every policy of a role neither used nor changed there*'
         $Partial[0].Exception.Message | Should -BeLike '*roleManagementPolicies.json may hold policies of roles that are neither used nor changed*'
         $Partial[0].Exception.Message | Should -Not -BeLike '*partial Entra ID read entry*'
 
@@ -1836,7 +1837,9 @@ Describe 'Export-OERInventory (help documents the bundle nesting)' {
         $Description | Should -Match ([regex]::Escape('WHICH AZURE ROLE MANAGEMENT POLICIES ARE EXPORTED.'))
         $Description | Should -Match ([regex]::Escape('keeps a role''s policy at a scope only when the role has an active role assignment or a PIM eligibility EXACTLY at that scope, or the policy has been changed.'))
         $Description | Should -Match ([regex]::Escape('A policy that cannot be judged is kept, never dropped, and its scope is named in IncompleteReads (below)'))
-        $Description | Should -Match ([regex]::Escape('Last, after every Entra ID entry, IncompleteReads carries one entry per Azure scope whose role management policies were kept without being judged'))
+        $Description | Should -Match ([regex]::Escape('Last, after every Entra ID entry, IncompleteReads carries one entry per Azure scope where at least one role management policy could not be judged'))
+        $Description | Should -Match ([regex]::Escape('It does not mean every policy at the scope was kept: when only one row could not be judged, the other unused, unchanged policies there are still left out.'))
+        $Description | Should -Not -Match 'nothing is missing for it'
         $Description | Should -Match ([regex]::Escape('plus one per such Azure scope, and not the number of unread collections'))
         $Description | Should -Match ([regex]::Escape('Invoke-OERStructure reads and writes only the policies a document declares'))
 

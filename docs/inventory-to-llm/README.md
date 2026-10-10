@@ -466,12 +466,15 @@ deletion is proposed from it.
 The bundle's `README.md` lists every such report, and every Azure scope the export could not read
 (for `roleAssignments.json` and `roleManagementPolicies.json`, or for `azurePimEligibility.json`),
 under "What this export could not read" -- one bullet per entry, each written as a code span so an
-entry such as `<all Azure scopes: scope enumeration failed>` is shown as it is. An Azure scope whose
-role management policies were kept without being judged is listed there too, after the Entra ID
-entries, as `roleManagementPolicies/role selection at <scope>` under a label of its own: nothing is
-missing for it, but `roleManagementPolicies.json` may hold policies of roles that are neither used
-nor changed at that scope, so such a policy is no evidence that its role is in use. When nothing was
-left unread, that section says so. The list is in the README alone: `inventory.json` and the other
+entry such as `<all Azure scopes: scope enumeration failed>` is shown as it is. An Azure scope where
+at least one role management policy could not be judged is listed there too, after the Entra ID
+entries, as `roleManagementPolicies/role selection at <scope>` under a label of its own. Every policy
+there that could not be judged was kept, none of them left out -- where the scope's role assignment
+or eligibility read failed, that is every policy of a role neither used nor changed there -- so
+`roleManagementPolicies.json` may hold policies of roles that are neither used nor changed at that
+scope, and such a policy is no evidence that its role is in use. The entry does not mean every
+policy at the scope was kept: when only one policy could not be judged, the other unused, unchanged
+ones are still left out. When nothing was left unread, that section says so. The list is in the README alone: `inventory.json` and the other
 JSON files never carry it, so the apply document keeps exactly the shape the schema describes.
 
 ## Notes

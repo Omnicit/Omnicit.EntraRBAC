@@ -125,32 +125,36 @@ function Export-OERInventory {
     warning 'Could not read groups: ...'), and is written as an empty array that does not mean the
     tenant has none; the entry groupsRoster likewise means groupsRoster.json is empty only because
     the roster read failed. Last, after every Entra ID entry, IncompleteReads carries one entry per
-    Azure scope whose role management policies were kept without being judged (see WHICH AZURE ROLE
+    Azure scope where at least one role management policy could not be judged (see WHICH AZURE ROLE
     MANAGEMENT POLICIES ARE EXPORTED above), reading 'roleManagementPolicies/role selection at' and
-    the scope -- for a subscription, 'roleManagementPolicies/role selection at /subscriptions/<id>'.
-    Such an entry names no unread collection and nothing is missing for it: it says that
-    roleManagementPolicies.json may hold policies of roles that are neither used nor changed at that
-    scope. The Count of IncompleteReads is therefore one for the Groups read when it left anything
+    the scope in its canonical form -- for a subscription,
+    'roleManagementPolicies/role selection at /subscriptions/<id>'. Such an entry names no unread
+    collection: every policy at that scope that could not be judged was kept, none of them left out
+    -- where the scope's role assignment read or eligibility read failed, that is every policy of a
+    role neither used nor changed there -- so roleManagementPolicies.json may hold policies of roles
+    that are neither used nor changed at that scope. It does not mean every policy at the scope was
+    kept: when only one row could not be judged, the other unused, unchanged policies there are still
+    left out. The Count of IncompleteReads is therefore one for the Groups read when it left anything
     unread, plus the number of partial reports from Get-OERInventory, plus one when the group roster
     could not be read, plus one per such Azure scope, and not the number of unread collections; read
     the entries for that. The same non-terminating InventoryPartial error is raised here when
     IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty, and its message gives the
     causes of the unread group reads (Get-OERInventory's own InventoryPartial gives those of the other
     sections). The part of that message that counts partial Entra ID read entries counts the Entra ID
-    entries only; the Azure scopes kept without being judged have a clause of their own, which names
-    each of them. A members, scopedRoles, resources or resourceRoles collection that could not be
-    read, or that has an entry the export could name by nothing the apply engine accepts, is NOT
-    written into inventory.json as an empty one or with an empty name: its key is an explicit null,
-    which the apply engine reads as "leave untouched". Do not hand-edit that null to [] -- under
-    Invoke-OERStructure -Prune an empty declared collection deletes every live member, binding or
-    resource. Any other collection IncompleteReads names is left out of the document or written only
-    as far as it was read, as the Get-OERInventory help describes; Invoke-OERStructure never removes
-    a catalog, access package or assignment policy that is absent from the document.
+    entries only; the Azure scopes where policies could not be judged have a clause of their own,
+    which names each of them. A members, scopedRoles, resources or resourceRoles collection that
+    could not be read, or that has an entry the export could name by nothing the apply engine
+    accepts, is NOT written into inventory.json as an empty one or with an empty name: its key is an
+    explicit null, which the apply engine reads as "leave untouched". Do not hand-edit that null to
+    [] -- under Invoke-OERStructure -Prune an empty declared collection deletes every live member,
+    binding or resource. Any other collection IncompleteReads names is left out of the document or
+    written only as far as it was read, as the Get-OERInventory help describes; Invoke-OERStructure
+    never removes a catalog, access package or assignment policy that is absent from the document.
 
     The bundle says so itself. The generated README.md carries a section named "What this export
     could not read": one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes
-    entry, an Azure scope whose role management policies were kept without being judged under a
-    label of its own, or the statement that nothing was left unread, so whoever receives the bundle
+    entry, an Azure scope where role management policies could not be judged under a label of its
+    own, or the statement that nothing was left unread, so whoever receives the bundle
     (an LLM, say) can tell a collection that was not read from one that is empty. The lists go into
     README.md only, never into inventory.json or any other file that is validated or applied.
 
@@ -278,8 +282,7 @@ function Export-OERInventory {
     Reads the Azure role assignments and the role management policy of every Azure role at every
     scope the walk reads, as earlier versions did. Without -AllRolePolicies, roleManagementPolicies.json
     holds only the policies of roles with an active role assignment or a PIM eligibility exactly at
-    the policy's scope, or whose policy has been changed, and those at a scope named as kept without
-    being judged.
+    the policy's scope, or whose policy has been changed, and every policy that could not be judged.
 
     .EXAMPLE
     $Bundle = Export-OERInventory -OutputPath C:\Temp
@@ -508,11 +511,13 @@ function Export-OERInventory {
         $RolePolicyCandidates = [System.Collections.Generic.List[object]]::new()
         $RoleAssignmentFacts = [System.Collections.Generic.List[object]]::new()
         $RoleAssignmentUnreadScopes = [System.Collections.Generic.List[string]]::new()
-        # The 'roleManagementPolicies/role selection at <scope>' entries, the scope verbatim (an ARM
-        # scope reads 'roleManagementPolicies/role selection at /subscriptions/...'), in the shape of
-        # Get-OERInventory's 'directoryRoleManagementPolicies/role selection': scopes whose policies
-        # were kept without being judged. Kept apart from the Entra ID entries in $IncompleteReads and
-        # appended after them, so the Entra ID entries keep their documented order and own clause.
+        # The 'roleManagementPolicies/role selection at <scope>' entries, the scope in its canonical
+        # form (ConvertTo-OERCanonicalScope: a trailing '/' trimmed, letter case kept; an ARM scope
+        # reads 'roleManagementPolicies/role selection at /subscriptions/...'), in the shape of
+        # Get-OERInventory's 'directoryRoleManagementPolicies/role selection': scopes where at least one
+        # policy could not be judged and was kept. Kept apart from the Entra ID entries in
+        # $IncompleteReads and appended after them, so the Entra ID entries keep their documented order
+        # and own clause.
         $RolePolicySelectionReads = [System.Collections.Generic.List[string]]::new()
 
         if ($AzureSections.Count -gt 0) {
@@ -905,8 +910,8 @@ function Export-OERInventory {
             SkippedScopes          = @($SkippedScopes)
             AzurePimEligibility    = @($AzureEligibilities).Count
             SkippedEligibilityScopes = @($SkippedEligibilityScopes)
-            # The Entra ID entries first, in their documented order, then the scopes whose role
-            # management policies were kept without being judged (BL-107).
+            # The Entra ID entries first, in their documented order, then the scopes where role
+            # management policies that could not be judged were kept (BL-107).
             IncompleteReads        = @($IncompleteReads) + @($RolePolicySelectionReads)
             Files                  = $WrittenFiles.ToArray()
         }
@@ -991,11 +996,15 @@ function Export-OERInventory {
             }
             if ($RolePolicySelectionReads.Count -gt 0) {
                 # A clause of its own (BL-107), not folded into the Entra ID one above, whose count and
-                # wording stay over the Entra ID entries only: these are Azure scopes, and nothing was
-                # left out of the bundle for them -- more was kept than the selection would keep.
+                # wording stay over the Entra ID entries only: these are Azure scopes, and no policy that
+                # could not be judged was left out for them -- more was kept than the selection would
+                # keep. It does not claim every policy at such a scope was kept: a scope is named also
+                # when only one row could not be judged, and the other unused, unchanged policies there
+                # are still left out.
                 $PartialParts.Add(
-                    "the role management policies at $($RolePolicySelectionReads.Count) Azure scope(s) were kept without being judged, " +
-                    'since whether a role is used there, or whether its policy was changed, could not be read, so ' +
+                    "at $($RolePolicySelectionReads.Count) Azure scope(s) every role management policy that could not be judged was kept, none of them left out, " +
+                    'since whether its role is used there, or whether it was changed, could not be read -- where a scope''s role assignment or ' +
+                    'eligibility read failed, that is every policy of a role neither used nor changed there -- so ' +
                     'roleManagementPolicies.json may hold policies of roles that are neither used nor changed at those scopes: ' +
                     ($RolePolicySelectionReads -join '; '))
             }

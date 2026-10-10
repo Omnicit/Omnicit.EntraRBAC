@@ -6307,15 +6307,25 @@ error is never dropped (G3). Cost if wrong: more policies kept than needed at su
 scope named.
 
 **R6 (how it is named).** Each such scope becomes the `IncompleteReads` entry
-`roleManagementPolicies/role selection at <scope>`, the scope verbatim -- for a subscription,
-`roleManagementPolicies/role selection at /subscriptions/<id>` -- in the shape of
-`Get-OERInventory`'s `directoryRoleManagementPolicies/role selection` entry. The entries are kept in
-a list of their own and appended after every Entra ID entry, in the output's `IncompleteReads` and in
+`roleManagementPolicies/role selection at <scope>`, the scope in its canonical form
+(`ConvertTo-OERCanonicalScope`, which trims a trailing `/` and keeps the letter case) -- for a
+subscription, `roleManagementPolicies/role selection at /subscriptions/<id>` -- in the shape of
+`Get-OERInventory`'s `directoryRoleManagementPolicies/role selection` entry. A scope is named when at
+least one policy there could not be judged, so the entry does not mean that every policy at the
+scope was kept: every policy there that could not be judged was kept, none of them left out, and only
+where the scope's role assignment read or eligibility read failed is that every policy of a role
+neither used nor changed there. A single row with no `policy` object at a scope whose reads succeeded
+names the scope too, while the other unused, unchanged policies there are still left out (the test
+'keeps the input order of the policies and names each unjudged scope once, in the order first seen'
+in `tests/Unit/Private/Select-OERInventoryRolePolicy.Tests.ps1` shows it). The entries are kept in a
+list of their own and appended after every Entra ID entry, in the output's `IncompleteReads` and in
 the list the bundle README is given, so the Entra ID entries keep their documented order. They make
-the run `InventoryPartial`, with a clause of their own that names every entry and says the policies
-there were kept without being judged, so `roleManagementPolicies.json` may hold policies of roles that
-are neither used nor changed at those scopes; the Entra ID clause still counts and words the Entra ID
-entries only. The bundle README lists each under a label of its own, "Azure role management policies
+the run `InventoryPartial`, with a clause of their own that names every entry and says that every
+policy there that could not be judged was kept, none of them left out -- at a scope whose role
+assignment or eligibility read failed, every policy of a role neither used nor changed there -- so
+`roleManagementPolicies.json` may hold policies of roles that are neither used nor changed at those
+scopes; the Entra ID clause still counts and words the Entra ID entries only. The bundle README lists
+each under a label of its own, "Azure role management policies
 kept without being judged" (an entry that starts with `roleManagementPolicies/`, compared ordinally;
 every other entry keeps "Entra ID"). No property of its own: the `Omnicit.EntraRBAC.InventoryBundle`
 object keeps exactly its properties, and no ErrorId is new (A8, A14). Cost if wrong: a caller that
@@ -6354,9 +6364,12 @@ site too. Cost if wrong: three attributes and one guard come out, replaced by a 
 refusal.
 
 **R11 (wording).** The warning and the clause are short and fixed in the code; they do not quote the
-entry form, so R7 did not move them. The help, the bundle README, the prompt template, README and the
-about topic say the same rule in their own words. Cost if wrong: text-only edits, plus the fragments
-the Export tests match.
+entry form, so R7 did not move them. The clause first read "the role management policies at N Azure
+scope(s) were kept without being judged", which reads as every policy at the scope; the review of
+the texts found that false where only one row could not be judged (R6), so it now says that every
+policy that could not be judged was kept, none of them left out (text only, no change in behaviour).
+The help, the bundle README, the prompt template, README and the about topic say the same rule in
+their own words. Cost if wrong: text-only edits, plus the fragments the Export tests match.
 
 **R12 (no runspace proof without a `try`).** No new guard stops a public cmdlet: each keeps or omits
 an entry, or names a scope, so the no-`try` runspace proof other guards need was not made. Cost if
@@ -6364,8 +6377,9 @@ wrong: one such test in a follow-up.
 
 **Known limits.**
 
-- A change that leaves no record (no date, no name) is omitted from the default export (R1). The
-  measurement found none.
+- A change that leaves no record (no date, no name) is omitted from the default export (R1). No
+  measurement can see such a change directly; what was measured is that every row without a record
+  carried the one common rule set.
 - A PIM active assignment scheduled to start later does not keep its role's policy until it starts:
   the selection reads `roleAssignments` (read in the code), and such an assignment is a schedule, not
   yet a role assignment (not measured here). The next export after it starts keeps the policy. The
@@ -6373,8 +6387,11 @@ wrong: one such test in a follow-up.
 - `-AllRolePolicies` is the path earlier versions took, with their size and cost: every policy at
   every scope the walk reads, and none of the selection's reads, warnings or `IncompleteReads`
   entries. Without `RoleManagementPolicies` in `-Include` -- the default -- nothing changed at all.
-- The walk still reads management groups and subscriptions only, so no resource-group policy is
-  exported on either path.
+- Without `-Scope` the walk reads management groups and subscriptions only, on either path. A
+  resource group's policies, or those of any other scope, are exported only when `-Scope` names that
+  scope: `Resolve-OERInventoryScopeTree` then returns that one scope unchanged and the per-scope loop
+  reads it like any other (read in the code; the live checklist's sections 2.1 and 2.2 export a
+  resource group that way).
 - The live checklist (`docs/live-verification/feat-export-role-policies-in-use-checklist.md`) compares
   the exports of the build before this step and of this step, and an apply of the exported document;
   it is written and not yet run, so until it is, everything after the measurement above is proved
