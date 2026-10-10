@@ -4277,6 +4277,29 @@ Describe 'Get-OERInventory' {
             Assert-SectionUnread -Read $Read -Section groups -CauseText 'Could not read groups: throttled' -WarningText 'Could not read groups'
         }
 
+        It 'reports the groups section as unread, with one warning and the cause, when the group reader stops on <Label>' -ForEach @(
+            @{ Label = 'a throw'; Stop = { throw [System.Exception]::new('stop') }; Expected = 'stop' }
+            # A statement-terminating error is not a throw: without a try around the reader's call it
+            # would end the call and leave $GroupRead empty, which reads as zero groups. The message is
+            # the runtime's own, so the test asks the runtime for it rather than spelling it.
+            @{ Label = 'a statement-terminating error'; Stop = { $null.NoSuchMethod() }; Expected = $(try { $null.NoSuchMethod() } catch { [string]$PSItem.Exception.Message }) }
+        ) {
+            # The error is raised inside the real group reader, by a helper it calls for every group
+            # outside any catch of its own (Test-OERGroupOnPremisesSynced), so the read stops part-way.
+            Mock -ModuleName $script:moduleName Get-OERGroup -MockWith {
+                [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_team'; GroupType = 'Assigned'; IsAssignableToRole = $false; SecurityEnabled = $true; Members = @(); Owners = @(); PimEligibility = @() }
+            }
+            Mock -ModuleName $script:moduleName Test-OERGroupOnPremisesSynced -MockWith $Stop
+            $Read = Get-SectionRead -Include Groups
+            # Reach proofs: the reader was reached, and the helper inside it ran (once, then the read stopped).
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupOnPremisesSynced -Times 1 -Exactly
+            $Expected | Should -Not -BeNullOrEmpty
+            Assert-SectionUnread -Read $Read -Section groups -CauseText "Could not read groups: $Expected" -WarningText "Could not read groups: $Expected"
+            @($Read.Verbose | Where-Object { $_.Message -like "*Get-OERInventory: Could not read groups: $Expected*" }).Count |
+                Should -BeGreaterThan 0
+        }
+
         It 'reports the administrative unit list as unread when Get-OERAdministrativeUnit publishes a failure and returns nothing' {
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit -MockWith $script:AuListPublished
             $Read = Get-SectionRead -Include AdministrativeUnits

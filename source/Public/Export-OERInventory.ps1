@@ -288,7 +288,27 @@ function Export-OERInventory {
                 $GroupReadParams.RelevantOnly = $true
                 if ($IncludeSyncedGroups) { $GroupReadParams.IncludeSyncedGroups = $true }
             }
-            $GroupRead = Get-OERInventoryGroup @GroupReadParams
+            # The reader catches what it expects (a failed list read, a failed collection read) and
+            # names it in Unread and Causes. This catch is for the rest: an error nothing in the
+            # reader catches ends the read, and the reader's progress try/finally unwinds it -- a
+            # statement-terminating error as well as a throw -- so the call returns NOTHING. A
+            # $GroupRead of $null would be read below as zero groups with nothing unread, which is
+            # a failed read stated as an empty fact. So the stop is reported as what it is, the
+            # groups section unread, with the reader's own wording for a list that could not be read:
+            # the warning stands before the bundle's ShouldProcess (the read comes first), the cause
+            # reaches the InventoryPartial message, and the rest of the export carries on.
+            try {
+                $GroupRead = Get-OERInventoryGroup @GroupReadParams
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $GroupReadCause = "Could not read groups: $($PSItem.Exception.Message)"
+                Write-Warning $GroupReadCause
+                $GroupRead = [PSCustomObject]@{
+                    Groups = @()
+                    Unread = @('groups')
+                    Causes = @([PSCustomObject]@{ Cause = $GroupReadCause; Target = '' })
+                }
+            }
         }
         # DirectoryRoleManagementPolicies and DirectoryRoleAssignments are Graph-only, same as the
         # other four: they are deliberately absent from the ARM-triggering check above, so naming

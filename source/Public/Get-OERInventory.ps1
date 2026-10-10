@@ -455,12 +455,26 @@ function Get-OERInventory {
 
         if ($Include -contains 'Groups') {
             $GroupReadFilter = if ($GroupFilter) { $GroupFilter } else { 'securityEnabled eq true' }
-            $GroupRead = Get-OERInventoryGroup -Filter $GroupReadFilter -IncludeId:$IncludeId -PrincipalNameCache $PrincipalNameCache
+            # The reader catches what it expects and names it in Unread and Causes. This catch is for
+            # an error nothing in the reader catches: it ends the read, and the reader's try/finally
+            # unwinds it -- a statement-terminating error as well as a throw -- so the call returns
+            # nothing. Reading that as zero groups would state a failed read as an empty fact, so it
+            # is counted unread like a list that could not be read, with the same wording.
+            $GroupRead = $null
+            try {
+                $GroupRead = Get-OERInventoryGroup -Filter $GroupReadFilter -IncludeId:$IncludeId -PrincipalNameCache $PrincipalNameCache
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
+                Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($PSItem.Exception.Message)"
+            }
             # Groups is the first section read, so replaying in order leaves the cause list and the unread
             # list exactly as the section used to leave them.
-            foreach ($GroupCause in @($GroupRead.Causes)) { Add-UnreadCause -Cause $GroupCause.Cause -Target $GroupCause.Target }
-            foreach ($GroupUnread in @($GroupRead.Unread)) { $UnreadCollections.Add($GroupUnread) }
-            foreach ($GroupEntry in @($GroupRead.Groups)) { $Groups.Add($GroupEntry) }
+            if ($GroupRead) {
+                foreach ($GroupCause in @($GroupRead.Causes)) { Add-UnreadCause -Cause $GroupCause.Cause -Target $GroupCause.Target }
+                foreach ($GroupUnread in @($GroupRead.Unread)) { $UnreadCollections.Add($GroupUnread) }
+                foreach ($GroupEntry in @($GroupRead.Groups)) { $Groups.Add($GroupEntry) }
+            }
         }
 
         if ($Include -contains 'AdministrativeUnits') {

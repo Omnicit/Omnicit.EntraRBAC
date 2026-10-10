@@ -290,11 +290,17 @@ Describe 'Get-OERInventoryGroup' {
             )
         }
 
-        It 'writes Completed exactly once when the loop stops on an error nothing catches (Review Focus 5)' {
+        It 'writes Completed exactly once when the loop stops on <Label> nothing catches (Review Focus 5)' -ForEach @(
+            @{ Label = 'a throw'; Stop = { throw [System.Exception]::new('stop') }; Expected = 'stop' }
+            # A statement-terminating error: it is not a throw, and without a try on the stack it would
+            # end only the statement that called the helper. The message is the runtime's own, so the
+            # test asks the runtime for it rather than spelling it.
+            @{ Label = 'a statement-terminating error'; Stop = { $null.NoSuchMethod() }; Expected = $(try { $null.NoSuchMethod() } catch { [string]$PSItem.Exception.Message }) }
+        ) {
             # The projection asks Test-OERGroupOnPremisesSynced for every group, outside any catch of
-            # the reader's own, so a throw there ends the read part-way. The reader is called inside
+            # the reader's own, so an error there ends the read part-way. The reader is called inside
             # try {} here, with no -ErrorAction, so the exception reaches the test and is observed.
-            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupOnPremisesSynced { throw [System.Exception]::new('stop') }
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupOnPremisesSynced -MockWith $Stop
             $Caught = InModuleScope Omnicit.EntraRBAC {
                 try {
                     $null = Get-OERInventoryGroup -Filter 'securityEnabled eq true' -ProgressActivity 'Export-OERInventory'
@@ -304,7 +310,8 @@ Describe 'Get-OERInventoryGroup' {
                 }
             }
             # Reach proof: the loop stopped on the error, after the first group's record.
-            $Caught | Should -Be 'stop'
+            $Caught | Should -Be $Expected
+            $Expected | Should -Not -BeNullOrEmpty
             @($script:ProgressLog) | Should -Be @(
                 'Export-OERInventory|Reading the groups in full|'
                 'Export-OERInventory|Group 1 of 3|33'

@@ -2111,6 +2111,60 @@ Describe 'Export-OERInventory (a section whose list could not be read is partial
         )
     }
 
+    It 'reports the groups section as unread, with one warning and the cause, and still writes the bundle, when the group reader stops on <Label>' -ForEach @(
+        @{ Label = 'a throw'; Stop = { throw [System.Exception]::new('stop') }; Expected = 'stop' }
+        # A statement-terminating error is not a throw: without a try around the reader's call it would
+        # end the call and leave $GroupRead empty, which reads as zero groups. The message is the
+        # runtime's own, so the test asks the runtime for it rather than spelling it.
+        @{ Label = 'a statement-terminating error'; Stop = { $null.NoSuchMethod() }; Expected = $(try { $null.NoSuchMethod() } catch { [string]$PSItem.Exception.Message }) }
+    ) {
+        # The error is raised inside the REAL group reader, by a helper it calls for the group's
+        # eligibility outside any catch of its own (Resolve-OEREligibilityDuration), so the read stops
+        # part-way. The helper is one the export does not call itself: the roster flag is read through
+        # Test-OERGroupOnPremisesSynced, so stopping that one would stop the roster read as well.
+        Mock -ModuleName $script:moduleName Get-OERGroup -ParameterFilter { -not $All } -MockWith {
+            [PSCustomObject]@{
+                Id = 'g-1'; DisplayName = 'role_sec_team'; GroupType = 'Assigned'; IsAssignableToRole = $true; SecurityEnabled = $true
+                Members = @(); Owners = @()
+                PimEligibility = @([PSCustomObject]@{ principalId = 'p-1'; accessId = 'member'; startDateTime = $null; endDateTime = $null })
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERGroup -ParameterFilter { $All } -MockWith {
+            [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_team'; GroupType = 'Assigned'; IsAssignableToRole = $true }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ 'p-1' = 'Person One' } }
+        Mock -ModuleName $script:moduleName Resolve-OEREligibilityDuration -MockWith $Stop
+
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sec-reader-stops') -Include Groups -AllGroupsDetailed `
+            -WarningAction SilentlyContinue -WarningVariable ExWarn -ErrorAction SilentlyContinue -ErrorVariable ExErr
+
+        # Reach proofs: the reader was reached, the helper inside it ran once and stopped it, and the
+        # roster read after it still ran.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -ParameterFilter { -not $All }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OEREligibilityDuration -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -ParameterFilter { $All }
+        $Expected | Should -Not -BeNullOrEmpty
+
+        # The groups section is reported unread, first and by its own name, not read as an empty tenant.
+        @($Bundle.IncompleteReads)[0] | Should -Be 'groups'
+        $Bundle.Groups | Should -Be 0
+
+        # ONE warning, in the reader's own wording for a list that could not be read.
+        @($ExWarn | Where-Object { "$_" -like 'Could not read groups:*' }).Count | Should -Be 1
+        @($ExWarn | Where-Object { "$_" -eq "Could not read groups: $Expected" }).Count | Should -Be 1
+
+        # The cause reaches the one InventoryPartial the export raises.
+        $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+        $Partial.Count | Should -Be 1
+        $Partial[0].Exception.Message | Should -Match 'Causes of the unread group reads'
+        $Partial[0].Exception.Message | Should -Match ([regex]::Escape("Could not read groups: $Expected"))
+
+        # The bundle is still written, with the section unread in the README.
+        Test-Path -LiteralPath (Join-Path $Bundle.BundlePath 'inventory.json') | Should -BeTrue
+        $Section = Get-ReadmeCouldNotReadSection -BundlePath $Bundle.BundlePath
+        ((Get-SectionBullets -Section $Section) -join "`n") | Should -BeExactly '- Entra ID: `groups`'
+    }
+
     It 'lists the groups section in the README, as written to disk, when the filtered group read fails' {
         # The same failure as the first row above, but written for real (no -WhatIf): the README is
         # only generated when the bundle is, and this is the one that proves the section reaches it.

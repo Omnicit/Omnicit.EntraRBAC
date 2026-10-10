@@ -35,11 +35,11 @@ function Get-OERInventoryGroup {
     this function, and adds nothing to the Unread list. Under a full read Get-OERGroup has already
     read its members, owners and PIM eligibility with the list, before this function sees the group,
     so a collection of it that failed to read can still leave its cause in the Causes list (with no
-    Unread name, since the group is not projected); no error is dropped. Under -RelevantOnly
-    nothing of it is read at all. When any group was dropped, ONE warning says how many. It exists
-    for a caller whose filter is an operator's own expression: a filter that closes the parenthesis
-    it is wrapped in can list groups the caller never meant to cover, and this check is what keeps
-    them out of the document.
+    Unread name, since the group is not projected); no error is dropped. Under -RelevantOnly the
+    group is still listed, but its members, owners and PIM eligibility are not read. When any group
+    was dropped, ONE warning says how many. It exists for a caller whose filter is an operator's
+    own expression: a filter that closes the parenthesis it is wrapped in can list groups the
+    caller never meant to cover, and this check is what keeps them out of the document.
 
     With -ExcludeSharedName a group whose display name another listed group shares, compared without
     regard to letter case, is left out in either mode, and the name is reported once, with the
@@ -66,6 +66,11 @@ function Get-OERInventoryGroup {
     drops included -- as 'Group n of N' with a percentage, and the activity is ended when the read is
     done, also when it stops on an error. Without it nothing is written to the progress stream, which
     is how Get-OERInventory calls it.
+
+    An error nothing in it catches (a throw, or a statement-terminating error in a helper it calls)
+    ends the read and propagates to the caller, and the call returns no result at all. A caller
+    therefore reports the groups section unread when the call stops, as both callers do, and never
+    reads a missing result as zero groups.
 
     The calling command must already have signed in (Initialize-OERAuth); this function makes no
     sign-in of its own.
@@ -106,8 +111,9 @@ function Get-OERInventoryGroup {
 
     .PARAMETER ProgressActivity
     The activity name to show progress under (Write-Progress -Activity). Export-OERInventory passes
-    its own name, so the group read and the Azure scope walk after it are one activity to an
-    operator. Without it nothing is written to the progress stream.
+    its own name, which its Azure scope walk uses too: this read's record is completed when the read
+    is done, and the walk then starts a new record under the same activity name. Without it nothing
+    is written to the progress stream.
 
     .EXAMPLE
     $Read = Get-OERInventoryGroup -Filter 'securityEnabled eq true' -PrincipalNameCache $Cache
