@@ -876,7 +876,8 @@ BeforeAll {
         about files not on it.
 
         The remaining PSObject.Properties.Name call sites module-wide -- schema validation in
-        Test-OERStructureSchema.ps1, the inventory projection in Get-OERInventory.ps1 and
+        Test-OERStructureSchema.ps1, the inventory projection (the groups section in
+        Get-OERInventoryGroup.ps1, the other sections in Get-OERInventory.ps1) and
         Export-OERInventory.ps1, Invoke-OERStructure.ps1's own document-shape checks, and the two
         predicate helpers' own bodies -- inspect a document being READ from Graph or validated
         OFFLINE, neither of which is the "declared vs. explicit null" apply-time question this rule

@@ -441,7 +441,7 @@ function Export-OERInventory {
         # (Get-OERInventory's own .DESCRIPTION) -- -IncludeId above exists purely to key the join,
         # so every id it stamped is removed again here, before anything below reads from $Inv or
         # the canonical inventory is assembled. -IncludeId stamps more than the top-level id: a
-        # Groups eligibility entry gets one too (Get-OERInventory.ps1's $EligProj.id), so the strip
+        # Groups eligibility entry gets one too (Get-OERInventoryGroup.ps1's $EligProj.id), so the strip
         # reaches that nested collection as well.
         $StampedSections = @(
             $Inv.Groups, $Inv.AdministrativeUnits, $Inv.Catalogs,
