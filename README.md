@@ -1,5 +1,12 @@
 # Omnicit.EntraRBAC
 
+[![Build and test](https://github.com/Omnicit/Omnicit.EntraRBAC/actions/workflows/build-and-test.yml/badge.svg?branch=main)](https://github.com/Omnicit/Omnicit.EntraRBAC/actions/workflows/build-and-test.yml)
+[![PowerShell Gallery (with prereleases)](https://img.shields.io/powershellgallery/v/Omnicit.EntraRBAC?label=Omnicit.EntraRBAC%20Preview&include_prereleases)](https://www.powershellgallery.com/packages/Omnicit.EntraRBAC/)
+[![PowerShell Gallery](https://img.shields.io/powershellgallery/v/Omnicit.EntraRBAC?label=Omnicit.EntraRBAC)](https://www.powershellgallery.com/packages/Omnicit.EntraRBAC/)
+![PowerShell Gallery](https://img.shields.io/powershellgallery/p/Omnicit.EntraRBAC)
+
+![Omnicit.EntraRBAC](assets/icon.png)
+
 `Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module for managing RBAC building blocks
 across many Entra ID and Azure tenants. It covers Entra ID groups and PIM, Administrative Units,
 Entitlement Management (Catalogs, Access Packages, Resources), Access Reviews, Azure resources and

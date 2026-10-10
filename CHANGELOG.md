@@ -59,6 +59,8 @@ or eligible exactly there or the policy changed, at one more role assignment rea
 leaves the rest untouched. A policy it cannot judge is kept, its scope named in `IncompleteReads`
 and `InventoryPartial`. `-AllRolePolicies` keeps all, as before.
 
+The module's page on the PowerShell Gallery now shows its icon.
+
 ## [1.1.3] - 2026-10-07
 
 `Invoke-OERStructure` without `-TenantId`, and the builders that look up a name

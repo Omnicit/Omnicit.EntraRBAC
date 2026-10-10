@@ -137,6 +137,7 @@
                                           'PSEdition_Core', 'Windows', 'Linux', 'MacOS')
             ProjectUri               = 'https://github.com/Omnicit/Omnicit.EntraRBAC'
             LicenseUri               = 'https://github.com/Omnicit/Omnicit.EntraRBAC/blob/main/LICENSE'
+            IconUri                  = 'https://raw.githubusercontent.com/Omnicit/Omnicit.EntraRBAC/main/assets/icon.png'
             RequireLicenseAcceptance = $false
             ReleaseNotes             = ''
             Prerelease               = ''
