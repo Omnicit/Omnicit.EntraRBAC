@@ -4612,14 +4612,19 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
     Context 'what the latch table stores' {
         # The keys are the commands' own invocation objects, which carry their bound parameters (a
         # tenant among them); what this checks is that every value is $true, every key is an
-        # InvocationInfo, and no other module variable is added -- not that a key holds nothing.
-        It 'stores the boolean $true as every value, keys every entry on an InvocationInfo, and adds no module variable but _OERSignInLatch' {
+        # InvocationInfo, and no module variable is added but the two below -- not that a key holds
+        # nothing. The latch adds one, _OERSignInLatch; the session-uncertain marker's own helper,
+        # Set-OERSessionUncertain, adds the other, _OERSessionUncertain, on its first use. Both are
+        # removed before the measurement, so it does not depend on this Describe's BeforeEach, or an
+        # earlier test, having created the marker's variable already.
+        It 'stores the boolean $true as every value, keys every entry on an InvocationInfo, and adds no module variable but _OERSignInLatch and the session-uncertain marker''s _OERSessionUncertain' {
             Mock -ModuleName $script:moduleName Get-AzToken {
                 [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = '22222222-2222-2222-2222-222222222222' }
             }
 
             $R = InModuleScope $script:moduleName {
                 Remove-Variable -Scope Script -Name _OERSignInLatch -ErrorAction Ignore
+                Remove-Variable -Scope Script -Name _OERSessionUncertain -ErrorAction Ignore
                 $Before = @((Get-Variable -Scope Script).Name)
                 $Caught = $null
                 try {
@@ -4631,6 +4636,7 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
                 @{
                     Caught   = $Caught
                     Refusal  = $Refusal
+                    Before   = $Before
                     Added    = @($After | Where-Object { $_ -notin $Before })
                     Values   = @($Entries | ForEach-Object { $_.Value })
                     KeyTypes = @($Entries | ForEach-Object { $_.Key.GetType().FullName })
@@ -4641,7 +4647,9 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
             $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch,Initialize-OERAuth'
             $R.Caught.Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'
             $R.Refusal | Should -Not -BeNullOrEmpty
-            $R.Added | Should -Be @('_OERSignInLatch')
+            # Not vacuous: the marker's variable did not exist when the measurement began.
+            $R.Before | Should -Not -Contain '_OERSessionUncertain'
+            @($R.Added | Sort-Object) | Should -Be @('_OERSessionUncertain', '_OERSignInLatch')
             $R.Values.Count | Should -BeGreaterThan 0
             foreach ($Value in $R.Values) {
                 $Value | Should -BeOfType ([bool])

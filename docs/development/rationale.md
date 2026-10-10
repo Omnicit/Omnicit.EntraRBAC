@@ -3426,16 +3426,24 @@ goes out, the retry included. Mutation-proved: a refresh that stops forwarding t
 P7 or P8 red, and an identity that also carried the Graph token's exact expiry turns all three red,
 and none of P1 to P6. Gate 10 of [#static-source-gates](#static-source-gates) keeps the three gates,
 their order, the pairing of each memory write with its latch release, and the helpers' owners in
-place. P10 to P17, in the same Describe, belong to the next subsection. P18 and P18b belong to BL-77:
+place. P10 to P17, in the same Describe, belong to the next subsection. P18 to P18d belong to BL-77:
 P18 pipes a command naming one tenant by its tenant ID into one naming it by its domain, the stubbed
 lookup resolving the domain to that tenant, and both commands send every request, with no
 `SignInSuperseded`; P18b, the control, has the domain's token come back from another tenant, and the
-second sign-in is refused with `TenantMismatch` while nothing is replaced silently. The unit Context
+second sign-in is refused with `TenantMismatch` while nothing is replaced silently. P18c and P18d
+(Sprint 10 step 10, BL-93) do the same for a sign-in that names no tenant, whose token requests carry
+no tenant at all: P18c pipes a command that names no tenant, its stubbed tokens issued for tenant A,
+into one naming tenant A by its tenant ID, and both commands send every request, with no
+`SignInSuperseded`, although the second signs in again, since the session cache is still keyed on the
+tenant as named; P18d, the control, has the no-tenant tokens issued for tenant B, and every request of
+both commands is refused with `SignInSuperseded`, each record naming the first command, inside whose
+output the second runs. The unit Context
 `the tenant term (BL-77)` in `tests/Unit/Private/Get-OERSignInIdentity.Tests.ps1` pins the term
 itself: the granted tenant for a domain and for no tenant named, one identity for one tenant named
 two ways, the fall-back to the name for a granted value that is not a GUID, never the ARM token's
 tenant, and two granted tenants still told apart. Mutation-proved: the tenant term always the name
-turns four of those tests and P18 red; the ARM tenant first turns the ARM tests red; dropping the GUID
+turns four of those tests and P18 red, and, measured on a copy of the built module for BL-93, P18c
+red while P18b and P18d stay green; the ARM tenant first turns the ARM tests red; dropping the GUID
 check turns the fall-back cases red.
 
 ### A command acts under the session it began with
@@ -4074,7 +4082,17 @@ token failed, or where another `Connect-MgGraph` replaced the session; naming th
 every document's sign-in names the tenant, so A19's same-frame retry is unchanged: after one
 document's sign-in failed, the next one signs in again, and a success clears the marker. Without
 `-TenantId`, every document after one whose sign-in was refused is refused too, and the batch sends
-nothing more.
+nothing more. H13, in the Describe
+`A command whose sign-in was refused sends nothing through either transport (A19, F1)` of
+`tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` (Sprint 10 step 10, BL-93), proves that half in
+a script with no `try`, for two documents piped to `Invoke-OERStructure -WhatIf` without `-TenantId`
+from a process that holds no session: the first document's token call fails, the one token call made
+is that one, the second document's sign-in is refused for the uncertain session before any token
+call, nothing connects, and neither document's group read is sent. H4, the same pipeline with
+`-TenantId`, is its control: there the second document signs in again and is applied.
+Mutation-proved on a copy of the built module: the condition of the session-uncertain refusal made
+`$false` turns H13 red -- the second document signs in, connects, reads its group and plans its
+creation -- and leaves H4 green.
 
 **Known limits.**
 

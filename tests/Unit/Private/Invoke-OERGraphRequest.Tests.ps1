@@ -5135,6 +5135,138 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
         $R.Output | Should -Contain 'ARM CALLS: 0'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'every request is answered by a module-scope stub, and the refused command sends nothing'
     }
+
+    It 'H13: two documents piped to Invoke-OERStructure without -TenantId, outside any try: after the first document''s sign-in fails, the second document is refused before any token call and the batch sends nothing (R14, A10)' {
+        # Sprint 9 step 3, Ruling R14: without -TenantId, every document after one whose sign-in was
+        # refused is refused too, and the batch sends nothing more. The process holds no session. The
+        # first document's sign-in names no tenant and fails at its token call, which latches
+        # Invoke-OERStructure and marks the session uncertain (A10). The second document's sign-in names
+        # no tenant either, so it is refused for the uncertain session before any token call, and its
+        # group read is refused by the latch. H4 is the control: the same pipeline WITH -TenantId, whose
+        # second document signs in again and is applied. The token stub fails ONLY its first call and
+        # answers every later one, so a second document that got past the refusal would sign in, connect
+        # and send its group read. Nothing up the stack catches anything.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
+            Import-Module Omnicit.EntraRBAC
+            $global:OERLatchTokenCalls = [System.Collections.Generic.List[string]]::new()
+            $global:OERLatchConnectCalls = 0
+            $global:OERLatchContextCalls = 0
+            $global:OERLatchGraphTenant = $null
+            $global:OERLatchContext = $null
+            $global:OERLatchGraphRequests = [System.Collections.Generic.List[string]]::new()
+            # MODULE-scope stubs, as in H4, removed again below before the runspace check reads the module
+            # scope. Get-AzToken records 'graph <tenant>' or 'arm <tenant>', the tenant as Initialize-OERAuth
+            # passes it; its FIRST call -- the first document's sign-in -- fails, and every later one answers
+            # a token for the tenant it names, never a real one. Connect-MgGraph records a session for the
+            # tenant of the last Microsoft Graph token, and Get-MgContext returns it. Invoke-MgGraphRequest
+            # records the request's URI only and answers an empty list. Hang guards: exit past a bound no
+            # step reaches.
+            & (Get-Module Omnicit.EntraRBAC) {
+                function script:Get-AzToken {
+                    [CmdletBinding()]
+                    param([string]$Tenant, [string]$Resource, [string[]]$Scope, [string]$ClientId, [string]$Claim,
+                        [switch]$Interactive, [switch]$DeviceCode, [switch]$ManagedIdentity, [switch]$Force)
+                    if ($global:OERLatchTokenCalls.Count -ge 5) { exit }
+                    $Kind = if ($Resource -like '*graph*') { 'graph' } else { 'arm' }
+                    $global:OERLatchTokenCalls.Add(('{0} {1}' -f $Kind, $Tenant))
+                    if ($global:OERLatchTokenCalls.Count -eq 1) { throw [System.Exception]::new('AADSTS50076: interaction required.') }
+                    if ($Kind -eq 'graph') { $global:OERLatchGraphTenant = $Tenant }
+                    [pscustomobject]@{
+                        Token     = 'NOT-A-REAL-TOKEN-' + $Kind
+                        ExpiresOn = [System.DateTimeOffset]::UtcNow.AddHours(1)
+                        Identity  = 'oer-r14-probe'
+                        TenantId  = $Tenant
+                    }
+                }
+                function script:Connect-MgGraph {
+                    [CmdletBinding()]
+                    param($AccessToken, [switch]$NoWelcome, $Environment)
+                    $global:OERLatchConnectCalls++
+                    if ($global:OERLatchConnectCalls -gt 5) { exit }
+                    $global:OERLatchContext = [pscustomobject]@{
+                        AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                        ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = $global:OERLatchGraphTenant
+                        Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+                    }
+                }
+                function script:Get-MgContext {
+                    $global:OERLatchContextCalls++
+                    if ($global:OERLatchContextCalls -gt 100) { exit }
+                    $global:OERLatchContext
+                }
+                function script:Invoke-MgGraphRequest {
+                    [CmdletBinding()]
+                    param($Method, $Uri, $Body)
+                    if ($global:OERLatchGraphRequests.Count -ge 5) { exit }
+                    $global:OERLatchGraphRequests.Add([string]$Uri)
+                    @{ value = @() }
+                }
+            }
+            $Doc1 = Join-Path ([System.IO.Path]::GetTempPath()) ('oer-r14-h13a-{0}.json' -f [guid]::NewGuid().ToString('N'))
+            $Doc2 = Join-Path ([System.IO.Path]::GetTempPath()) ('oer-r14-h13b-{0}.json' -f [guid]::NewGuid().ToString('N'))
+            Set-Content -LiteralPath $Doc1 -Encoding utf8 -Value '{ "version": "1.0", "groups": [ { "displayName": "oer-r14-probe-1" } ] }'
+            Set-Content -LiteralPath $Doc2 -Encoding utf8 -Value '{ "version": "1.0", "groups": [ { "displayName": "oer-r14-probe-2" } ] }'
+            # A plain call, as at a prompt: no try anywhere up the stack, and no -TenantId.
+            $Rows = @($Doc1, $Doc2 | Invoke-OERStructure -WhatIf)
+            Remove-Item -LiteralPath $Doc1, $Doc2
+            'DOCUMENTS REMOVED: {0}' -f (-not (Test-Path -LiteralPath $Doc1) -and -not (Test-Path -LiteralPath $Doc2))
+            # Oldest first: $Error holds the newest record first.
+            $Records = @($Error)
+            [array]::Reverse($Records)
+            # Unqualified, from the module scope: removes the nearest definition, which is the stub.
+            & (Get-Module Omnicit.EntraRBAC) {
+                Remove-Item -Path function:Get-AzToken
+                Remove-Item -Path function:Connect-MgGraph
+                Remove-Item -Path function:Get-MgContext
+                Remove-Item -Path function:Invoke-MgGraphRequest
+            }
+            $Restored = foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest') {
+                $Resolved = & (Get-Module Omnicit.EntraRBAC) { param($N) Get-Command -Name $N -CommandType Function -ErrorAction Ignore } $Name
+                [bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE')
+            }
+            'TRIPWIRE RESTORED: {0}' -f (@($Restored) -notcontains $false)
+            'CONTEXT STUB REMOVED: {0}' -f ($null -eq (& (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Get-MgContext -CommandType Function -ErrorAction Ignore }))
+            foreach ($Call in $global:OERLatchTokenCalls) { 'TOKEN: {0}' -f $Call }
+            'CONNECT CALLS: {0}' -f $global:OERLatchConnectCalls
+            foreach ($Uri in $global:OERLatchGraphRequests) { 'GRAPH: {0}' -f $Uri }
+            foreach ($Row in $Rows) { 'ROW: {0} | {1} | {2} | {3}' -f $Row.Section, $Row.Item, $Row.Action, $Row.Detail }
+            foreach ($Record in $Records) {
+                'ERROR: {0} | {1} | {2}' -f [string]$Record.FullyQualifiedErrorId, [string]$Record.TargetObject, [string]$Record.Exception.Message
+            }
+            'ERROR IDS: {0}' -f ((@($Records) | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | ')
+            'END OF SCRIPT REACHED'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        $R.Output | Should -Contain 'DOCUMENTS REMOVED: True'
+        # The two fixed texts of New-OERSignInRefusedError: the latch's, and the session-uncertain one.
+        $Refused = 'The module''s sign-in for this command was refused, so Omnicit.EntraRBAC sends nothing for this command: this request was not sent. Run Connect-OER, or run a new command whose sign-in succeeds, to send requests again.'
+        $Uncertain = 'An earlier sign-in in this PowerShell session failed or was refused, so the module''s session may not be the one that sign-in asked for, and Omnicit.EntraRBAC sends nothing for a command that names no tenant: this request was not sent. Name the tenant with -TenantId, or run Connect-OER or Disconnect-OER, to send requests again.'
+        # One token call, the first document's. A sign-in that names no tenant ('organizations') passes
+        # Get-AzToken no -Tenant at all, so the stub records an empty tenant. The second document's
+        # sign-in was refused before its token call, and nothing connected.
+        @($R.Output | Where-Object { "$_".StartsWith('TOKEN: ') }) | Should -Be @('TOKEN: graph ')
+        $R.Output | Should -Contain 'CONNECT CALLS: 0'
+        @($R.Output | Where-Object { "$_".StartsWith('GRAPH: ') }) | Should -BeNullOrEmpty
+        # Both documents answered, each with its refused group read, and neither planned a creation.
+        @($R.Output | Where-Object { "$_".StartsWith('ROW: ') }) | Should -Be @(
+            ('ROW: groups | oer-r14-probe-1 | Failed | handler error: ' + $Refused)
+            ('ROW: groups | oer-r14-probe-2 | Failed | handler error: ' + $Refused))
+        # Oldest first: the first document's failed sign-in, which names no tenant ('organizations' is
+        # its target), and its refused group read; then the second document's sign-in, refused for the
+        # uncertain session and naming Invoke-OERStructure, and its refused group read.
+        @($R.Output | Where-Object { "$_".StartsWith('ERROR: ') }) | Should -Be @(
+            'ERROR: GraphTokenAcquisitionFailed,Initialize-OERAuth | organizations | Failed to acquire a Microsoft Graph token: AADSTS50076: interaction required.'
+            ('ERROR: SignInRefused,Invoke-OERStructure | Invoke-OERStructure | ' + $Refused)
+            ('ERROR: SignInRefused,Initialize-OERAuth | Invoke-OERStructure | ' + $Uncertain)
+            ('ERROR: SignInRefused,Invoke-OERStructure | Invoke-OERStructure | ' + $Refused))
+        $Ids = @($R.Output | Where-Object { "$_" -like 'ERROR IDS: *' })[0]
+        $Ids | Should -Match 'GraphTokenAcquisitionFailed'
+        $Ids | Should -Match 'SignInRefused'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'the first document sends nothing, and the second is refused before any token call'
+    }
 }
 
 Describe 'A command whose sign-in a later command in the pipeline replaced sends nothing (A20, F-E)' {
@@ -5929,6 +6061,75 @@ $RecordLines
         $Ids = @(Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | ForEach-Object { ($_ -split ',')[0] })
         $Ids | Should -Be @('TenantMismatch', 'SignInRefused', 'SignInRefused')
         (Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ')[0] | Should -BeLike '*issued for tenant ''77777777-7777-7777-7777-777777777777'', not for the requested tenant ''contoso.onmicrosoft.com'' (tenant ID ''44444444-4444-4444-4444-444444444444'')*'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    # P18c and P18d are BL-77's end-to-end proofs for a sign-in that names no tenant. Invoke-FirstProbe
+    # without -TenantId calls Initialize-OERAuth with an empty -TenantId, which names no tenant: the
+    # state's tenant is 'organizations', and the token requests carry no -Tenant at all, so the stub
+    # records an empty tenant and $global:OERA20GrantedTenants[''] says which tenant answers them. The
+    # identity's tenant term is the tenant the Microsoft Graph token was issued for when that is a GUID,
+    # so a first command that names no tenant and a second that names, by tenant ID, the tenant the
+    # first one's token came from are one identity, and both send. Before BL-77 the term was the NAME,
+    # so 'organizations' and a tenant ID were two identities and every request in P18c was refused with
+    # SignInSuperseded, as P18d's are. P18d shows the gate still refuses when the tenants really
+    # differ. The session cache is still keyed on the tenant as named, so the second command signs in
+    # again in both.
+    It 'P18c: two commands in one pipeline, the first naming no tenant and the second naming the tenant its token was issued for by tenant ID, both send (BL-77)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            # The tokens requested with no tenant are issued for tenant A.
+            $global:OERA20GrantedTenants[''] = '44444444-4444-4444-4444-444444444444'
+            'item' | Invoke-FirstProbe | Invoke-SecondProbe -TenantId '44444444-4444-4444-4444-444444444444'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The first sign-in's pair, requested with no tenant, then the second's, requested for tenant A
+        # by tenant ID: the second sign-in is not a cached return of the first.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph ', 'arm '
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444')
+        # The second sign-in switched the state's TenantId from 'organizations' to tenant A's ID before
+        # the first command's process block ran, and both Graph tokens were issued for tenant A: every
+        # request goes out.
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @('v1.0/groups?probe=Invoke-FirstProbe', 'v1.0/groups?probe=Invoke-SecondProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -Be @(
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-FirstProbe'
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-SecondProbe')
+        Get-PipelineProbeSuperseded -Probe $R | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P18d: the same pipeline whose no-tenant sign-in is answered by another tenant is refused with SignInSuperseded (BL-77 control)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            # The tokens requested with no tenant are issued for tenant B, and the second command names A.
+            $global:OERA20GrantedTenants[''] = '77777777-7777-7777-7777-777777777777'
+            'item' | Invoke-FirstProbe | Invoke-SecondProbe -TenantId '44444444-4444-4444-4444-444444444444'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # Both sign-ins succeeded, as in P18c.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph ', 'arm '
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        # The first command remembers tenant B, the state now carries tenant A: its two requests are
+        # refused, and so are the second command's two, made inside the first command's output with the
+        # first command's frame on the call stack, so every record names the first command, as in P1.
+        Get-PipelineProbeSuperseded -Probe $R | Should -Be @(
+            'SignInSuperseded,Invoke-FirstProbe | Invoke-FirstProbe', 'SignInSuperseded,Invoke-FirstProbe | Invoke-FirstProbe'
+            'SignInSuperseded,Invoke-SecondProbe | Invoke-FirstProbe', 'SignInSuperseded,Invoke-SecondProbe | Invoke-FirstProbe')
+        # No other record, and all four carry the one text naming the first command.
+        @(Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ').Count | Should -Be 4
+        @(Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | ForEach-Object { ($_ -split ' \| ', 3)[2] } | Select-Object -Unique) | Should -Be @(
+            'Another OER command in the same pipeline signed in to a different tenant or identity after Invoke-FirstProbe began, so Omnicit.EntraRBAC sends nothing while Invoke-FirstProbe runs: this request was not sent. Run the commands as separate statements, so that each one signs in and finishes before the next one starts.')
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 
