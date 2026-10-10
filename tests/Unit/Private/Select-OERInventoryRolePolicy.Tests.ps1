@@ -194,6 +194,18 @@ Describe 'Select-OERInventoryRolePolicy' {
         Get-UnjudgedText $Result | Should -BeExactly "$script:SelOtherSub,$script:SelSub"
     }
 
+    It 'skips a null element of each list: nothing null is kept, no empty scope is named, and a null fact keeps nothing' {
+        $Result = Invoke-TestSelect `
+            -Policy @($null, (New-TestPolicy -Name 'Assigned' -Scope $script:SelSub -RoleGuid 'aaaaaaaa-0000-0000-0000-00000000000a'), $null) `
+            -Assignment @($null, (New-TestFact -Scope $script:SelSub -RoleDefinitionId "$script:SelSubRoleDef/aaaaaaaa-0000-0000-0000-00000000000a")) `
+            -Eligibility @($null)
+        # Reached: the one real policy was judged, and kept on its assignment.
+        Get-KeptName $Result | Should -BeExactly 'Assigned'
+        @($Result.Kept).Count | Should -Be 1
+        @(@($Result.Kept) | Where-Object { $null -eq $_ }).Count | Should -Be 0
+        @($Result.UnjudgedScopes).Count | Should -Be 0
+    }
+
     It 'returns empty lists for no policies' {
         $Result = Invoke-TestSelect -Assignment @(New-TestFact -Scope $script:SelSub -RoleDefinitionId "$script:SelSubRoleDef/aaaaaaaa-0000-0000-0000-00000000000a") -UnreadScope @($script:SelSub)
         ($Result.PSObject.Properties.Name -join ',') | Should -BeExactly 'Kept,UnjudgedScopes'

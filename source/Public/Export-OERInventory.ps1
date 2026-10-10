@@ -461,9 +461,11 @@ function Export-OERInventory {
         $RolePolicyCandidates = [System.Collections.Generic.List[object]]::new()
         $RoleAssignmentFacts = [System.Collections.Generic.List[object]]::new()
         $RoleAssignmentUnreadScopes = [System.Collections.Generic.List[string]]::new()
-        # The 'roleManagementPolicies/<scope>/role selection' entries: scopes whose policies were kept
-        # without being judged. Kept apart from the Entra ID entries in $IncompleteReads and appended
-        # after them, so the Entra ID entries keep their documented order and their own clause.
+        # The 'roleManagementPolicies/role selection at <scope>' entries, the scope verbatim (an ARM
+        # scope reads 'roleManagementPolicies/role selection at /subscriptions/...'), in the shape of
+        # Get-OERInventory's 'directoryRoleManagementPolicies/role selection': scopes whose policies
+        # were kept without being judged. Kept apart from the Entra ID entries in $IncompleteReads and
+        # appended after them, so the Entra ID entries keep their documented order and own clause.
         $RolePolicySelectionReads = [System.Collections.Generic.List[string]]::new()
 
         if ($AzureSections.Count -gt 0) {
@@ -594,7 +596,7 @@ function Export-OERInventory {
                         if ($SeenRmp.Add($Key)) { $RoleManagementPolicies.Add($Kept) }
                     }
                     foreach ($Unjudged in @($Selection.UnjudgedScopes)) {
-                        if ($Unjudged) { $RolePolicySelectionReads.Add("roleManagementPolicies/$Unjudged/role selection") }
+                        if ($Unjudged) { $RolePolicySelectionReads.Add("roleManagementPolicies/role selection at $Unjudged") }
                     }
                 }
             }

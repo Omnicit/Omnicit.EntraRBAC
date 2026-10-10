@@ -27,7 +27,8 @@ function Select-OERInventoryRolePolicy {
 
     .PARAMETER Policy
     The candidates, as Get-OERInventoryRolePolicy emits them: Entry, Scope, RoleDefinitionId and
-    Modified. Pass an empty array when there are none.
+    Modified. Pass an empty array when there are none. A null element in this list or in the two
+    below is skipped.
 
     .PARAMETER Assignment
     The role assignments read for the selection, objects with Scope and RoleDefinitionId (the
@@ -49,9 +50,11 @@ function Select-OERInventoryRolePolicy {
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Policy,
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Assignment,
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Eligibility,
+        # [AllowNull()] lets a null element bind (a mandatory array refuses one otherwise), so a
+        # stray null in a list is skipped below instead of failing the whole selection.
+        [Parameter(Mandatory)][AllowNull()][AllowEmptyCollection()][object[]]$Policy,
+        [Parameter(Mandatory)][AllowNull()][AllowEmptyCollection()][object[]]$Assignment,
+        [Parameter(Mandatory)][AllowNull()][AllowEmptyCollection()][object[]]$Eligibility,
         [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$UnreadScope
     )
     # The role definition guid: the last '/'-segment of the role definition id.
@@ -59,12 +62,12 @@ function Select-OERInventoryRolePolicy {
         param([string]$RoleDefinitionId)
         ($RoleDefinitionId -split '/')[-1]
     }
-    # The scope|guid keys of the facts that stand at a scope, an empty role definition id ignored.
+    # The scope|guid keys of the facts that stand at a scope, an empty role definition id ignored --
+    # which also skips a null fact, whose role definition id reads as empty.
     $KeysOf = {
         param([object[]]$Fact)
         $Keys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         foreach ($Item in @($Fact)) {
-            if ($null -eq $Item) { continue }
             $Guid = & $RoleGuidOf ([string]$Item.RoleDefinitionId)
             if (-not $Guid) { continue }
             $null = $Keys.Add("$(ConvertTo-OERCanonicalScope -Scope ([string]$Item.Scope))|$Guid")

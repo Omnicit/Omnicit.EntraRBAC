@@ -299,12 +299,12 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
         $Section = Get-TestSection -Readme (Get-TestReadme -IncompleteReads @(
                 'groupsRoster'
                 'directoryRoleManagementPolicies/role selection'
-                'roleManagementPolicies//subscriptions/aaaaaaaa-0000-0000-0000-000000000001/role selection'
+                'roleManagementPolicies/role selection at /subscriptions/aaaaaaaa-0000-0000-0000-000000000001'
             ) -SkippedScopes @('/subscriptions/aaaaaaaa-0000-0000-0000-000000000002'))
         $Expected = @(
             '- Entra ID: `groupsRoster`'
             '- Entra ID: `directoryRoleManagementPolicies/role selection`'
-            '- Azure role management policies kept without being judged: `roleManagementPolicies//subscriptions/aaaaaaaa-0000-0000-0000-000000000001/role selection`'
+            '- Azure role management policies kept without being judged: `roleManagementPolicies/role selection at /subscriptions/aaaaaaaa-0000-0000-0000-000000000001`'
             '- Azure scope, absent from `roleAssignments.json` and `roleManagementPolicies.json`: `/subscriptions/aaaaaaaa-0000-0000-0000-000000000002`'
         )
         ((Get-TestBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")

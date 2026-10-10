@@ -751,7 +751,7 @@ Describe 'Export-OERInventory (Azure role policy selection, BL-107)' {
             Untouched = 'aaaaaaaa-0000-0000-0000-00000000000f'
             Elsewhere = 'aaaaaaaa-0000-0000-0000-00000000000d'
         }
-        $script:BlUnjudged = "roleManagementPolicies/$script:BlSub/role selection"
+        $script:BlUnjudged = "roleManagementPolicies/role selection at $script:BlSub"
         $script:BlAzureBullet = '- Azure role management policies kept without being judged: `' + $script:BlUnjudged + '`'
 
         # The policy list of a scope in the lister's shape: every role's policy untouched (the shape
