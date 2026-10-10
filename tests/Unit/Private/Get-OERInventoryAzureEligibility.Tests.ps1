@@ -143,6 +143,62 @@ Describe 'Get-OERInventoryAzureEligibility' {
         $Item.endDateTime | Should -BeNullOrEmpty
     }
 
+    It 'carries the scope and role definition id of every row read in RoleScopes, duplicates included, and leaves the other outputs as they were' {
+        # BL-107: the export's role policy selection keeps a policy whose role has an eligibility
+        # exactly at the policy's scope, so it needs every row read, not the deduplicated projection.
+        $script:EligRoleDef = '/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleDefinitions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        Mock -ModuleName $script:moduleName Get-OEREligibleRoleAssignment {
+            param($Scope, $AtScope)
+            if ($Scope -eq '/subscriptions/33333333-3333-3333-3333-333333333333') {
+                Write-Error -Message 'boom (forbidden)' -ErrorId 'Forbidden' -ErrorAction Stop
+                return
+            }
+            # The same schedule seen from both scopes, a row of the subscription's resource group read
+            # from the subscription, and a null row.
+            [PSCustomObject]@{
+                RoleEligibilityScheduleId = 'sched-1'
+                Scope                     = '/subscriptions/11111111-1111-1111-1111-111111111111'
+                RoleDefinitionId          = $script:EligRoleDef
+                RoleName                  = 'Owner'
+                PrincipalId               = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+                PrincipalType             = 'User'
+            }
+            if ($Scope -eq '/subscriptions/11111111-1111-1111-1111-111111111111') {
+                [PSCustomObject]@{
+                    RoleEligibilityScheduleId = 'sched-2'
+                    Scope                     = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-app'
+                    RoleDefinitionId          = '/providers/Microsoft.Authorization/roleDefinitions/cccccccc-cccc-cccc-cccc-cccccccccccc'
+                    RoleName                  = 'Reader'
+                    PrincipalId               = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
+                    PrincipalType             = 'User'
+                }
+                $null
+            }
+        }
+        $Result = InModuleScope $script:moduleName {
+            Get-OERInventoryAzureEligibility -Scope @(
+                '/subscriptions/11111111-1111-1111-1111-111111111111',
+                '/providers/Microsoft.Management/managementGroups/mg-platform',
+                '/subscriptions/33333333-3333-3333-3333-333333333333'
+            ) -WarningAction SilentlyContinue
+        }
+        ($Result.PSObject.Properties.Name -join ',') | Should -BeExactly 'Eligibilities,SkippedScopes,RoleScopes'
+        $Pairs = @(@($Result.RoleScopes) | ForEach-Object { "$($_.Scope)|$($_.RoleDefinitionId)" })
+        ($Pairs -join "`n") | Should -BeExactly (@(
+                "/subscriptions/11111111-1111-1111-1111-111111111111|$script:EligRoleDef"
+                '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-app|/providers/Microsoft.Authorization/roleDefinitions/cccccccc-cccc-cccc-cccc-cccccccccccc'
+                "/subscriptions/11111111-1111-1111-1111-111111111111|$script:EligRoleDef"
+            ) -join "`n")
+        foreach ($Pair in @($Result.RoleScopes)) {
+            ($Pair.PSObject.Properties.Name -join ',') | Should -BeExactly 'Scope,RoleDefinitionId'
+            $Pair.Scope | Should -BeOfType [string]
+            $Pair.RoleDefinitionId | Should -BeOfType [string]
+        }
+        # The existing outputs: the duplicate schedule is one eligibility, the failed scope is skipped.
+        @($Result.Eligibilities).Count | Should -Be 2
+        @($Result.SkippedScopes) | Should -Be @('/subscriptions/33333333-3333-3333-3333-333333333333')
+    }
+
     It 'is tagged Omnicit.EntraRBAC.InventoryAzureEligibility' {
         Mock -ModuleName $script:moduleName Get-OEREligibleRoleAssignment { @() }
         $Result = InModuleScope $script:moduleName {

@@ -15,6 +15,12 @@ function Get-OERRoleManagementPolicyForScope {
     (the ARM list-for-scope endpoint has no $filter). Returns nothing when the scope has no policy
     assignments (an empty scope is not an error).
 
+    Each result also carries PolicyMetadata: the row's policyAssignmentProperties.policy object as ARM
+    returned it (the policy id, and lastModifiedDateTime and lastModifiedBy when ARM reports them), or
+    $null when the row carries none. Export-OERInventory's role policy selection reads whether a policy
+    has been changed from it through Test-OERRolePolicyModified, with no request of its own; the other
+    callers ignore it.
+
     .PARAMETER Scope
     The ARM scope at which to list policy assignments (e.g. '/subscriptions/{id}').
 
@@ -36,6 +42,7 @@ function Get-OERRoleManagementPolicyForScope {
             RoleName         = [string]$Assignment.properties.policyAssignmentProperties.roleDefinition.displayName
             Scope            = [string]$Assignment.properties.scope
             EffectiveRules   = @($Assignment.properties.effectiveRules)
+            PolicyMetadata   = $Assignment.properties.policyAssignmentProperties.policy
         }
     }
 }

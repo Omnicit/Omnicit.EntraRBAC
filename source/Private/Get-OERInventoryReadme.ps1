@@ -55,6 +55,12 @@ function Get-OERInventoryReadme {
     # entry holds none, two for an entry with a lone backtick), padded with a space each side so an
     # entry that starts or ends with a backtick still closes cleanly.
     $Bullets = [System.Collections.Generic.List[string]]::new()
+    # An IncompleteReads entry that starts with 'roleManagementPolicies/' is not an Entra ID read: it is
+    # an Azure scope whose role management policies Export-OERInventory kept without being judged
+    # (BL-107), appended after the Entra ID entries, so it gets its own label.
+    $AzurePolicyPrefix = 'roleManagementPolicies/'
+    $AzurePolicyLabel = 'Azure role management policies kept without being judged'
+    # The two scope lists never hold such an entry: theirs start with '/' or '<'.
     $Lists = @(
         @{ Label = 'Entra ID'; Entries = $IncompleteReads }
         @{ Label = 'Azure scope, absent from `roleAssignments.json` and `roleManagementPolicies.json`'; Entries = $SkippedScopes }
@@ -63,6 +69,8 @@ function Get-OERInventoryReadme {
     foreach ($List in $Lists) {
         foreach ($Entry in @($List.Entries)) {
             if ([string]::IsNullOrWhiteSpace($Entry)) { continue }
+            $Label = $List.Label
+            if ($Entry.StartsWith($AzurePolicyPrefix, [System.StringComparison]::Ordinal)) { $Label = $AzurePolicyLabel }
             $OneLine = $Entry -replace '\r\n|\r|\n', ' '
             $LongestRun = 0
             foreach ($Run in [regex]::Matches($OneLine, '`+')) {
@@ -74,7 +82,7 @@ function Get-OERInventoryReadme {
                 $Fence = '`' * ($LongestRun + 1)
                 "$Fence $OneLine $Fence"
             }
-            $Bullets.Add("- $($List.Label): $CodeSpan")
+            $Bullets.Add("- $($Label): $CodeSpan")
         }
     }
 

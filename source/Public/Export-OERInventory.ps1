@@ -182,6 +182,12 @@ function Export-OERInventory {
     eligibility or assignment schedules (the default). Forwarded to the internal Get-OERInventory
     call; has no effect unless -Include names DirectoryRoleManagementPolicies.
 
+    .PARAMETER AllRolePolicies
+    For the RoleManagementPolicies section, export the policy of every Azure role at every scope the
+    walk reads, as earlier versions did, instead of only the policies of roles with an active
+    assignment or an eligibility exactly at that scope, or whose policy has been changed (the
+    default). Has no effect unless -Include names RoleManagementPolicies.
+
     .PARAMETER ManagementGroup
     Narrow the Azure scope walk to a single management group branch identified by name or id.
 
@@ -247,6 +253,9 @@ function Export-OERInventory {
         [switch]$AllGroupsDetailed,
         [switch]$IncludeSyncedGroups,
         [switch]$AllDirectoryRolePolicies,
+        # A switch takes no position, so declaring it here leaves every positional parameter where it
+        # was (see the -GroupFilter comment below).
+        [switch]$AllRolePolicies,
         [string]$ManagementGroup,
         [string]$Scope,
         [switch]$Force,
@@ -440,6 +449,23 @@ function Export-OERInventory {
         $AzureEligibilities = @()
         $SkippedEligibilityScopes = [System.Collections.Generic.List[string]]::new()
 
+        # BL-107: without -AllRolePolicies the RoleManagementPolicies section keeps a role's policy at a
+        # scope only when the role has an active assignment or an eligibility EXACTLY at that scope, or
+        # the policy has been changed (Select-OERInventoryRolePolicy owns the rule). The policies are
+        # then read per scope by Get-OERInventoryRolePolicy -- the same one paged list and the same
+        # converters as Get-OERInventory -AllRolesAtScope -- and kept or omitted after the walk, once
+        # the eligibility read below is in; nothing is requested per policy. -AllRolePolicies runs the
+        # per-scope Get-OERInventory call exactly as before and selects nothing.
+        $SelectRolePolicies = ($AzureSections -contains 'RoleManagementPolicies') -and -not $AllRolePolicies
+        $ScopeSections = @(if ($SelectRolePolicies) { $AzureSections | Where-Object { $_ -ne 'RoleManagementPolicies' } } else { $AzureSections })
+        $RolePolicyCandidates = [System.Collections.Generic.List[object]]::new()
+        $RoleAssignmentFacts = [System.Collections.Generic.List[object]]::new()
+        $RoleAssignmentUnreadScopes = [System.Collections.Generic.List[string]]::new()
+        # The 'roleManagementPolicies/<scope>/role selection' entries: scopes whose policies were kept
+        # without being judged. Kept apart from the Entra ID entries in $IncompleteReads and appended
+        # after them, so the Entra ID entries keep their documented order and their own clause.
+        $RolePolicySelectionReads = [System.Collections.Generic.List[string]]::new()
+
         if ($AzureSections.Count -gt 0) {
             $TreeParams = @{}
             if ($ManagementGroup) { $TreeParams.ManagementGroup = $ManagementGroup }
@@ -479,27 +505,61 @@ function Export-OERInventory {
                     foreach ($S in @($Tree.Scopes)) {
                         $ScopeIndex++
                         Write-Progress -Activity 'Export-OERInventory' -Status "Azure scope $ScopeIndex of $ScopesEnumerated" -PercentComplete (($ScopeIndex / [Math]::Max($ScopesEnumerated, 1)) * 100)
+                        $ScopeInv = $null
+                        $ScopeCandidates = @()
+                        $ScopeAssignments = @()
+                        $ScopeAssignmentsUnread = $false
                         try {
-                            $ScopeParams = @{ Include = $AzureSections; Scope = $S }
-                            if ($AzureSections -contains 'RoleManagementPolicies') { $ScopeParams.AllRolesAtScope = $true }
-                            # -ErrorAction Stop is load-bearing: without it a NON-terminating failure
-                            # inside Get-OERInventory never reaches this catch under the default
-                            # preference, so the scope contributed nothing and did not even warn.
-                            $ScopeInv = Get-OERInventory @ScopeParams -ErrorAction Stop
+                            # Selecting, the call leaves RoleManagementPolicies (and -AllRolesAtScope)
+                            # out and is not made at all when nothing is left; otherwise it is the call
+                            # it always was.
+                            if ($ScopeSections.Count -gt 0) {
+                                $ScopeParams = @{ Include = $ScopeSections; Scope = $S }
+                                if ($ScopeSections -contains 'RoleManagementPolicies') { $ScopeParams.AllRolesAtScope = $true }
+                                # -ErrorAction Stop is load-bearing: without it a NON-terminating failure
+                                # inside Get-OERInventory never reaches this catch under the default
+                                # preference, so the scope contributed nothing and did not even warn.
+                                $ScopeInv = Get-OERInventory @ScopeParams -ErrorAction Stop
+                            }
+                            if ($SelectRolePolicies) {
+                                # The role assignments listed at (or above) the scope, FIRST: its sign-in
+                                # check renews a token near expiry before the policy list, as the
+                                # per-scope Get-OERRoleManagementPolicy call does with -AllRolePolicies.
+                                # A failure here costs the selection, not the scope: the policies at the
+                                # scope are then kept without being judged and named, never dropped.
+                                try {
+                                    $ScopeAssignments = @(Get-OERRoleAssignment -Scope $S -AtScope -ErrorAction Stop)
+                                } catch {
+                                    Remove-OERErrorRecord -Record $PSItem
+                                    Write-Warning "Could not read the role assignments at scope '$S', so its role management policies are kept without being judged: $($PSItem.Exception.Message)"
+                                    $ScopeAssignmentsUnread = $true
+                                }
+                                # A failed policy list reaches the catch below and skips the scope, as a
+                                # failed policy read always has. -ErrorAction Stop for the same reason as
+                                # above.
+                                $ScopeCandidates = @(Get-OERInventoryRolePolicy -Scope $S -ErrorAction Stop)
+                            }
                         } catch {
                             Remove-OERErrorRecord -Record $PSItem
                             Write-Warning "Skipping scope '$S': $($PSItem.Exception.Message)"
                             $SkippedScopes.Add([string]$S)
                             continue
                         }
-                        foreach ($Ra in @($ScopeInv.RoleAssignments)) {
+                        # $ScopeInv is $null when no call was made, and @($null.X) is a one-element
+                        # array holding $null, so every read of it drops nulls.
+                        foreach ($Ra in @($ScopeInv.RoleAssignments | Where-Object { $null -ne $_ })) {
                             $Key = if ($Ra.PSObject.Properties.Name -contains 'id' -and $Ra.id) { [string]$Ra.id } else { '{0}|{1}|{2}' -f $Ra.scope, $Ra.role, $Ra.principal }
                             if ($SeenRa.Add($Key)) { $RoleAssignments.Add($Ra) }
                         }
-                        foreach ($Rmp in @($ScopeInv.RoleManagementPolicies)) {
+                        # Non-empty only under -AllRolePolicies: selecting, the call reads no policy.
+                        foreach ($Rmp in @($ScopeInv.RoleManagementPolicies | Where-Object { $null -ne $_ })) {
                             $Key = '{0}|{1}' -f $Rmp.scope, $Rmp.role
                             if ($SeenRmp.Add($Key)) { $RoleManagementPolicies.Add($Rmp) }
                         }
+                        # The selection's inputs, from a scope that was read; decided after the walk.
+                        foreach ($Candidate in $ScopeCandidates) { if ($null -ne $Candidate) { $RolePolicyCandidates.Add($Candidate) } }
+                        foreach ($Fact in $ScopeAssignments) { if ($null -ne $Fact) { $RoleAssignmentFacts.Add($Fact) } }
+                        if ($ScopeAssignmentsUnread) { $RoleAssignmentUnreadScopes.Add([string]$S) }
                         # Counted only here, after the scope has been read and merged, so ScopeCount
                         # reports coverage rather than intent.
                         $ScopeCount++
@@ -515,6 +575,27 @@ function Export-OERInventory {
                 $AzureEligibilities = @($EligResult.Eligibilities)
                 foreach ($SkEl in @($EligResult.SkippedScopes)) {
                     if ($SkEl) { $SkippedEligibilityScopes.Add([string]$SkEl) }
+                }
+
+                # BL-107: the selection, now that the eligibilities are read. A scope whose role
+                # assignment read or eligibility read failed cannot be judged: its policies that are not
+                # kept on other grounds are kept anyway, and the scope is named. The kept entries are
+                # merged with the same scope|role rule as the -AllRolePolicies path above.
+                if ($SelectRolePolicies) {
+                    $SelectionUnread = @(@($RoleAssignmentUnreadScopes) + @($EligResult.SkippedScopes) |
+                            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
+                    $Selection = Select-OERInventoryRolePolicy `
+                        -Policy $RolePolicyCandidates.ToArray() `
+                        -Assignment $RoleAssignmentFacts.ToArray() `
+                        -Eligibility @($EligResult.RoleScopes | Where-Object { $null -ne $_ }) `
+                        -UnreadScope $SelectionUnread
+                    foreach ($Kept in @($Selection.Kept | Where-Object { $null -ne $_ })) {
+                        $Key = '{0}|{1}' -f $Kept.scope, $Kept.role
+                        if ($SeenRmp.Add($Key)) { $RoleManagementPolicies.Add($Kept) }
+                    }
+                    foreach ($Unjudged in @($Selection.UnjudgedScopes)) {
+                        if ($Unjudged) { $RolePolicySelectionReads.Add("roleManagementPolicies/$Unjudged/role selection") }
+                    }
                 }
             }
         }
@@ -725,7 +806,8 @@ function Export-OERInventory {
             # IncompleteReads entry), and they go into the README alone: inventory.json is the apply
             # document and must stay exactly the shape the schema describes. The parameters are
             # mandatory, so a README that claims a complete read cannot be written by forgetting one.
-            (Get-OERInventoryReadme -IncompleteReads @($IncompleteReads) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes)) |
+            # The role policy selection's entries follow the Entra ID entries, as in the output object.
+            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes)) |
                 Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
         }
         $WrittenFiles.Add('README.md')
@@ -774,7 +856,9 @@ function Export-OERInventory {
             SkippedScopes          = @($SkippedScopes)
             AzurePimEligibility    = @($AzureEligibilities).Count
             SkippedEligibilityScopes = @($SkippedEligibilityScopes)
-            IncompleteReads        = @($IncompleteReads)
+            # The Entra ID entries first, in their documented order, then the scopes whose role
+            # management policies were kept without being judged (BL-107).
+            IncompleteReads        = @($IncompleteReads) + @($RolePolicySelectionReads)
             Files                  = $WrittenFiles.ToArray()
         }
         $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.InventoryBundle')
@@ -784,7 +868,7 @@ function Export-OERInventory {
         # then learns the coverage is incomplete. A warning alone left $? true, -ErrorAction Stop
         # inert and a try/catch seeing success, which is how a heavily truncated bundle reached the
         # LLM -> Invoke-OERStructure workflow looking exactly like a full tenant snapshot.
-        if ($SkippedScopes.Count -gt 0 -or $SkippedEligibilityScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0) {
+        if ($SkippedScopes.Count -gt 0 -or $SkippedEligibilityScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0 -or $RolePolicySelectionReads.Count -gt 0) {
             $PartialParts = [System.Collections.Generic.List[string]]::new()
             # A '<...>' entry is not a scope that failed to READ: it names the whole walk that could not
             # start, or a level of the tree (management groups, subscriptions) that could not be LISTED,
@@ -855,6 +939,16 @@ function Export-OERInventory {
                     if ($GroupCauseClause) { $IncompletePart += '.' + $GroupCauseClause.TrimEnd('.') }
                 }
                 $PartialParts.Add($IncompletePart)
+            }
+            if ($RolePolicySelectionReads.Count -gt 0) {
+                # A clause of its own (BL-107), not folded into the Entra ID one above, whose count and
+                # wording stay over the Entra ID entries only: these are Azure scopes, and nothing was
+                # left out of the bundle for them -- more was kept than the selection would keep.
+                $PartialParts.Add(
+                    "the role management policies at $($RolePolicySelectionReads.Count) Azure scope(s) were kept without being judged, " +
+                    'since whether a role is used there, or whether its policy was changed, could not be read, so ' +
+                    'roleManagementPolicies.json may hold policies of roles that are neither used nor changed at those scopes: ' +
+                    ($RolePolicySelectionReads -join '; '))
             }
             Write-CmdletError `
                 -Message ([System.Exception]::new(

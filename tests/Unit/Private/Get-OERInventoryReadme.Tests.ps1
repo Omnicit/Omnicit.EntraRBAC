@@ -292,6 +292,25 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
         $Section | Should -Not -MatchExactly 'This bundle is PARTIAL'
     }
 
+    It 'labels an IncompleteReads entry that starts with roleManagementPolicies/ as Azure role management policies kept without being judged, and every other entry Entra ID' {
+        # BL-107: the export appends one such entry per Azure scope whose role management policies were
+        # kept without being judged, after the Entra ID entries. directoryRoleManagementPolicies/... is
+        # an Entra ID entry: it only ends with the same words.
+        $Section = Get-TestSection -Readme (Get-TestReadme -IncompleteReads @(
+                'groupsRoster'
+                'directoryRoleManagementPolicies/role selection'
+                'roleManagementPolicies//subscriptions/aaaaaaaa-0000-0000-0000-000000000001/role selection'
+            ) -SkippedScopes @('/subscriptions/aaaaaaaa-0000-0000-0000-000000000002'))
+        $Expected = @(
+            '- Entra ID: `groupsRoster`'
+            '- Entra ID: `directoryRoleManagementPolicies/role selection`'
+            '- Azure role management policies kept without being judged: `roleManagementPolicies//subscriptions/aaaaaaaa-0000-0000-0000-000000000001/role selection`'
+            '- Azure scope, absent from `roleAssignments.json` and `roleManagementPolicies.json`: `/subscriptions/aaaaaaaa-0000-0000-0000-000000000002`'
+        )
+        ((Get-TestBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
+        $Section | Should -Match 'This bundle is PARTIAL'
+    }
+
     It 'shows an entry that looks like an HTML tag, since every entry is a code span' {
         $Entry = '<all Azure scopes: scope enumeration failed>'
         $Section = Get-TestSection -Readme (Get-TestReadme -SkippedScopes @($Entry) -SkippedEligibilityScopes @($Entry))
