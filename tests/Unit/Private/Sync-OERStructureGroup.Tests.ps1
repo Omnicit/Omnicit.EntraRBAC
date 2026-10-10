@@ -8564,6 +8564,269 @@ Describe 'Sync-OERStructureGroup: the plan shows the warning a real run gives (B
                 }
             }
         }
+
+        It 'keys the policy a planned warning opens on the entry''s own access type: owner entries first, then a member entry' {
+            # The mirror of 'plans one warning per access type ...' with the owner entries first
+            # (BL-100). In a real run the first owner entry's Add-OERGroupEligibility opens the owner
+            # policy, the second owner entry finds it open, and the member entry still finds the member
+            # policy closed. A plan that kept the opened policy under another access type than the
+            # entry's own would warn for the second owner entry and not for the member entry.
+            InModuleScope $script:moduleName -Parameters @{ MemberText = $script:StepMemberText; OwnerText = $script:StepOwnerText } {
+                param($MemberText, $OwnerText)
+                $Json = '{ "displayName": "role_sec_step", "members": null, "eligibility": [ ' +
+                    '{ "principal": "person3@example.com", "accessType": "owner" }, ' +
+                    '{ "principal": "person1@example.com", "accessType": "owner" }, ' +
+                    '{ "principal": "person2@example.com", "accessType": "member" } ] }'
+
+                $Plan = Invoke-GroupWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $true
+                # Reached: every entry was planned; nothing was written.
+                @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'would set permanent owner eligibility for *' }).Count | Should -Be 2
+                @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like "would set permanent member eligibility for 'person2@example.com':*" }).Count | Should -Be 1
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -in @('PATCH', 'POST') }
+                $Plan.Warnings.Count | Should -Be 2
+                $Plan.Warnings[0] | Should -BeExactly $OwnerText
+                $Plan.Warnings[1] | Should -BeExactly $MemberText
+
+                $script:StepEligRequired = $true
+                $script:StepOwnerEligRequired = $true
+                $Run = Invoke-GroupWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $false
+                # Reached: each policy was opened once, by its first entry, and every request was sent.
+                @($Run.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -like 'set permanent * eligibility for *' }).Count | Should -Be 3
+                Should -Invoke Invoke-OERGraphRequest -Times 3 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Uri -like '*/roleManagementPolicies/pol-step-owner/rules/Expiration_Admin_Eligibility' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Uri -like '*/roleManagementPolicies/pol-step/rules/Expiration_Admin_Eligibility' }
+                $Run.Warnings.Count | Should -Be 2 -Because 'a real run warns once per policy it opens'
+                ($Run.Warnings[0] -ceq $Plan.Warnings[0]) | Should -BeTrue -Because 'the plan must show the very warnings the run gives, in order'
+                ($Run.Warnings[1] -ceq $Plan.Warnings[1]) | Should -BeTrue -Because 'the plan must show the very warnings the run gives, in order'
+            }
+        }
+
+        It 'plans the warning for the next member entry when the first one''s policy read fails, as a real run writes it' {
+            # A failed read plans no warning and opens nothing (BL-100). In a real run the first entry's
+            # Add-OERGroupEligibility cannot read the policy either, proceeds without opening it and
+            # warns nothing, so the second entry's read finds the policy still closed and that entry
+            # warns and opens it. Only the first read of the policy id fails, in each mode. The transport
+            # here accepts the first entry's request; a live Microsoft Graph enforces the closed policy on
+            # it, which changes that entry's row, not the warnings.
+            InModuleScope $script:moduleName -Parameters @{ MemberText = $script:StepMemberText } {
+                param($MemberText)
+                Mock Get-OERPimGroupPolicyId {
+                    $script:StepPolicyIdReads++
+                    if ($script:StepPolicyIdReads -eq 1) { throw 'Forbidden: policy read denied' }
+                    'pol-step'
+                }
+                $Json = '{ "displayName": "role_sec_step", "members": null, "eligibility": [ ' +
+                    '{ "principal": "person1@example.com", "accessType": "member" }, ' +
+                    '{ "principal": "person2@example.com", "accessType": "member" } ] }'
+
+                $script:StepPolicyIdReads = 0
+                $Plan = Invoke-GroupWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $true
+                # Reached: both entries were planned, each after its own read; nothing was written.
+                @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'would set permanent member eligibility for *' }).Count | Should -Be 2
+                Should -Invoke Get-OERPimGroupPolicyId -Times 2 -Exactly -ParameterFilter { $AccessType -eq 'member' }
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -in @('PATCH', 'POST') }
+                $Plan.Warnings.Count | Should -Be 1
+                $Plan.Warnings[0] | Should -BeExactly $MemberText
+
+                $script:StepEligRequired = $true
+                $script:StepPolicyIdReads = 0
+                $Run = Invoke-GroupWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $false
+                # Reached: both requests were sent, the second after its cmdlet opened the policy.
+                @($Run.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -like 'set permanent member eligibility for *' }).Count | Should -Be 2
+                Should -Invoke Get-OERPimGroupPolicyId -Times 4 -Exactly -ParameterFilter { $AccessType -eq 'member' }
+                Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Uri -like '*/roleManagementPolicies/pol-step/rules/Expiration_Admin_Eligibility' }
+                $Run.Warnings.Count | Should -Be 1 -Because 'the second entry finds the policy the first could not read still closed'
+                ($Run.Warnings[0] -ceq $Plan.Warnings[0]) | Should -BeTrue -Because 'the plan must show the very warning the run gives'
+            }
+        }
+
+        It 'plans the warning for the next member entry when the first one''s read lists no policy, as a real run writes it' {
+            # A read that lists no policy plans no warning and opens nothing (BL-100). In a real run the
+            # first entry's Add-OERGroupEligibility reports GroupNotOnboarded and sends nothing, so the
+            # second entry's read finds the listed policy closed and that entry warns and opens it. Only
+            # the first read of the policy id answers that nothing is listed, in each mode.
+            InModuleScope $script:moduleName -Parameters @{ MemberText = $script:StepMemberText } {
+                param($MemberText)
+                Mock Get-OERPimGroupPolicyId {
+                    $script:StepPolicyIdReads++
+                    if ($script:StepPolicyIdReads -eq 1) { return $null }
+                    'pol-step'
+                }
+                $Json = '{ "displayName": "role_sec_step", "members": null, "eligibility": [ ' +
+                    '{ "principal": "person1@example.com", "accessType": "member" }, ' +
+                    '{ "principal": "person2@example.com", "accessType": "member" } ] }'
+
+                $script:StepPolicyIdReads = 0
+                $Plan = Invoke-GroupWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $true
+                # Reached: both entries were planned, each after its own read; nothing was written.
+                @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'would set permanent member eligibility for *' }).Count | Should -Be 2
+                Should -Invoke Get-OERPimGroupPolicyId -Times 2 -Exactly -ParameterFilter { $AccessType -eq 'member' }
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -in @('PATCH', 'POST') }
+                $Plan.Warnings.Count | Should -Be 1
+                $Plan.Warnings[0] | Should -BeExactly $MemberText
+
+                # The first entry's GroupNotOnboarded is published through the caller, so the run is
+                # captured with -ErrorAction SilentlyContinue and its records read from -ErrorVariable.
+                $script:StepEligRequired = $true
+                $script:StepPolicyIdReads = 0
+                $RunErrors = $null
+                $RunAll = @(Invoke-SyncGroupWarnViaCaller -Item ($Json | ConvertFrom-Json) -WhatIf:$false -Confirm:$false -WarningAction Continue -ErrorAction SilentlyContinue -ErrorVariable RunErrors 3>&1)
+                $RunRows = @($RunAll | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+                $RunWarnings = @($RunAll | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                # Reached: the first entry failed as the cmdlet reports it, the second was sent after its
+                # cmdlet opened the policy.
+                $FirstRow = @($RunRows | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like "failed to add permanent eligibility for 'person1@example.com': Microsoft Graph does not list a PIM-for-groups policy for 'member' access*" })
+                $FirstRow.Count | Should -Be 1
+                [string]$FirstRow[0].Error.FullyQualifiedErrorId | Should -Match '^GroupNotOnboarded,'
+                # Narrowed to the caller's own record: -ErrorVariable also collects the cmdlet's inner
+                # record and the stop exception that carried it out of the cmdlet.
+                $OwnErrors = @($RunErrors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncGroupWarnViaCaller' })
+                $OwnErrors.Count | Should -Be 1
+                [string]$OwnErrors[0].FullyQualifiedErrorId | Should -BeExactly 'GroupNotOnboarded,Invoke-SyncGroupWarnViaCaller'
+                # Nothing else went wrong: every collected item carries the GroupNotOnboarded record.
+                $OtherErrors = @($RunErrors | Where-Object {
+                        $CollectedId = if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.FullyQualifiedErrorId } elseif ($_.ErrorRecord) { [string]$_.ErrorRecord.FullyQualifiedErrorId } else { '' }
+                        $CollectedId -notlike 'GroupNotOnboarded,*'
+                    })
+                $OtherErrors.Count | Should -Be 0
+                @($RunRows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -like "set permanent member eligibility for 'person2@example.com'*" }).Count | Should -Be 1
+                Should -Invoke Get-OERPimGroupPolicyId -Times 4 -Exactly -ParameterFilter { $AccessType -eq 'member' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Uri -like '*/roleManagementPolicies/pol-step/rules/Expiration_Admin_Eligibility' }
+                $RunWarnings.Count | Should -Be 1 -Because 'the second entry finds the listed policy closed'
+                ($RunWarnings[0] -ceq $Plan.Warnings[0]) | Should -BeTrue -Because 'the plan must show the very warning the run gives'
+            }
+        }
+
+        It 'decides each access type on its own: step 4 opening the owner policy leaves <Entry> to the read of its own policy' -ForEach @(
+            # The member policy still forbids permanent eligibility, so the member entry warns in both modes.
+            @{ Entry = 'a permanent member entry'; EntryJson = '{ "principal": "person1@example.com", "accessType": "member" }'
+                Row = 'would set permanent member eligibility*'; RunRow = 'set permanent member eligibility*'; Warns = $true; MemberPatches = 1 }
+            # Control: the owner entry finds the owner policy step 4 opens, so neither mode warns.
+            @{ Entry = 'a permanent owner entry'; EntryJson = '{ "principal": "person3@example.com", "accessType": "owner" }'
+                Row = 'would set permanent owner eligibility*'; RunRow = 'set permanent owner eligibility*'; Warns = $false; MemberPatches = 0 }
+        ) {
+            # The mirror of 'decides each access type on its own: step 4 opening the member policy ...'
+            # for the owner access type (BL-100): step 4's declined change stands in under the access
+            # type it was declared for.
+            InModuleScope $script:moduleName -Parameters @{ EntryJson = $EntryJson; Row = $Row; RunRow = $RunRow; Warns = $Warns; MemberPatches = $MemberPatches; MemberText = $script:StepMemberText } {
+                param($EntryJson, $Row, $RunRow, $Warns, $MemberPatches, $MemberText)
+                $Json = '{ "displayName": "role_sec_step", "members": null, "pimPolicy": { "owner": { "allowPermanentEligibility": true } }, ' +
+                    '"eligibility": [ ' + $EntryJson + ' ] }'
+
+                $Plan = Invoke-GroupWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $true
+                # Reached: both gates declined and planned their rows; nothing was written.
+                @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'would set pimPolicy (owner):*' }).Count | Should -Be 1
+                @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like $Row }).Count | Should -Be 1
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -in @('PATCH', 'POST') }
+
+                $script:StepEligRequired = $true
+                $script:StepOwnerEligRequired = $true
+                $Run = Invoke-GroupWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $false
+                # Reached: step 4 opened the owner policy and step 5 sent its request.
+                @($Run.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -like 'pimPolicy (owner) set:*' }).Count | Should -Be 1
+                @($Run.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -like $RunRow }).Count | Should -Be 1
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Uri -like '*/roleManagementPolicies/pol-step-owner/rules/Expiration_Admin_Eligibility' }
+                Should -Invoke Invoke-OERGraphRequest -Times $MemberPatches -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Uri -like '*/roleManagementPolicies/pol-step/rules/Expiration_Admin_Eligibility' }
+                if ($Warns) {
+                    $Plan.Warnings.Count | Should -Be 1
+                    $Plan.Warnings[0] | Should -BeExactly $MemberText
+                    $Run.Warnings.Count | Should -Be 1 -Because 'the member policy is still closed when the member entry is sent'
+                    ($Run.Warnings[0] -ceq $Plan.Warnings[0]) | Should -BeTrue -Because 'the plan must show the very warning the run gives'
+                } else {
+                    $Plan.Warnings.Count | Should -Be 0
+                    $Run.Warnings.Count | Should -Be 0
+                }
+            }
+        }
+
+        It 'plans one warning per group item, as a real run writes, for two groups of one document whose policies forbid permanent eligibility' {
+            # The record of a planned warning belongs to one group item (BL-100): a second group's
+            # member policy is another policy, still closed after the first group's entry opens its own.
+            # Both items go through the real Invoke-OERStructure, which calls the handler once per item,
+            # so a record kept across the items of one run would hide the second group's warning. Each
+            # group's member policy is kept separately by the transport below.
+            InModuleScope $script:moduleName -Parameters @{ MemberText = $script:StepMemberText } {
+                param($MemberText)
+                $SecondText = "This eligibility requires opening the PIM-for-groups policy for group '66666666-6666-6666-6666-6666666666e6' (member access) " +
+                    'to allow PERMANENT eligible assignments, which affects ALL member eligibility for this group.'
+                Mock Resolve-OERGroupId {
+                    switch ($DisplayName) {
+                        'role_sec_step' { '66666666-6666-6666-6666-6666666666e5' }
+                        'role_sec_step2' { '66666666-6666-6666-6666-6666666666e6' }
+                        '66666666-6666-6666-6666-6666666666e5' { $DisplayName }
+                        '66666666-6666-6666-6666-6666666666e6' { $DisplayName }
+                        default { throw "unexpected group $DisplayName" }
+                    }
+                }
+                Mock Get-OERGroup {
+                    $StepGroupName = if ($Id -eq '66666666-6666-6666-6666-6666666666e6') { 'role_sec_step2' } else { 'role_sec_step' }
+                    [PSCustomObject]@{ Id = $Id; DisplayName = $StepGroupName; Description = $null; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+                }
+                Mock Get-OERPimGroupPolicyId {
+                    if ($GroupId -eq '66666666-6666-6666-6666-6666666666e6') { 'pol-step-g2' } elseif ($AccessType -eq 'owner') { 'pol-step-owner' } else { 'pol-step' }
+                }
+                # The member policy of each group, closed until a PATCH of its rule opens it.
+                Mock Invoke-OERGraphRequest {
+                    if ($Method -eq 'POST' -and $Uri -like '*eligibilityScheduleRequests') { return @{ id = 'req-step'; status = 'Provisioned' } }
+                    if ($Uri -match '/roleManagementPolicies/(pol-step|pol-step-g2)/rules(?:/([^/?]+))?$') {
+                        $StepPolicy = $Matches[1]
+                        $StepRuleId = $Matches[2]
+                        if ($Method -eq 'PATCH' -and $StepRuleId -eq 'Expiration_Admin_Eligibility') {
+                            $script:StepTwoGroupRequired[$StepPolicy] = [bool]$Body.isExpirationRequired
+                            return @{}
+                        }
+                        if ($Method -ne 'PATCH' -and $Method -ne 'POST') {
+                            $StepRules = @(
+                                @{ id = 'Expiration_EndUser_Assignment'; isExpirationRequired = $true; maximumDuration = 'PT8H' }
+                                @{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = $script:StepTwoGroupRequired[$StepPolicy]; maximumDuration = 'P365D' }
+                            )
+                            if ($StepRuleId) { return @($StepRules | Where-Object { $_.id -eq $StepRuleId })[0] }
+                            return @{ value = $StepRules }
+                        }
+                    }
+                    throw "unexpected $Method $Uri"
+                }
+                function Invoke-StructureWarnCapture {
+                    param([string]$Json, [bool]$WhatIfRun)
+                    $All = @(Invoke-OERStructure -Json $Json -Include Groups -WhatIf:$WhatIfRun -Confirm:$false -WarningAction Continue -ErrorAction Stop 3>&1)
+                    [PSCustomObject]@{
+                        Rows     = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+                        Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                    }
+                }
+                $Json = '{ "version": "1.0", "groups": [ ' +
+                    '{ "displayName": "role_sec_step", "members": null, "eligibility": [ { "principal": "person1@example.com", "accessType": "member" } ] }, ' +
+                    '{ "displayName": "role_sec_step2", "members": null, "eligibility": [ { "principal": "person2@example.com", "accessType": "member" } ] } ] }'
+
+                $script:StepTwoGroupRequired = @{ 'pol-step' = $true; 'pol-step-g2' = $true }
+                $Plan = Invoke-StructureWarnCapture -Json $Json -WhatIfRun $true
+                # Reached: the entry of each group was planned after the read of its own policy; nothing
+                # was written.
+                @($Plan.Rows | Where-Object { $_.Item -eq 'role_sec_step' -and $_.Action -eq 'Skipped' -and $_.Detail -like "would set permanent member eligibility for 'person1@example.com':*" }).Count | Should -Be 1
+                @($Plan.Rows | Where-Object { $_.Item -eq 'role_sec_step2' -and $_.Action -eq 'Skipped' -and $_.Detail -like "would set permanent member eligibility for 'person2@example.com':*" }).Count | Should -Be 1
+                Should -Invoke Get-OERPimGroupPolicyId -Times 1 -Exactly -ParameterFilter { $GroupId -eq '66666666-6666-6666-6666-6666666666e6' }
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -in @('PATCH', 'POST') }
+                $Plan.Warnings.Count | Should -Be 2
+                $Plan.Warnings[0] | Should -BeExactly $MemberText
+                $Plan.Warnings[1] | Should -BeExactly $SecondText
+
+                $script:StepTwoGroupRequired = @{ 'pol-step' = $true; 'pol-step-g2' = $true }
+                $Run = Invoke-StructureWarnCapture -Json $Json -WhatIfRun $false
+                # Reached: each group's policy was opened by its own entry, and both requests were sent.
+                @($Run.Rows | Where-Object { $_.Item -eq 'role_sec_step' -and $_.Action -eq 'Updated' -and $_.Detail -like "set permanent member eligibility for 'person1@example.com'*" }).Count | Should -Be 1
+                @($Run.Rows | Where-Object { $_.Item -eq 'role_sec_step2' -and $_.Action -eq 'Updated' -and $_.Detail -like "set permanent member eligibility for 'person2@example.com'*" }).Count | Should -Be 1
+                Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Uri -like '*/roleManagementPolicies/pol-step/rules/Expiration_Admin_Eligibility' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Uri -like '*/roleManagementPolicies/pol-step-g2/rules/Expiration_Admin_Eligibility' }
+                $Run.Warnings.Count | Should -Be 2 -Because 'a real run warns once for each group policy it opens'
+                ($Run.Warnings[0] -ceq $Plan.Warnings[0]) | Should -BeTrue -Because 'the plan must show the very warnings the run gives, in order'
+                ($Run.Warnings[1] -ceq $Plan.Warnings[1]) | Should -BeTrue -Because 'the plan must show the very warnings the run gives, in order'
+            }
+        }
     }
 
     Context 'the MFA / authentication context pair the diff reconciles (step 4, Set-OERGroupPimPolicy)' {
