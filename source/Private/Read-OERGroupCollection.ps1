@@ -5,12 +5,12 @@ function Read-OERGroupCollection {
     failure.
 
     .DESCRIPTION
-    The single reader of the three per-group collections Get-OERGroup attaches (and, in a later
-    step, the inventory's group reader): the members and the owners (through Get-OERGroupRelation,
-    which reads the untyped and the typed service principal collection and emits nothing unless
-    both succeed) and the PIM-for-Groups eligibility schedule instances (one Invoke-OERGraphRequest
-    read). Get-OERGroupMember reads a group's members through Get-OERGroupRelation directly and does
-    not use it.
+    The single reader of the three per-group collections that Get-OERGroup attaches and that the
+    inventory's group reader, Get-OERInventoryGroup, reads one at a time under -RelevantOnly: the
+    members and the owners (through Get-OERGroupRelation, which reads the untyped and the typed
+    service principal collection and emits nothing unless both succeed) and the PIM-for-Groups
+    eligibility schedule instances (one Invoke-OERGraphRequest read). Get-OERGroupMember reads a
+    group's members through Get-OERGroupRelation directly and does not use it.
 
     It returns ONE tagged Omnicit.EntraRBAC.GroupCollectionRead object and never writes an error
     record: a failed read comes back with Read false, Value null, and the ErrorId, Message and
@@ -82,8 +82,8 @@ function Read-OERGroupCollection {
             # Invoke-OERStructure -Prune then deletes on (issue #76). Omitting the property
             # instead keeps the two cases apart, and the error is non-terminating so
             # -ErrorAction and -ErrorVariable can see it; a Write-Warning could not be. This
-            # function returns the failure; the caller (Get-OERGroup) does the omitting and
-            # writes the error.
+            # function returns the failure; the caller does the omitting and reports it
+            # (Get-OERGroup writes the error, Get-OERInventoryGroup records the cause).
             try {
                 # Get-OERGroupRelation is the single reader of a group's members: the untyped
                 # v1.0 read leaves service principals out, so it adds the typed read, and it
@@ -149,7 +149,7 @@ function Read-OERGroupCollection {
                 # fires in production. Keep the token rule here and in the wrapper in step, and
                 # never delete either one on the strength of the other. Every other failure is
                 # returned as unread, same as members and owners above; the caller omits the
-                # property and writes the error.
+                # property and reports the failure.
                 #
                 # MATCHED ON THE GRAPH ERROR CODE AS A WHOLE TOKEN, not on one exact
                 # FullyQualifiedErrorId spelling. The code is the reliable signal; where the

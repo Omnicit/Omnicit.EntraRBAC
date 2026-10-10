@@ -57,15 +57,21 @@ Describe 'Export-OERInventory (core)' {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Get-OERConfiguration {}
         Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
-        # An inventory with one RBAC-relevant group and one plain group.
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
+        # The group read: one RBAC-relevant group and one plain group.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @(
                     [PSCustomObject]@{ displayName = 'role_sec_admin'; roleAssignable = $true;  dynamic = $false; members = @('person26@example.com'); eligibility = @() },
                     [PSCustomObject]@{ displayName = 'PlainTeam';      roleAssignable = $false; dynamic = $false; members = @('person27@example.com','person28@example.com'); eligibility = @() }
                 )
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                Unread = @(); Causes = @()
+            }
+        }
+        # The other Entra ID sections, never read for -Include Groups: empty, so a test that adds one
+        # never reaches the real cmdlet.
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
                 AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
             }
             $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
@@ -117,9 +123,9 @@ Describe 'Export-OERInventory (core)' {
         @($Roster).Count | Should -Be 2
     }
 
-    It 'passes -IncludeId to the internal Get-OERInventory call for the roster join key' {
+    It 'passes -IncludeId to the group reader for the roster join key' {
         Export-OERInventory -OutputPath $TestDrive -Include Groups | Out-Null
-        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -ParameterFilter {
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter {
             $IncludeId -eq $true
         }
     }
@@ -128,8 +134,8 @@ Describe 'Export-OERInventory (core)' {
         # Two groups sharing the display name 'dup' with different ids and different member
         # counts. A display-name-only join would attribute the LAST write's count to both rows;
         # keying on id must attribute each row its own group's count.
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            param($Include, $IncludeId)
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            param($IncludeId)
             $G1 = [PSCustomObject]@{
                 displayName = 'dup'; roleAssignable = $true; dynamic = $false
                 members = @('person26@example.com'); eligibility = @()
@@ -142,14 +148,7 @@ Describe 'Export-OERInventory (core)' {
                 $G1 | Add-Member -NotePropertyName id -NotePropertyValue 'id-A' -Force
                 $G2 | Add-Member -NotePropertyName id -NotePropertyValue 'id-B' -Force
             }
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
-                Groups = @($G1, $G2)
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
-            }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
+            [PSCustomObject]@{ Groups = @($G1, $G2); Unread = @(); Causes = @() }
         }
         Mock -ModuleName $script:moduleName Get-OERGroup {
             [PSCustomObject]@{
@@ -170,8 +169,8 @@ Describe 'Export-OERInventory (core)' {
     }
 
     It 'reports a null member count for a group the detailed projection did not include' {
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            param($Include, $IncludeId)
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            param($IncludeId)
             $G1 = [PSCustomObject]@{
                 displayName = 'role_sec_admin'; roleAssignable = $true; dynamic = $false
                 members = @('person26@example.com'); eligibility = @()
@@ -179,14 +178,7 @@ Describe 'Export-OERInventory (core)' {
             if ($IncludeId) {
                 $G1 | Add-Member -NotePropertyName id -NotePropertyValue 'id-A' -Force
             }
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
-                Groups = @($G1)
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
-            }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
+            [PSCustomObject]@{ Groups = @($G1); Unread = @(); Causes = @() }
         }
         Mock -ModuleName $script:moduleName Get-OERGroup {
             [PSCustomObject]@{
@@ -210,8 +202,8 @@ Describe 'Export-OERInventory (core)' {
         # -IncludeId is threaded through the internal call purely to key the roster join, and the
         # id it stamps (on both the top-level group and each eligibility entry) must be stripped
         # again before the canonical inventory is written.
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            param($Include, $IncludeId)
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            param($IncludeId)
             $Elig = [PSCustomObject]@{ principal = 'anna@contoso.com'; accessType = 'member' }
             if ($IncludeId) {
                 $Elig | Add-Member -NotePropertyName id -NotePropertyValue 'p-1' -Force
@@ -223,14 +215,7 @@ Describe 'Export-OERInventory (core)' {
             if ($IncludeId) {
                 $G1 | Add-Member -NotePropertyName id -NotePropertyValue 'id-A' -Force
             }
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
-                Groups = @($G1)
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
-            }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
+            [PSCustomObject]@{ Groups = @($G1); Unread = @(); Causes = @() }
         }
         $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups
         $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
@@ -247,14 +232,11 @@ Describe 'Export-OERInventory (core)' {
     It 'emits an empty (not null) groups section when no group is RBAC-relevant' {
         # Regression: an empty else-branch assigned from an if-statement collapses to $null, which
         # would inject a single null group and fail apply-schema validation.
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @([PSCustomObject]@{ displayName = 'PlainTeam'; roleAssignable = $false; dynamic = $false; members = @('person26@example.com'); eligibility = @() })
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                Unread = @(); Causes = @()
             }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory'); $inv
         }
         $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups
         $Raw = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
@@ -354,22 +336,15 @@ Describe 'Export-OERInventory (the roster is complete, the apply document is not
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Get-OERConfiguration {}
         Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
-        # The inventory read is security-enabled-scoped, so it returns the ONE security group only.
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            param($Include, $IncludeId)
+        # The group read is security-enabled-scoped, so it returns the ONE security group only.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            param($IncludeId)
             $G1 = [PSCustomObject]@{
                 displayName = 'role_sec_admin'; roleAssignable = $true; dynamic = $false
                 members = @('person26@example.com'); eligibility = @()
             }
             if ($IncludeId) { $G1 | Add-Member -NotePropertyName id -NotePropertyValue 'g-sec' -Force }
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
-                Groups = @($G1)
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
-            }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
+            [PSCustomObject]@{ Groups = @($G1); Unread = @(); Causes = @() }
         }
         # The roster read sees the tenant: the security group AND a Microsoft 365 group with
         # securityEnabled false, which is exactly what the old filter dropped. The mock HONOURS the
@@ -418,10 +393,10 @@ Describe 'Export-OERInventory (the roster is complete, the apply document is not
             'scope widens what the apply engine reconciles and, under -Prune, deletes'
         )
         @($Inv.Groups).Count | Should -Be 1
-        # And the widening is not smuggled in from this side either: Export never passes a
-        # -GroupFilter, so Get-OERInventory keeps its own 'securityEnabled eq true' default.
-        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter {
-            -not $GroupFilter
+        # And the widening is not smuggled in from this side either: the export sends the group
+        # reader the 'securityEnabled eq true' filter and nothing wider.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 1 -Exactly -ParameterFilter {
+            $Filter -eq 'securityEnabled eq true'
         }
     }
 
@@ -455,27 +430,25 @@ Describe 'Export-OERInventory (the roster is complete, the apply document is not
 Describe 'Export-OERInventory (-IncludeSyncedGroups, A15)' {
     # A group synchronized from on-premises is never role-assignable and never managed in PIM for
     # Groups, so none of the three RBAC-relevance criteria keeps it in inventory.json. The switch
-    # keeps it on request; Get-OERInventory writes onPremisesSynced as a boolean true for such a
-    # group and never otherwise, and the filter takes nothing but that.
+    # keeps it on request; the group reader (Get-OERInventoryGroup) writes onPremisesSynced as a
+    # boolean true for such a group and never otherwise, and the filter takes nothing but that. The
+    # reader is mocked here and returns all three groups whatever it is asked, so these tests prove
+    # the selection the export makes on what comes back.
     BeforeEach {
         InModuleScope $script:moduleName { $script:_OERAuthState = $null }
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Get-OERConfiguration {}
         Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
         # The group order is rbac, synced, plain: the order a kept set must come back in.
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @(
                     [PSCustomObject]@{ displayName = 'rbac';   roleAssignable = $true;  dynamic = $false; members = @('person26@example.com'); eligibility = @() },
                     [PSCustomObject]@{ displayName = 'synced'; roleAssignable = $false; dynamic = $false; onPremisesSynced = $true; members = @() },
                     [PSCustomObject]@{ displayName = 'plain';  roleAssignable = $false; dynamic = $false; members = @() }
                 )
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                Unread = @(); Causes = @()
             }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
         }
         Mock -ModuleName $script:moduleName Get-OERGroup {
             [PSCustomObject]@{ Id = 'g1'; DisplayName = 'rbac';   GroupType = 'RoleEnabled'; IsAssignableToRole = $true }
@@ -532,22 +505,18 @@ Describe 'Export-OERInventory (-IncludeSyncedGroups, A15)' {
     }
 
     It 'takes only a boolean true for a synchronized group, never the string True or a boolean false' {
-        # A hand-built inventory can carry any shape; Get-OERInventory writes a boolean true or no key.
+        # A hand-built group read can carry any shape; the reader writes a boolean true or no key.
         # The string 'True' and the boolean false are not synchronized groups, so neither is kept.
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @(
                     [PSCustomObject]@{ displayName = 'rbac';       roleAssignable = $true;  dynamic = $false; members = @(); eligibility = @() },
                     [PSCustomObject]@{ displayName = 'as-string';  roleAssignable = $false; dynamic = $false; onPremisesSynced = 'True'; members = @() },
                     [PSCustomObject]@{ displayName = 'as-false';   roleAssignable = $false; dynamic = $false; onPremisesSynced = $false;  members = @() },
                     [PSCustomObject]@{ displayName = 'as-bool';    roleAssignable = $false; dynamic = $false; onPremisesSynced = $true;   members = @() }
                 )
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                Unread = @(); Causes = @()
             }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
         }
         $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups -IncludeSyncedGroups
         $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
@@ -555,12 +524,13 @@ Describe 'Export-OERInventory (-IncludeSyncedGroups, A15)' {
         $Result.Groups | Should -Be 2
     }
 
-    It 'makes the selection here and sends Get-OERInventory the same read, with no group filter' {
-        # The selection is made on the projection Get-OERInventory returns, so the switch adds
-        # nothing to the read and cannot widen the securityEnabled scope of inventory.json.
+    It 'asks the group reader to keep synchronized groups, with the same security-enabled filter' {
+        # The switch reaches the read (a synchronized group is then read in full rather than
+        # dropped after two requests), but not the filter, so it cannot widen the securityEnabled
+        # scope of inventory.json. The selection above is still made here on what comes back.
         Export-OERInventory -OutputPath $TestDrive -Include Groups -IncludeSyncedGroups | Out-Null
-        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter {
-            -not $GroupFilter -and $IncludeId -eq $true
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 1 -Exactly -ParameterFilter {
+            $Filter -eq 'securityEnabled eq true' -and $IncludeId -eq $true -and $RelevantOnly -eq $true -and $IncludeSyncedGroups -eq $true
         }
     }
 }
@@ -571,6 +541,8 @@ Describe 'Export-OERInventory (Azure walk)' {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Get-OERConfiguration {}
         Mock -ModuleName $script:moduleName Get-OERGroup {}
+        # Groups are not under test here: the default -Include reads them, and finds none.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
         Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
         Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
             [PSCustomObject]@{
@@ -744,6 +716,8 @@ Describe 'Export-OERInventory (Azure PIM eligibility)' {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Get-OERConfiguration {}
         Mock -ModuleName $script:moduleName Get-OERGroup {}
+        # Groups are not under test here: a run that includes them finds none.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
         Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
         Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
             [PSCustomObject]@{
@@ -901,6 +875,8 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Get-OERConfiguration {}
         Mock -ModuleName $script:moduleName Get-OERGroup {}
+        # A test about a group read replaces this; the rest read no group.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
         Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
         # Default to an empty, all-read eligibility result so the many RoleAssignments-including
         # tests below (none of which are about azurePimEligibility.json) never reach the real
@@ -1105,21 +1081,15 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
     }
 
     It 'reports an unread collection on the bundle summary and raises InventoryPartial' {
-        # Get-OERInventory now reports a collection it could not read as a non-terminating
-        # InventoryPartial carrying the section/displayName/key triple on TargetObject, and returns
-        # a document whose members key is an explicit null.
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            Write-Error -Message 'This inventory is PARTIAL: groups/role_sec_team members could not be read.' `
-                -ErrorId 'InventoryPartial' -Category LimitsExceeded `
-                -TargetObject 'groups/role_sec_team/members' -ErrorAction Continue
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
+        # The group reader reports a collection it could not read in its Unread list, by the
+        # section/displayName/key triple, and returns a projection whose members key is an explicit
+        # null.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @([PSCustomObject]@{ displayName = 'role_sec_team'; roleAssignable = $true; dynamic = $false; description = $null; members = $null })
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                Unread = @('groups/role_sec_team/members')
+                Causes = @([PSCustomObject]@{ Cause = "Could not read members for group g-1: Too many requests (429). The Members property is omitted rather than reported as empty."; Target = 'g-1' })
             }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
         }
 
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'ir1') -Include Groups `
@@ -1176,28 +1146,22 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
     }
 
     It 'opens the export InventoryPartial message by saying objects were left out for a shared name when that is the only cause' {
-        # F5. Get-OERInventory leaves out two live objects that share a name and names them in its own
-        # InventoryPartial. Nothing is unread and nothing is written as null, so an opening that
-        # spoke only of collections that could not be read would be untrue of this export.
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            Write-Error -Message 'This inventory is PARTIAL: 1 collection(s) or object(s) were left out because two or more live objects share a name.' `
-                -ErrorId 'InventoryPartial' -Category LimitsExceeded `
-                -TargetObject 'groups/Dup' -ErrorAction Continue
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
+        # F5. The group reader leaves out two live groups that share a name and names them in its
+        # Unread list. Nothing is unread and nothing is written as null, so an opening that spoke
+        # only of collections that could not be read would be untrue of this export.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @()
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                Unread = @('groups/Dup')
+                Causes = @([PSCustomObject]@{ Cause = 'Two or more live objects share the name groups/Dup (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.'; Target = 'groups/Dup' })
             }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
         }
 
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'ir-dup') -Include Groups `
             -WarningAction SilentlyContinue -ErrorVariable ExErr -ErrorAction SilentlyContinue
 
-        # Reach proof: the inventory read ran, its one report is the only entry, and Export raised its own error.
-        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        # Reach proof: the group read ran, its one report is the only entry, and Export raised its own error.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 1 -Exactly
         @($Bundle.IncompleteReads) | Should -Be @('groups/Dup')
         $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
         $Partial.Count | Should -Be 1
@@ -1217,20 +1181,32 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
         # $ErrorAction is unbound, which is precisely how the real cmdlet inherits the preference.
         # A hardcoded fallback would make this test INERT: it would stay non-terminating with the
         # pin removed and pass either way.
+        #
+        # Get-OERInventory no longer reads the groups, so the partial read under test is an
+        # administrative unit's, and the run includes AdministrativeUnits to reach that call. The
+        # group read reports its own unread collection beside it, through the reader's Unread list.
         Mock -ModuleName $script:moduleName Get-OERInventory {
             param($Include, $IncludeId, $ErrorAction)
             $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
-            Write-Error -Message 'This inventory is PARTIAL: groups/role_sec_team members could not be read.' `
+            Write-Error -Message 'This inventory is PARTIAL: administrativeUnits/AU-One scopedRoles could not be read.' `
                 -ErrorId 'InventoryPartial' -Category LimitsExceeded `
-                -TargetObject 'groups/role_sec_team/members' -ErrorAction $Ea
+                -TargetObject 'administrativeUnits/AU-One/scopedRoles' -ErrorAction $Ea
             $inv = [PSCustomObject]@{
                 Version = '1.0'
-                Groups = @([PSCustomObject]@{ displayName = 'role_sec_team'; roleAssignable = $true; dynamic = $false; description = $null; members = $null })
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                Groups = @()
+                AdministrativeUnits = @([PSCustomObject]@{ displayName = 'AU-One'; description = $null; restricted = $false; scopedRoles = $null })
+                Catalogs = @(); AccessPackages = @()
                 AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
             }
             $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
             $inv
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
+                Groups = @([PSCustomObject]@{ displayName = 'role_sec_team'; roleAssignable = $true; dynamic = $false; description = $null; members = $null })
+                Unread = @('groups/role_sec_team/members')
+                Causes = @()
+            }
         }
         # A real group so groupsRoster.json is genuinely written: the assertion below is that the
         # WHOLE bundle survives, not merely inventory.json. The Describe-level mock returns nothing,
@@ -1242,7 +1218,7 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
         $Root = Join-Path $TestDrive 'eastop'
         $Caught = $null
         try {
-            Export-OERInventory -OutputPath $Root -Include Groups -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+            Export-OERInventory -OutputPath $Root -Include Groups, AdministrativeUnits -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
         } catch {
             $Caught = $PSItem
         }
@@ -1258,41 +1234,41 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
         $Caught | Should -Not -BeNullOrEmpty
         $Caught.FullyQualifiedErrorId | Should -Be 'InventoryPartial,Export-OERInventory'
         $Caught.Exception.Message | Should -Match 'groups/role_sec_team/members'
+        $Caught.Exception.Message | Should -Match 'administrativeUnits/AU-One/scopedRoles'
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Exactly -Times 1 -ParameterFilter { $ErrorAction -eq 'Continue' }
     }
 
     It 'falls back to the error message when the partial error carries no TargetObject' {
         # A record whose TargetObject is empty must not become a blank IncompleteReads entry: the
-        # summary would then count a gap it cannot name.
+        # summary would then count a gap it cannot name. Get-OERInventory no longer reads the groups,
+        # so the record is an administrative unit's.
         Mock -ModuleName $script:moduleName Get-OERInventory {
-            Write-Error -Message 'This inventory is PARTIAL: groups/role_sec_team members could not be read.' `
+            Write-Error -Message 'This inventory is PARTIAL: administrativeUnits/AU-One scopedRoles could not be read.' `
                 -ErrorId 'InventoryPartial' -Category LimitsExceeded -ErrorAction Continue
             $inv = [PSCustomObject]@{
                 Version = '1.0'
-                Groups = @([PSCustomObject]@{ displayName = 'role_sec_team'; roleAssignable = $true; dynamic = $false; description = $null; members = $null })
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                Groups = @()
+                AdministrativeUnits = @([PSCustomObject]@{ displayName = 'AU-One'; description = $null; restricted = $false; scopedRoles = $null })
+                Catalogs = @(); AccessPackages = @()
                 AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
             }
             $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
             $inv
         }
 
-        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'ir2') -Include Groups `
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'ir2') -Include AdministrativeUnits `
             -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
         @($Bundle.IncompleteReads).Count | Should -Be 1
         @($Bundle.IncompleteReads)[0] | Should -Not -BeNullOrEmpty
-        @($Bundle.IncompleteReads)[0] | Should -Match 'role_sec_team'
+        @($Bundle.IncompleteReads)[0] | Should -Match 'AU-One'
     }
 
     It 'reports an empty IncompleteReads and raises no InventoryPartial when every collection was read' {
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @([PSCustomObject]@{ displayName = 'role_sec_team'; roleAssignable = $true; dynamic = $false; description = $null; members = @() })
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                Unread = @(); Causes = @()
             }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
         }
 
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'ir3') -Include Groups `
@@ -1303,15 +1279,11 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
     }
 
     It 'reports an unknown member count rather than one for a group whose members were not read' {
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @([PSCustomObject]@{ id = 'g-1'; displayName = 'role_sec_team'; roleAssignable = $true; dynamic = $false; description = $null; members = $null })
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                Unread = @('groups/role_sec_team/members'); Causes = @()
             }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
         }
         Mock -ModuleName $script:moduleName Get-OERGroup {
             [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_team'; IsAssignableToRole = $true; GroupType = 'Assigned' }
@@ -1327,15 +1299,11 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
     }
 
     It 'still reports a real member count for a group whose members were read' {
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @([PSCustomObject]@{ id = 'g-1'; displayName = 'role_sec_team'; roleAssignable = $true; dynamic = $false; description = $null; members = @('person26@example.com','person27@example.com') })
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                Unread = @(); Causes = @()
             }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
         }
         Mock -ModuleName $script:moduleName Get-OERGroup {
             [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_team'; IsAssignableToRole = $true; GroupType = 'Assigned' }
@@ -1350,16 +1318,13 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
     It 'does not class a group as RBAC-relevant on an eligibility key that was never read' {
         # eligibility is ABSENT on a group whose eligibility read failed. @($null).Count is 1, so a
         # bare count in the $DetailedGroups filter would promote every such group into inventory.json
-        # on evidence that does not exist.
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
+        # on evidence that does not exist. The group reader returns such a group, read in full,
+        # because its relevance could not be decided (R2).
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @([PSCustomObject]@{ displayName = 'PlainTeam'; roleAssignable = $false; dynamic = $false; description = $null; members = @() })
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                Unread = @('groups/PlainTeam/eligibility', 'groups/PlainTeam/pimPolicy'); Causes = @()
             }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
         }
 
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'ir6') -Include Groups `
@@ -1371,16 +1336,12 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
     }
 
     It 'still classes a group as RBAC-relevant on a genuinely declared eligibility' {
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @([PSCustomObject]@{ displayName = 'PlainTeam'; roleAssignable = $false; dynamic = $false; description = $null; members = @()
                         eligibility = @([PSCustomObject]@{ principal = 'person30@example.com'; accessType = 'member' }) })
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                Unread = @(); Causes = @()
             }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
         }
 
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'ir7') -Include Groups `
@@ -1392,15 +1353,11 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
     It 'writes the explicit null through to inventory.json rather than an empty array' {
         # End-to-end: the file Invoke-OERStructure -Prune actually reads must carry null, since an
         # empty array there is a DECLARED empty membership and prunes every live member.
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            $inv = [PSCustomObject]@{
-                Version = '1.0'
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @([PSCustomObject]@{ displayName = 'role_sec_team'; roleAssignable = $true; dynamic = $false; description = $null; members = $null })
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                Unread = @('groups/role_sec_team/members'); Causes = @()
             }
-            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $inv
         }
 
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'ir8') -Include Groups `
@@ -1423,6 +1380,8 @@ Describe 'Export-OERInventory (prompt + readme + self-check)' {
         InModuleScope $script:moduleName { $script:_OERAuthState = $null }
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Get-OERGroup {}
+        # Groups are not under test here: the group read finds none.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
         Mock -ModuleName $script:moduleName Get-OERInventory {
             $inv = [PSCustomObject]@{ Version='1.0'; Groups=@(); AdministrativeUnits=@(); Catalogs=@(); AccessPackages=@(); AccessReviews=@(); RoleAssignments=@(); RoleManagementPolicies=@() }
             $inv.PSObject.TypeNames.Insert(0,'Omnicit.EntraRBAC.Inventory'); $inv
@@ -1444,8 +1403,9 @@ Describe 'Export-OERInventory (prompt + readme + self-check)' {
         $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'readme-complete') -Include Groups `
             -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
 
-        # Reach proofs: both group reads ran, and the export itself reports a complete read.
-        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        # Reach proofs: both group reads ran (the inventory's group reader and the roster), and the
+        # export itself reports a complete read.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 1 -Exactly
         Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
         @($Result.IncompleteReads).Count | Should -Be 0
         @($Result.SkippedScopes).Count | Should -Be 0
@@ -1532,6 +1492,8 @@ Describe 'Export-OERInventory (directory role sections)' {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Get-OERConfiguration {}
         Mock -ModuleName $script:moduleName Get-OERGroup {}
+        # Groups are not under test here: the default -Include reads them, and finds none.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
         Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
         # -All-scope Azure walk zeroed out (Scopes empty) so a default -Include (which still carries
         # RoleAssignments) does not need the Azure per-scope mocking this Describe does not set up.
@@ -2176,9 +2138,9 @@ Describe 'Export-OERInventory (a section whose list could not be read is partial
 Describe 'Export-OERInventory (the group roster that could not be read is partial)' {
     # BL-05 / decision A9, the roster half. groupsRoster.json is read-only context, but a roster that
     # could not be read is written as [] exactly like a tenant with no groups, so it is named in
-    # IncompleteReads as groupsRoster -- by this cmdlet, not by Get-OERInventory, which never sees it.
-    # Get-OERInventory is mocked here: the inventory read is healthy and returns the one group, and
-    # the roster read (Get-OERGroup -All) is the only thing under test.
+    # IncompleteReads as groupsRoster -- by this cmdlet, not by the group reader, which never sees it.
+    # The group reader is mocked here: the group read is healthy and returns the one group, and the
+    # roster read (Get-OERGroup -All) is the only thing under test.
     BeforeAll {
         # A non-terminating failure the roster read's -ErrorAction Stop promotes. A Write-Error mock
         # body is never promoted, so it would not reach the catch; a mock with its own CmdletBinding
@@ -2195,16 +2157,12 @@ Describe 'Export-OERInventory (the group roster that could not be read is partia
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Get-OERConfiguration {}
         Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
-        # The filtered group read succeeds: the inventory comes back with its one security group.
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            $Inv = [PSCustomObject]@{
-                Version = '1.0'
+        # The filtered group read succeeds: it comes back with its one security group.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
                 Groups = @([PSCustomObject]@{ id = 'g-1'; displayName = 'role_sec_team'; roleAssignable = $true; dynamic = $false; description = $null; members = @() })
-                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
-                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                Unread = @(); Causes = @()
             }
-            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
-            $Inv
         }
     }
 
@@ -2314,6 +2272,8 @@ Describe 'Export-OERInventory tenantId (BL-88, A14)' {
         }
         # What Get-OERInventory hands back here carries no tenantId: the export writes its OWN capture.
         Mock -ModuleName $script:moduleName Get-OERInventory { & $script:RealConvert }
+        # The group read finds no group; the groups section is not what decides tenantId.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
     }
 
     AfterAll {
@@ -2324,8 +2284,8 @@ Describe 'Export-OERInventory tenantId (BL-88, A14)' {
         $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'tid-groups') -Include Groups `
             -WarningVariable Warn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
 
-        # Reach proofs: the bundle was written, and the real self-check ran over it.
-        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        # Reach proofs: the group read ran, the bundle was written, and the real self-check ran over it.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 1 -Exactly
         Test-Path (Join-Path $Result.BundlePath 'inventory.json') | Should -BeTrue
         Test-Path (Join-Path $Result.BundlePath 'schema.json') | Should -BeTrue
 
@@ -2354,6 +2314,7 @@ Describe 'Export-OERInventory tenantId (BL-88, A14)' {
         # Reach proofs: the Azure walk ran (it asked for an ARM token), and no Entra read was made.
         Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $IncludeARM }
         Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 0
         $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
         $Inv.tenantId | Should -BeExactly '44444444-4444-4444-4444-444444444444'
         @($Inv.PSObject.Properties.Name)[0..2] | Should -Be @('version', 'tenantId', 'groups')
@@ -2373,8 +2334,10 @@ Describe 'Export-OERInventory tenantId (BL-88, A14)' {
     }
 
     It 'writes its own capture, not the tenantId of the inventory Get-OERInventory returned' {
+        # AdministrativeUnits, not Groups: Get-OERInventory no longer reads the groups, so a run of
+        # groups alone would never call it and the test would prove nothing.
         Mock -ModuleName $script:moduleName Get-OERInventory { & $script:RealConvert -TenantId '77777777-7777-7777-7777-777777777777' }
-        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'tid-own') -Include Groups `
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'tid-own') -Include AdministrativeUnits `
             -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
 
         Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
@@ -2407,5 +2370,338 @@ Describe 'Export-OERInventory tenantId (BL-88, A14)' {
         $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
         $Inv.PSObject.Properties.Name | Should -Not -Contain 'tenantId'
         @($Warn).Count | Should -Be 0
+    }
+}
+
+Describe 'Export-OERInventory (the groups are read through the relevance-first group reader, A13)' {
+    # Without -AllGroupsDetailed the export asks the group reader to decide first, in two requests
+    # per group, which groups are RBAC-relevant, and to read members, owners and policies only for
+    # those. Get-OERInventory reads the other Entra ID sections only.
+    Context 'what the export asks the reader for' {
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+            Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+            Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+            Mock -ModuleName $script:moduleName Get-OERGroup {}
+            Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+            Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+                [PSCustomObject]@{ Scopes = @(); Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() } }
+            }
+            Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+            Mock -ModuleName $script:moduleName Get-OERInventory {
+                $inv = [PSCustomObject]@{
+                    Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                    AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                }
+                $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+                $inv
+            }
+            Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        }
+
+        It 'asks once for the relevant groups only, with ids, without shared names, under the security-enabled filter' {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-default') -WarningAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter {
+                $RelevantOnly -eq $true -and $IncludeId -eq $true -and $ExcludeSharedName -eq $true -and
+                $Filter -eq 'securityEnabled eq true' -and -not $IncludeSyncedGroups
+            }
+            # Get-OERInventory still reads the other Entra ID sections, and never the groups.
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Exactly -Times 1 -ParameterFilter {
+                $Include -contains 'AdministrativeUnits' -and $Include -contains 'DirectoryRoleAssignments'
+            }
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 0 -ParameterFilter { $Include -contains 'Groups' }
+        }
+
+        It 'asks for every group in full under -AllGroupsDetailed' {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-all') -Include Groups -AllGroupsDetailed | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter {
+                -not $RelevantOnly -and -not $IncludeSyncedGroups -and $IncludeId -eq $true -and $ExcludeSharedName -eq $true -and
+                $Filter -eq 'securityEnabled eq true'
+            }
+        }
+
+        It 'asks the reader to keep synchronized groups under -IncludeSyncedGroups' {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-synced') -Include Groups -IncludeSyncedGroups | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter {
+                $RelevantOnly -eq $true -and $IncludeSyncedGroups -eq $true
+            }
+        }
+
+        It 'asks for every group in full, and nothing about synchronized groups, under -AllGroupsDetailed -IncludeSyncedGroups' {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-all-synced') -Include Groups -AllGroupsDetailed -IncludeSyncedGroups | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter {
+                -not $RelevantOnly -and -not $IncludeSyncedGroups
+            }
+        }
+
+        It 'does not read groups at all when -Include does not name Groups' {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-none') -Include AdministrativeUnits | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Exactly -Times 1
+        }
+    }
+
+    Context 'end to end, through the transport' {
+        # Only the sign-in and the transport are mocked (plus the profile read and the schema
+        # self-check, which are not under test): the real group reader, the real Get-OERGroup and
+        # the real collection, criterion and policy readers answer from one dispatcher, so every
+        # request is counted and the document is what the real chain builds.
+        BeforeAll {
+            $script:E2EIdRa = '11111111-1111-1111-1111-111111111111'
+            $script:E2EIdEl = '22222222-2222-2222-2222-222222222222'
+            $script:E2EIdMod = '33333333-3333-3333-3333-333333333333'
+            $script:E2EIdPlain = '44444444-4444-4444-4444-444444444444'
+            $script:E2EIdSync = '55555555-5555-5555-5555-555555555555'
+            $script:E2EIdDyn = '66666666-6666-6666-6666-666666666666'
+            $script:E2EEligPrincipal = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+
+            # The mixed fixture tenant, in list order (the same set as Get-OERInventoryGroup.Tests.ps1).
+            # Every group is security-enabled, so the security-enabled filter keeps all of them.
+            $script:E2ENewTenant = {
+                @(
+                    @{ Id = $script:E2EIdRa; Name = 'G-RA'; RoleAssignable = $true; Synced = $false; Dynamic = $false
+                        Member = 'person1@contoso.com'; Owner = 'person2@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                    @{ Id = $script:E2EIdEl; Name = 'G-EL'; RoleAssignable = $false; Synced = $false; Dynamic = $false
+                        Member = 'person3@contoso.com'; Owner = 'person4@contoso.com'; Eligibility = @($script:E2EEligPrincipal); Policy = 'Untouched' }
+                    @{ Id = $script:E2EIdMod; Name = 'G-MOD'; RoleAssignable = $false; Synced = $false; Dynamic = $false
+                        Member = 'person5@contoso.com'; Owner = 'person6@contoso.com'; Eligibility = @(); Policy = 'Modified' }
+                    @{ Id = $script:E2EIdPlain; Name = 'G-PLAIN'; RoleAssignable = $false; Synced = $false; Dynamic = $false
+                        Member = 'person7@contoso.com'; Owner = 'person8@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                    @{ Id = $script:E2EIdSync; Name = 'G-SYNC'; RoleAssignable = $false; Synced = $true; Dynamic = $false
+                        Member = 'person9@contoso.com'; Owner = 'person10@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                    @{ Id = $script:E2EIdDyn; Name = 'G-DYN'; RoleAssignable = $false; Synced = $false; Dynamic = $true
+                        Member = 'person11@contoso.com'; Owner = 'person12@contoso.com'; Eligibility = 'NotSupported'; Policy = 'NotSupported' }
+                )
+            }
+
+            # Answers one request the way Microsoft Graph would for the fixture tenant, and records
+            # it. $script:E2ERefuse holds '<kind>:<group id>' keys (members, owners, eligibility,
+            # criterion) whose request is refused with the key's text. A request it has no answer for
+            # throws, so an unexpected request fails the test.
+            $script:E2EFakeGraph = {
+                param([string]$Method, [string]$Uri, [hashtable]$Body, [string[]]$ExpectedErrorCode)
+                $Verb = if ($Method) { $Method } else { 'GET' }
+                $script:E2EGraphCalls.Add("$Verb $Uri")
+                $GroupOf = { param([string]$Id) @($script:E2ETenant | Where-Object { $_.Id -eq $Id })[0] }
+                $RefuseIfAsked = {
+                    param([string]$Key)
+                    if ($script:E2ERefuse.ContainsKey($Key)) {
+                        throw [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($script:E2ERefuse[$Key]), 'TooManyRequests',
+                            [System.Management.Automation.ErrorCategory]::LimitsExceeded, $Key)
+                    }
+                }
+                $NotSupported = {
+                    if ($ExpectedErrorCode -notcontains 'ResourceTypeNotSupported') {
+                        throw "The fake tenant answers ResourceTypeNotSupported, which the request did not declare: $Verb $Uri"
+                    }
+                    $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'ResourceTypeNotSupported'; StatusCode = 400; Message = 'ResourceTypeNotSupported'; Uri = $Uri }
+                    $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                    $Marker
+                }
+
+                if ($Verb -eq 'POST' -and $Uri -eq 'v1.0/directoryObjects/getByIds') {
+                    return [PSCustomObject]@{ value = @(foreach ($PrincipalId in @($Body.ids)) { @{ id = $PrincipalId; userPrincipalName = 'person13@contoso.com' } }) }
+                }
+                if ($Uri.StartsWith('v1.0/groups?') -or $Uri -eq 'v1.0/groups') {
+                    return [PSCustomObject]@{
+                        value = @(foreach ($G in $script:E2ETenant) {
+                                @{
+                                    id                            = $G.Id
+                                    displayName                   = $G.Name
+                                    description                   = "$($G.Name) team"
+                                    mailNickname                  = $G.Name.Replace('-', '').ToLowerInvariant()
+                                    securityEnabled               = $true
+                                    isAssignableToRole            = $G.RoleAssignable
+                                    groupTypes                    = [string[]]@(if ($G.Dynamic) { 'DynamicMembership' })
+                                    membershipRule                = $(if ($G.Dynamic) { 'user.department -eq "IT"' } else { $null })
+                                    membershipRuleProcessingState = $(if ($G.Dynamic) { 'On' } else { $null })
+                                    onPremisesSyncEnabled         = $(if ($G.Synced) { $true } else { $null })
+                                }
+                            })
+                    }
+                }
+                if ($Uri -match '^v1\.0/groups/(?<Id>[^/]+)/(?<Rel>members|owners)(?<Typed>/microsoft\.graph\.servicePrincipal)?$') {
+                    $Id = $Matches.Id
+                    $Rel = $Matches.Rel
+                    $Typed = [bool]$Matches.Typed
+                    & $RefuseIfAsked "$($Rel):$Id"
+                    if ($Typed) { return [PSCustomObject]@{ value = @() } }
+                    $G = & $GroupOf $Id
+                    $Upn = if ($Rel -eq 'members') { $G.Member } else { $G.Owner }
+                    return [PSCustomObject]@{ value = @(@{ id = "u-$Rel-$($G.Name)"; displayName = $Upn; userPrincipalName = $Upn; '@odata.type' = '#microsoft.graph.user' }) }
+                }
+                if ($Uri.StartsWith('beta/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?') -and $Uri -match "groupId eq '(?<Id>[^']*)'") {
+                    $Id = $Matches.Id
+                    & $RefuseIfAsked "eligibility:$Id"
+                    $G = & $GroupOf $Id
+                    if ($G.Eligibility -is [string]) { return (& $NotSupported) }
+                    return [PSCustomObject]@{ value = @(foreach ($PrincipalId in @($G.Eligibility)) { @{ principalId = $PrincipalId; accessId = 'member'; startDateTime = $null; endDateTime = $null } }) }
+                }
+                if ($Uri.StartsWith('beta/policies/roleManagementPolicies?') -and $Uri -match "scopeId eq '(?<Id>[^']*)'") {
+                    $Id = $Matches.Id
+                    & $RefuseIfAsked "criterion:$Id"
+                    $G = & $GroupOf $Id
+                    if ($G.Policy -eq 'NotSupported') { return (& $NotSupported) }
+                    $Modified = if ($G.Policy -eq 'Modified') { '2026-09-01T00:00:00Z' } else { $null }
+                    return [PSCustomObject]@{
+                        value = @(
+                            @{ id = "Group_$($Id)_member"; lastModifiedDateTime = $Modified; lastModifiedBy = $null }
+                            @{ id = "Group_$($Id)_owner"; lastModifiedDateTime = $null; lastModifiedBy = $null }
+                        )
+                    }
+                }
+                if ($Uri.StartsWith('beta/policies/roleManagementPolicyAssignments?') -and $Uri -match "scopeId eq '(?<Id>[^']*)'") {
+                    $Id = $Matches.Id
+                    $G = & $GroupOf $Id
+                    if ($G.Policy -eq 'NotSupported') { return (& $NotSupported) }
+                    return [PSCustomObject]@{
+                        value = @(
+                            @{ roleDefinitionId = 'member'; policyId = "Group_$($Id)_member" }
+                            @{ roleDefinitionId = 'owner'; policyId = "Group_$($Id)_owner" }
+                        )
+                    }
+                }
+                if ($Uri -match '^beta/policies/roleManagementPolicies/Group_[^/]+/rules$') {
+                    return [PSCustomObject]@{
+                        value = @(
+                            @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
+                            @{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') }
+                        )
+                    }
+                }
+                throw "The fake tenant has no answer for: $Verb $Uri"
+            }
+
+            # One group per line, each normalised the same way on both sides (a JSON round trip, then
+            # compressed), sorted, so a difference in serialisation can neither hide a difference in
+            # content nor fake one.
+            function ConvertTo-GroupLine {
+                param([object[]]$Group)
+                @(foreach ($G in @($Group)) {
+                        if ($null -eq $G) { continue }
+                        ConvertTo-Json -InputObject (ConvertTo-Json -InputObject $G -Depth 12 | ConvertFrom-Json) -Depth 12 -Compress
+                    }) | Sort-Object
+            }
+
+            # Today's selection, applied to the groups Get-OERInventory returns: the predicate the
+            # export used on them before the reader decided relevance first.
+            function Select-TodayRelevantGroup {
+                param([object[]]$Group, [switch]$IncludeSyncedGroups)
+                @($Group | Where-Object {
+                        $null -ne $_ -and (
+                            $_.roleAssignable -eq $true -or
+                            @($_.eligibility | Where-Object { $null -ne $_ }).Count -gt 0 -or
+                            ($_.PSObject.Properties.Name -contains 'pimPolicy') -or
+                            ($IncludeSyncedGroups -and $_.onPremisesSynced -is [bool] -and $_.onPremisesSynced))
+                    })
+            }
+        }
+
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+            Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+            Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+            Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+            $script:E2ETenant = & $script:E2ENewTenant
+            $script:E2ERefuse = @{}
+            $script:E2EGraphCalls = [System.Collections.Generic.List[string]]::new()
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                param([string]$Method, [string]$Uri, [hashtable]$Body, [switch]$All, [string[]]$ExpectedErrorCode)
+                & $script:E2EFakeGraph -Method $Method -Uri $Uri -Body $Body -ExpectedErrorCode $ExpectedErrorCode
+            }
+        }
+
+        It 'writes the same groups, with the same content, as the export did before it decided relevance first' {
+            $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'e2e-default') -Include Groups `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+            $Written = @((Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json).groups)
+            @($Written | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD')
+
+            $Oracle = Select-TodayRelevantGroup -Group @((Get-OERInventory -Include Groups -ErrorAction SilentlyContinue).Groups)
+            $Expected = @(ConvertTo-GroupLine -Group $Oracle)
+            $Expected.Count | Should -Be 3
+            @(ConvertTo-GroupLine -Group $Written) | Should -Be $Expected
+            @($Bundle.IncompleteReads).Count | Should -Be 0
+            @($ExErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+
+        It 'writes every group Get-OERInventory returns, with the same content, under -AllGroupsDetailed' {
+            $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'e2e-all') -Include Groups -AllGroupsDetailed `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            $Written = @((Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json).groups)
+            $Expected = @(ConvertTo-GroupLine -Group @((Get-OERInventory -Include Groups -ErrorAction SilentlyContinue).Groups))
+            $Expected.Count | Should -Be 6
+            @(ConvertTo-GroupLine -Group $Written) | Should -Be $Expected
+        }
+
+        It 'writes the same groups as before under -IncludeSyncedGroups, the synchronized one included' {
+            $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'e2e-synced') -Include Groups -IncludeSyncedGroups `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            $Written = @((Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json).groups)
+            @($Written | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD', 'G-SYNC')
+            $Oracle = Select-TodayRelevantGroup -Group @((Get-OERInventory -Include Groups -ErrorAction SilentlyContinue).Groups) -IncludeSyncedGroups
+            @(ConvertTo-GroupLine -Group $Written) | Should -Be @(ConvertTo-GroupLine -Group $Oracle)
+        }
+
+        It 'costs a group it does not keep exactly two requests' {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'e2e-cost') -Include Groups `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 2 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 2 -ParameterFilter { $Uri -like '*55555555-5555-5555-5555-555555555555*' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 2 -ParameterFilter { $Uri -like '*66666666-6666-6666-6666-666666666666*' }
+            # The same group read in full under -AllGroupsDetailed costs six: the members and the
+            # owners (two requests each), the eligibility and the criterion -- eight for it in all
+            # across the two runs of this test.
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'e2e-cost-all') -Include Groups -AllGroupsDetailed `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 8 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
+        }
+
+        It 'puts an unread members collection of a kept group first in IncompleteReads, and its cause in the partial message' {
+            $script:E2ERefuse["members:$script:E2EIdRa"] = 'Too many requests (429)'
+            $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'e2e-members') -Include Groups `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+            @($Bundle.IncompleteReads)[0] | Should -Be 'groups/G-RA/members'
+            @($Bundle.IncompleteReads).Count | Should -Be 1
+            $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -BeLike '*Causes of the unread group reads: Could not read members for group 11111111-1111-1111-1111-111111111111: Too many requests (429). The Members property is omitted rather than reported as empty*'
+            # The written document says the membership is unknown, not empty.
+            $Raw = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw
+            $Raw | Should -Match '"members"\s*:\s*null'
+        }
+
+        It 'still writes the whole bundle under -ErrorAction Stop when a kept group''s members could not be read' {
+            # The reader call carries no -ErrorAction pin of its own (it writes no error record), so
+            # it runs under the caller's Stop. Every read inside it that can fail is caught where it
+            # is made, so the only error the caller sees is the export's own trailing InventoryPartial.
+            $script:E2ERefuse["members:$script:E2EIdRa"] = 'Too many requests (429)'
+            $Root = Join-Path $TestDrive 'e2e-stop'
+            $Caught = $null
+            try {
+                Export-OERInventory -OutputPath $Root -Include Groups -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+            } catch {
+                $Caught = $PSItem
+            }
+            @(Get-ChildItem -Path $Root -Recurse -Filter 'inventory.json' -ErrorAction SilentlyContinue).Count | Should -Be 1
+            @(Get-ChildItem -Path $Root -Recurse -Filter 'groupsRoster.json' -ErrorAction SilentlyContinue).Count | Should -Be 1
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -Be 'InventoryPartial,Export-OERInventory'
+            $Caught.Exception.Message | Should -Match 'groups/G-RA/members'
+        }
+
+        It 'gives one cause for two kept groups whose members failed the same way' {
+            $script:E2ERefuse["members:$script:E2EIdRa"] = 'Too many requests (429)'
+            $script:E2ERefuse["members:$script:E2EIdEl"] = 'Too many requests (429)'
+            $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'e2e-members-two') -Include Groups `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+            @($Bundle.IncompleteReads)[0] | Should -Be 'groups/G-RA/members, groups/G-EL/members'
+            $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -BeLike '*Causes of the unread group reads: Could not read members for group*'
+            [regex]::Matches($Partial[0].Exception.Message, 'Could not read members for group').Count | Should -Be 1
+        }
     }
 }

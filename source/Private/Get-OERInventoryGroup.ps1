@@ -7,13 +7,31 @@ function Get-OERInventoryGroup {
     .DESCRIPTION
     The single owner of the inventory's Groups section. Get-OERInventory calls it to fill that
     section and replays the unread names and the causes it returns through its own lists.
+    Export-OERInventory calls it directly, with -RelevantOnly unless -AllGroupsDetailed is given.
 
-    It makes ONE Get-OERGroup call carrying the members, owners and PIM eligibility switches and the
-    filter it is given, then projects each group as an apply-document entry: an explicit null for a
-    members read that failed, the PIM-for-Groups pimPolicy only for a group that
+    By default it makes ONE Get-OERGroup call carrying the members, owners and PIM eligibility
+    switches and the filter it is given, then projects each group as an apply-document entry: an
+    explicit null for a members read that failed, the PIM-for-Groups pimPolicy only for a group that
     Test-OERGroupPimInUse finds in use, and onPremisesSynced only for a group synchronized from
     on-premises. A failed read is never an empty fact: it is named in the Unread list and its cause
     is kept in the Causes list.
+
+    With -RelevantOnly the Get-OERGroup call carries the filter alone, and each listed group is first
+    asked, in at most two requests, whether it is RBAC-relevant: its PIM eligibility, and, for a
+    group that is not role-assignable and has none, the Test-OERGroupPimInUse criterion. A group
+    that is neither role-assignable nor eligible nor found in use (nor synchronized from on-premises,
+    under -IncludeSyncedGroups) costs exactly those two requests and is not returned. Every other
+    group has its members and owners read one collection at a time (Read-OERGroupCollection) and is
+    projected exactly as a full read projects it, the criterion's answer reused rather than asked
+    again. A group whose relevance could not be read -- its eligibility or the criterion failed --
+    is read in full and projected the same way, and the failure is named exactly as a full read
+    names it.
+
+    With -ExcludeSharedName a group whose display name another listed group shares, compared without
+    regard to letter case, is left out in either mode, and the name is reported once, with the
+    spelling of the first such group, in the Unread list ('groups/<name>') and with the
+    Get-OERSharedNameCause text in the Causes list. The names are counted over every listed group,
+    so a group -RelevantOnly does not keep still makes its name shared.
 
     It returns ONE tagged Omnicit.EntraRBAC.InventoryGroupRead object and never writes an error
     record. It writes a warning for a group list that could not be read, and its verbose lines carry
@@ -42,11 +60,30 @@ function Get-OERInventoryGroup {
     it and what is learned is left in it, so the caller's other sections share the lookups. A new,
     empty cache is used when none is given.
 
+    .PARAMETER RelevantOnly
+    Decide first which groups are RBAC-relevant (role-assignable, with PIM eligibility, or found to
+    use PIM for Groups), and read the members, owners and PIM policy of those groups only, and of
+    every group whose relevance could not be read.
+
+    .PARAMETER IncludeSyncedGroups
+    With -RelevantOnly, also keep every group synchronized from on-premises
+    (Test-OERGroupOnPremisesSynced). Without -RelevantOnly every group is read in full already, and
+    this switch changes nothing.
+
+    .PARAMETER ExcludeSharedName
+    Leave out every group whose display name another listed group shares, compared without regard to
+    letter case, and report each such name once in the Unread and Causes lists.
+
     .EXAMPLE
     $Read = Get-OERInventoryGroup -Filter 'securityEnabled eq true' -PrincipalNameCache $Cache
     $Read.Groups.Count
     Reads the security-enabled groups with their members, owners, eligibility and PIM policy, and
     returns the projections together with the collections that could not be read and why.
+
+    .EXAMPLE
+    $Read = Get-OERInventoryGroup -Filter 'securityEnabled eq true' -IncludeId -ExcludeSharedName -RelevantOnly
+    Reads only the RBAC-relevant security-enabled groups in full, after two requests per listed group,
+    stamps their ids, and leaves out every group whose name another shares.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
@@ -57,7 +94,13 @@ function Get-OERInventoryGroup {
 
         [switch]$IncludeId,
 
-        [hashtable]$PrincipalNameCache = @{}
+        [hashtable]$PrincipalNameCache = @{},
+
+        [switch]$RelevantOnly,
+
+        [switch]$IncludeSyncedGroups,
+
+        [switch]$ExcludeSharedName
     )
 
     # What the read below records into: the projections, the unread collection names and the causes.
@@ -83,8 +126,14 @@ function Get-OERInventoryGroup {
         if (-not $UnreadCollections.Contains($Key)) { $UnreadCollections.Add($Key) }
     }
 
-    $GroupParams = @{ IncludeMembers = $true; IncludePimEligibility = $true; IncludeOwners = $true }
-    $GroupParams.Filter = $Filter
+    # A full read lists the groups with all three collections attached. A relevant-only read lists
+    # them alone: the collections are read group by group in the projection loop below, so a group
+    # that turns out not to be RBAC-relevant never costs a members or owners request.
+    $GroupParams = if ($RelevantOnly) {
+        @{ Filter = $Filter }
+    } else {
+        @{ IncludeMembers = $true; IncludePimEligibility = $true; IncludeOwners = $true; Filter = $Filter }
+    }
     $GroupItems = @()
     # -ErrorAction SilentlyContinue + -ErrorVariable, not -ErrorAction Stop: Get-OERGroup now
     # writes a non-terminating error per group whose members, owners or eligibility read
@@ -145,6 +194,21 @@ function Get-OERInventoryGroup {
             Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($PSItem.Exception.Message)"
         }
     }
+
+    # -ExcludeSharedName: how many listed groups carry each display name, compared without regard to
+    # letter case -- the key the validator refuses a duplicate on (Test-OERStructureSchema), so a pair
+    # it would refuse is never written. Counted over EVERY listed group, before the relevance
+    # decision below, because the name is shared whether or not the namesake is RBAC-relevant: two
+    # live groups answer that name, so the apply engine refuses it either way, and a read that kept
+    # only the relevant one would write an entry that cannot be applied.
+    $SharedNameCount = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    if ($ExcludeSharedName) {
+        foreach ($G in $GroupItems) {
+            $NameKey = [string]$G.DisplayName
+            $SharedNameCount[$NameKey] = 1 + $(if ($SharedNameCount.ContainsKey($NameKey)) { $SharedNameCount[$NameKey] } else { 0 })
+        }
+    }
+
     # Project one access-type policy object from a Get-OERGroupPimPolicy result, or $null when
     # the group carries no policy for that access type. The block is emitted whenever ANY
     # meaningful field is present -- gating it on activationMaxHours alone used to discard a
@@ -221,10 +285,61 @@ function Get-OERInventoryGroup {
         }
     }
     # The criterion's answers already obtained for a group id, as Get-PimUsageDecision returns them.
-    # The projection reuses an entry instead of asking again; nothing fills it in this reader yet.
+    # The relevance decision under -RelevantOnly fills it for a group it had to ask, and the
+    # projection reuses an entry instead of asking again, so no group's criterion is read twice.
     $PimUsageDecided = @{}
 
     foreach ($G in $GroupItems) {
+        if ($RelevantOnly) {
+            $GroupId = [string]$G.Id
+            # THE FIRST REQUEST: the eligibility, which is both a relevance criterion and a collection
+            # the projection needs. Kept on the group as Get-OERGroup would attach it, or recorded
+            # exactly as Get-OERGroup's own record would have been: the cause here, and the
+            # projection below names the collection, since the property stays absent.
+            $EligRead = Read-OERGroupCollection -GroupId $GroupId -Collection PimEligibility
+            if ($EligRead.Read) {
+                $G | Add-Member -NotePropertyName PimEligibility -NotePropertyValue $EligRead.Value -Force
+            } else {
+                Write-Verbose "Get-OERInventory: $($EligRead.Message)"
+                Add-UnreadCause -Cause $EligRead.Message -Target $GroupId
+            }
+            # A role-assignable group is relevant on its own, and so is a synchronized group when the
+            # caller asked for them; neither needs the criterion to be kept.
+            $Kept = ($G.IsAssignableToRole -eq $true) -or ($IncludeSyncedGroups -and (Test-OERGroupOnPremisesSynced -Group $G))
+            if (-not $Kept) {
+                # The null-filter is load-bearing, as in the projection below: @($null).Count is 1.
+                $RelevantEligCount = if ($EligRead.Read) { @($EligRead.Value | Where-Object { $null -ne $_ }).Count } else { 0 }
+                if ($RelevantEligCount -eq 0) {
+                    # THE SECOND REQUEST: the criterion, decided here once and reused by the
+                    # projection. A group with eligibility needs no request for it (the eligibility
+                    # decides "in use" on its own), so it is asked only for a group without any.
+                    $PimUsageDecided[$GroupId] = Get-PimUsageDecision -Group $G -EligibilityCount 0
+                    $InUse = ($null -ne $PimUsageDecided[$GroupId].Usage -and [bool]$PimUsageDecided[$GroupId].Usage.InUse)
+                    # R2: a group whose relevance could not be read -- its eligibility read failed, so
+                    # its count is 0 by default rather than by measurement, or the criterion failed --
+                    # is never guessed to be irrelevant. It is read in full below, exactly as a full
+                    # read would have read it, and the projection names what could not be read.
+                    $Undecided = (-not $EligRead.Read) -or $PimUsageDecided[$GroupId].Failed
+                    # Not relevant, and known not to be: the two requests above are all this group
+                    # costs. No members, owners or policy request is made for it, and it is not
+                    # returned (the export would not keep it in inventory.json either).
+                    if (-not $InUse -and -not $Undecided) { continue }
+                }
+            }
+            # Every other group -- kept, eligible, found in use, or undecided -- gets the two
+            # collections a full read attaches, one at a time and recorded the same way as the
+            # eligibility above.
+            foreach ($RelevantCollection in @('Members', 'Owners')) {
+                $RelevantRead = Read-OERGroupCollection -GroupId $GroupId -Collection $RelevantCollection
+                if ($RelevantRead.Read) {
+                    $G | Add-Member -NotePropertyName $RelevantCollection -NotePropertyValue $RelevantRead.Value -Force
+                } else {
+                    Write-Verbose "Get-OERInventory: $($RelevantRead.Message)"
+                    Add-UnreadCause -Cause $RelevantRead.Message -Target $GroupId
+                }
+            }
+        }
+
         $Proj = [ordered]@{
             displayName    = $G.DisplayName
             roleAssignable = [bool]$G.IsAssignableToRole
@@ -398,9 +513,10 @@ function Get-OERInventoryGroup {
         # inventory that looked complete and was not, issue #76's defect class in a new
         # place. A failure now arrives as PimPolicyReadFailed and is accounted for exactly
         # like a failed members, owners or eligibility read: the CAUSE to verbose and the
-        # deduplicated cause list, the COLLECTION to $UnreadCollections, and the run ends in
-        # the InventoryPartial error that names it -- which Export-OERInventory in turn folds
-        # into the bundle's IncompleteReads. No per-group warning, for the reason stated at
+        # deduplicated cause list, the COLLECTION to $UnreadCollections, and the caller names
+        # it: Get-OERInventory in its InventoryPartial error, Export-OERInventory (which reads
+        # its groups through this function) in the bundle's IncompleteReads and its own
+        # InventoryPartial message. No per-group warning, for the reason stated at
         # the enumeration loop above: a per-collection failure is reported at the projection,
         # where the group is known by name, and 96 refused groups would otherwise print 192
         # near-identical lines and bury the one signal an operator can act on.
@@ -443,6 +559,31 @@ function Get-OERInventoryGroup {
             $Proj.pimPolicy = [PSCustomObject]$PimProj
         }
         $Groups.Add([PSCustomObject]$Proj)
+    }
+
+    # -ExcludeSharedName: none of the groups that share a name is written, and the name is reported
+    # instead -- the unread entry 'groups/<name>' with the spelling of the first listed group that
+    # carries it, and the cause -- once however many groups share it. The same rule, wording and
+    # order as Get-OERInventory's Select-UniqueNamedEntry: added after every other finding of this
+    # section. A group left out of the document removes nothing: Invoke-OERStructure prunes child
+    # collections only.
+    if ($ExcludeSharedName) {
+        $UniqueGroups = [System.Collections.Generic.List[object]]::new()
+        foreach ($P in $Groups) {
+            if ($SharedNameCount[[string]$P.displayName] -gt 1) { continue }
+            $UniqueGroups.Add($P)
+        }
+        $Groups = $UniqueGroups
+        $ReportedNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($G in $GroupItems) {
+            $SharedName = [string]$G.DisplayName
+            if ($SharedNameCount[$SharedName] -le 1 -or -not $ReportedNames.Add($SharedName)) { continue }
+            $SharedPath = "groups/$SharedName"
+            $UnreadCollections.Add($SharedPath)
+            $SharedCause = Get-OERSharedNameCause -Path $SharedPath
+            Write-Verbose "Get-OERInventory: $SharedCause"
+            Add-UnreadCause -Cause $SharedCause -Target $SharedPath
+        }
     }
 
     $Result = [PSCustomObject]@{

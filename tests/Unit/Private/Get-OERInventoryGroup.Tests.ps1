@@ -2,6 +2,45 @@ BeforeAll {
     Import-Module Omnicit.EntraRBAC -Force
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+
+    # One read with every stream the assertions look at captured, and -ErrorAction pinned: a
+    # global Stop preference would otherwise end the call at the first record the mocks write.
+    # The verbose lines keep Get-OERInventory's own prefix on purpose (its verbose output did
+    # not change when this section moved here), which is why they are asserted verbatim.
+    function Invoke-GroupRead {
+        param(
+            [string]$Filter = 'securityEnabled eq true',
+            [switch]$IncludeId,
+            [hashtable]$Cache,
+            [switch]$RelevantOnly,
+            [switch]$IncludeSyncedGroups,
+            [switch]$ExcludeSharedName
+        )
+        $Arguments = @{
+            Filter              = $Filter
+            IncludeId           = [bool]$IncludeId
+            Cache               = $Cache
+            RelevantOnly        = [bool]$RelevantOnly
+            IncludeSyncedGroups = [bool]$IncludeSyncedGroups
+            ExcludeSharedName   = [bool]$ExcludeSharedName
+        }
+        InModuleScope Omnicit.EntraRBAC -Parameters $Arguments {
+            $Params = @{ Filter = $Filter }
+            if ($IncludeId) { $Params.IncludeId = $true }
+            if ($null -ne $Cache) { $Params.PrincipalNameCache = $Cache }
+            if ($RelevantOnly) { $Params.RelevantOnly = $true }
+            if ($IncludeSyncedGroups) { $Params.IncludeSyncedGroups = $true }
+            if ($ExcludeSharedName) { $Params.ExcludeSharedName = $true }
+            $Stream = @(Get-OERInventoryGroup @Params -Verbose -ErrorVariable ReadErr -ErrorAction SilentlyContinue `
+                    -WarningVariable ReadWarn -WarningAction SilentlyContinue 4>&1)
+            [PSCustomObject]@{
+                Result  = @($Stream | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })[0]
+                Verbose = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+                Warned  = @($ReadWarn | ForEach-Object { "$_" })
+                Errors  = @($ReadErr)
+            }
+        }
+    }
 }
 
 AfterAll {
@@ -9,29 +48,6 @@ AfterAll {
 }
 
 Describe 'Get-OERInventoryGroup' {
-    BeforeAll {
-        # One read with every stream the assertions look at captured, and -ErrorAction pinned: a
-        # global Stop preference would otherwise end the call at the first record the mocks write.
-        # The verbose lines keep Get-OERInventory's own prefix on purpose (its verbose output did
-        # not change when this section moved here), which is why they are asserted verbatim.
-        function Invoke-GroupRead {
-            param([string]$Filter = 'securityEnabled eq true', [switch]$IncludeId, [hashtable]$Cache)
-            InModuleScope Omnicit.EntraRBAC -Parameters @{ Filter = $Filter; IncludeId = [bool]$IncludeId; Cache = $Cache } {
-                $Params = @{ Filter = $Filter }
-                if ($IncludeId) { $Params.IncludeId = $true }
-                if ($null -ne $Cache) { $Params.PrincipalNameCache = $Cache }
-                $Stream = @(Get-OERInventoryGroup @Params -Verbose -ErrorVariable ReadErr -ErrorAction SilentlyContinue `
-                        -WarningVariable ReadWarn -WarningAction SilentlyContinue 4>&1)
-                [PSCustomObject]@{
-                    Result  = @($Stream | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })[0]
-                    Verbose = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
-                    Warned  = @($ReadWarn | ForEach-Object { "$_" })
-                    Errors  = @($ReadErr)
-                }
-            }
-        }
-    }
-
     BeforeEach {
         Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
         Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
@@ -64,6 +80,19 @@ Describe 'Get-OERInventoryGroup' {
             }
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERGroup -Exactly -Times 1
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERGroup -Exactly -Times 0 -ParameterFilter { $All -eq $true }
+        }
+
+        It 'sends the filter alone, with none of the three include switches, under -RelevantOnly' {
+            # The collections are read one group at a time afterwards, so the list read carries none.
+            Mock -ModuleName Omnicit.EntraRBAC Read-OERGroupCollection {
+                param($GroupId, $Collection)
+                [PSCustomObject]@{ Collection = $Collection; Read = $true; Value = @(); ErrorId = $null; Message = $null; Exception = $null }
+            }
+            Invoke-GroupRead -RelevantOnly | Out-Null
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERGroup -Exactly -Times 1 -ParameterFilter {
+                $Filter -eq 'securityEnabled eq true' -and -not $IncludeMembers -and -not $IncludeOwners -and -not $IncludePimEligibility
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERGroup -Exactly -Times 1
         }
 
         It 'sends a widened filter exactly as given' {
@@ -460,6 +489,342 @@ Describe 'Get-OERInventoryGroup' {
             $Read = Invoke-GroupRead
             @($Read.Result.Unread) | Should -Contain 'groups/role_sec_a/members'
             $Read.Result.Causes.Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
+    # Only the sign-in and the transport are mocked. Get-OERGroup, Read-OERGroupCollection,
+    # Get-OERGroupRelation, Test-OERGroupPimInUse, Get-OERPimGroupPolicyId, Get-OERGroupPimPolicy and
+    # Resolve-OERPrincipalName are the real ones, so every request a group costs reaches the one
+    # Invoke-OERGraphRequest mock below and is counted there. ONE mock with a dispatcher on the URI,
+    # not a filtered mock per request: an unmatched filtered mock throws, and a filtered mock beats
+    # an unfiltered one, so a set of them could hide a request nobody expected. The dispatcher throws
+    # on a request it has no answer for, so an unexpected request fails the test instead.
+    BeforeAll {
+        $script:IdRa = '11111111-1111-1111-1111-111111111111'
+        $script:IdEl = '22222222-2222-2222-2222-222222222222'
+        $script:IdMod = '33333333-3333-3333-3333-333333333333'
+        $script:IdPlain = '44444444-4444-4444-4444-444444444444'
+        $script:IdSync = '55555555-5555-5555-5555-555555555555'
+        $script:IdDyn = '66666666-6666-6666-6666-666666666666'
+        $script:EligPrincipal = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+
+        # The fixture tenant, in list order. Eligibility is a list of principal ids, or 'NotSupported'
+        # (400 ResourceTypeNotSupported: a group PIM for Groups cannot manage). Policy is 'Untouched',
+        # 'Modified' (one policy carries a lastModifiedDateTime) or 'NotSupported'.
+        $script:NewTenant = {
+            @(
+                @{ Id = $script:IdRa; Name = 'G-RA'; RoleAssignable = $true; Synced = $false; Dynamic = $false
+                    Member = 'person1@contoso.com'; Owner = 'person2@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                @{ Id = $script:IdEl; Name = 'G-EL'; RoleAssignable = $false; Synced = $false; Dynamic = $false
+                    Member = 'person3@contoso.com'; Owner = 'person4@contoso.com'; Eligibility = @($script:EligPrincipal); Policy = 'Untouched' }
+                @{ Id = $script:IdMod; Name = 'G-MOD'; RoleAssignable = $false; Synced = $false; Dynamic = $false
+                    Member = 'person5@contoso.com'; Owner = 'person6@contoso.com'; Eligibility = @(); Policy = 'Modified' }
+                @{ Id = $script:IdPlain; Name = 'G-PLAIN'; RoleAssignable = $false; Synced = $false; Dynamic = $false
+                    Member = 'person7@contoso.com'; Owner = 'person8@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                @{ Id = $script:IdSync; Name = 'G-SYNC'; RoleAssignable = $false; Synced = $true; Dynamic = $false
+                    Member = 'person9@contoso.com'; Owner = 'person10@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                @{ Id = $script:IdDyn; Name = 'G-DYN'; RoleAssignable = $false; Synced = $false; Dynamic = $true
+                    Member = 'person11@contoso.com'; Owner = 'person12@contoso.com'; Eligibility = 'NotSupported'; Policy = 'NotSupported' }
+            )
+        }
+
+        # Answers one request the way Microsoft Graph would for the fixture tenant, and records it.
+        # $script:Refuse holds '<kind>:<group id>' keys (members, owners, eligibility, criterion) whose
+        # request is refused with a 403 carrying the key's text.
+        $script:FakeGraph = {
+            param([string]$Method, [string]$Uri, [hashtable]$Body, [string[]]$ExpectedErrorCode)
+            $Verb = if ($Method) { $Method } else { 'GET' }
+            $script:GraphCalls.Add("$Verb $Uri")
+            $GroupOf = { param([string]$Id) @($script:Tenant | Where-Object { $_.Id -eq $Id })[0] }
+            $RefuseIfAsked = {
+                param([string]$Key)
+                if ($script:Refuse.ContainsKey($Key)) {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new($script:Refuse[$Key]), 'Authorization_RequestDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $Key)
+                }
+            }
+            $NotSupported = {
+                if ($ExpectedErrorCode -notcontains 'ResourceTypeNotSupported') {
+                    throw "The fake tenant answers ResourceTypeNotSupported, which the request did not declare: $Verb $Uri"
+                }
+                $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'ResourceTypeNotSupported'; StatusCode = 400; Message = 'ResourceTypeNotSupported'; Uri = $Uri }
+                $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                $Marker
+            }
+
+            if ($Verb -eq 'POST' -and $Uri -eq 'v1.0/directoryObjects/getByIds') {
+                return [PSCustomObject]@{ value = @(foreach ($PrincipalId in @($Body.ids)) { @{ id = $PrincipalId; userPrincipalName = 'person13@contoso.com' } }) }
+            }
+            if ($Uri.StartsWith('v1.0/groups?') -or $Uri -eq 'v1.0/groups') {
+                return [PSCustomObject]@{
+                    value = @(foreach ($G in $script:Tenant) {
+                            @{
+                                id                            = $G.Id
+                                displayName                   = $G.Name
+                                description                   = "$($G.Name) team"
+                                mailNickname                  = $G.Name.Replace('-', '').ToLowerInvariant()
+                                securityEnabled               = $true
+                                isAssignableToRole            = $G.RoleAssignable
+                                groupTypes                    = [string[]]@(if ($G.Dynamic) { 'DynamicMembership' })
+                                membershipRule                = $(if ($G.Dynamic) { 'user.department -eq "IT"' } else { $null })
+                                membershipRuleProcessingState = $(if ($G.Dynamic) { 'On' } else { $null })
+                                onPremisesSyncEnabled         = $(if ($G.Synced) { $true } else { $null })
+                            }
+                        })
+                }
+            }
+            if ($Uri -match '^v1\.0/groups/(?<Id>[^/]+)/(?<Rel>members|owners)(?<Typed>/microsoft\.graph\.servicePrincipal)?$') {
+                $Id = $Matches.Id
+                $Rel = $Matches.Rel
+                $Typed = [bool]$Matches.Typed
+                & $RefuseIfAsked "$($Rel):$Id"
+                if ($Typed) { return [PSCustomObject]@{ value = @() } }
+                $G = & $GroupOf $Id
+                $Upn = if ($Rel -eq 'members') { $G.Member } else { $G.Owner }
+                return [PSCustomObject]@{ value = @(@{ id = "u-$Rel-$($G.Name)"; displayName = $Upn; userPrincipalName = $Upn; '@odata.type' = '#microsoft.graph.user' }) }
+            }
+            if ($Uri.StartsWith('beta/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?') -and $Uri -match "groupId eq '(?<Id>[^']*)'") {
+                $Id = $Matches.Id
+                & $RefuseIfAsked "eligibility:$Id"
+                $G = & $GroupOf $Id
+                if ($G.Eligibility -is [string]) { return (& $NotSupported) }
+                return [PSCustomObject]@{ value = @(foreach ($PrincipalId in @($G.Eligibility)) { @{ principalId = $PrincipalId; accessId = 'member'; startDateTime = $null; endDateTime = $null } }) }
+            }
+            if ($Uri.StartsWith('beta/policies/roleManagementPolicies?') -and $Uri -match "scopeId eq '(?<Id>[^']*)'") {
+                $Id = $Matches.Id
+                & $RefuseIfAsked "criterion:$Id"
+                $G = & $GroupOf $Id
+                if ($G.Policy -eq 'NotSupported') { return (& $NotSupported) }
+                $Modified = if ($G.Policy -eq 'Modified') { '2026-09-01T00:00:00Z' } else { $null }
+                return [PSCustomObject]@{
+                    value = @(
+                        @{ id = "Group_$($Id)_member"; lastModifiedDateTime = $Modified; lastModifiedBy = $null }
+                        @{ id = "Group_$($Id)_owner"; lastModifiedDateTime = $null; lastModifiedBy = $null }
+                    )
+                }
+            }
+            if ($Uri.StartsWith('beta/policies/roleManagementPolicyAssignments?') -and $Uri -match "scopeId eq '(?<Id>[^']*)'") {
+                $Id = $Matches.Id
+                $G = & $GroupOf $Id
+                if ($G.Policy -eq 'NotSupported') { return (& $NotSupported) }
+                return [PSCustomObject]@{
+                    value = @(
+                        @{ roleDefinitionId = 'member'; policyId = "Group_$($Id)_member" }
+                        @{ roleDefinitionId = 'owner'; policyId = "Group_$($Id)_owner" }
+                    )
+                }
+            }
+            if ($Uri -match '^beta/policies/roleManagementPolicies/Group_[^/]+/rules$') {
+                return [PSCustomObject]@{
+                    value = @(
+                        @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
+                        @{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') }
+                    )
+                }
+            }
+            throw "The fake tenant has no answer for: $Verb $Uri"
+        }
+
+        # The requests recorded so far whose method and URI match a -like pattern.
+        function Get-GraphCallCount {
+            param([string]$Like)
+            @($script:GraphCalls | Where-Object { $_ -like $Like }).Count
+        }
+    }
+
+    BeforeEach {
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        $script:Tenant = & $script:NewTenant
+        $script:Refuse = @{}
+        $script:GraphCalls = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            param([string]$Method, [string]$Uri, [hashtable]$Body, [switch]$All, [string[]]$ExpectedErrorCode)
+            & $script:FakeGraph -Method $Method -Uri $Uri -Body $Body -ExpectedErrorCode $ExpectedErrorCode
+        }
+    }
+
+    Context 'which groups are read in full' {
+        It 'costs a group it does not keep exactly two requests, the eligibility and the criterion, and reads no members or owners of it' {
+            $Read = Invoke-GroupRead -RelevantOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Not -Contain 'G-PLAIN'
+
+            # G-PLAIN: no eligibility, untouched policies.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 2 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -like '*eligibilityScheduleInstances*44444444-4444-4444-4444-444444444444*' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -like 'beta/policies/roleManagementPolicies[?]*44444444-4444-4444-4444-444444444444*' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like 'v1.0/groups/44444444-4444-4444-4444-444444444444/*' }
+
+            # G-SYNC without -IncludeSyncedGroups: synchronized, but not kept on that account.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 2 -ParameterFilter { $Uri -like '*55555555-5555-5555-5555-555555555555*' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -like '*eligibilityScheduleInstances*55555555-5555-5555-5555-555555555555*' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -like 'beta/policies/roleManagementPolicies[?]*55555555-5555-5555-5555-555555555555*' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like 'v1.0/groups/55555555-5555-5555-5555-555555555555/*' }
+
+            # G-DYN: both reads answer ResourceTypeNotSupported, which decides "not in use".
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 2 -ParameterFilter { $Uri -like '*66666666-6666-6666-6666-666666666666*' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -like '*eligibilityScheduleInstances*66666666-6666-6666-6666-666666666666*' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -like 'beta/policies/roleManagementPolicies[?]*66666666-6666-6666-6666-666666666666*' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like 'v1.0/groups/66666666-6666-6666-6666-666666666666/*' }
+        }
+
+        It 'returns the groups it keeps, in list order, with their members and owners, and nothing unread' {
+            $Read = Invoke-GroupRead -RelevantOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD')
+            $ByName = @{}
+            foreach ($G in $Read.Result.Groups) { $ByName[$G.displayName] = $G }
+            $ByName['G-RA'].members | Should -Be @('person1@contoso.com')
+            $ByName['G-RA'].owners | Should -Be @('person2@contoso.com')
+            $ByName['G-EL'].members | Should -Be @('person3@contoso.com')
+            $ByName['G-EL'].owners | Should -Be @('person4@contoso.com')
+            $ByName['G-MOD'].members | Should -Be @('person5@contoso.com')
+            $ByName['G-MOD'].owners | Should -Be @('person6@contoso.com')
+            # Eligibility and pimPolicy are projected exactly as a full read projects them.
+            $ByName['G-EL'].eligibility[0].principal | Should -Be 'person13@contoso.com'
+            $ByName['G-EL'].pimPolicy.member.activationMaxHours | Should -Be 8
+            $ByName['G-MOD'].pimPolicy.owner.activationMaxHours | Should -Be 8
+            @($ByName['G-RA'].eligibility).Count | Should -Be 0
+            $ByName['G-RA'].PSObject.Properties.Name | Should -Not -Contain 'pimPolicy'
+            $Read.Result.Unread.Count | Should -Be 0
+            $Read.Result.Causes.Count | Should -Be 0
+            # A kept role-assignable group: the eligibility, the members and the owners (two requests
+            # each: the untyped and the service principal read), and the criterion in the projection.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 6 -ParameterFilter { $Uri -like '*11111111-1111-1111-1111-111111111111*' }
+        }
+
+        It 'asks the criterion once for a group decided before the projection, and the projection reuses the answer' {
+            $Read = Invoke-GroupRead -RelevantOnly
+            # G-MOD is kept on the criterion alone (a modified policy), so the criterion is asked
+            # before the projection, and the projection must not ask it again.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -like 'beta/policies/roleManagementPolicies[?]*33333333-3333-3333-3333-333333333333*' }
+            @($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-MOD' }).Count | Should -Be 1
+            ($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-MOD' }).pimPolicy.member.activationMaxHours | Should -Be 8
+        }
+
+        It 'keeps a synchronized group under -IncludeSyncedGroups and reads its members and owners' {
+            $Read = Invoke-GroupRead -RelevantOnly -IncludeSyncedGroups
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD', 'G-SYNC')
+            $Synced = $Read.Result.Groups | Where-Object { $_.displayName -eq 'G-SYNC' }
+            $Synced.onPremisesSynced | Should -BeTrue
+            $Synced.members | Should -Be @('person9@contoso.com')
+            $Synced.owners | Should -Be @('person10@contoso.com')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/55555555-5555-5555-5555-555555555555/members' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 6 -ParameterFilter { $Uri -like '*55555555-5555-5555-5555-555555555555*' }
+            # The switch keeps synchronized groups only: G-PLAIN is still not kept.
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Not -Contain 'G-PLAIN'
+        }
+    }
+
+    Context 'a group whose relevance could not be read is read in full (R2)' {
+        It 'reads a group whose eligibility read was refused in full, and names its eligibility and pimPolicy unread with the cause' {
+            $script:Refuse["eligibility:$script:IdPlain"] = 'Insufficient privileges to complete the operation'
+            $Read = Invoke-GroupRead -RelevantOnly
+            $Plain = @($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-PLAIN' })
+            $Plain.Count | Should -Be 1 -Because 'a group whose relevance is unknown is read as before, never dropped'
+            $Plain[0].members | Should -Be @('person7@contoso.com')
+            $Plain[0].owners | Should -Be @('person8@contoso.com')
+            $Plain[0].PSObject.Properties.Name | Should -Not -Contain 'eligibility'
+            $Plain[0].PSObject.Properties.Name | Should -Not -Contain 'pimPolicy'
+            @($Read.Result.Unread) | Should -Be @('groups/G-PLAIN/eligibility', 'groups/G-PLAIN/pimPolicy')
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Read.Result.Causes[0].Cause | Should -Be 'Could not read PIM eligibility for group 44444444-4444-4444-4444-444444444444: Insufficient privileges to complete the operation. The PimEligibility property is omitted rather than reported as empty.'
+            $Read.Result.Causes[0].Target | Should -Be $script:IdPlain
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: $($Read.Result.Causes[0].Cause)"
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/44444444-4444-4444-4444-444444444444/members' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/44444444-4444-4444-4444-444444444444/owners' }
+            # The criterion decided ahead is reused by the projection, not asked a second time.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -like 'beta/policies/roleManagementPolicies[?]*44444444-4444-4444-4444-444444444444*' }
+            # The eligibility, the criterion, and two requests each for members and owners.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 6 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
+        }
+
+        It 'reads a group whose criterion was refused in full, and names its pimPolicy unread with the cause' {
+            $script:Refuse["criterion:$script:IdPlain"] = 'Insufficient privileges to complete the operation.'
+            $Read = Invoke-GroupRead -RelevantOnly
+            $Plain = @($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-PLAIN' })
+            $Plain.Count | Should -Be 1
+            $Plain[0].members | Should -Be @('person7@contoso.com')
+            @($Plain[0].eligibility).Count | Should -Be 0
+            $Plain[0].PSObject.Properties.Name | Should -Contain 'eligibility'
+            $Plain[0].PSObject.Properties.Name | Should -Not -Contain 'pimPolicy'
+            @($Read.Result.Unread) | Should -Be @('groups/G-PLAIN/pimPolicy')
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Read.Result.Causes[0].Cause | Should -Be "Could not determine whether group '44444444-4444-4444-4444-444444444444' uses PIM for Groups: Insufficient privileges to complete the operation."
+            $Read.Result.Causes[0].Target | Should -Be $script:IdPlain
+            # A criterion that failed is not asked again in the projection either.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -like 'beta/policies/roleManagementPolicies[?]*44444444-4444-4444-4444-444444444444*' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 6 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
+        }
+
+        It 'drops no group when the eligibility of every group could not be read (Review Focus 1)' {
+            foreach ($G in $script:Tenant) { $script:Refuse["eligibility:$($G.Id)"] = 'Too many requests (429)' }
+            $Read = Invoke-GroupRead -RelevantOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD', 'G-PLAIN', 'G-SYNC', 'G-DYN')
+            foreach ($G in $script:Tenant) {
+                Get-GraphCallCount -Like "GET v1.0/groups/$($G.Id)/members" | Should -Be 1 -Because "$($G.Name) is read in full"
+                Get-GraphCallCount -Like "GET v1.0/groups/$($G.Id)/owners" | Should -Be 1 -Because "$($G.Name) is read in full"
+                @($Read.Result.Unread) | Should -Contain "groups/$($G.Name)/eligibility"
+            }
+        }
+    }
+
+    Context 'shared names' {
+        BeforeEach {
+            $script:Tenant[0].Name = 'Admins'     # G-RA, kept
+            $script:Tenant[3].Name = 'admins'     # G-PLAIN, not kept
+        }
+
+        It 'leaves out every group whose name another shares, and names the name once with its first spelling and the cause (Review Focus 4)' {
+            $Read = Invoke-GroupRead -RelevantOnly -ExcludeSharedName
+            $Expected = InModuleScope Omnicit.EntraRBAC { Get-OERSharedNameCause -Path 'groups/Admins' }
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-EL', 'G-MOD')
+            @($Read.Result.Unread) | Should -Be @('groups/Admins')
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Read.Result.Causes[0].Cause | Should -BeExactly $Expected
+            $Read.Result.Causes[0].Target | Should -Be 'groups/Admins'
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: $Expected"
+        }
+
+        It 'leaves out the shared name in a full read too' {
+            $Read = Invoke-GroupRead -ExcludeSharedName
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-EL', 'G-MOD', 'G-SYNC', 'G-DYN')
+            @($Read.Result.Unread) | Should -Be @('groups/Admins')
+        }
+
+        It 'keeps both spellings without -ExcludeSharedName, for a caller that applies its own rule' {
+            $Read = Invoke-GroupRead -RelevantOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('Admins', 'G-EL', 'G-MOD')
+            $Read.Result.Unread.Count | Should -Be 0
+        }
+    }
+
+    Context 'an empty tenant (Review Focus 2)' {
+        It 'returns no group and nothing unread when the list answers nothing' {
+            $script:Tenant = @()
+            $Read = Invoke-GroupRead -RelevantOnly -ExcludeSharedName
+            $Read.Result.Groups.Count | Should -Be 0
+            $Read.Result.Unread.Count | Should -Be 0
+            $Read.Result.Causes.Count | Should -Be 0
+            $Read.Warned.Count | Should -Be 0
+            # The list itself, and nothing else.
+            $script:GraphCalls.Count | Should -Be 1
+        }
+    }
+
+    Context 'full mode' {
+        It 'reads every group in full without -RelevantOnly' {
+            $Read = Invoke-GroupRead
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD', 'G-PLAIN', 'G-SYNC', 'G-DYN')
+            Get-GraphCallCount -Like 'GET v1.0/groups[?]*' | Should -Be 1
+            foreach ($G in $script:Tenant) {
+                Get-GraphCallCount -Like "GET v1.0/groups/$($G.Id)/members" | Should -Be 1 -Because "$($G.Name) is read in full"
+                Get-GraphCallCount -Like "GET v1.0/groups/$($G.Id)/owners" | Should -Be 1 -Because "$($G.Name) is read in full"
+                Get-GraphCallCount -Like "GET *eligibilityScheduleInstances*$($G.Id)*" | Should -Be 1 -Because "$($G.Name) is read in full"
+            }
+            # The members, the owners, the eligibility and the criterion: what a full read costs G-PLAIN.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 6 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
         }
     }
 }
