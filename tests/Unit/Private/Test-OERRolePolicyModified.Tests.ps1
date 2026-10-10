@@ -55,9 +55,13 @@ AfterAll {
 
 Describe 'Test-OERRolePolicyModified' {
     It 'returns $null when there is no metadata to judge' {
+        # Counted on the call itself, inside the module scope, so the count does not rest on how a
+        # variable holds an empty result: 1 for a returned $null, 0 for a bare return (measured with
+        # that mutant).
+        $Answers = InModuleScope Omnicit.EntraRBAC { @(Test-OERRolePolicyModified -Metadata $null).Count }
+        $Answers | Should -Be 1 -Because 'the predicate answers once, with a null, and never with nothing'
         $Result = InModuleScope Omnicit.EntraRBAC { Test-OERRolePolicyModified -Metadata $null }
         $null -eq $Result | Should -BeTrue
-        @($Result).Count | Should -Be 1 -Because 'the predicate answers once, with a null, and never with nothing'
     }
 
     It 'returns <Expected> for <Case> (<Form>)' -ForEach $script:Cases {

@@ -208,8 +208,8 @@ be proposed. `roleManagementPolicies` (the PIM settings of Azure roles) holds, u
 exactly at the policy's scope, or whose policy has been changed, and every policy the export could
 not judge, at a scope listed under "What this export could not read" as kept without being judged.
 A policy absent from it was left out by the export, not missing from the tenant, and applying a
-document that does not declare it leaves it untouched. Four areas fall outside that model, each differently -- do not read this
-bundle as a complete picture of the tenant:
+document that does not declare it leaves it untouched. Four areas fall outside that model, each
+differently -- do not read this bundle as a complete picture of the tenant:
 
 - Azure resource groups and individual Azure resources are not created or managed by the document.
   A role assignment at a resource-group or resource scope does apply, but `scopeHierarchy.json`

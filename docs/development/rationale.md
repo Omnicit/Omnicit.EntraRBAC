@@ -6293,9 +6293,9 @@ near expiry is renewed there, just before the policy list -- as the per-scope
 `Get-OERRoleManagementPolicy` call inside `Get-OERInventory` does on the `-AllRolePolicies` path.
 `Get-OERInventoryRolePolicy` never signs in. A failure of the role assignment read costs the
 selection, not the scope: its `catch` scrubs the record first, writes one warning ("Could not read
-the role assignments at scope '...', so its role management policies are kept without being judged:
-..." with the cause) and marks the scope unread for the selection, and the policy list is still
-read. A failed
+the role assignments at scope '...', so a role management policy there not kept by a use or a change
+is kept without being judged: ..." with the cause) and marks the scope unread for the selection, and
+the policy list is still read. A failed
 policy list reaches the per-scope `catch` and skips the scope exactly as a failed policy read always
 has. Cost if wrong: an interactive long export prompts at a 401 instead of five minutes before.
 
@@ -6312,8 +6312,8 @@ scope named.
 subscription, `roleManagementPolicies/role selection at /subscriptions/<id>` -- in the shape of
 `Get-OERInventory`'s `directoryRoleManagementPolicies/role selection` entry. A scope is named when at
 least one policy there could not be judged, so the entry does not mean that every policy at the
-scope was kept: every policy there that could not be judged was kept, none of them left out, and only
-where the scope's role assignment read or eligibility read failed is that every policy of a role
+scope was kept: every policy there that could not be judged was kept, none of them left out, and
+where the scope's role assignment read or eligibility read failed that is every policy of a role
 neither used nor changed there. A single row with no `policy` object at a scope whose reads succeeded
 names the scope too, while the other unused, unchanged policies there are still left out (the test
 'keeps the input order of the policies and names each unjudged scope once, in the order first seen'
@@ -6368,8 +6368,12 @@ entry form, so R7 did not move them. The clause first read "the role management 
 scope(s) were kept without being judged", which reads as every policy at the scope; the review of
 the texts found that false where only one row could not be judged (R6), so it now says that every
 policy that could not be judged was kept, none of them left out (text only, no change in behaviour).
-The help, the bundle README, the prompt template, README and the about topic say the same rule in
-their own words. Cost if wrong: text-only edits, plus the fragments the Export tests match.
+The warning first read "so its role management policies are kept without being judged", which reads
+the same way although a policy kept there for an eligibility or a change was judged; the final
+review found it loose, so it now says that a policy there not kept by a use or a change is kept
+without being judged (text only). The help, the bundle README, the prompt template, README and the
+about topic say the same rule in their own words. Cost if wrong: text-only edits, plus the fragments
+the Export tests match.
 
 **R12 (no runspace proof without a `try`).** No new guard stops a public cmdlet: each keeps or omits
 an entry, or names a scope, so the no-`try` runspace proof other guards need was not made. Cost if
@@ -6392,6 +6396,13 @@ wrong: one such test in a follow-up.
   scope: `Resolve-OERInventoryScopeTree` then returns that one scope unchanged and the per-scope loop
   reads it like any other (read in the code; the live checklist's sections 2.1 and 2.2 export a
   resource group that way).
+- The row shape of a management group's policy assignment list is NOT measured: `oer-live-cc` is
+  refused the management group listing, so the measurement above read a subscription only. If such
+  rows carried no `policyAssignmentProperties.policy`, every policy at every management group the
+  walk reads would be kept and its scope named as unjudged (R5), so every export with
+  `RoleManagementPolicies` whose walk reads a management group would end `InventoryPartial`. That is
+  the safe direction -- more kept and named, nothing dropped -- and it is to be confirmed in the
+  maintainer's own tenant.
 - The live checklist (`docs/live-verification/feat-export-role-policies-in-use-checklist.md`) compares
   the exports of the build before this step and of this step, and an apply of the exported document;
   it is written and not yet run, so until it is, everything after the measurement above is proved

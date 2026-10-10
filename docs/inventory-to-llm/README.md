@@ -474,8 +474,9 @@ or eligibility read failed, that is every policy of a role neither used nor chan
 `roleManagementPolicies.json` may hold policies of roles that are neither used nor changed at that
 scope, and such a policy is no evidence that its role is in use. The entry does not mean every
 policy at the scope was kept: when only one policy could not be judged, the other unused, unchanged
-ones are still left out. When nothing was left unread, that section says so. The list is in the README alone: `inventory.json` and the other
-JSON files never carry it, so the apply document keeps exactly the shape the schema describes.
+ones are still left out. When nothing was left unread, that section says so. The list is in the
+README alone: `inventory.json` and the other JSON files never carry it, so the apply document keeps
+exactly the shape the schema describes.
 
 ## Notes
 

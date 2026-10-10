@@ -81,9 +81,10 @@ function Export-OERInventory {
     the step 5 live-verification checklist, section 4
     (docs/live-verification/feat-inventory-directory-roles-and-rename-checklist.md), one unfiltered
     subscription read returned an eligibility at a resource group below it (2026-09-30).
-    Resolve-OERInventoryScopeTree enumerates management group and subscription scopes only, so a
-    resource-group- or resource-scoped eligibility reaches this file ONLY through that unfiltered
-    subscription read's below-scope behaviour. The results
+    Without -Scope, Resolve-OERInventoryScopeTree enumerates management group and subscription
+    scopes only, so a resource-group- or resource-scoped eligibility reaches this file only through
+    that unfiltered subscription read's below-scope behaviour; a -Scope naming a resource group or a
+    resource is itself the one scope read, unfiltered. The results
     are deduplicated on the eligibility schedule id, so one eligibility
     visible from several scopes in the walk appears once -- for example a management-group
     eligibility, read once directly at the management group and again, inherited, from every
@@ -579,13 +580,14 @@ function Export-OERInventory {
                                 # The role assignments listed at (or above) the scope, FIRST: its sign-in
                                 # check renews a token near expiry before the policy list, as the
                                 # per-scope Get-OERRoleManagementPolicy call does with -AllRolePolicies.
-                                # A failure here costs the selection, not the scope: the policies at the
-                                # scope are then kept without being judged and named, never dropped.
+                                # A failure here costs the selection, not the scope: a policy at the scope
+                                # not kept by a use or a change is then kept without being judged, and the
+                                # scope is named, never dropped.
                                 try {
                                     $ScopeAssignments = @(Get-OERRoleAssignment -Scope $S -AtScope -ErrorAction Stop)
                                 } catch {
                                     Remove-OERErrorRecord -Record $PSItem
-                                    Write-Warning "Could not read the role assignments at scope '$S', so its role management policies are kept without being judged: $($PSItem.Exception.Message)"
+                                    Write-Warning "Could not read the role assignments at scope '$S', so a role management policy there not kept by a use or a change is kept without being judged: $($PSItem.Exception.Message)"
                                     $ScopeAssignmentsUnread = $true
                                 }
                                 # A failed policy list reaches the catch below and skips the scope, as a

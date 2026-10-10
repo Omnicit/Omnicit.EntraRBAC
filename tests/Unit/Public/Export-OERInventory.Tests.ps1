@@ -741,6 +741,8 @@ Describe 'Export-OERInventory (Azure role policy selection, BL-107)' {
     # No id below is version-4 shaped.
     BeforeAll {
         $script:BlSub = '/subscriptions/11111111-1111-1111-1111-111111111111'
+        # A second subscription, for the tests that walk two scopes.
+        $script:BlSub2 = '/subscriptions/22222222-2222-2222-2222-222222222222'
         $script:BlRg = "$script:BlSub/resourceGroups/rg-app"
         $script:BlMg = '/providers/Microsoft.Management/managementGroups/mg-parent'
         $script:BlTenantRoleDef = '/providers/Microsoft.Authorization/roleDefinitions'
@@ -953,10 +955,12 @@ Describe 'Export-OERInventory (Azure role policy selection, BL-107)' {
         @($Bundle.SkippedScopes).Count | Should -Be 0
         $Bundle.ScopeCount | Should -Be 1
         @($Warn | Where-Object { $_.Message -like 'Skipping scope*' }).Count | Should -Be 0
-        # One warning, naming the scope and the cause.
+        # One warning, naming the scope and the cause, and saying which policies it keeps unjudged:
+        # those not kept by a use or a change, not every policy at the scope.
         @($Warn).Count | Should -Be 1
         $Warn[0].Message | Should -BeLike "*'$script:BlSub'*"
         $Warn[0].Message | Should -BeLike '*Forbidden (403): the client has no authorization to list role assignments*'
+        $Warn[0].Message | Should -BeLike "Could not read the role assignments at scope '$script:BlSub', so a role management policy there not kept by a use or a change is kept without being judged: *"
 
         # Named, as the one IncompleteReads entry, and by one InventoryPartial that names it in a
         # clause of its own -- not as an Entra ID read.
@@ -973,6 +977,70 @@ Describe 'Export-OERInventory (Azure role policy selection, BL-107)' {
         $Section = Get-ReadmeCouldNotReadSection -BundlePath $Bundle.BundlePath
         ((Get-SectionBullets -Section $Section) -join "`n") | Should -BeExactly $script:BlAzureBullet
         Assert-ListStaysOutOfJson -BundlePath $Bundle.BundlePath -Forbidden @($script:BlAzureBullet)
+    }
+
+    It 'marks unread only the scope whose role assignment read failed, and judges the next scope on its own read' {
+        # Two scopes, the failing one first. The unread mark belongs to one scope: the second
+        # scope's role assignments were read, so its policies are judged and its scope is not named.
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @($script:BlSub, $script:BlSub2)
+                Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment $script:BlFailingAssignmentRead -ParameterFilter { $Scope -eq $script:BlSub }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sel-two-scopes') -Include RoleManagementPolicies `
+            -WarningVariable Warn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+
+        # Reached: both scopes were read, and the first one's role assignment read failed.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -eq $script:BlSub2 }
+        $Bundle.ScopeCount | Should -Be 2
+        @($Bundle.SkippedScopes).Count | Should -Be 0
+        @($Warn).Count | Should -Be 1
+        $Warn[0].Message | Should -BeLike "*'$script:BlSub'*"
+
+        # The first scope keeps every policy, three of them unjudged; the second keeps only the
+        # role assigned there and the changed one, and omits the untouched one and the one used
+        # elsewhere.
+        $Written = @(Get-Content (Join-Path $Bundle.BundlePath 'roleManagementPolicies.json') -Raw | ConvertFrom-Json)
+        (@($Written | Where-Object { $_.scope -eq $script:BlSub } | ForEach-Object { $_.role }) -join ',') |
+            Should -BeExactly 'Assigned,Eligible,Changed,Untouched,Elsewhere'
+        (@($Written | Where-Object { $_.scope -eq $script:BlSub2 } | ForEach-Object { $_.role }) -join ',') |
+            Should -BeExactly 'Assigned,Changed'
+        $Bundle.RoleManagementPolicies | Should -Be 7
+
+        # Only the first scope is named, in IncompleteReads and in the one InventoryPartial.
+        @($Bundle.IncompleteReads) | Should -Be @($script:BlUnjudged)
+        $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+        $Partial.Count | Should -Be 1
+        $Partial[0].Exception.Message | Should -BeLike "*$script:BlUnjudged*"
+        $Partial[0].Exception.Message | Should -BeLike '*at 1 Azure scope(s) every role management policy that could not be judged was kept*'
+        $Partial[0].Exception.Message | Should -Not -BeLike "*role selection at $script:BlSub2*"
+    }
+
+    It 'writes a kept policy once when the walk lists its scope twice, as the -AllRolePolicies path does' {
+        # The scope tree does not deduplicate the scopes it lists. Should one scope come twice, its
+        # policies are read twice and every candidate comes twice; the merge keeps one of each, with
+        # the same scope|role rule as the -AllRolePolicies merge.
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @($script:BlSub, $script:BlSub)
+                Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+            }
+        }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sel-twice') -Include RoleManagementPolicies `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        # Reached: the policy list was read once per listed scope, so every candidate came twice.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicyForScope -Times 2 -Exactly
+        $Bundle.ScopeCount | Should -Be 2
+        Get-BlPolicyRole -BundlePath $Bundle.BundlePath | Should -BeExactly 'Assigned,Eligible,Changed'
+        $Bundle.RoleManagementPolicies | Should -Be 3
+
+        $All = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sel-twice-all') -Include RoleManagementPolicies -AllRolePolicies `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        Get-BlPolicyRole -BundlePath $All.BundlePath | Should -BeExactly 'Assigned,Eligible,Changed,Untouched,Elsewhere'
     }
 
     It 'appends the unjudged scope after the Entra ID entries, and keeps the Entra ID clause over the Entra ID entries only' {
@@ -1032,6 +1100,8 @@ Describe 'Export-OERInventory (Azure role policy selection, BL-107)' {
         $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
         $Partial.Count | Should -Be 1
         $Partial[0].Exception.Message | Should -Not -BeLike '*roleManagementPolicies/*'
+        # No role selection clause either, not even one counting zero scopes.
+        $Partial[0].Exception.Message | Should -Not -BeLike '*could not be judged*'
     }
 
     It 'adds -AllRolePolicies as a switch directly after -AllDirectoryRolePolicies, and every positional parameter keeps its position' {
@@ -2675,6 +2745,9 @@ Describe 'Export-OERInventory (the group roster that could not be read is partia
             Should -BeLike '*1 partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle*'
         $Partial[0].Exception.Message |
             Should -BeLike '*A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read*'
+        # An Entra ID partial carries no Azure role selection clause, not even one counting zero
+        # scopes.
+        $Partial[0].Exception.Message | Should -Not -BeLike '*could not be judged*'
     }
 
     It 'adds no groupsRoster entry and raises no InventoryPartial when the roster read answers GroupNotFound' {
