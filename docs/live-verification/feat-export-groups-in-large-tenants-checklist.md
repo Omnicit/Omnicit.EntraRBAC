@@ -232,7 +232,7 @@ function Get-S108Roster {
 }
 
 function Invoke-S108Export {
-    # One export of the Groups section into raw\s108\<Name>, fenced; the request log written; the bundle
+    # One export of the Groups section into a folder of raw\s108 named after it, fenced; the request log written; the bundle
     # summary and the export's own errors printed as counts and ids.
     param([Parameter(Mandatory)][string]$Name, [hashtable]$Extra = @{})
     Reset-S108Requests
