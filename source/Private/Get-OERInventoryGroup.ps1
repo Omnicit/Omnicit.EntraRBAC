@@ -34,12 +34,14 @@ function Get-OERInventoryGroup {
     is not projected, not asked the PIM-in-use criterion, has no members, owners or policy read by
     this function, and adds nothing to the Unread list. Under a full read Get-OERGroup has already
     read its members, owners and PIM eligibility with the list, before this function sees the group,
-    so a collection of it that failed to read can still leave its cause in the Causes list (with no
-    Unread name, since the group is not projected); no error is dropped. Under -RelevantOnly the
-    group is still listed, but its members, owners and PIM eligibility are not read. When any group
-    was dropped, ONE warning says how many. It exists for a caller whose filter is an operator's
-    own expression: a filter that closes the parenthesis it is wrapped in can list groups the
-    caller never meant to cover, and this check is what keeps them out of the document.
+    so a collection of it may have failed to read; that failure is no gap in the document, which
+    does not hold the group, so this function removes every cause whose Target is the dropped
+    group's id from the Causes list (the verbose stream has already carried it) and names nothing
+    unread for it. Under -RelevantOnly the group is still listed, but its members, owners and PIM
+    eligibility are not read. When any group was dropped, ONE warning says how many. It exists for a
+    caller whose filter is an operator's own expression: a filter that closes the parenthesis it is
+    wrapped in can list groups the caller never meant to cover, and this check is what keeps them
+    out of the document.
 
     With -ExcludeSharedName a group whose display name another listed group shares, compared without
     regard to letter case, is left out in either mode, and the name is reported once, with the
@@ -271,16 +273,29 @@ function Get-OERInventoryGroup {
         # ONE warning, written here (the caller's ShouldProcess comes after this read, so -WhatIf and a
         # -Confirm prompt both show it). Under a full read the list has already carried the collections of
         # such a group (Get-OERGroup read them with the list), which is the only read it costs: a
-        # collection of it that failed to read has already left its cause in the Causes list by the
-        # record loop above, and that cause stays (no error is dropped), with no Unread name since the
-        # group is never projected.
+        # collection of it that failed to read was reported by the record loop above, whose verbose line
+        # carried the cause, and left it in the Causes list. A group left out is not in the document, so
+        # that failed read is no gap in it and the cause is removed here (by the group's id, the Target
+        # the record loop gave it); it names no Unread collection either, since the group is never
+        # projected. A cause with no target is never removed, and a group without an id removes none.
         if ($SecurityEnabledOnly) {
-            $KeptGroupItems = @($GroupItems | Where-Object { $_.SecurityEnabled -is [bool] -and $_.SecurityEnabled })
-            $LeftOutCount = @($GroupItems).Count - $KeptGroupItems.Count
+            # One pass, so a tenant with very many groups is walked once: the groups that stay, how many
+            # went, and the ids of the ones that went (a group without an id has none to remove by).
+            $KeptGroupItems = [System.Collections.Generic.List[object]]::new()
+            $LeftOutIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $LeftOutCount = 0
+            foreach ($Listed in $GroupItems) {
+                if ($Listed.SecurityEnabled -is [bool] -and $Listed.SecurityEnabled) { $KeptGroupItems.Add($Listed); continue }
+                $LeftOutCount++
+                if ($Listed.Id) { $null = $LeftOutIds.Add([string]$Listed.Id) }
+            }
             if ($LeftOutCount -gt 0) {
                 Write-Warning "-GroupFilter returned $LeftOutCount group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out."
+                for ($CauseIndex = $Causes.Count - 1; $CauseIndex -ge 0; $CauseIndex--) {
+                    if ($LeftOutIds.Contains([string]$Causes[$CauseIndex].Target)) { $Causes.RemoveAt($CauseIndex) }
+                }
             }
-            $GroupItems = $KeptGroupItems
+            $GroupItems = $KeptGroupItems.ToArray()
         }
 
         # -ExcludeSharedName: how many listed groups carry each display name, compared without regard to

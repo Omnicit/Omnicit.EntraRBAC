@@ -1100,7 +1100,8 @@ Describe 'Get-OERGroup PIM eligibility raises no error record for a not-onboarde
 
 Describe 'Get-OERGroup PIM eligibility refuses a 403 whose prose mentions the expected code' {
     # THE DEFECT, seen from the cmdlet that suffers it. Both the wrapper's expected-code match and
-    # this cmdlet's own inline fallback used to split the record's message on ':' unconditionally, so
+    # the inline fallback of Read-OERGroupCollection (the reader this cmdlet calls) used to split
+    # the record's message on ':' unconditionally, so
     #   {"code":"Authorization_RequestDenied","message":"Insufficient privileges: ResourceTypeNotSupported"}
     # produced 'ResourceTypeNotSupported' as a whole segment and a real 403 was recorded as
     # PimEligibility = @(). An operator reading that document sees a group with no PIM eligibility;
@@ -1109,10 +1110,11 @@ Describe 'Get-OERGroup PIM eligibility refuses a 403 whose prose mentions the ex
     # THE TWO GUARDS ARE NOT BACKUPS FOR EACH OTHER, so do not read this Describe as covering one via
     # the other. The stub below models BOTH halves of InvokeMgGraphRequest.cs, which is what lets one
     # fixture reach both: with -ExpectedErrorCode declared the failure arrives at the WRAPPER's gate
-    # as data, and the inline catch never runs at all. Measured -- softening the wrapper's gate alone
-    # brings the defect back completely and silently (PimEligibility present, Count 0, zero error
-    # records); softening the inline copy alone leaves PimEligibility = @() with 5 records. Different
-    # arrival shapes, different guards, and the wrapper's is the one a live tenant exercises.
+    # as data, and the catch inside Read-OERGroupCollection never runs at all. Measured -- softening
+    # the wrapper's gate alone brings the defect back completely and silently (PimEligibility
+    # present, Count 0, zero error records); softening the inline copy in Read-OERGroupCollection
+    # alone leaves PimEligibility = @() with 5 records. Different arrival shapes, different guards,
+    # and the wrapper's is the one a live tenant exercises.
     BeforeEach {
         InModuleScope $script:moduleName { $script:_OERAuthState = $null }
         Mock -ModuleName $script:moduleName Initialize-OERAuth { }

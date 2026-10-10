@@ -132,15 +132,15 @@ GROUPS IN AN EXPORT
     RBAC-relevant security groups in inventory.json: role-assignable ones, ones
     with PIM eligibility, ones found to use PIM for Groups and, with
     -IncludeSyncedGroups, synchronized ones. It decides that before it reads any
-    group in full. Every group costs one request
-    for its PIM eligibility and, when that does not decide it, one for its
-    PIM-for-Groups policies; a group found not relevant costs those two and no
-    more, so its members, owners and policies are never read. A group whose
-    relevance could not be read is read in full, and what could not be read is
-    named in IncompleteReads. The export shows progress while it reads the groups.
-    -AllGroupsDetailed reads every security group in full, as earlier versions
-    did. In groupsRoster.json a group the export did not read in full has
-    memberCount null, meaning not known rather than zero.
+    group in full. Every group costs one request for its PIM eligibility and,
+    when that does not decide it, one for its PIM-for-Groups policies; a group
+    found not relevant costs those two and no more, so its members, owners and
+    policies are never read. A group whose relevance could not be read is read
+    in full, and what could not be read is named in IncompleteReads. The export
+    shows progress while it reads the groups. -AllGroupsDetailed reads every
+    security group in full, as earlier versions did. In groupsRoster.json a group
+    the export did not read in full has memberCount null, meaning not known
+    rather than zero.
 
     -GroupFilter narrows the groups inventory.json is read from and never widens
     them. The export lists groups with 'securityEnabled eq true and (your filter)'

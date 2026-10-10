@@ -180,11 +180,13 @@ Describe 'Get-OERInventoryGroup' {
             $Read.Errors.Count | Should -Be 0
         }
 
-        It 'keeps the cause of a failed collection read of a group it left out under a full read, and names no unread collection for it' {
+        It 'removes the cause of a failed collection read of a group it left out under a full read, and names no unread collection for it' {
             # A full read has Get-OERGroup read the collections WITH the list, before the reader sees
             # the group, so the failed members read of a group the switch then drops has already been
-            # reported. No error is dropped: its cause stays in Causes. The group is not projected, so
-            # nothing names it in Unread (that name is added where a group is projected).
+            # reported, and its cause already written to the verbose stream. The group is not in the
+            # document, so that failed read is no gap in it: the cause leaves Causes (by the group's
+            # id, the Target), and nothing names the group in Unread (that name is added where a group
+            # is projected).
             Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
                 param($ErrorAction)
                 $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
@@ -196,15 +198,56 @@ Describe 'Get-OERInventoryGroup' {
             $Read = Invoke-GroupRead -SecurityEnabledOnly
             @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('sec_team')
             $Read.Result.Unread.Count | Should -Be 0
-            @($Read.Result.Causes).Count | Should -Be 1
-            $Read.Result.Causes[0].Cause | Should -Be "Could not read members for group 'g-m365': Too many requests (429)."
-            $Read.Result.Causes[0].Target | Should -Be 'g-m365'
+            @($Read.Result.Causes).Count | Should -Be 0
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: Could not read members for group 'g-m365': Too many requests (429)."
             # Non-vacuity: without the switch the same listing projects the group, which names the
-            # members it could not read, and the cause is the same single cause.
+            # members it could not read, and the cause is the single cause the switch removed.
             $Control = Invoke-GroupRead
             @($Control.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('sec_team', 'm365_team')
             @($Control.Result.Unread) | Should -Be @('groups/m365_team/members')
             @($Control.Result.Causes).Count | Should -Be 1
+            $Control.Result.Causes[0].Cause | Should -Be "Could not read members for group 'g-m365': Too many requests (429)."
+            $Control.Result.Causes[0].Target | Should -Be 'g-m365'
+        }
+
+        It 'removes the cause of the group it left out only, and keeps the cause of a group it keeps' {
+            # Two failed reads in one listing: the kept group's owners and the dropped group's members.
+            # Only the dropped group's cause leaves; the kept group's stays, with its Unread name.
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -Message "Could not read owners for group 'g-sec': Too many requests (429)." `
+                    -ErrorId 'GroupOwnerReadFailed' -Category LimitsExceeded -TargetObject 'g-sec' -ErrorAction $Ea
+                Write-Error -Message "Could not read members for group 'g-m365': Too many requests (429)." `
+                    -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'g-m365' -ErrorAction $Ea
+                [PSCustomObject]@{ Id = 'g-sec'; DisplayName = 'sec_team'; GroupType = 'Assigned'; IsAssignableToRole = $false; SecurityEnabled = $true; Members = @(); PimEligibility = @() }
+                [PSCustomObject]@{ Id = 'g-m365'; DisplayName = 'm365_team'; GroupType = 'Unified'; IsAssignableToRole = $false; SecurityEnabled = $false; Owners = @(); PimEligibility = @() }
+            }
+            $Read = Invoke-GroupRead -SecurityEnabledOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('sec_team')
+            @($Read.Result.Unread) | Should -Be @('groups/sec_team/owners')
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Read.Result.Causes[0].Cause | Should -Be "Could not read owners for group 'g-sec': Too many requests (429)."
+            $Read.Result.Causes[0].Target | Should -Be 'g-sec'
+        }
+
+        It 'removes no cause that has no target when the group it left out has no id' {
+            # A cause with an empty Target is not about any group, and a left-out group without an id
+            # must not make the empty text match it.
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -Message 'Could not read owners for a group: Too many requests (429).' `
+                    -ErrorId 'GroupOwnerReadFailed' -Category LimitsExceeded -ErrorAction $Ea
+                $script:SecurityListing[0]
+                [PSCustomObject]@{ DisplayName = 'noid_team'; GroupType = 'Unified'; IsAssignableToRole = $false; SecurityEnabled = $false; Members = @(); Owners = @(); PimEligibility = @() }
+            }
+            $Read = Invoke-GroupRead -SecurityEnabledOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('sec_team')
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Read.Result.Causes[0].Cause | Should -Be 'Could not read owners for a group: Too many requests (429).'
+            $Read.Result.Causes[0].Target | Should -Be ''
+            $Read.Warned.Count | Should -Be 1
         }
 
         It 'sends the filter it is given exactly as given, and asks for nothing more' {
@@ -1062,6 +1105,27 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             Get-GraphCallCount -Like 'GET beta/policies/roleManagementPolicyAssignments[?]*33333333-3333-3333-3333-333333333333*' | Should -BeGreaterThan 0
             Get-GraphCallCount -Like 'GET beta/policies/roleManagementPolicyAssignments[?]*22222222-2222-2222-2222-222222222222*' | Should -Be 0
             $Read.Warned.Count | Should -Be 1
+        }
+
+        It 'removes the cause of a failed members read of a group it left out in a full read, through the real Get-OERGroup' {
+            # The real Get-OERGroup reads G-EL's members with the list and writes the failure with the
+            # group's id as its target, which is what the reader removes the cause by.
+            $script:Tenant[1].SecurityEnabled = $false
+            $script:Refuse["members:$script:IdEl"] = 'Too many requests (429)'
+            $Read = Invoke-GroupRead -SecurityEnabledOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-MOD', 'G-PLAIN', 'G-SYNC', 'G-DYN')
+            $Read.Result.Unread.Count | Should -Be 0
+            @($Read.Result.Causes).Count | Should -Be 0
+            # Reach proof: the members of G-EL were asked for and refused, and the cause was written to
+            # the verbose stream before it was removed.
+            Get-GraphCallCount -Like "GET v1.0/groups/$script:IdEl/members" | Should -BeGreaterThan 0
+            @($Read.Verbose | Where-Object { $_ -like "Get-OERInventory: Could not read members for group $($script:IdEl):*" }).Count | Should -Be 1
+            # Non-vacuity: without the switch the group is projected, names its members unread, and
+            # the same cause is on the list with the group's id as its target.
+            $Control = Invoke-GroupRead
+            @($Control.Result.Unread) | Should -Be @('groups/G-EL/members')
+            @($Control.Result.Causes).Count | Should -Be 1
+            $Control.Result.Causes[0].Target | Should -Be $script:IdEl
         }
 
         It 'reads the same group as before without the switch' {

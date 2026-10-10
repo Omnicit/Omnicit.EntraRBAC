@@ -205,12 +205,13 @@ function Export-OERInventory {
     the groups the read itself shows as securityEnabled (a boolean true), so a filter that closes the
     parenthesis, for example 'x eq 1) or (securityEnabled eq false', cannot widen inventory.json to a
     group that is not security-enabled. Such a group is left out, with one warning that names how
-    many were left out. The expression is yours: it is sent as typed and never escaped, so double a
-    single quote inside a quoted value yourself ('O''Brien'). It applies to the Groups section only:
-    it changes nothing when -Include leaves Groups out, and groupsRoster.json is not filtered by it
-    and still lists every group in the tenant, with a null memberCount for a security group the
-    filter left out, since that group was not read. An empty or white space value is refused at
-    binding.
+    many were left out. With -AllGroupsDetailed a group the filter widens to is read in full before
+    it is left out; the default read reads nothing of it. The expression is yours: it is sent as
+    typed and never escaped, so double a single quote inside a quoted value yourself ('O''Brien'). It
+    applies to the Groups section only: it changes nothing when -Include leaves Groups out, and
+    groupsRoster.json is not filtered by it and still lists every group in the tenant, with a null
+    memberCount for a security group the filter left out, since that group was not read. An empty or
+    white space value is refused at binding.
 
     .EXAMPLE
     Export-OERInventory

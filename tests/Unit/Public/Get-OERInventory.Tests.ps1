@@ -117,6 +117,17 @@ Describe 'Get-OERInventory' {
             $grp.pimPolicy.owner.activationMaxHours | Should -Be 8
         }
 
+        It 'shows no progress while it reads the groups, since progress is the export''s alone' {
+            # Get-OERInventory calls the shared reader without -ProgressActivity, so its output stays
+            # what it was. The real reader runs here; only Write-Progress is observed.
+            Mock -ModuleName $script:moduleName Write-Progress { }
+            $Result = Get-OERInventory -Include Groups
+            # Reach proof: the reader ran and the group it read was projected.
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+            @($Result.Groups).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Write-Progress -Times 0 -Exactly
+        }
+
         It 'projects a user member as its UPN and a non-user member (device/group/app) as its object id' {
             Mock -ModuleName $script:moduleName Get-OERGroup {
                 [PSCustomObject]@{
@@ -4091,8 +4102,9 @@ Describe 'Get-OERInventory' {
             # assignment policy name, objects not written because two of them share a name, the group
             # list, the administrative unit list, the access review list, an entry written as null
             # because it has no name) -- and the remainder is counted rather than silently lost.
-            # Raise the numbers here and $UnreadCauseCap together, or a whole shape can be crowded
-            # out of the clause purely by the order the sections run in.
+            # Raise the numbers here and $UnreadCauseCap (in Format-OERUnreadCauseClause, where the
+            # cap lives) together, or a whole shape can be crowded out of the clause purely by the
+            # order the sections run in.
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
                 [CmdletBinding()] param([switch]$IncludeMembers, [switch]$IncludeScopedRoles)
                 foreach ($N in 1..24) {

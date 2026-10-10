@@ -6158,8 +6158,11 @@ filters.
 security-enabled is left out of `inventory.json` with one warning naming the count, written before
 the bundle's `ShouldProcess`; `groupsRoster.json`, read unfiltered, still lists it. Under
 `-AllGroupsDetailed` the list is read with the collections attached, so such a group's collections
-are read before the check drops it, and a failed read of one leaves its cause with no unread name.
-Cost if wrong: drop them silently, with a verbose line only.
+are read before the check drops it, and a failed read of one is written to the verbose stream by the
+record loop and then removed from the causes by the group's id: the group is not in the document, so
+its failed read is no gap in it, and no causes clause names a group found nowhere else. Cost if
+wrong: drop them silently, with a verbose line only; and, for the cause, keep it in the list, where
+the partial message would name a failure in a group the document does not hold.
 
 **R7 (progress).** `Write-Progress` runs in the export's group read only (`-ProgressActivity`,
 activity `Export-OERInventory`): a status while the list is read, then one 'Group n of N' record
