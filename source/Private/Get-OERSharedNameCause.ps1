@@ -7,8 +7,8 @@ function Get-OERSharedNameCause {
     The single owner of the sentence that says why live objects whose names match without regard to
     letter case are not written to an inventory: they would be two document entries the validator
     refuses as a duplicate, and the apply engine refuses an ambiguous name anyway, so none of them
-    could be applied. Get-OERInventory (Select-UniqueNamedEntry) and the group reader that
-    Export-OERInventory uses both report it, and both must say the same thing.
+    could be applied. Get-OERInventory reports it, through its Select-UniqueNamedEntry, for every
+    section it writes.
 
     .PARAMETER Path
     The unread entry the text names, as the partial signal spells it: the section and the name

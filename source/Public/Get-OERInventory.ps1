@@ -465,9 +465,9 @@ function Get-OERInventory {
 
         if ($Include -contains 'AdministrativeUnits') {
             $AuItems = @()
-            # Same shape as the group read above: Get-OERAdministrativeUnit now writes a
-            # non-terminating error per unit whose members or scoped-role read failed, and
-            # -ErrorAction Stop would abort the whole enumeration on the first one. The records
+            # Same shape as the group read in Get-OERInventoryGroup.ps1: Get-OERAdministrativeUnit
+            # now writes a non-terminating error per unit whose members or scoped-role read failed,
+            # and -ErrorAction Stop would abort the whole enumeration on the first one. The records
             # are inspected below rather than discarded.
             $AuReadErrors = $null
             try {
@@ -479,20 +479,21 @@ function Get-OERInventory {
                     # affected unit is known by name; only anything else warrants a section warning.
                     if ($AErr.FullyQualifiedErrorId -like 'AdministrativeUnitMemberReadFailed*' -or
                         $AErr.FullyQualifiedErrorId -like 'AdministrativeUnitScopedRoleReadFailed*') {
-                        # Keep the CAUSE, same reasoning as the group loop above.
+                        # Keep the CAUSE, same reasoning as the group record loop in Get-OERInventoryGroup.ps1.
                         $AuCause = [string]$AErr.Exception.Message
                         Write-Verbose "Get-OERInventory: $AuCause"
                         Add-UnreadCause -Cause $AuCause -Target ([string]$AErr.TargetObject)
                         continue
                     }
-                    # Same publisher test as the group loop above, and for the same measured reason:
-                    # seven failing units produced 56 section-level warnings, 49 of them foreign
-                    # records the engine had collected from nested calls. See that comment for why
-                    # the PUBLISHER named in the FullyQualifiedErrorId, not the error id, is the
-                    # discriminator.
+                    # Same publisher test as the group record loop in Get-OERInventoryGroup.ps1, and for
+                    # the same measured reason: seven failing units produced 56 section-level warnings,
+                    # 49 of them foreign records the engine had collected from nested calls. See the
+                    # matching comment there for why the PUBLISHER named in the FullyQualifiedErrorId,
+                    # not the error id, is the discriminator.
                     if (@(([string]$AErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERAdministrativeUnit') {
                         Write-Warning "Could not read administrative units: $($AErr.Exception.Message)"
-                        # Counted unread as well as warned, for the same reason as the groups read above.
+                        # Counted unread as well as warned, for the same reason as the group list read in
+                        # Get-OERInventoryGroup.ps1.
                         Add-UnreadSection -Key 'administrativeUnits' -Cause "Could not read administrative units: $($AErr.Exception.Message)"
                     } else {
                         Write-Verbose ("Get-OERInventory: ignoring a foreign error record seen while reading " +
@@ -529,7 +530,7 @@ function Get-OERInventory {
                 # the apply handler can only skip. Omit it, matching membershipRule above.
                 if (-not $Proj.dynamic) {
                     if ($Au.PSObject.Properties.Name -contains 'Members') {
-                        # Same rule as group members: a user as its UPN (resolvable + friendly), every other
+                        # Same rule as group members (Get-OERInventoryGroup.ps1): a user as its UPN (resolvable + friendly), every other
                         # member type as its object id (which the apply resolves verbatim); display name is
                         # not resolvable so it is only a last-resort fallback.
                         $Proj.members = @(foreach ($M in @($Au.Members)) {
@@ -824,7 +825,8 @@ function Get-OERInventory {
                     # removes every binding of the package, and an omitted key still reconciles the
                     # same way. An explicit null is the documented "leave the bindings untouched"
                     # signal, so that is what an unread set is, and the gap is reported through
-                    # InventoryPartial like the group and administrative-unit collections above.
+                    # InventoryPartial like the group collections (Get-OERInventoryGroup.ps1) and the
+                    # administrative-unit collections above.
                     # -ErrorAction Stop inside try/catch, the shape the directory-role sections below
                     # use: one reader per package, so a failure is attributed to exactly this package,
                     # and a record a reader swallowed internally (a retried 429) never counts as one.
@@ -1099,13 +1101,15 @@ function Get-OERInventory {
                         Where-Object { $null -ne $_ })
                 foreach ($ArErr in @($ArReadErrors)) {
                     if ($null -eq $ArErr) { continue }
-                    # No Remove-OERErrorRecord here, same as the group and administrative-unit loops
-                    # above: a record Get-OERAccessReviewDefinition PUBLISHED was already scrubbed by
+                    # No Remove-OERErrorRecord here, same as the group record loop (Get-OERInventoryGroup.ps1)
+                    # and the administrative-unit loop above: a record Get-OERAccessReviewDefinition
+                    # PUBLISHED was already scrubbed by
                     # that cmdlet's own catch, and scrubbing a reported diagnostic again would only
                     # strip it from $global:Error.
                     if ($ArErr.FullyQualifiedErrorId -like 'AccessReviewDefinitionNotFound*') { continue }
                     # Warn only for a record Get-OERAccessReviewDefinition itself PUBLISHED. Same
-                    # publisher test, same measured reason, as the two loops above: -ErrorVariable is
+                    # publisher test, same measured reason, as the group record loop (Get-OERInventoryGroup.ps1)
+                    # and the administrative-unit loop above: -ErrorVariable is
                     # filled by the ENGINE and also collects records raised inside nested calls even
                     # when an inner catch swallowed them, and Invoke-OERGraphRequest swallows and
                     # retries a 429, a 503 carrying Retry-After, and an ACRS claims challenge -- one
@@ -1114,7 +1118,8 @@ function Get-OERInventory {
                     # Write-Error appends a further name when a record is republished.
                     if (@(([string]$ArErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERAccessReviewDefinition') {
                         Write-Warning "Could not read access reviews: $($ArErr.Exception.Message)"
-                        # Counted unread as well as warned, for the same reason as the groups read above.
+                        # Counted unread as well as warned, for the same reason as the group list read in
+                        # Get-OERInventoryGroup.ps1.
                         Add-UnreadSection -Key 'accessReviews' -Cause "Could not read access reviews: $($ArErr.Exception.Message)"
                     } else {
                         # Routed to verbose rather than dropped: a stray is still evidence when a read

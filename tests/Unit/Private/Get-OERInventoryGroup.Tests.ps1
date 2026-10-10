@@ -274,8 +274,10 @@ Describe 'Get-OERInventoryGroup' {
     Context 'a failed read is named, never an empty fact' {
         It 'turns a members failure into an explicit null, an unread name and one cause with its target' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
                 Write-Error -Message "Could not read members for group 'g-1': Too many requests (429)." `
-                    -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'g-1' -ErrorAction Continue
+                    -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'g-1' -ErrorAction $Ea
                 [PSCustomObject]@{
                     Id = 'g-1'; DisplayName = 'role_sec_team'; Description = $null; GroupType = 'Assigned'
                     IsAssignableToRole = $false; Owners = @(); PimEligibility = @()
@@ -312,10 +314,12 @@ Describe 'Get-OERInventoryGroup' {
 
         It 'turns a list failure published by Get-OERGroup into the unread name groups and a warning' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
                 Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new('Insufficient privileges to complete the operation.'),
                         'Authorization_RequestDenied,Get-OERGroup',
-                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction Continue
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction $Ea
             }
             $Read = Invoke-GroupRead
             $Read.Result.Groups.Count | Should -Be 0
@@ -338,7 +342,9 @@ Describe 'Get-OERInventoryGroup' {
 
         It 'reports nothing for a group that was not found' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
-                Write-Error -Message 'gone' -ErrorId 'GroupNotFound' -Category ObjectNotFound -ErrorAction Continue
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -Message 'gone' -ErrorId 'GroupNotFound' -Category ObjectNotFound -ErrorAction $Ea
             }
             $Read = Invoke-GroupRead
             $Read.Result.Unread.Count | Should -Be 0
@@ -348,7 +354,9 @@ Describe 'Get-OERInventoryGroup' {
 
         It 'sends a foreign error record to the verbose stream, not to a warning or the unread list' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
-                Write-Error -Message 'stray from a nested call' -ErrorId 'SomeNestedFailure' -Category NotSpecified -ErrorAction Continue
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -Message 'stray from a nested call' -ErrorId 'SomeNestedFailure' -Category NotSpecified -ErrorAction $Ea
             }
             $Read = Invoke-GroupRead
             $Read.Result.Unread.Count | Should -Be 0
@@ -357,9 +365,20 @@ Describe 'Get-OERInventoryGroup' {
         }
 
         It 'keeps the groups that were read when one group has a failed collection' {
+            # Pester does not carry the caller's -ErrorAction into a mock body the way a real
+            # cmdlet's own preference would, so every mock in this file that writes a record honours
+            # it explicitly. Without that this test is INERT: a bare -ErrorAction Continue in the
+            # mock never terminates, so changing the reader's -ErrorAction SilentlyContinue on its
+            # Get-OERGroup call to Stop would still pass. With it, Stop makes the write terminate,
+            # the reader's catch turns the whole read into 'groups' unread, and the group after the
+            # failure is never projected -- the data loss the SilentlyContinue + -ErrorVariable
+            # shape exists to prevent. The test is against null, not truthiness: SilentlyContinue is
+            # the enum's value 0, so a bare "if ($ErrorAction)" reads it as not given.
             Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
                 Write-Error -Message 'members read failed' -ErrorId 'GroupMemberReadFailed' `
-                    -Category LimitsExceeded -TargetObject 'g-1' -ErrorAction Continue
+                    -Category LimitsExceeded -TargetObject 'g-1' -ErrorAction $Ea
                 [PSCustomObject]@{
                     Id = 'g-1'; DisplayName = 'role_sec_first'; Description = $null; GroupType = 'Assigned'
                     IsAssignableToRole = $false; Owners = @(); PimEligibility = @()
@@ -380,10 +399,12 @@ Describe 'Get-OERInventoryGroup' {
     Context 'order' {
         It 'lists the unread names and the causes in the order they were found' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
                 Write-Error -Message "Could not read members for group 'g-a': first" `
-                    -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'g-a' -ErrorAction Continue
+                    -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'g-a' -ErrorAction $Ea
                 Write-Error -Message "Could not read owners for group 'g-a': second" `
-                    -ErrorId 'GroupOwnerReadFailed' -Category LimitsExceeded -TargetObject 'g-a' -ErrorAction Continue
+                    -ErrorId 'GroupOwnerReadFailed' -Category LimitsExceeded -TargetObject 'g-a' -ErrorAction $Ea
                 [PSCustomObject]@{
                     Id = 'g-a'; DisplayName = 'role_sec_a'; Description = $null; GroupType = 'Assigned'
                     IsAssignableToRole = $false; PimEligibility = @()
@@ -409,9 +430,11 @@ Describe 'Get-OERInventoryGroup' {
 
         It 'puts the list failure first, then the per-group findings' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
                 Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new('page two refused'), 'Authorization_RequestDenied,Get-OERGroup',
-                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction Continue
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction $Ea
                 [PSCustomObject]@{
                     Id = 'g-a'; DisplayName = 'role_sec_a'; Description = $null; GroupType = 'Assigned'
                     IsAssignableToRole = $false; Members = @(); PimEligibility = @()
@@ -425,7 +448,9 @@ Describe 'Get-OERInventoryGroup' {
 
         It 'never adds a blank cause' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
-                Write-Error -Message ' ' -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'g-a' -ErrorAction Continue
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -Message ' ' -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'g-a' -ErrorAction $Ea
                 [PSCustomObject]@{
                     Id = 'g-a'; DisplayName = 'role_sec_a'; Description = $null; GroupType = 'Assigned'
                     IsAssignableToRole = $false; Owners = @(); PimEligibility = @()

@@ -5,19 +5,20 @@ function Get-OERInventoryGroup {
     eligibility and PIM policy, and projects each as an apply-document entry.
 
     .DESCRIPTION
-    The single owner of the inventory's Groups section. Get-OERInventory calls it for its Groups
-    section; the section used to live in that cmdlet's body and was moved here unchanged.
+    The single owner of the inventory's Groups section. Get-OERInventory calls it to fill that
+    section and replays the unread names and the causes it returns through its own lists.
 
     It makes ONE Get-OERGroup call carrying the members, owners and PIM eligibility switches and the
-    filter it is given, then projects each group exactly as Get-OERInventory always has: the
-    apply-document shape, an explicit null for a members read that failed, the PIM-for-Groups
-    pimPolicy only for a group that Test-OERGroupPimInUse finds in use, and onPremisesSynced only for
-    a group synchronized from on-premises. A failed read is never an empty fact: it is named in the
-    Unread list and its cause is kept in the Causes list.
+    filter it is given, then projects each group as an apply-document entry: an explicit null for a
+    members read that failed, the PIM-for-Groups pimPolicy only for a group that
+    Test-OERGroupPimInUse finds in use, and onPremisesSynced only for a group synchronized from
+    on-premises. A failed read is never an empty fact: it is named in the Unread list and its cause
+    is kept in the Causes list.
 
     It returns ONE tagged Omnicit.EntraRBAC.InventoryGroupRead object and never writes an error
-    record. The warnings and the verbose lines it writes are the ones Get-OERInventory has always
-    written for this section, verbose lines included with their Get-OERInventory prefix.
+    record. It writes a warning for a group list that could not be read, and its verbose lines carry
+    the 'Get-OERInventory: ' prefix, so an inventory's verbose output reads the same wherever the
+    line came from.
     - Groups: the projections, in list order.
     - Unread: the collection names that could not be read, in the order they were found ('groups'
       for the list itself, 'groups/<name>/members' and so on for a collection), exactly as the
@@ -59,8 +60,7 @@ function Get-OERInventoryGroup {
         [hashtable]$PrincipalNameCache = @{}
     )
 
-    # What the moved section needs from the command that used to hold it. The section was written
-    # against these names, so they stand in under the same names rather than the text changing.
+    # What the read below records into: the projections, the unread collection names and the causes.
     # $Causes keeps every cause RAW (the message and the id it was about): the caller replays them
     # through its own list, and the clause is built where the partial message is, from all sections.
     $Groups            = [System.Collections.Generic.List[object]]::new()
