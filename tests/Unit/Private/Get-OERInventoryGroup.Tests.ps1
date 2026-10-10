@@ -14,7 +14,8 @@ BeforeAll {
             [hashtable]$Cache,
             [switch]$RelevantOnly,
             [switch]$IncludeSyncedGroups,
-            [switch]$ExcludeSharedName
+            [switch]$ExcludeSharedName,
+            [switch]$SecurityEnabledOnly
         )
         $Arguments = @{
             Filter              = $Filter
@@ -23,6 +24,7 @@ BeforeAll {
             RelevantOnly        = [bool]$RelevantOnly
             IncludeSyncedGroups = [bool]$IncludeSyncedGroups
             ExcludeSharedName   = [bool]$ExcludeSharedName
+            SecurityEnabledOnly = [bool]$SecurityEnabledOnly
         }
         InModuleScope Omnicit.EntraRBAC -Parameters $Arguments {
             $Params = @{ Filter = $Filter }
@@ -31,6 +33,7 @@ BeforeAll {
             if ($RelevantOnly) { $Params.RelevantOnly = $true }
             if ($IncludeSyncedGroups) { $Params.IncludeSyncedGroups = $true }
             if ($ExcludeSharedName) { $Params.ExcludeSharedName = $true }
+            if ($SecurityEnabledOnly) { $Params.SecurityEnabledOnly = $true }
             $Stream = @(Get-OERInventoryGroup @Params -Verbose -ErrorVariable ReadErr -ErrorAction SilentlyContinue `
                     -WarningVariable ReadWarn -WarningAction SilentlyContinue 4>&1)
             [PSCustomObject]@{
@@ -107,6 +110,79 @@ Describe 'Get-OERInventoryGroup' {
                 { Get-OERInventoryGroup -Filter '' } | Should -Throw
             }
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERGroup -Exactly -Times 0
+        }
+    }
+
+    Context '-SecurityEnabledOnly' {
+        # A listing the way an operator's widened filter could answer it: one security group, then
+        # a group with securityEnabled false, one whose property is missing, one whose value is
+        # null, one whose value is the text 'true' and one whose value is a number. Only the first
+        # is a security-enabled group by the rule the apply document keeps (a boolean true).
+        BeforeEach {
+            $script:SecurityListing = @(
+                [PSCustomObject]@{ Id = 'g-sec'; DisplayName = 'sec_team'; GroupType = 'Assigned'; IsAssignableToRole = $false; SecurityEnabled = $true; Members = @(); Owners = @(); PimEligibility = @() }
+                [PSCustomObject]@{ Id = 'g-m365'; DisplayName = 'm365_team'; GroupType = 'Unified'; IsAssignableToRole = $false; SecurityEnabled = $false; Members = @(); Owners = @(); PimEligibility = @() }
+                [PSCustomObject]@{ Id = 'g-missing'; DisplayName = 'missing_team'; GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); Owners = @(); PimEligibility = @() }
+                [PSCustomObject]@{ Id = 'g-null'; DisplayName = 'null_team'; GroupType = 'Assigned'; IsAssignableToRole = $false; SecurityEnabled = $null; Members = @(); Owners = @(); PimEligibility = @() }
+                [PSCustomObject]@{ Id = 'g-text'; DisplayName = 'text_team'; GroupType = 'Assigned'; IsAssignableToRole = $false; SecurityEnabled = 'true'; Members = @(); Owners = @(); PimEligibility = @() }
+                [PSCustomObject]@{ Id = 'g-number'; DisplayName = 'number_team'; GroupType = 'Assigned'; IsAssignableToRole = $false; SecurityEnabled = 1; Members = @(); Owners = @(); PimEligibility = @() }
+            )
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup { $script:SecurityListing }
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+        }
+
+        It 'projects the security-enabled groups only, and only a boolean true counts' {
+            $Read = Invoke-GroupRead -SecurityEnabledOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('sec_team')
+            # Non-vacuity: without the switch the same listing projects all six.
+            @((Invoke-GroupRead).Result.Groups).Count | Should -Be 6
+        }
+
+        It 'asks the PIM-in-use criterion for the groups it keeps only' {
+            $null = Invoke-GroupRead -SecurityEnabledOnly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Test-OERGroupPimInUse -Exactly -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Test-OERGroupPimInUse -Exactly -Times 1 -ParameterFilter { $GroupId -eq 'g-sec' }
+        }
+
+        It 'writes ONE warning that names how many groups it left out' {
+            $Read = Invoke-GroupRead -SecurityEnabledOnly
+            $Read.Warned.Count | Should -Be 1
+            $Read.Warned[0] | Should -BeExactly '-GroupFilter returned 5 group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out.'
+        }
+
+        It 'names a single group as one' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup { $script:SecurityListing[0, 1] }
+            $Read = Invoke-GroupRead -SecurityEnabledOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('sec_team')
+            $Read.Warned.Count | Should -Be 1
+            $Read.Warned[0] | Should -BeExactly '-GroupFilter returned 1 group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out.'
+        }
+
+        It 'writes no warning and keeps every group when every listed group is security-enabled' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup { $script:SecurityListing[0] }
+            $Read = Invoke-GroupRead -SecurityEnabledOnly
+            @($Read.Result.Groups).Count | Should -Be 1
+            $Read.Warned.Count | Should -Be 0
+        }
+
+        It 'writes no warning without the switch, however the listing reads' {
+            $Read = Invoke-GroupRead
+            $Read.Warned.Count | Should -Be 0
+        }
+
+        It 'leaves a group it left out unread and without a cause' {
+            $Read = Invoke-GroupRead -SecurityEnabledOnly
+            $Read.Result.Unread.Count | Should -Be 0
+            $Read.Result.Causes.Count | Should -Be 0
+            $Read.Errors.Count | Should -Be 0
+        }
+
+        It 'sends the filter it is given exactly as given, and asks for nothing more' {
+            $null = Invoke-GroupRead -SecurityEnabledOnly -Filter 'securityEnabled eq true and (x eq 1)'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERGroup -Exactly -Times 1 -ParameterFilter {
+                $Filter -eq 'securityEnabled eq true and (x eq 1)'
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERGroup -Exactly -Times 1
         }
     }
 
@@ -559,9 +635,13 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
                 return [PSCustomObject]@{ value = @(foreach ($PrincipalId in @($Body.ids)) { @{ id = $PrincipalId; userPrincipalName = 'person13@contoso.com' } }) }
             }
             if ($Uri.StartsWith('v1.0/groups?') -or $Uri -eq 'v1.0/groups') {
+                # The answer ignores the filter, which is how a filter widened past the security-enabled
+                # scope answers: every group of the fixture tenant is listed. A group marks its own
+                # securityEnabled: a boolean, a text or null as given, or the property left out when the
+                # value is the text '<missing>'.
                 return [PSCustomObject]@{
                     value = @(foreach ($G in $script:Tenant) {
-                            @{
+                            $Row = @{
                                 id                            = $G.Id
                                 displayName                   = $G.Name
                                 description                   = "$($G.Name) team"
@@ -573,6 +653,11 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
                                 membershipRuleProcessingState = $(if ($G.Dynamic) { 'On' } else { $null })
                                 onPremisesSyncEnabled         = $(if ($G.Synced) { $true } else { $null })
                             }
+                            if ($G.ContainsKey('SecurityEnabled')) {
+                                if ($G.SecurityEnabled -is [string] -and $G.SecurityEnabled -ceq '<missing>') { $Row.Remove('securityEnabled') }
+                                else { $Row.securityEnabled = $G.SecurityEnabled }
+                            }
+                            $Row
                         })
                 }
             }
@@ -797,6 +882,113 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             $Read = Invoke-GroupRead -RelevantOnly
             @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('Admins', 'G-EL', 'G-MOD')
             $Read.Result.Unread.Count | Should -Be 0
+        }
+    }
+
+    Context '-SecurityEnabledOnly, driven through the transport' {
+        # G-EL (index 1) is the group the scenarios turn into one the listing should not have held: it
+        # is eligible, so it is RBAC-relevant and would cost the most requests if it were read.
+        It 'does not read a group it left out, in a relevant-only read' {
+            $script:Tenant[1].SecurityEnabled = $false
+            $Read = Invoke-GroupRead -RelevantOnly -SecurityEnabledOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-MOD')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*22222222-2222-2222-2222-222222222222*' }
+            # Reach proof: the group beside it was read, and the list was read once.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/11111111-1111-1111-1111-111111111111/members' }
+            Get-GraphCallCount -Like 'GET v1.0/groups[?]*' | Should -Be 1
+            $Read.Warned.Count | Should -Be 1
+            $Read.Warned[0] | Should -BeExactly '-GroupFilter returned 1 group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out.'
+            $Read.Result.Unread.Count | Should -Be 0
+        }
+
+        It 'does not project a group it left out, in a full read' {
+            # A full read has the list carry the collections, so Get-OERGroup has read this group's
+            # before the reader sees it; what the reader owes is that it is not projected, and that
+            # it makes none of the projection's own requests for it (the PIM policy of a group found
+            # in use).
+            $script:Tenant[1].SecurityEnabled = $false
+            $Read = Invoke-GroupRead -SecurityEnabledOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-MOD', 'G-PLAIN', 'G-SYNC', 'G-DYN')
+            # Reach proof: G-MOD is in use through its modified policy, so its policy was looked up.
+            Get-GraphCallCount -Like 'GET beta/policies/roleManagementPolicyAssignments[?]*33333333-3333-3333-3333-333333333333*' | Should -BeGreaterThan 0
+            Get-GraphCallCount -Like 'GET beta/policies/roleManagementPolicyAssignments[?]*22222222-2222-2222-2222-222222222222*' | Should -Be 0
+            $Read.Warned.Count | Should -Be 1
+        }
+
+        It 'reads the same group as before without the switch' {
+            # The control for the two reads above: the group the switch leaves out is a real, relevant
+            # group, and it is read when the switch is not given.
+            $script:Tenant[1].SecurityEnabled = $false
+            $Read = Invoke-GroupRead -RelevantOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
+            $Read.Warned.Count | Should -Be 0
+        }
+
+        It 'leaves out a group whose securityEnabled is <Label>' -ForEach @(
+            @{ Label = 'missing'; Value = '<missing>' }
+            @{ Label = 'null'; Value = $null }
+            @{ Label = 'the text true'; Value = 'true' }
+            @{ Label = 'the number 1'; Value = 1 }
+            @{ Label = 'false'; Value = $false }
+        ) {
+            $script:Tenant[1].SecurityEnabled = $Value
+            $Read = Invoke-GroupRead -RelevantOnly -SecurityEnabledOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-MOD')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*22222222-2222-2222-2222-222222222222*' }
+            $Read.Warned.Count | Should -Be 1
+            $Read.Warned[0] | Should -BeLike '-GroupFilter returned 1 group(s) that are not security-enabled;*'
+        }
+
+        It 'counts every group it leaves out in the one warning' {
+            $script:Tenant[1].SecurityEnabled = $false
+            $script:Tenant[3].SecurityEnabled = '<missing>'
+            $script:Tenant[4].SecurityEnabled = $null
+            $Read = Invoke-GroupRead -RelevantOnly -SecurityEnabledOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-MOD')
+            $Read.Warned.Count | Should -Be 1
+            $Read.Warned[0] | Should -BeExactly '-GroupFilter returned 3 group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out.'
+            # G-PLAIN and G-SYNC are not relevant, and they are not even asked: not the two requests.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*55555555-5555-5555-5555-555555555555*' }
+        }
+
+        It 'writes no warning, and changes nothing, when the listing holds security-enabled groups only' {
+            $Read = Invoke-GroupRead -RelevantOnly -SecurityEnabledOnly
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD')
+            $Read.Warned.Count | Should -Be 0
+        }
+
+        Context 'a group the filter widened to shares a name with a security group (ruling 1)' {
+            BeforeEach {
+                $script:Tenant[0].Name = 'Admins'                  # G-RA: security, role-assignable, kept
+                $script:Tenant[3].Name = 'admins'                  # G-PLAIN: the namesake
+                $script:Tenant[3].SecurityEnabled = $false         # ... which the filter widened to
+            }
+
+            It 'does not count the group it left out, so the security group is kept and no shared name is reported' {
+                $Read = Invoke-GroupRead -RelevantOnly -ExcludeSharedName -SecurityEnabledOnly
+                @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('Admins', 'G-EL', 'G-MOD')
+                $Read.Result.Unread.Count | Should -Be 0
+                $Read.Result.Causes.Count | Should -Be 0
+                $Read.Warned.Count | Should -Be 1
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
+            }
+
+            It 'does the same in a full read' {
+                $Read = Invoke-GroupRead -ExcludeSharedName -SecurityEnabledOnly
+                @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('Admins', 'G-EL', 'G-MOD', 'G-SYNC', 'G-DYN')
+                $Read.Result.Unread.Count | Should -Be 0
+            }
+
+            It 'still reports the name as shared when both groups are security-enabled' {
+                # The control: the same two names, with the namesake security-enabled, are shared.
+                $script:Tenant[3].SecurityEnabled = $true
+                $Read = Invoke-GroupRead -RelevantOnly -ExcludeSharedName -SecurityEnabledOnly
+                @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-EL', 'G-MOD')
+                @($Read.Result.Unread) | Should -Be @('groups/Admins')
+                $Read.Warned.Count | Should -Be 0
+            }
         }
     }
 

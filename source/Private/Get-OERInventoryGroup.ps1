@@ -7,7 +7,8 @@ function Get-OERInventoryGroup {
     .DESCRIPTION
     The single owner of the inventory's Groups section. Get-OERInventory calls it to fill that
     section and replays the unread names and the causes it returns through its own lists.
-    Export-OERInventory calls it directly, with -RelevantOnly unless -AllGroupsDetailed is given.
+    Export-OERInventory calls it directly, with -SecurityEnabledOnly always and -RelevantOnly unless
+    -AllGroupsDetailed is given.
 
     By default it makes ONE Get-OERGroup call carrying the members, owners and PIM eligibility
     switches and the filter it is given, then projects each group as an apply-document entry: an
@@ -27,14 +28,26 @@ function Get-OERInventoryGroup {
     is read in full and projected the same way, and the failure is named exactly as a full read
     names it.
 
+    With -SecurityEnabledOnly a listed group whose securityEnabled is not a boolean true -- false,
+    null, missing, a text or a number -- is dropped straight after the list is read, before the
+    shared names are counted and before the relevance decision, as if it had never been listed: it
+    is not projected, not asked the PIM-in-use criterion, has no members, owners or policy read by
+    this function (a full read has Get-OERGroup read them with the list, before this function sees
+    the group), and leaves nothing in the Unread or Causes lists. When any group was dropped, ONE
+    warning says how many. It exists for a caller whose filter is an operator's own expression: a
+    filter that closes the parenthesis it is wrapped in can list groups the caller never meant to
+    cover, and this check is what keeps them out of the document.
+
     With -ExcludeSharedName a group whose display name another listed group shares, compared without
     regard to letter case, is left out in either mode, and the name is reported once, with the
     spelling of the first such group, in the Unread list ('groups/<name>') and with the
-    Get-OERSharedNameCause text in the Causes list. The names are counted over every listed group,
-    so a group -RelevantOnly does not keep still makes its name shared.
+    Get-OERSharedNameCause text in the Causes list. The names are counted over every listed group
+    that is in scope (every one -SecurityEnabledOnly keeps), so a group -RelevantOnly does not keep
+    still makes its name shared, and a group -SecurityEnabledOnly dropped does not.
 
     It returns ONE tagged Omnicit.EntraRBAC.InventoryGroupRead object and never writes an error
-    record. It writes a warning for a group list that could not be read, and its verbose lines carry
+    record. It writes a warning for a group list that could not be read and, under
+    -SecurityEnabledOnly, one for the groups it left out, and its verbose lines carry
     the 'Get-OERInventory: ' prefix, so an inventory's verbose output reads the same wherever the
     line came from.
     - Groups: the projections, in list order.
@@ -50,7 +63,8 @@ function Get-OERInventoryGroup {
 
     .PARAMETER Filter
     The OData filter sent to Get-OERGroup, exactly as given. Get-OERInventory passes its -GroupFilter,
-    or 'securityEnabled eq true' when it has none.
+    or 'securityEnabled eq true' when it has none. Export-OERInventory passes 'securityEnabled eq
+    true', with its own -GroupFilter ANDed to it inside parentheses when it has one.
 
     .PARAMETER IncludeId
     Stamp each projection, and each eligibility entry of it, with its id.
@@ -74,6 +88,13 @@ function Get-OERInventoryGroup {
     Leave out every group whose display name another listed group shares, compared without regard to
     letter case, and report each such name once in the Unread and Causes lists.
 
+    .PARAMETER SecurityEnabledOnly
+    Drop every listed group whose securityEnabled is not a boolean true (false, null, missing, a text
+    or a number) straight after the list is read, before the shared names are counted and before the
+    relevance decision, and write ONE warning that names how many were dropped. Use it when the
+    filter is not the caller's own, so a filter that lists more than the security-enabled scope
+    cannot widen the result.
+
     .EXAMPLE
     $Read = Get-OERInventoryGroup -Filter 'securityEnabled eq true' -PrincipalNameCache $Cache
     $Read.Groups.Count
@@ -84,6 +105,11 @@ function Get-OERInventoryGroup {
     $Read = Get-OERInventoryGroup -Filter 'securityEnabled eq true' -IncludeId -ExcludeSharedName -RelevantOnly
     Reads only the RBAC-relevant security-enabled groups in full, after at most two requests per
     listed group, stamps their ids, and leaves out every group whose name another shares.
+
+    .EXAMPLE
+    $Read = Get-OERInventoryGroup -Filter "securityEnabled eq true and (startswith(displayName,'role_'))" -SecurityEnabledOnly -RelevantOnly
+    Reads the groups an operator's filter chose, and keeps only the ones that really are
+    security-enabled, with one warning when the filter listed any other.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
@@ -100,7 +126,9 @@ function Get-OERInventoryGroup {
 
         [switch]$IncludeSyncedGroups,
 
-        [switch]$ExcludeSharedName
+        [switch]$ExcludeSharedName,
+
+        [switch]$SecurityEnabledOnly
     )
 
     # What the read below records into: the projections, the unread collection names and the causes.
@@ -195,12 +223,34 @@ function Get-OERInventoryGroup {
         }
     }
 
+    # -SecurityEnabledOnly: keep the listed groups the apply document covers, whatever the filter let
+    # through. The filter is the CALLER's expression, so a caller that composes one from an operator's
+    # text (Export-OERInventory -GroupFilter) can be handed a listing that is wider than the scope it
+    # meant, by an expression that closes its own parenthesis. The check is on the READ, not on the
+    # text: the group's own securityEnabled must be a boolean true, so a missing property, a null, a
+    # text or a number is not security-enabled either, and a group that fails it is out of scope as
+    # if it had never been listed. That is why it runs here, straight after the list is read and
+    # BEFORE the shared-name count below and the relevance decision: a group that is out of scope
+    # must neither be read in full nor make a security group's name "shared". The count goes into
+    # ONE warning, written here (the caller's ShouldProcess comes after this read, so -WhatIf and a
+    # -Confirm prompt both show it). Under a full read the list has already carried the collections of
+    # such a group (Get-OERGroup read them with the list), which is the only read it costs.
+    if ($SecurityEnabledOnly) {
+        $KeptGroupItems = @($GroupItems | Where-Object { $_.SecurityEnabled -is [bool] -and $_.SecurityEnabled })
+        $LeftOutCount = @($GroupItems).Count - $KeptGroupItems.Count
+        if ($LeftOutCount -gt 0) {
+            Write-Warning "-GroupFilter returned $LeftOutCount group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out."
+        }
+        $GroupItems = $KeptGroupItems
+    }
+
     # -ExcludeSharedName: how many listed groups carry each display name, compared without regard to
     # letter case -- the key the validator refuses a duplicate on (Test-OERStructureSchema), so a pair
-    # it would refuse is never written. Counted over EVERY listed group, before the relevance
-    # decision below, because the name is shared whether or not the namesake is RBAC-relevant: two
-    # live groups answer that name, so the apply engine refuses it either way, and a read that kept
-    # only the relevant one would write an entry that cannot be applied.
+    # it would refuse is never written. Counted over EVERY listed group that is in scope (every one
+    # -SecurityEnabledOnly kept), before the relevance decision below, because the name is shared
+    # whether or not the namesake is RBAC-relevant: two live groups answer that name, so the apply
+    # engine refuses it either way, and a read that kept only the relevant one would write an entry
+    # that cannot be applied.
     $SharedNameCount = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
     if ($ExcludeSharedName) {
         foreach ($G in $GroupItems) {

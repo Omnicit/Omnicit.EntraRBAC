@@ -4,6 +4,7 @@ BeforeAll {
     Import-Module $script:moduleName -Force -ErrorAction Stop
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 
     # F2 / A17. The bundle's README.md lists what the export could not read; the apply document and
     # every other JSON file must not. These helpers read the section back from a written bundle.
@@ -1730,7 +1731,7 @@ Describe 'Export-OERInventory (an unread collection is never applied as empty)' 
             $Ap.displayName | Should -Be 'AP-Sales'
             $Ap.PSObject.Properties.Name | Should -Contain 'resourceRoles' -Because 'an omitted key still reconciles and prunes'
             $null -eq $Ap.PSObject.Properties['resourceRoles'].Value | Should -BeTrue
-            $Ap.PSObject.Properties.Name | Should -Not -Contain 'id' -Because 'the id stamped for the roster join is stripped, the null is not'
+            $Ap.PSObject.Properties.Name | Should -Not -Contain 'id' -Because 'the document carries no id on an access package, whether or not its resourceRoles was read'
         }
         # Only the collection that was not read is null: the catalog read succeeded and stays a fact.
         $Catalog = @((Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json).catalogs)[0]
@@ -2455,6 +2456,79 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
             }
         }
 
+        It 'always asks the reader to keep security-enabled groups only' -ForEach @(
+            @{ Label = 'by default'; Splat = @{} }
+            @{ Label = 'under -AllGroupsDetailed'; Splat = @{ AllGroupsDetailed = $true } }
+            @{ Label = 'under -IncludeSyncedGroups'; Splat = @{ IncludeSyncedGroups = $true } }
+            @{ Label = 'with a -GroupFilter'; Splat = @{ GroupFilter = "startswith(displayName,'role_')" } }
+        ) {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-security-only') -Include Groups @Splat | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter { $SecurityEnabledOnly -eq $true }
+        }
+
+        It 'asks for exactly the security-enabled filter without -GroupFilter' {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-filter-none') -Include Groups | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter {
+                $Filter -ceq 'securityEnabled eq true'
+            }
+        }
+
+        It 'ANDs a -GroupFilter to the security-enabled filter, inside parentheses' {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-filter-given') -Include Groups -GroupFilter "startswith(displayName,'role_')" | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter {
+                $Filter -ceq "securityEnabled eq true and (startswith(displayName,'role_'))"
+            }
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1
+        }
+
+        It 'composes the same filter under -AllGroupsDetailed' {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-filter-all') -Include Groups -AllGroupsDetailed -GroupFilter "startswith(displayName,'role_')" | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter {
+                -not $RelevantOnly -and $Filter -ceq "securityEnabled eq true and (startswith(displayName,'role_'))"
+            }
+        }
+
+        It 'passes the operator''s expression through unescaped, a quote doubled by the operator included (Review Focus 3)' {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-filter-quote') -Include Groups -GroupFilter "startswith(displayName,'O''Brien')" | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter {
+                $Filter -ceq "securityEnabled eq true and (startswith(displayName,'O''Brien'))"
+            }
+        }
+
+        It 'keeps an expression that closes the parenthesis exactly as typed, for the reader''s check to catch' {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-filter-widen') -Include Groups -GroupFilter 'x eq 1) or (securityEnabled eq false' | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter {
+                $Filter -ceq 'securityEnabled eq true and (x eq 1) or (securityEnabled eq false)' -and $SecurityEnabledOnly -eq $true
+            }
+        }
+
+        It 'refuses -GroupFilter <Label> at parameter binding, and reads and signs in to nothing' -ForEach @(
+            @{ Label = 'empty'; Value = ''; Message = 'The argument is null or empty' }
+            @{ Label = '$null'; Value = $null; Message = 'The argument is null or empty' }
+            @{ Label = 'one space'; Value = ' '; Message = 'The GroupFilter consists only of white space. Pass an OData filter, or leave the parameter out.' }
+            @{ Label = 'three spaces'; Value = '   '; Message = 'The GroupFilter consists only of white space. Pass an OData filter, or leave the parameter out.' }
+            @{ Label = 'a tab'; Value = "`t"; Message = 'The GroupFilter consists only of white space. Pass an OData filter, or leave the parameter out.' }
+            @{ Label = 'a carriage return and a line feed'; Value = "`r`n"; Message = 'The GroupFilter consists only of white space. Pass an OData filter, or leave the parameter out.' }
+        ) {
+            $Caught = $null
+            try {
+                Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-filter-blank') -Include Groups -GroupFilter $Value -ErrorAction Stop | Out-Null
+            } catch {
+                $Caught = $PSItem
+            }
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Export-OERInventory'
+            $Caught.Exception | Should -BeOfType [System.Management.Automation.ParameterBindingException]
+            $Caught.Exception.GetType().Name | Should -BeExactly 'ParameterBindingValidationException'
+            $Caught.Exception.Message | Should -BeLike "*$Message*"
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 0
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+            Test-Path (Join-Path $TestDrive 'ask-filter-blank') | Should -BeFalse
+        }
+
         It 'does not read groups at all when -Include does not name Groups' {
             Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-none') -Include AdministrativeUnits | Out-Null
             Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 0
@@ -2534,9 +2608,16 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
                     # A group a test marks NotSecurity (a Microsoft 365 group) is left out of a listing
                     # that carries the security-enabled filter and kept by the unfiltered roster read.
                     $Listed = @($script:E2ETenant | Where-Object { -not ($Uri -like '*securityEnabled*' -and $_.NotSecurity) })
+                    # A listing the operator's own expression chose (the filter was composed as
+                    # 'securityEnabled eq true and (...)', so the encoded URI holds ' and (') answers the
+                    # ids a test names in $script:E2EFilterAnswer, security-enabled or not: that is how a
+                    # filter that closes the parenthesis widens the listing.
+                    if ($null -ne $script:E2EFilterAnswer -and $Uri -like '*%20and%20%28*') {
+                        $Listed = @($script:E2ETenant | Where-Object { $script:E2EFilterAnswer -contains $_.Id })
+                    }
                     return [PSCustomObject]@{
                         value = @(foreach ($G in $Listed) {
-                                @{
+                                $Row = @{
                                     id                            = $G.Id
                                     displayName                   = $G.Name
                                     description                   = "$($G.Name) team"
@@ -2548,6 +2629,14 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
                                     membershipRuleProcessingState = $(if ($G.Dynamic) { 'On' } else { $null })
                                     onPremisesSyncEnabled         = $(if ($G.Synced) { $true } else { $null })
                                 }
+                                # A group marks its own securityEnabled when a test needs a value the
+                                # security-enabled filter would never answer with: a boolean, a text or null
+                                # as given, or the property left out when the value is the text '<missing>'.
+                                if ($G.ContainsKey('SecurityEnabled')) {
+                                    if ($G.SecurityEnabled -is [string] -and $G.SecurityEnabled -ceq '<missing>') { $Row.Remove('securityEnabled') }
+                                    else { $Row.securityEnabled = $G.SecurityEnabled }
+                                }
+                                $Row
                             })
                     }
                 }
@@ -2650,6 +2739,7 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
             Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
             $script:E2ETenant = & $script:E2ENewTenant
             $script:E2ERefuse = @{}
+            $script:E2EFilterAnswer = $null
             $script:E2EGraphCalls = [System.Collections.Generic.List[string]]::new()
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 param([string]$Method, [string]$Uri, [hashtable]$Body, [switch]$All, [string[]]$ExpectedErrorCode)
@@ -2889,5 +2979,219 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
                 @($Twins | Where-Object { $_.memberCount -eq 2 }).Count | Should -Be 1 -Because 'the security group keeps its own count'
             }
         }
+
+        Context '-GroupFilter narrows the listing and never widens the document (A13)' {
+            # The listing request, the way Get-OERGroup -Filter spells it: the whole expression
+            # percent-encoded ONCE. Written out here, not computed, so a filter that was escaped twice
+            # (%2527 for a quote) or not at all cannot agree with its own expectation.
+            BeforeAll {
+                $script:SecurityOnlyListing = 'GET v1.0/groups?$filter=securityEnabled%20eq%20true'
+                $script:RoleFilterListing = 'GET v1.0/groups?$filter=securityEnabled%20eq%20true%20and%20%28startswith%28displayName%2C%27G-%27%29%29'
+                $script:QuoteFilterListing = 'GET v1.0/groups?$filter=securityEnabled%20eq%20true%20and%20%28startswith%28displayName%2C%27O%27%27Brien%27%29%29'
+                $script:WidenedFilterListing = 'GET v1.0/groups?$filter=securityEnabled%20eq%20true%20and%20%28x%20eq%201%29%20or%20%28securityEnabled%20eq%20false%29'
+                $script:WidenedFilter = 'x eq 1) or (securityEnabled eq false'
+                $script:LeftOutWarning = '-GroupFilter returned {0} group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out.'
+                function Get-E2EListingCall {
+                    param([string]$Exactly)
+                    @($script:E2EGraphCalls | Where-Object { $_ -ceq $Exactly }).Count
+                }
+                function Get-E2EWrittenGroupName {
+                    param([string]$BundlePath)
+                    @((Get-Content (Join-Path $BundlePath 'inventory.json') -Raw | ConvertFrom-Json).groups | ForEach-Object { $_.displayName })
+                }
+            }
+
+            It 'lists the groups with exactly the security-enabled filter when no -GroupFilter is given' {
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'gf-none') -Include Groups `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable Warn
+                Get-E2EListingCall -Exactly $script:SecurityOnlyListing | Should -Be 1
+                @($script:E2EGraphCalls | Where-Object { $_ -like 'GET v1.0/groups[?]*' }).Count | Should -Be 1
+                Get-E2EWrittenGroupName -BundlePath $Bundle.BundlePath | Should -Be @('G-RA', 'G-EL', 'G-MOD')
+                @($Warn | Where-Object { "$_" -like '-GroupFilter returned*' }).Count | Should -Be 0
+            }
+
+            It 'sends the operator''s expression ANDed to the security-enabled filter, in parentheses, encoded once, and lists the roster unfiltered' {
+                $script:E2EFilterAnswer = @($script:E2EIdRa, $script:E2EIdEl)
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'gf-role') -Include Groups -GroupFilter "startswith(displayName,'G-')" `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr -WarningVariable Warn
+                Get-E2EListingCall -Exactly $script:RoleFilterListing | Should -Be 1
+                # The security-enabled listing alone was not sent as well: one filtered listing, then the roster.
+                @($script:E2EGraphCalls | Where-Object { $_ -like 'GET v1.0/groups[?]*' }).Count | Should -Be 1
+                Get-E2EListingCall -Exactly 'GET v1.0/groups' | Should -Be 1
+                Get-E2EWrittenGroupName -BundlePath $Bundle.BundlePath | Should -Be @('G-RA', 'G-EL')
+                # The roster is read without the filter and still lists every group of the tenant.
+                $Roster = Read-E2ERoster -BundlePath $Bundle.BundlePath
+                $Roster.Count | Should -Be 6
+                $Bundle.RosterCount | Should -Be 6
+                @($Roster | Where-Object { $_.displayName -eq 'G-MOD' }).Count | Should -Be 1 -Because 'the filter narrows inventory.json, not the roster'
+                @($Warn | Where-Object { "$_" -like '-GroupFilter returned*' }).Count | Should -Be 0
+                @($ExErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+            }
+
+            It 'carries a quote the operator doubled through to the listing request, percent-encoded once (Review Focus 3)' {
+                $script:E2EFilterAnswer = @($script:E2EIdRa)
+                $null = Export-OERInventory -OutputPath (Join-Path $TestDrive 'gf-quote') -Include Groups -GroupFilter "startswith(displayName,'O''Brien')" `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+                Get-E2EListingCall -Exactly $script:QuoteFilterListing | Should -Be 1
+                @($script:E2EGraphCalls | Where-Object { $_ -like '*%25*' }).Count | Should -Be 0 -Because 'a request that holds %25 was percent-encoded twice'
+            }
+
+            It 'reads the groups it keeps in full under -AllGroupsDetailed with a -GroupFilter' {
+                $script:E2EFilterAnswer = @($script:E2EIdRa, $script:E2EIdPlain)
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'gf-all') -Include Groups -AllGroupsDetailed -GroupFilter "startswith(displayName,'G-')" `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+                Get-E2EListingCall -Exactly $script:RoleFilterListing | Should -Be 1
+                Get-E2EWrittenGroupName -BundlePath $Bundle.BundlePath | Should -Be @('G-RA', 'G-PLAIN')
+            }
+
+            It 'leaves a group the filter widened to out of the document, unread, with ONE warning, and keeps it in the roster' {
+                $script:E2ETenant = @($script:E2ETenant) + @(
+                    @{ Id = $script:E2EIdM365; Name = 'G-M365'; RoleAssignable = $true; Synced = $false; Dynamic = $false; NotSecurity = $true
+                        Member = 'person27@contoso.com'; Owner = 'person28@contoso.com'; Eligibility = @($script:E2EEligPrincipal); Policy = 'Modified' }
+                )
+                # The widened filter answers the security group and the Microsoft 365 group, which is
+                # role-assignable, eligible and modified: relevant on every count, were it kept.
+                $script:E2EFilterAnswer = @($script:E2EIdRa, $script:E2EIdM365)
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'gf-widened') -Include Groups -GroupFilter $script:WidenedFilter `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr -WarningVariable Warn
+                # Reach proof: the widened listing was sent, and answered the Microsoft 365 group.
+                Get-E2EListingCall -Exactly $script:WidenedFilterListing | Should -Be 1
+                Get-E2EWrittenGroupName -BundlePath $Bundle.BundlePath | Should -Be @('G-RA')
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*99999999-9999-9999-9999-999999999999*' }
+                $Raw = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw
+                $Raw | Should -Not -Match 'G-M365'
+                (Get-Content (Join-Path $Bundle.BundlePath 'groups.json') -Raw) | Should -Not -Match 'G-M365'
+                $Left = @($Warn | Where-Object { "$_" -like '-GroupFilter returned*' })
+                $Left.Count | Should -Be 1
+                "$($Left[0])" | Should -BeExactly ($script:LeftOutWarning -f 1)
+                # A group the document is not meant to hold is not a gap in it.
+                @($Bundle.IncompleteReads).Count | Should -Be 0
+                @($ExErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+                # The roster is read unfiltered, so it still names the group, with no count taken.
+                $Roster = Read-E2ERoster -BundlePath $Bundle.BundlePath
+                $Roster.Count | Should -Be 7
+                $Row = @($Roster | Where-Object { $_.displayName -eq 'G-M365' })
+                $Row.Count | Should -Be 1
+                $null -eq $Row[0].memberCount | Should -BeTrue -Because 'the group was not read, so no count was taken'
+            }
+
+            It 'leaves a group out whose securityEnabled is missing, null or not a boolean, and counts each in the one warning' {
+                $Fixture = @{}
+                foreach ($Group in $script:E2ETenant) { $Fixture[$Group.Name] = $Group }
+                $Fixture['G-EL'].SecurityEnabled = '<missing>'
+                $Fixture['G-MOD'].SecurityEnabled = 'true'
+                $Fixture['G-PLAIN'].SecurityEnabled = $null
+                $script:E2EFilterAnswer = @($script:E2EIdRa, $script:E2EIdEl, $script:E2EIdMod, $script:E2EIdPlain)
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'gf-notbool') -Include Groups -GroupFilter $script:WidenedFilter `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -WarningVariable Warn
+                Get-E2EListingCall -Exactly $script:WidenedFilterListing | Should -Be 1
+                Get-E2EWrittenGroupName -BundlePath $Bundle.BundlePath | Should -Be @('G-RA')
+                $Left = @($Warn | Where-Object { "$_" -like '-GroupFilter returned*' })
+                $Left.Count | Should -Be 1
+                "$($Left[0])" | Should -BeExactly ($script:LeftOutWarning -f 3)
+                # Left out before the relevance decision: not even the two requests a plain group costs.
+                foreach ($LeftOutId in @($script:E2EIdEl, $script:E2EIdMod, $script:E2EIdPlain)) {
+                    @($script:E2EGraphCalls | Where-Object { $_ -like "*$LeftOutId*" }).Count | Should -Be 0
+                }
+            }
+
+            It 'keeps the security group of a shared name when its namesake is one the filter widened to (ruling 1)' {
+                $Fixture = @{}
+                foreach ($Group in $script:E2ETenant) { $Fixture[$Group.Name] = $Group }
+                $Fixture['G-RA'].Name = 'Admins'
+                $script:E2ETenant = @($script:E2ETenant) + @(
+                    @{ Id = $script:E2EIdM365; Name = 'admins'; RoleAssignable = $false; Synced = $false; Dynamic = $false; NotSecurity = $true
+                        Member = 'person27@contoso.com'; Owner = 'person28@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                )
+                $script:E2EFilterAnswer = @($script:E2EIdRa, $script:E2EIdM365)
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'gf-shared') -Include Groups -GroupFilter $script:WidenedFilter `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr -WarningVariable Warn
+                Get-E2EListingCall -Exactly $script:WidenedFilterListing | Should -Be 1
+                Get-E2EWrittenGroupName -BundlePath $Bundle.BundlePath | Should -Be @('Admins')
+                @($Bundle.IncompleteReads).Count | Should -Be 0 -Because 'the namesake is out of scope, so the name is not shared'
+                @($ExErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+                @($Warn | Where-Object { "$_" -like '-GroupFilter returned*' }).Count | Should -Be 1
+            }
+
+        }
+    }
+}
+
+Describe 'Export-OERInventory (-GroupFilter: the warning for a group left out stands before the confirmation gate)' {
+    # The warning is written by the group reader, which runs before the export's ShouldProcess, so
+    # -WhatIf and a -Confirm prompt both show it first. The 'What if:' line and the prompt go straight
+    # to the host, so the order is read from the answering host (tests/Unit/TestHelpers/
+    # OERConfirmHost.ps1), in a runspace whose copy of the module has its sign-in and transport
+    # replaced (a Pester mock does not cross the boundary). The list answers ONE group that is not
+    # security-enabled, the way a filter that closes its parenthesis can, so nothing else is read.
+    BeforeAll {
+        $script:GateScenario = {
+            param([string]$OutputPath)
+            $Text = @'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    $script:GateCalls = [System.Collections.Generic.List[string]]::new()
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Get-OERConfiguration -Value { }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body, [switch]$All, [string[]]$ExpectedErrorCode)
+        $script:GateCalls.Add("$Method $Uri")
+        if ($Uri.StartsWith('v1.0/groups')) {
+            return [pscustomobject]@{ value = @(@{ id = '99999999-9999-9999-9999-999999999999'; displayName = 'G-M365'; securityEnabled = $false; isAssignableToRole = $false; groupTypes = [string[]]@() }) }
+        }
+        throw "The fake tenant has no answer for: $Method $Uri"
+    }
+}
+$Host.UI.WriteLine('PHASE: WhatIf')
+Export-OERInventory -OutputPath '#OUTPUT#' -Include Groups -GroupFilter 'x eq 1) or (securityEnabled eq false' -WhatIf | Out-Null
+"WHATIF-CALLS:$(& $Module { @($script:GateCalls) -join ';' })"
+& $Module { $script:GateCalls.Clear() }
+$Host.UI.WriteLine('PHASE: Confirm')
+Export-OERInventory -OutputPath '#OUTPUT#' -Include Groups -GroupFilter 'x eq 1) or (securityEnabled eq false' -Confirm | Out-Null
+"CONFIRM-CALLS:$(& $Module { @($script:GateCalls) -join ';' })"
+'END'
+'@
+            [scriptblock]::Create($Text.Replace('#OUTPUT#', $OutputPath))
+        }
+        # The events of one phase: from that phase's marker line to the next marker (or the end).
+        function Get-GatePhaseEvent {
+            param([string[]]$Events, [string]$Phase)
+            $Start = [array]::IndexOf($Events, "Line: PHASE: $Phase")
+            if ($Start -lt 0) { return }
+            for ($Index = $Start + 1; $Index -lt $Events.Count; $Index++) {
+                if ($Events[$Index] -like 'Line: PHASE: *') { break }
+                $Events[$Index]
+            }
+        }
+        $script:GateOutput = Join-Path $TestDrive 'gate-bundle'
+        $script:GateRun = Invoke-OERWithConfirmAnswer -Answer '&No' -Script (& $script:GateScenario -OutputPath $script:GateOutput)
+        $script:GateWarning = 'Warning: -GroupFilter returned 1 group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out.'
+    }
+
+    It 'reaches the end of the scenario with no error, and the list was sent with the composed filter' {
+        @($script:GateRun.Output) | Should -Contain 'END'
+        @($script:GateRun.Errors) | Should -BeNullOrEmpty
+        foreach ($Prefix in 'WHATIF-CALLS:', 'CONFIRM-CALLS:') {
+            $Line = [string](@($script:GateRun.Output | Where-Object { [string]$_ -like "$Prefix*" })[0])
+            $Line | Should -BeExactly ($Prefix + 'GET v1.0/groups?$filter=securityEnabled%20eq%20true%20and%20%28x%20eq%201%29%20or%20%28securityEnabled%20eq%20false%29;GET v1.0/groups')
+        }
+    }
+
+    It 'under -WhatIf writes the warning once, before the What if: line' {
+        $Events = @(Get-GatePhaseEvent -Events $script:GateRun.Events -Phase 'WhatIf')
+        $WhatIf = [array]::FindIndex([string[]]$Events, [Predicate[string]] { param($E) $E -like 'Line: What if: *' })
+        $WhatIf | Should -BeGreaterOrEqual 0 -Because 'the cmdlet must reach its gate, so the missing warning below is not a cmdlet that stopped early'
+        @($Events | Where-Object { $_ -ceq $script:GateWarning }).Count | Should -Be 1
+        [array]::IndexOf([string[]]$Events, $script:GateWarning) | Should -BeLessThan $WhatIf
+    }
+
+    It 'under -Confirm answered No writes the warning once, before the prompt, and writes no bundle' {
+        $Events = @(Get-GatePhaseEvent -Events $script:GateRun.Events -Phase 'Confirm')
+        $Prompt = [array]::FindIndex([string[]]$Events, [Predicate[string]] { param($E) $E -like 'Prompt: *' })
+        $Prompt | Should -BeGreaterOrEqual 0 -Because 'the cmdlet must reach its prompt, so the missing warning below is not a cmdlet that stopped early'
+        @($Events | Where-Object { $_ -ceq $script:GateWarning }).Count | Should -Be 1
+        [array]::IndexOf([string[]]$Events, $script:GateWarning) | Should -BeLessThan $Prompt
+        Test-Path $script:GateOutput | Should -BeFalse
     }
 }

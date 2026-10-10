@@ -171,9 +171,27 @@ function Export-OERInventory {
     The tenantId written into inventory.json is the tenant ID the session's Microsoft Graph token was
     issued for, not this value.
 
+    .PARAMETER GroupFilter
+    An OData filter that narrows the groups inventory.json is read from, for a tenant with very many
+    groups. It is ANDed to the security-enabled filter inside parentheses, so the groups are listed
+    with 'securityEnabled eq true and (your filter)', and it only narrows: the export also keeps only
+    the groups the read itself shows as securityEnabled (a boolean true), so a filter that closes the
+    parenthesis, for example 'x eq 1) or (securityEnabled eq false', cannot widen inventory.json to a
+    group that is not security-enabled. Such a group is left out, with one warning that names how
+    many were left out. The expression is yours: it is sent as typed and never escaped, so double a
+    single quote inside a quoted value yourself ('O''Brien'). groupsRoster.json is not filtered by
+    it and still lists every group in the tenant. An empty or white space value is refused at
+    binding.
+
     .EXAMPLE
     Export-OERInventory
     Reads the tenant and writes a bundle under the current directory.
+
+    .EXAMPLE
+    Export-OERInventory -GroupFilter "startswith(displayName,'role_')"
+    Reads inventory.json's groups from the security-enabled groups whose display name starts with
+    role_ only, so far fewer groups are read in a tenant with very many of them. groupsRoster.json
+    still lists every group in the tenant.
 
     .EXAMPLE
     Export-OERInventory -OutputPath C:\Temp -Include Groups,AdministrativeUnits,Catalogs,AccessPackages,RoleAssignments,RoleManagementPolicies
@@ -203,7 +221,19 @@ function Export-OERInventory {
         [string]$Scope,
         [switch]$Force,
         [ValidateNotNullOrEmpty()]
-        [string]$TenantId
+        [string]$TenantId,
+        # Declared LAST on purpose, as New-OERConfiguration's -Environment is. Positional binding
+        # follows DECLARATION order, so a parameter inserted above -ManagementGroup, -Scope or
+        # -TenantId would silently change what an existing positional argument binds to.
+        # A filter of white space only is refused here, at binding, as an empty one is (the same
+        # BL-96 pattern as New-OERConfiguration's -TenantId). The module supports PowerShell 7.2, which
+        # has no [ValidateNotNullOrWhiteSpace()] (7.4+), so the same test runs as a script. Declared
+        # ABOVE [ValidateNotNullOrEmpty()] on purpose: validation attributes run in reverse
+        # declaration order (measured), so an empty or null value still reads the NotNullOrEmpty
+        # message and white space reads this one.
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The GroupFilter consists only of white space. Pass an OData filter, or leave the parameter out.')]
+        [ValidateNotNullOrEmpty()]
+        [string]$GroupFilter
     )
     begin {
         $AuthParams = @{}
@@ -234,12 +264,22 @@ function Export-OERInventory {
         # out groups that share a name, the rule Get-OERInventory applies to its own groups section.
         # The reader never writes an error record: what it could not read comes back in its Unread
         # and Causes lists, folded into IncompleteReads and the partial message below.
+        #
+        # -GroupFilter narrows that scope and never widens it. It is ANDed to the security-enabled
+        # filter inside parentheses, and it is the operator's OWN OData expression, so it is sent as
+        # typed and never escaped through ConvertTo-OERODataFilterValue (that helper escapes a VALUE
+        # for a quoted literal, and applied to a whole expression it would break the expression);
+        # Get-OERGroup -Filter percent-encodes the whole expression once. The parentheses alone are
+        # not the guard, since an expression can close them ('x eq 1) or (securityEnabled eq false'
+        # lists every group the second operand matches). The guard is -SecurityEnabledOnly, which
+        # keeps only the groups the read itself shows as securityEnabled, whatever the filter listed.
         $GroupRead = $null
         if ($Include -contains 'Groups') {
             $GroupReadParams = @{
-                Filter            = 'securityEnabled eq true'
-                IncludeId         = $true
-                ExcludeSharedName = $true
+                Filter              = if ($GroupFilter) { "securityEnabled eq true and ($GroupFilter)" } else { 'securityEnabled eq true' }
+                IncludeId           = $true
+                ExcludeSharedName   = $true
+                SecurityEnabledOnly = $true
             }
             if (-not $AllGroupsDetailed) {
                 $GroupReadParams.RelevantOnly = $true
