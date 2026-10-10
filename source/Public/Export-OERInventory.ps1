@@ -93,6 +93,28 @@ function Export-OERInventory {
     it carries nothing. A scope whose eligibility read fails is named in SkippedEligibilityScopes and
     folds into the same trailing InventoryPartial error as a failed role-assignment scope.
 
+    WHICH AZURE ROLE MANAGEMENT POLICIES ARE EXPORTED. A scope's policy list carries the policies of
+    roles nobody uses or has changed there -- 963 of 967 on the one subscription measured -- so without
+    -AllRolePolicies the RoleManagementPolicies section keeps a role's policy at a scope only when the
+    role has an active role assignment or a PIM eligibility EXACTLY at that scope, or the policy has
+    been changed. An assignment or an eligibility at a management group above the scope, or at a
+    resource group below it, does not keep it. A policy counts as changed when the policy object the
+    list returns for it carries a non-empty lastModifiedDateTime, or a lastModifiedBy with a non-empty
+    id or displayName: measured on one subscription, every untouched policy carried no date and an
+    empty lastModifiedBy, and every changed one a date and a display name. The policies are still read
+    with the one paged policy list per scope, and nothing is requested per policy. The selection adds
+    one paged role assignment list per scope (atScope(): the assignments at or above it), read just
+    before that policy list, and uses the eligibility read described above, which the export makes for
+    azurePimEligibility.json anyway. A policy that cannot be judged is kept, never dropped, and its
+    scope is named in IncompleteReads (below): one not kept by a use or a change whose list row
+    carries no policy object or no role definition id, or whose scope's role assignment read or
+    eligibility read failed. A failed role assignment read writes one warning ('Could not read the
+    role assignments at scope ...') and costs only the selection: the scope is still read. A failed
+    policy list skips the scope exactly as before. -AllRolePolicies exports every policy at every
+    scope the walk reads, with the call earlier versions made. Invoke-OERStructure reads and writes
+    only the policies a document declares, so a policy the export leaves out stays as it is when the
+    document, or a proposal built from it, is applied.
+
     Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
     Groups read when it left anything unread, then one entry per partial report from
     Get-OERInventory, which reads the other Entra ID sections. Each entry names the affected
@@ -102,26 +124,35 @@ function Export-OERInventory {
     by its own name alone (groups also when the group read stops on an unforeseen error, with the
     warning 'Could not read groups: ...'), and is written as an empty array that does not mean the
     tenant has none; the entry groupsRoster likewise means groupsRoster.json is empty only because
-    the roster read failed. Its Count is therefore one for the Groups read when it left anything
+    the roster read failed. Last, after every Entra ID entry, IncompleteReads carries one entry per
+    Azure scope whose role management policies were kept without being judged (see WHICH AZURE ROLE
+    MANAGEMENT POLICIES ARE EXPORTED above), reading 'roleManagementPolicies/role selection at' and
+    the scope -- for a subscription, 'roleManagementPolicies/role selection at /subscriptions/<id>'.
+    Such an entry names no unread collection and nothing is missing for it: it says that
+    roleManagementPolicies.json may hold policies of roles that are neither used nor changed at that
+    scope. The Count of IncompleteReads is therefore one for the Groups read when it left anything
     unread, plus the number of partial reports from Get-OERInventory, plus one when the group roster
-    could not be read, and not the number of unread collections; read the entries for that. The same
-    non-terminating InventoryPartial error is raised here when IncompleteReads, SkippedScopes or
-    SkippedEligibilityScopes is non-empty, and its message gives the causes of the unread group
-    reads (Get-OERInventory's own InventoryPartial gives those of the other sections). A members,
-    scopedRoles, resources or resourceRoles collection that could not be read, or that has an entry
-    the export could name by nothing the apply engine accepts, is NOT written into inventory.json as
-    an empty one or with an empty name: its key is an explicit null, which the apply engine reads as
-    "leave untouched". Do not hand-edit that null to [] -- under Invoke-OERStructure -Prune an
-    empty declared collection deletes every live member, binding or resource. Any other collection
-    IncompleteReads names is left out of the document or written only as far as it was read, as the
-    Get-OERInventory help describes; Invoke-OERStructure never removes a catalog, access package or
-    assignment policy that is absent from the document.
+    could not be read, plus one per such Azure scope, and not the number of unread collections; read
+    the entries for that. The same non-terminating InventoryPartial error is raised here when
+    IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty, and its message gives the
+    causes of the unread group reads (Get-OERInventory's own InventoryPartial gives those of the other
+    sections). The part of that message that counts partial Entra ID read entries counts the Entra ID
+    entries only; the Azure scopes kept without being judged have a clause of their own, which names
+    each of them. A members, scopedRoles, resources or resourceRoles collection that could not be
+    read, or that has an entry the export could name by nothing the apply engine accepts, is NOT
+    written into inventory.json as an empty one or with an empty name: its key is an explicit null,
+    which the apply engine reads as "leave untouched". Do not hand-edit that null to [] -- under
+    Invoke-OERStructure -Prune an empty declared collection deletes every live member, binding or
+    resource. Any other collection IncompleteReads names is left out of the document or written only
+    as far as it was read, as the Get-OERInventory help describes; Invoke-OERStructure never removes
+    a catalog, access package or assignment policy that is absent from the document.
 
     The bundle says so itself. The generated README.md carries a section named "What this export
     could not read": one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes
-    entry, or the statement that nothing was left unread, so whoever receives the bundle (an LLM,
-    say) can tell a collection that was not read from one that is empty. The lists go into README.md
-    only, never into inventory.json or any other file that is validated or applied.
+    entry, an Azure scope whose role management policies were kept without being judged under a
+    label of its own, or the statement that nothing was left unread, so whoever receives the bundle
+    (an LLM, say) can tell a collection that was not read from one that is empty. The lists go into
+    README.md only, never into inventory.json or any other file that is validated or applied.
 
     inventory.json carries the top-level tenantId that Get-OERInventory writes -- the tenant ID the
     session's Microsoft Graph token was issued for -- so Invoke-OERStructure applies it only in that
@@ -153,7 +184,10 @@ function Export-OERInventory {
     Which sections to gather from the tenant. Defaults to the Entra sections (Groups,
     AdministrativeUnits, Catalogs, AccessPackages, AccessReviews, DirectoryRoleManagementPolicies,
     DirectoryRoleAssignments) plus RoleAssignments. The two DirectoryRole* sections are Graph-only
-    and never acquire an ARM token by themselves.
+    and never acquire an ARM token by themselves. RoleManagementPolicies, the Azure role management
+    policies, is not in the default: named here, it exports the policies of the roles in use or
+    changed at each scope the walk reads (see WHICH AZURE ROLE MANAGEMENT POLICIES ARE EXPORTED
+    above), and every policy with -AllRolePolicies.
 
     .PARAMETER AllGroupsDetailed
     Read every group the Groups section covers in full, as earlier versions did, and keep each in
@@ -184,9 +218,13 @@ function Export-OERInventory {
 
     .PARAMETER AllRolePolicies
     For the RoleManagementPolicies section, export the policy of every Azure role at every scope the
-    walk reads, as earlier versions did, instead of only the policies of roles with an active
-    assignment or an eligibility exactly at that scope, or whose policy has been changed (the
-    default). Has no effect unless -Include names RoleManagementPolicies.
+    walk reads, as earlier versions did, instead of only the policies of roles with an active role
+    assignment or a PIM eligibility exactly at that scope, or whose policy has been changed (the
+    default; see WHICH AZURE ROLE MANAGEMENT POLICIES ARE EXPORTED above). The export then reads each
+    scope with the call earlier versions made: no role assignment list is read for the selection, and
+    no scope is named in IncompleteReads as kept without being judged. Has no effect unless -Include
+    names RoleManagementPolicies; the DirectoryRoleManagementPolicies section has its own switch,
+    -AllDirectoryRolePolicies.
 
     .PARAMETER ManagementGroup
     Narrow the Azure scope walk to a single management group branch identified by name or id.
@@ -231,8 +269,17 @@ function Export-OERInventory {
 
     .EXAMPLE
     Export-OERInventory -OutputPath C:\Temp -Include Groups,AdministrativeUnits,Catalogs,AccessPackages,RoleAssignments,RoleManagementPolicies
-    Reads the full posture (including tenant-wide Azure role assignments and PIM policies) into a
-    bundle under C:\Temp\oer-inventory-<tenant>-<stamp>\, not into C:\Temp itself.
+    Reads the full posture (including tenant-wide Azure role assignments, and the PIM policies of the
+    Azure roles in use or changed at each scope) into a bundle under
+    C:\Temp\oer-inventory-<tenant>-<stamp>\, not into C:\Temp itself.
+
+    .EXAMPLE
+    Export-OERInventory -Include RoleAssignments,RoleManagementPolicies -AllRolePolicies
+    Reads the Azure role assignments and the role management policy of every Azure role at every
+    scope the walk reads, as earlier versions did. Without -AllRolePolicies, roleManagementPolicies.json
+    holds only the policies of roles with an active role assignment or a PIM eligibility exactly at
+    the policy's scope, or whose policy has been changed, and those at a scope named as kept without
+    being judged.
 
     .EXAMPLE
     $Bundle = Export-OERInventory -OutputPath C:\Temp

@@ -1829,6 +1829,26 @@ Describe 'Export-OERInventory (help documents the bundle nesting)' {
         $ParamText = ((@($Param.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
         $ParamText | Should -Match ([regex]::Escape("The tenantId written into inventory.json is the tenant ID the session's Microsoft Graph token was issued for, not this value."))
     }
+
+    It 'says which Azure role management policies are exported, where the unjudged entry stands, and that -AllRolePolicies keeps every one (BL-107)' {
+        # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+        $Description = ((@($script:ExportHelp.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('WHICH AZURE ROLE MANAGEMENT POLICIES ARE EXPORTED.'))
+        $Description | Should -Match ([regex]::Escape('keeps a role''s policy at a scope only when the role has an active role assignment or a PIM eligibility EXACTLY at that scope, or the policy has been changed.'))
+        $Description | Should -Match ([regex]::Escape('A policy that cannot be judged is kept, never dropped, and its scope is named in IncompleteReads (below)'))
+        $Description | Should -Match ([regex]::Escape('Last, after every Entra ID entry, IncompleteReads carries one entry per Azure scope whose role management policies were kept without being judged'))
+        $Description | Should -Match ([regex]::Escape('plus one per such Azure scope, and not the number of unread collections'))
+        $Description | Should -Match ([regex]::Escape('Invoke-OERStructure reads and writes only the policies a document declares'))
+
+        $Param = @($script:ExportHelp.Parameters.Parameter) | Where-Object { $_.Name -eq 'AllRolePolicies' }
+        $Param | Should -Not -BeNullOrEmpty
+        $ParamText = ((@($Param.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $ParamText | Should -Match ([regex]::Escape('export the policy of every Azure role at every scope the walk reads, as earlier versions did'))
+        $ParamText | Should -Match ([regex]::Escape('no role assignment list is read for the selection, and no scope is named in IncompleteReads as kept without being judged'))
+
+        $Examples = (@($script:ExportHelp.Examples.Example) | ForEach-Object { [string]$_.Code }) -join "`n"
+        $Examples | Should -Match ([regex]::Escape('-AllRolePolicies'))
+    }
 }
 
 Describe 'Export-OERInventory (directory role sections)' {

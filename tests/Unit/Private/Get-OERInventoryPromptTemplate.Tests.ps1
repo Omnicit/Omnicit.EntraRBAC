@@ -346,6 +346,9 @@ Describe 'Get-OERInventoryPromptTemplate apply-document section list' {
             $Collapsed | Should -Not -Match 'apply-only for now'
             $Collapsed | Should -Not -Match 'does not read them'
             $Collapsed | Should -Match ([regex]::Escape('directoryRoleManagementPolicies (the PIM settings of Microsoft Entra directory roles) and directoryRoleAssignments (eligible and active assignments of Microsoft Entra directory roles) are both captured in inventory.json (policies for roles with at least one eligible or active assignment unless the export used -AllDirectoryRolePolicies; assignments that are direct and at tenant scope -- activations and assignments inherited through a group are not listed), and may be proposed.'))
+            # BL-107: which Azure role policies roleManagementPolicies holds, so an absent one is not
+            # read as missing from the tenant.
+            $Collapsed | Should -Match ([regex]::Escape("roleManagementPolicies holds only the policies of Azure roles with an active role assignment or an eligibility exactly at the policy's scope, or whose policy has been changed, unless the export used -AllRolePolicies or the README lists the scope as kept without being judged, so the absence of a role's policy is no evidence that the tenant lacks it, and a document that does not declare it leaves it untouched."))
         }
     }
 

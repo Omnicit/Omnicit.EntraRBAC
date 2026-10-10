@@ -256,7 +256,10 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
         # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
         $Collapsed = $Section -replace '\s+', ' '
         $Collapsed | Should -Match ([regex]::Escape('This bundle is PARTIAL: `Export-OERInventory` could not read, or could not write, everything it was asked to, so do not treat it as a full tenant snapshot.'))
-        $Collapsed | Should -Match ([regex]::Escape('Each entry below names collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name; none of them is stated as a fact in this bundle.'))
+        $Collapsed | Should -Match ([regex]::Escape('Apart from the kind described last, each entry below names collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name; none of them is stated as a fact in this bundle.'))
+        # BL-107: the Azure role selection entry is the one kind that names no unread collection, so
+        # the intro says what it means instead of counting it among the reads that failed.
+        $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Azure role management policies kept without being judged" names an Azure scope where the export could not tell whether a role is used, or whether its policy was changed, since a read it needed failed or the policy list gave nothing to judge by. It kept each such policy rather than leave it out, so nothing is missing for that scope, but `roleManagementPolicies.json` may hold policies of roles that are neither used nor changed there.'))
         # "Unread collections" covers an unread collection only; an object left out for a shared name
         # is said to be absent here, since that section does not describe it.
         $Collapsed | Should -Match ([regex]::Escape('"Unread collections" below says how an unread collection is written; an object left out for a shared name is absent from `inventory.json` and the per-area files, which does not mean the tenant has none.'))
@@ -410,6 +413,9 @@ Describe 'Get-OERInventoryReadme apply-document section list' {
             $Collapsed | Should -Not -Match 'apply-only for now'
             $Collapsed | Should -Not -Match 'does not read them'
             $Collapsed | Should -Match ([regex]::Escape('`directoryRoleManagementPolicies` (the PIM settings of Microsoft Entra directory roles) and `directoryRoleAssignments` (eligible and active assignments of Microsoft Entra directory roles) are both captured in `inventory.json` (policies for roles with at least one eligible or active assignment unless the export used `-AllDirectoryRolePolicies`; assignments that are direct and at tenant scope -- activations and assignments inherited through a group are not listed), and may be proposed.'))
+            # BL-107: which Azure role management policies the file holds, and that an absent one was
+            # left out by the export rather than missing from the tenant.
+            $Collapsed | Should -Match ([regex]::Escape('`roleManagementPolicies` (the PIM settings of Azure roles) holds, unless the export used `-AllRolePolicies`, only the policy of a role with an active role assignment or a PIM eligibility exactly at the policy''s scope, or whose policy has been changed, and the policies at a scope listed under "What this export could not read" as kept without being judged. A policy absent from it was left out by the export, not missing from the tenant, and applying a document that does not declare it leaves it untouched.'))
         }
     }
 }

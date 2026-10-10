@@ -13,13 +13,19 @@ function Get-OERInventoryReadme {
     The three parameters are mandatory on purpose: a caller that forgot them would get a README that
     claims a complete read. When all three hold nothing but blank entries, the section says that
     nothing was left unread. Each entry is written as a Markdown code span, so an entry such as
-    '<all Azure scopes: scope enumeration failed>' is shown and not swallowed as an HTML tag.
+    '<all Azure scopes: scope enumeration failed>' is shown and not swallowed as an HTML tag. An
+    IncompleteReads entry that starts with 'roleManagementPolicies/' is an Azure scope whose role
+    management policies the export kept without being judged, not an Entra ID read, and is listed
+    under the label 'Azure role management policies kept without being judged'.
 
     .PARAMETER IncompleteReads
-    The Entra ID entries Export-OERInventory reports as incompletely read (the IncompleteReads list
-    of its output): collections or objects that could not be read, could not be written without an
-    empty name, or were left out because two or more live objects share a name. Pass an empty array
-    when there are none.
+    The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
+    collections or objects that could not be read, could not be written without an empty name, or
+    were left out because two or more live objects share a name. Then, last, one entry per Azure
+    scope whose role management policies the export kept without being judged, reading
+    'roleManagementPolicies/role selection at <scope>': nothing was left out for it, but
+    roleManagementPolicies.json may hold policies of roles that are neither used nor changed there.
+    Pass an empty array when there are none.
 
     .PARAMETER SkippedScopes
     The Azure scopes whose role assignments and role management policies could not be read (the
@@ -91,11 +97,16 @@ function Get-OERInventoryReadme {
 ## What this export could not read
 
 This bundle is PARTIAL: `Export-OERInventory` could not read, or could not write, everything it was
-asked to, so do not treat it as a full tenant snapshot. Each entry below names collections or objects
-that could not be read, could not be written without an empty name, or were left out because two or
-more live objects share a name; none of them is stated as a fact in this bundle. "Unread
-collections" below says how an unread collection is written; an object left out for a shared name is
-absent from `inventory.json` and the per-area files, which does not mean the tenant has none.
+asked to, so do not treat it as a full tenant snapshot. Apart from the kind described last, each
+entry below names collections or objects that could not be read, could not be written without an
+empty name, or were left out because two or more live objects share a name; none of them is stated
+as a fact in this bundle. "Unread collections" below says how an unread collection is written; an
+object left out for a shared name is absent from `inventory.json` and the per-area files, which does
+not mean the tenant has none. An entry labelled "Azure role management policies kept without being
+judged" names an Azure scope where the export could not tell whether a role is used, or whether its
+policy was changed, since a read it needed failed or the policy list gave nothing to judge by. It
+kept each such policy rather than leave it out, so nothing is missing for that scope, but
+`roleManagementPolicies.json` may hold policies of roles that are neither used nor changed there.
 '@
         $Partial + "`n`n" + ($Bullets -join "`n")
     } else {
@@ -186,8 +197,13 @@ directory roles) and `directoryRoleAssignments` (eligible and active assignments
 directory roles) are both captured in `inventory.json` (policies for roles with at least one eligible
 or active assignment unless the export used `-AllDirectoryRolePolicies`; assignments that are direct
 and at tenant scope -- activations and assignments inherited through a group are not listed), and may
-be proposed. Four areas fall outside that model, each differently -- do not read this bundle as a
-complete picture of the tenant:
+be proposed. `roleManagementPolicies` (the PIM settings of Azure roles) holds, unless the export used
+`-AllRolePolicies`, only the policy of a role with an active role assignment or a PIM eligibility
+exactly at the policy's scope, or whose policy has been changed, and the policies at a scope listed
+under "What this export could not read" as kept without being judged. A policy absent from it was
+left out by the export, not missing from the tenant, and applying a document that does not declare
+it leaves it untouched. Four areas fall outside that model, each differently -- do not read this
+bundle as a complete picture of the tenant:
 
 - Azure resource groups and individual Azure resources are not created or managed by the document.
   A role assignment at a resource-group or resource scope does apply, but `scopeHierarchy.json`

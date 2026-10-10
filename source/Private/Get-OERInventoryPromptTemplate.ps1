@@ -76,6 +76,11 @@ directoryRoleAssignments (eligible and active assignments of Microsoft Entra dir
 both captured in inventory.json (policies for roles with at least one eligible or active assignment
 unless the export used -AllDirectoryRolePolicies; assignments that are direct and at tenant scope --
 activations and assignments inherited through a group are not listed), and may be proposed.
+roleManagementPolicies holds only the policies of Azure roles with an active role assignment or an
+eligibility exactly at the policy's scope, or whose policy has been changed, unless the export used
+-AllRolePolicies or the README lists the scope as kept without being judged, so the absence of a
+role's policy is no evidence that the tenant lacks it, and a document that does not declare it
+leaves it untouched.
 Four areas fall outside that model, each in a different way, so treat them differently:
 
 - Azure resource GROUPS and individual RESOURCES cannot be created or managed by the document.

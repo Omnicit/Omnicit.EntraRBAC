@@ -1090,6 +1090,28 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   them share a name. The clause is built by `Get-OERInventory` and `Export-OERInventory`, the
   shared-name text by `Get-OERInventory` and `Get-OERInventoryGroup`; never word either inline.
   `Why: docs/development/rationale.md#export-group-selection`
+- **`Test-OERRolePolicyModified` is the single owner of whether an Azure role management policy has
+  been changed** -- the list row's `policyAssignmentProperties.policy` (carried as `PolicyMetadata`
+  by `Get-OERRoleManagementPolicyForScope`, with no request of its own) with a non-empty
+  `lastModifiedDateTime`, `lastModifiedBy.id` or `lastModifiedBy.displayName`, the three fields
+  `Test-OERGroupPimInUse` reads. An empty `lastModifiedBy` object is not a change (measured on one
+  subscription: every untouched policy carried one), `isOrganizationDefault` is no signal (`false`
+  on every policy there), and a row with no policy object returns `$null`, which a caller never
+  reads as "not changed". Never re-implement the check inline.
+  `Why: docs/development/rationale.md#export-role-policy-selection`
+- **`Select-OERInventoryRolePolicy` is the single owner of which Azure role management policies
+  `Export-OERInventory` keeps without `-AllRolePolicies`** -- pure, every side keyed on the canonical
+  scope and the role definition guid: a policy whose role has a role assignment or an eligibility
+  EXACTLY at its scope, or that has been changed, is kept; one that cannot be judged (no policy
+  object, no role definition id, or a scope whose role assignment or eligibility read failed) is
+  kept AND its scope named, as `roleManagementPolicies/role selection at <scope>` last in
+  `IncompleteReads`, with an `InventoryPartial` clause of its own; anything else is omitted. The
+  export reads the candidates through `Get-OERInventoryRolePolicy` (the same one paged list and the
+  same converters as `Get-OERInventory -AllRolesAtScope`) and the assignments with one extra
+  `Get-OERRoleAssignment -AtScope` list per scope, read before the policy list; `-AllRolePolicies`
+  makes the per-scope call earlier versions made and selects nothing. Never decide the selection
+  anywhere else, never drop a policy that cannot be judged, and never add a request per policy.
+  `Why: docs/development/rationale.md#export-role-policy-selection`
 - **`Resolve-OERTenantDomain` is the single owner of the module's one network call outside the
   Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
   discovery lookup of a tenant named by domain at the cloud's Microsoft Entra ID authority, the host
