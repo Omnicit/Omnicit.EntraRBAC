@@ -510,11 +510,19 @@ failed request can carry the request message.
 
 Transport is detected from `CommandAst.GetCommandName()`, **never a text grep**:
 `source/Private/Remove-OERErrorRecord.ps1` carries a literal `Invoke-MgGraphRequest` in its
-`.EXAMPLE` block, and a grep would false-positive it into a violation. A known limit of that
-detection: it matches the command's literal name, so an alias -- `irm` for `Invoke-RestMethod`, as
-`iwr`, `curl` or `wget` for `Invoke-WebRequest` -- does not mark a file as reaching transport here.
-Gate 10's ownership scan does resolve those aliases, so such an alias anywhere but in its owner's file
-is a violation there.
+`.EXAMPLE` block, and a grep would false-positive it into a violation. Since Sprint 10 step 10
+(BL-93) that name is read through `Resolve-OERTransportCommandName`, the one resolver gate 10's
+ownership scan uses too, so the two gates cannot disagree about what a transport call is: a
+module-qualified name (`Microsoft.PowerShell.Utility\Invoke-RestMethod`), `irm` for
+`Invoke-RestMethod`, and `iwr`, `curl` or `wget` for `Invoke-WebRequest` mark a file as reaching
+transport, in any letter case, and a known-answer `It` holds the resolver to each of them -- the
+resolver itself: no file under `source/` calls a transport command by an alias or a module-qualified
+name, so the real tree holds no positive control of the scan's own use of it. Before,
+gate 2 matched the literal name only, so `irm` in a file whose catch did not scrub passed it. The
+census did not move: 151 transport-reaching files and 408 catches, before and after. What it still
+does not see: a command name built at run time, any other alias, and a module-qualified call of a
+module function outside the transport set (`Omnicit.EntraRBAC\Resolve-OERGroupId`), which creates
+no call edge, since the closure below matches a module function's literal name only.
 
 The gate carries a small, justified exemption list -- currently the four `Resolve-OERName` catches
 in `New-OERGroup`, `New-OERCatalog`, `New-OERAccessPackage` and `New-OERAdministrativeUnit`, whose
@@ -617,7 +625,8 @@ so a matcher that stopped matching cannot pass by finding nothing to complain ab
 
 **10. Transport gate hygiene** (Sprint 8 step 4b, A18, A19 and A20; two owner lists widened in
 Sprint 9 step 2; the tenant lookup, the session-uncertain marker and the session reclaim added in
-Sprint 9 step 3; the document tenant comparison added in Sprint 9 step 6b). The
+Sprint 9 step 3; the document tenant comparison added in Sprint 9 step 6b; the reclaim splat key and
+the `Connect-OER` caller rule added in Sprint 10 step 10). The
 gates that stand in front of every request -- the Graph SDK session gate in the Graph transport, and
 the sign-in latch gate and the sign-in supersession gate in both transports, all described under
 [#auth-state](#auth-state) -- are only as good as the claim that no request can go around them, and
@@ -666,8 +675,16 @@ appears under `source/` only in `Connect-OER.ps1`, which passes it, and `Initial
 which declares and reads it, and both must really name it. A parameter of that name on any command, a
 prefix of it on an `Initialize-OERAuth` call (PowerShell binds `-R` to the switch), a variable or a
 parameter declaration in any scope, and a string constant or expandable string holding it -- a member
-name, a hashtable key, an index -- each count, read from the AST, so comments do not; a known-answer
-table of sixteen miniatures runs that scan in every run. A pairing rule, read from
+name, a hashtable key, an index -- each count, read from the AST, so comments do not. Since Sprint 10
+step 10 (BL-93) a shorter prefix of it written as a key of a hashtable splatted into an
+`Initialize-OERAuth` call counts too, since a splat binds an abbreviated key as the command line binds
+an abbreviated parameter: a key the calling function writes into the splat variable as a hashtable
+literal (`$P = @{ Recl = $true }`, or `+=`), by a member or an index assignment, or with `.Add`. And
+no file under `source/` may call `Connect-OER`, which passes the switch on its own, so a call of it is
+a second reclaim caller that no name scan sees. A known-answer table of twenty-six miniatures runs the
+name and splat-key scans in every run, and the splat-key scan must read more than 85 splatted
+`Initialize-OERAuth` calls and 100 keys written into them on the real tree (92 and 114 when it was
+written). A pairing rule, read from
 `Initialize-OERAuth`: each `Register-OERSignInIdentity` call is the statement directly after an
 `Unlock-OERSignIn` call in the same block, each call standing alone and both passing `-Invocation`
 the same variable, and the two are called equally often -- two pairs, counted exactly, so a new success end is a deliberate edit of
@@ -709,11 +726,13 @@ unit suites' job, and so is the proof that `Get-OERSignInSupersession` walks eve
 call stack; the pairing rule proves where `Register-OERSignInIdentity` stands, not what it stores;
 a command name built at run time is invisible to it, as to the Az context gate;
 the ownership scan resolves a module-qualified name, the three `Invoke-WebRequest` aliases and the
-`Invoke-RestMethod` alias `irm`, and nothing else (gate 2, which decides where a scrub is required,
-matches only the literal names); a bearer read spelled any other way (`.Item('ArmToken')`, a key
-held in a variable) is not a marker; and the reclaim rule cannot see a name built at run time, an
-abbreviated key in a hashtable splatted into `Initialize-OERAuth` (`@{ Recl = $true }`, which binds),
-or a call of `Connect-OER` itself from another source file, which passes the switch on its own.
+`Invoke-RestMethod` alias `irm`, and nothing else, through the resolver gate 2 shares; a bearer read
+spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a marker; and the
+reclaim rule cannot see a name or a key built at run time, a key merged into the splat from another
+variable (`$P += $Other`), a hashtable literal wrapped in a cast or `[ordered]`, a key written into
+the splat variable outside the function that calls `Initialize-OERAuth`, a key that reaches the
+splat through parameter binding (a parameter named with a prefix of the switch, forwarded with
+`@PSBoundParameters`), or a call of `Connect-OER` through a name built at run time.
 
 Every gate asserts its own non-vacuity (per-root file counts, named control files, catch-clause and
 token counts, region-content checks) so a detection bug fails loudly instead of passing over an

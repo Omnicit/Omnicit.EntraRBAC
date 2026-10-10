@@ -1388,7 +1388,9 @@ bug.
   `Set-OERSessionUncertain` calls -- the statement directly after the `Lock-OERSignIn` assignment and
   the statement directly after each `Register-OERSignInIdentity`; the name `ReclaimGraphSession`
   (a parameter, a prefix of it on an `Initialize-OERAuth` call, a variable, a member, a hashtable key
-  or any string) only in `Connect-OER` and `Initialize-OERAuth`, both really naming it; every
+  or any string -- and a prefix of it as a key the calling function writes into a hashtable it
+  splats into `Initialize-OERAuth`) only in `Connect-OER` and `Initialize-OERAuth`, both really
+  naming it, and no file under `source/` calling `Connect-OER`, which passes it on its own; every
   `Register-OERSignInIdentity` call the statement directly after an `Unlock-OERSignIn` call with the
   same `-Invocation`, as many of the one as of the other; every send a wrapper makes in the body of
   a try that holds exactly one call path (in the Graph transport one `Invoke-MgGraphRequest` and one

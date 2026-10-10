@@ -52,6 +52,25 @@ BeforeAll {
         'Invoke-RestMethod', 'Get-AzToken', 'Connect-MgGraph', 'Connect-AzAccount'
     )
 
+    # ONE resolver of what a call really names, for this gate (Pass 1 below) and for the transport gate
+    # hygiene scans (Pass 9) alike, so the two can never disagree about what a transport call is (BL-93):
+    # a call written `irm` or `Microsoft.PowerShell.Utility\Invoke-RestMethod` reaches the wire exactly
+    # as `Invoke-RestMethod` does. A module-qualified name is the same command, and so is one of the
+    # Invoke-WebRequest aliases (iwr, curl, wget) or irm, the Invoke-RestMethod alias. Nothing else is
+    # resolved: any other alias, and a name built at run time, stay what GetCommandName() returns. The
+    # map is a default hashtable, so its keys match in any letter case, as PowerShell resolves them.
+    $script:transportCommandAliases = @{ iwr = 'Invoke-WebRequest'; curl = 'Invoke-WebRequest'; wget = 'Invoke-WebRequest'; irm = 'Invoke-RestMethod' }
+
+    # The bare, alias-resolved name of a command, or $null for none.
+    function Resolve-OERTransportCommandName {
+        param([string]$Name)
+
+        if ([string]::IsNullOrEmpty($Name)) { return $null }
+        $Bare = $Name -replace '^.*\\', ''
+        if ($script:transportCommandAliases.ContainsKey($Bare)) { return $script:transportCommandAliases[$Bare] }
+        return $Bare
+    }
+
     # Catch clauses that legitimately do NOT scrub. Keyed by file, but a file entry alone is NOT
     # enough to exempt: the catch's own try body must ALSO satisfy Test-OERResolveNameOnlyTry below,
     # and that structural shape IS the written justification. Keying on the file alone would silently
@@ -168,6 +187,11 @@ BeforeAll {
             source/Private/Remove-OERErrorRecord.ps1 carries the literal 'Invoke-MgGraphRequest
             @InvokeParams' inside its .EXAMPLE help block, so a grep scores it as a transport file and
             then reports its non-scrubbing catch as a violation. The AST never sees comment tokens.
+            The name is read through Resolve-OERTransportCommandName (above), so an alias the resolver
+            knows (irm, iwr, curl, wget) or a module-qualified transport name marks the file too. The
+            call edges of Pass 2 below still match a module function's literal name only, so a
+            module-qualified call of a MODULE function (Omnicit.EntraRBAC\Resolve-OERGroupId) creates
+            no edge.
 
             ONE FindAll walk collects all five node kinds into four buckets, filled with a plain
             foreach. Three separate walks cost 2.2s across source/ against 1.0s merged, and a
@@ -202,7 +226,7 @@ BeforeAll {
                 $CommandName = $Node.GetCommandName()
                 if ($CommandName) {
                     $CommandNames.Add($CommandName)
-                    if (-not $CallsTransport -and $script:transportCommands -contains $CommandName) {
+                    if (-not $CallsTransport -and $script:transportCommands -contains (Resolve-OERTransportCommandName -Name $CommandName)) {
                         $CallsTransport = $true
                     }
                     if (($CommandName -replace '^.*\\', '') -eq 'Initialize-OERAuth') {
@@ -1451,7 +1475,13 @@ BeforeAll {
         it, and both must really name it. A parameter of that name on any command, a prefix of it on an
         Initialize-OERAuth call (PowerShell binds -R to it), a variable or parameter declaration in any
         scope, and a string constant or expandable string holding it -- a member name, a hashtable key,
-        an index -- each count; comments do not, since the AST never sees them.
+        an index -- each count; comments do not, since the AST never sees them. A shorter prefix of it
+        written as a key of a hashtable splatted into an Initialize-OERAuth call counts too (BL-93), since
+        a splat binds an abbreviated key as the command line binds an abbreviated parameter: a key the
+        call's own function writes into the splat variable by a literal ($P = @{ Recl = $true }, or +=),
+        a member or index assignment, or .Add (Find-OERSplatKeyWrite). And since Connect-OER passes the
+        switch on its own, no file under source/ may call Connect-OER at all (BL-93): a call of it is a
+        second reclaim caller that no name scan sees.
 
         THE MARKER IS SET WHERE THE LATCH IS SET, AND PUT BACK WHERE IT IS RELEASED. In
         Initialize-OERAuth exactly three Set-OERSessionUncertain calls stand, each a statement of its own
@@ -1495,11 +1525,15 @@ BeforeAll {
         that, so a new success end is a deliberate edit of that number. A command name built at run
         time (a call through a variable) is invisible to GetCommandName(), the same limit the Az
         context gate records. The ownership scan resolves a module-qualified name, the three
-        Invoke-WebRequest aliases and the Invoke-RestMethod alias irm, and nothing else. A bearer read
-        spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a marker. The
-        reclaim rule cannot see a name built at run time ('Reclaim' + 'GraphSession'), an abbreviated
-        key in a hashtable splatted into Initialize-OERAuth (@{ Recl = $true }, which binds), or a
-        call of Connect-OER itself from another source file, which passes the switch on its own.
+        Invoke-WebRequest aliases and the Invoke-RestMethod alias irm, and nothing else -- through
+        Resolve-OERTransportCommandName, which the bearer-scrub gate's transport detection shares. A
+        bearer read spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a
+        marker. The reclaim rule cannot see a name or a key built at run time ('Reclaim' +
+        'GraphSession'), a key merged into the splat from another variable ($P += $Other), a hashtable
+        literal wrapped in a cast or [ordered], a key written into the splat variable outside the
+        function that calls Initialize-OERAuth, a key that reaches the splat through parameter binding
+        (a parameter named with a prefix of the switch, forwarded with @PSBoundParameters), or a call
+        of Connect-OER through a name built at run time.
         =====================================================================================
     #>
     $script:transportGateGraphPath = 'source\Private\Invoke-OERGraphRequest.ps1'
@@ -1530,19 +1564,8 @@ BeforeAll {
         [PSCustomObject]@{ Command = 'Set-OERSessionUncertain'; Owners = @('source\Private\Initialize-OERAuth.ps1', 'source\Public\Connect-OER.ps1', 'source\Public\Disconnect-OER.ps1') }
         [PSCustomObject]@{ Command = 'Get-OERDocumentTenantMismatch'; Owners = @('source\Public\Invoke-OERStructure.ps1') }
     )
-    $script:transportGateAliases = @{ iwr = 'Invoke-WebRequest'; curl = 'Invoke-WebRequest'; wget = 'Invoke-WebRequest'; irm = 'Invoke-RestMethod' }
-
-    # The command a call really names: a module-qualified call (Microsoft.PowerShell.Utility\Invoke-WebRequest)
-    # is the same command, and so is one of the Invoke-WebRequest aliases or irm, the Invoke-RestMethod alias.
-    function Resolve-OERTransportCommandName {
-        param([string]$Name)
-
-        if ([string]::IsNullOrEmpty($Name)) { return $null }
-        $Bare = $Name -replace '^.*\\', ''
-        if ($script:transportGateAliases.ContainsKey($Bare)) { return $script:transportGateAliases[$Bare] }
-        return $Bare
-    }
-
+    # The command a call really names, through Resolve-OERTransportCommandName -- defined once, ahead of
+    # Pass 1, and shared with the bearer-scrub gate's transport detection.
     function Get-OERCallName {
         param($CommandAst)
 
@@ -2398,14 +2421,123 @@ BeforeAll {
             }, $true)
     }
 
+    # True when $Ast is the variable $Name, read without any scope: prefix and in any letter case.
+    function Test-OERVariableNamed {
+        param($Ast, [string]$Name)
+
+        return ($Ast -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            (($Ast.VariablePath.UserPath -replace '^[A-Za-z]+:', '') -eq ($Name -replace '^[A-Za-z]+:', '')))
+    }
+
+    # THE FOUR WAYS A KEY IS WRITTEN INTO A SPLAT (BL-93). Every key node -- a constant string -- that
+    # $Scope writes into the hashtable held in the variable $Variable (named without its scope: prefix,
+    # in any letter case), in these four shapes and no other:
+    #   1. a member assignment            $V.Key = ...
+    #   2. an index assignment            $V['Key'] = ...
+    #   3. a hashtable literal assigned   $V = @{ Key = ... }   or   $V += @{ Key = ... }
+    #   4. an Add call                    $V.Add('Key', ...)
+    # Not returned: a key that is not a constant (held in a variable, or built at run time), a key merged
+    # in from another variable ($V += $Other), a literal wrapped in a cast or [ordered], and a write made
+    # outside $Scope. The whole scope is searched, nested script blocks and functions included.
+    function Find-OERSplatKeyWrite {
+        param($Scope, [string]$Variable)
+
+        $Writes = $Scope.FindAll({
+                $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] -or
+                $args[0] -is [System.Management.Automation.Language.InvokeMemberExpressionAst]
+            }, $true)
+        foreach ($Write in $Writes) {
+            if ($Write -is [System.Management.Automation.Language.InvokeMemberExpressionAst]) {
+                # 4. $V.Add('Key', ...)
+                $Arguments = @($Write.Arguments)
+                if ((Test-OERVariableNamed -Ast $Write.Expression -Name $Variable) -and
+                    $Write.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                    $Write.Member.Value -eq 'Add' -and $Arguments.Count -gt 0 -and
+                    $Arguments[0] -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                    $Arguments[0]
+                }
+                continue
+            }
+            $Left = $Write.Left
+            if ($Left -is [System.Management.Automation.Language.MemberExpressionAst]) {
+                # 1. $V.Key = ...
+                if ((Test-OERVariableNamed -Ast $Left.Expression -Name $Variable) -and
+                    $Left.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                    $Left.Member
+                }
+            } elseif ($Left -is [System.Management.Automation.Language.IndexExpressionAst]) {
+                # 2. $V['Key'] = ...
+                if ((Test-OERVariableNamed -Ast $Left.Target -Name $Variable) -and
+                    $Left.Index -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                    $Left.Index
+                }
+            } elseif ((Test-OERVariableNamed -Ast $Left -Name $Variable) -and
+                $Write.Operator -in [System.Management.Automation.Language.TokenKind]::Equals, [System.Management.Automation.Language.TokenKind]::PlusEquals) {
+                # 3. $V = @{ Key = ... } or $V += @{ Key = ... }: the hashtable must be the whole
+                # right-hand side, so a literal handed to a command is not the splat's. The parser gives
+                # a lone expression as a CommandExpressionAst, not as a pipeline of one element; both
+                # forms are read.
+                $Elements = if ($Write.Right -is [System.Management.Automation.Language.PipelineAst]) { @($Write.Right.PipelineElements) } else { @($Write.Right) }
+                if ($Elements.Count -eq 1 -and $Elements[0] -is [System.Management.Automation.Language.CommandExpressionAst] -and
+                    $Elements[0].Expression -is [System.Management.Automation.Language.HashtableAst]) {
+                    foreach ($Pair in $Elements[0].Expression.KeyValuePairs) {
+                        if ($Pair.Item1 -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $Pair.Item1 }
+                    }
+                }
+            }
+        }
+    }
+
+    # Every abbreviated ReclaimGraphSession key written into a hashtable that is splatted into a call of
+    # Initialize-OERAuth (BL-93): a splat binds an abbreviated key exactly as the command line binds an
+    # abbreviated parameter, so `$P = @{ Recl = $true }; Initialize-OERAuth @P` passes the switch. For
+    # each splatted variable of each such call, the writes are read (Find-OERSplatKeyWrite) in the
+    # call's nearest enclosing function, or in $Ast itself when there is none. A key is reported when it
+    # is a shorter prefix of the name in any letter case: the full name is a string constant, so
+    # Find-OERReclaimGraphSessionName already reports it, and counting it twice would only double an
+    # owner's sites. Each key node is reported once, however many calls splat its variable. -Census, when
+    # given, counts the splatted variables read (Calls) and the distinct keys read from their writes
+    # (Keys), whatever their names, so the real tree's scan can show it read the tree's splats.
+    function Find-OERReclaimSplatKey {
+        param($Ast, [hashtable]$Census)
+
+        $FullName = 'ReclaimGraphSession'
+        $Read = [System.Collections.Generic.HashSet[object]]::new()
+        foreach ($Call in @(Find-OERCallNamed -Ast $Ast -Name 'Initialize-OERAuth')) {
+            foreach ($Element in $Call.CommandElements) {
+                if ($Element -isnot [System.Management.Automation.Language.VariableExpressionAst] -or -not $Element.Splatted) { continue }
+                if ($null -ne $Census) { $Census.Calls++ }
+                $Scope = $Call.Parent
+                while ($null -ne $Scope -and -not [System.Object]::ReferenceEquals($Scope, $Ast) -and
+                    $Scope -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                    $Scope = $Scope.Parent
+                }
+                if ($null -eq $Scope) { $Scope = $Ast }
+                foreach ($Key in @(Find-OERSplatKeyWrite -Scope $Scope -Variable $Element.VariablePath.UserPath)) {
+                    if (-not $Read.Add($Key)) { continue }
+                    if ($null -ne $Census) { $Census.Keys++ }
+                    $Value = [string]$Key.Value
+                    if ($Value.Length -gt 0 -and $Value.Length -lt $FullName.Length -and
+                        $FullName.StartsWith($Value, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $Key
+                    }
+                }
+            }
+        }
+    }
+
     # A file whose text names ReclaimGraphSession is parsed again and searched whole. Any other file can
     # bind the switch only through an abbreviated parameter on an Initialize-OERAuth call, so only the
-    # call nodes Pass 1 kept for the sign-in call-site rule are searched there.
+    # call nodes Pass 1 kept for the sign-in call-site rule are searched there -- or through an
+    # abbreviated key splatted into one, so its top-level function is searched for those
+    # (Find-OERReclaimSplatKey). A call outside that function is a violation of the sign-in call-site
+    # rule below on its own.
     $script:reclaimOwnerPaths = @('source\Private\Initialize-OERAuth.ps1', 'source\Public\Connect-OER.ps1')
     $script:reclaimOwnerSites = @{}
     foreach ($Owner in $script:reclaimOwnerPaths) { $script:reclaimOwnerSites[$Owner] = 0 }
     $script:reclaimViolations = [System.Collections.Generic.List[string]]::new()
     $script:reclaimFilesSearched = 0
+    $script:reclaimSplatCensus = @{ Calls = 0; Keys = 0 }
     $ReclaimUnits = @{}
     foreach ($Unit in $script:sourceUnits) { $ReclaimUnits[$Unit.RelativePath] = $Unit }
     foreach ($File in $script:hygieneFiles) {
@@ -2413,6 +2545,7 @@ BeforeAll {
         if ($File.Extension -notin '.ps1', '.psm1', '.psd1') { continue }
         $Relative = $File.RelativePath -replace '/', '\'
         $References = @()
+        $SplatKeys = @()
         if ($File.Text -match 'ReclaimGraphSession') {
             $script:reclaimFilesSearched++
             $ReclaimTokens = $null
@@ -2424,14 +2557,26 @@ BeforeAll {
                 continue
             }
             $References = @(Find-OERReclaimGraphSessionName -Ast $ReclaimAst)
+            $SplatKeys = @(Find-OERReclaimSplatKey -Ast $ReclaimAst -Census $script:reclaimSplatCensus)
         } elseif ($ReclaimUnits.ContainsKey($Relative)) {
             $References = @(foreach ($Call in $ReclaimUnits[$Relative].SignInCalls) { Find-OERReclaimGraphSessionName -Ast $Call })
+            if ($null -ne $ReclaimUnits[$Relative].Definition) {
+                $SplatKeys = @(Find-OERReclaimSplatKey -Ast $ReclaimUnits[$Relative].Definition -Census $script:reclaimSplatCensus)
+            }
         }
-        foreach ($Reference in $References) {
+        # A splat key counts exactly as a reference does; its line names the key and the splat.
+        $Sites = @(
+            foreach ($Reference in $References) { '{0}:{1} -- {2}' -f $Relative, $Reference.Extent.StartLineNumber, $Reference.Extent.Text }
+            foreach ($Key in $SplatKeys) {
+                "{0}:{1} -- key '{2}' of a hashtable splatted into Initialize-OERAuth, which binds -ReclaimGraphSession" -f
+                $Relative, $Key.Extent.StartLineNumber, $Key.Value
+            }
+        )
+        foreach ($Site in $Sites) {
             if ($script:reclaimOwnerSites.ContainsKey($Relative)) {
                 $script:reclaimOwnerSites[$Relative]++
             } else {
-                $script:reclaimViolations.Add(('{0}:{1} -- {2}' -f $Relative, $Reference.Extent.StartLineNumber, $Reference.Extent.Text))
+                $script:reclaimViolations.Add($Site)
             }
         }
     }
@@ -2459,16 +2604,51 @@ BeforeAll {
         @{ Case = 'an abbreviation on another command'; Expect = 0; Text = 'Get-ChildItem -R' }
         @{ Case = 'another switch of Initialize-OERAuth'; Expect = 0; Text = 'Initialize-OERAuth -IncludeARM -ForceRefresh' }
         @{ Case = 'a longer variable name'; Expect = 0; Text = '$ReclaimGraphSessionAfter = 1' }
+        @{ Case = 'an abbreviated key in a hashtable literal splatted into Initialize-OERAuth'; Expect = 1; Text = '$P = @{ Recl = $true }; Initialize-OERAuth @P' }
+        @{ Case = 'an abbreviated key set as a member of the splat'; Expect = 1; Text = '$P = @{}; $P.Rec = $true; Initialize-OERAuth @P' }
+        @{ Case = 'a one-letter key set by index, in lower case'; Expect = 1; Text = '$P = @{}; $P[''r''] = $true; Initialize-OERAuth @P' }
+        @{ Case = 'an abbreviated key added with Add'; Expect = 1; Text = '$P = @{}; $P.Add(''Reclaim'', $true); Initialize-OERAuth @P' }
+        @{ Case = 'an abbreviated key added with += on a module-qualified call'; Expect = 1; Text = '$P = @{ TenantId = $T }; $P += @{ ReclaimGraph = $true }; Omnicit.EntraRBAC\Initialize-OERAuth @P' }
+        @{ Case = 'an abbreviated key inside the function that splats it'; Expect = 1; Text = 'function F { $P = @{ Rec = $true }; Initialize-OERAuth @P }' }
+        @{ Case = 'other keys splatted into Initialize-OERAuth'; Expect = 0; Text = '$P = @{ TenantId = $T; IncludeARM = $true }; $P.ForceRefresh = $true; Initialize-OERAuth @P' }
+        @{ Case = 'an abbreviated key splatted into another command'; Expect = 0; Text = '$P = @{ Recl = $true }; Get-Thing @P' }
+        @{ Case = 'an abbreviated key in a hashtable that is not the splat'; Expect = 0; Text = '$Q = @{ Recl = $true }; $P = @{}; Initialize-OERAuth @P' }
+        @{ Case = 'an abbreviated key written in another function'; Expect = 0; Text = 'function G { $P = @{ Rec = $true } }; function F { Initialize-OERAuth @P }' }
     )
     $script:reclaimKnownAnswerFailures = [System.Collections.Generic.List[string]]::new()
     foreach ($Case in $script:reclaimKnownAnswers) {
         $CaseTokens = $null
         $CaseErrors = $null
         $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
-        $Got = @(Find-OERReclaimGraphSessionName -Ast $CaseAst).Count
+        $Got = @(Find-OERReclaimGraphSessionName -Ast $CaseAst).Count + @(Find-OERReclaimSplatKey -Ast $CaseAst).Count
         if ($CaseErrors.Count -gt 0 -or $Got -ne $Case.Expect) {
             $script:reclaimKnownAnswerFailures.Add(('{0} -- expected {1} reference(s), got {2}{3}' -f
                     $Case.Case, $Case.Expect, $Got, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
+        }
+    }
+
+    # --- No file under source/ calls Connect-OER (BL-93; see WHO MAY NAME THE RECLAIM). ---
+    # Connect-OER passes -ReclaimGraphSession on its own, so a call of it is a reclaim no name scan sees.
+    # The command names Pass 1 collected per file decide which files call it (the name module-qualified
+    # or not, and a quoted name after & as well); only those files are parsed again, from the text
+    # already read, so each call is reported with its line. A name built at run time is not seen.
+    $script:connectOerCallers = [System.Collections.Generic.List[string]]::new()
+    foreach ($Unit in $script:sourceUnits) {
+        $Count = @($Unit.CommandNames | Where-Object { (Resolve-OERTransportCommandName -Name $_) -eq 'Connect-OER' }).Count
+        if ($Count -eq 0) { continue }
+        $CallerFile = @($script:hygieneFiles | Where-Object { ($_.RelativePath -replace '/', '\') -eq $Unit.RelativePath })[0]
+        $CallerTokens = $null
+        $CallerErrors = $null
+        $CallerAst = [System.Management.Automation.Language.Parser]::ParseInput(
+            $CallerFile.Text, $CallerFile.Path, [ref]$CallerTokens, [ref]$CallerErrors)
+        $CallerCalls = @(Find-OERCallNamed -Ast $CallerAst -Name 'Connect-OER')
+        foreach ($Call in $CallerCalls) {
+            $script:connectOerCallers.Add(('{0}:{1} -- calls Connect-OER: {2}' -f
+                    $Unit.RelativePath, $Call.Extent.StartLineNumber, ($Call.Extent.Text -split "`n")[0].Trim()))
+        }
+        if ($CallerCalls.Count -ne $Count) {
+            $script:connectOerCallers.Add(('{0} -- calls Connect-OER {1} time(s) by the names Pass 1 collected, and {2} call(s) were placed again' -f
+                    $Unit.RelativePath, $Count, $CallerCalls.Count))
         }
     }
 
@@ -3070,6 +3250,30 @@ PowerShell appended to the caller's $global:Error, so reference-equality removal
 If a catch is genuinely exempt (no HTTP record can reach it), add it to $script:scrubExemptions with
 a written reason rather than deleting this assertion.
 '@
+    }
+
+    It 'detects a transport call written as an alias or module-qualified, as gate 10 does' {
+        # Known answers for the resolver Pass 1's transport test reads (BL-93): each name must resolve,
+        # through the one resolver gate 10 uses, to a command in $script:transportCommands. They hold the
+        # resolver itself, not Pass 1's call of it: no file under source/ calls a transport command by an
+        # alias or a module-qualified name, so the real tree holds no positive control of that call.
+        $Cases = @(
+            @{ Name = 'irm'; Expect = 'Invoke-RestMethod' }
+            @{ Name = 'IRM'; Expect = 'Invoke-RestMethod' }
+            @{ Name = 'iwr'; Expect = 'Invoke-WebRequest' }
+            @{ Name = 'curl'; Expect = 'Invoke-WebRequest' }
+            @{ Name = 'wget'; Expect = 'Invoke-WebRequest' }
+            @{ Name = 'Microsoft.PowerShell.Utility\Invoke-RestMethod'; Expect = 'Invoke-RestMethod' }
+            @{ Name = 'Omnicit.EntraRBAC\Invoke-OERGraphRequest'; Expect = 'Invoke-OERGraphRequest' }
+            @{ Name = 'Get-AzToken'; Expect = 'Get-AzToken' }
+        )
+        foreach ($Case in $Cases) {
+            $Resolved = Resolve-OERTransportCommandName -Name $Case.Name
+            $Resolved | Should -BeExactly $Case.Expect -Because ('{0} must resolve to {1}' -f $Case.Name, $Case.Expect)
+            $script:transportCommands -contains $Resolved | Should -BeTrue -Because ('{0} is a transport command, so a file that calls it must scrub in every catch' -f $Case.Name)
+        }
+        Resolve-OERTransportCommandName -Name 'Get-ChildItem' | Should -BeExactly 'Get-ChildItem'
+        $script:transportCommands -contains (Resolve-OERTransportCommandName -Name 'Get-ChildItem') | Should -BeFalse
     }
 }
 
@@ -3697,21 +3901,43 @@ call back as a statement of its own in one of those three places.
     It 'names ReclaimGraphSession only in Connect-OER.ps1 and Initialize-OERAuth.ps1' {
         $script:reclaimKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because (
             'the reclaim scan no longer reaches the count a known-answer case requires, so a green result below would prove nothing; fix the scan rather than the case')
-        @($script:reclaimKnownAnswers).Count | Should -Be 16 -Because (
-            'the known-answer table holds sixteen cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        @($script:reclaimKnownAnswers).Count | Should -Be 26 -Because (
+            'the known-answer table holds twenty-six cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
         $script:reclaimStale -join "`n" | Should -BeNullOrEmpty -Because (
             'Connect-OER, which passes the switch, and Initialize-OERAuth, which declares and reads it, must each really name it; an owner listed here that names it nowhere is a stale rule, not a pass')
         $script:reclaimFilesSearched | Should -BeGreaterThan 1 -Because (
             'at least the two owner files name ReclaimGraphSession in their text; fewer files searched means the scan lost them')
+        # Non-vacuity of the splat-key scan (BL-93), measured when it was written: 92 splatted
+        # Initialize-OERAuth calls under source/ and 114 keys written into their splats.
+        $script:reclaimSplatCensus.Calls | Should -BeGreaterThan 85 -Because (
+            'the Initialize-OERAuth calls under source/ splat their parameters (92 splatted calls when this was written); fewer read means the splat-key scan stopped reaching the files')
+        $script:reclaimSplatCensus.Keys | Should -BeGreaterThan 100 -Because (
+            'the splats of those calls are written with 114 keys (TenantId, IncludeARM and the rest) when this was written; fewer read means the splat-key scan stopped reading the writes')
         $script:reclaimViolations -join "`n" | Should -BeNullOrEmpty -Because @'
 -ReclaimGraphSession is the one way past two of Initialize-OERAuth's refusals: the Graph SDK session gate
 (A18), which refuses a session another Connect-MgGraph started, and the session-uncertain refusal (A10,
 BL-89), which refuses a sign-in that names no tenant after a refused one. It is also the one key that
 clears the session-uncertain marker without naming a tenant. Connect-OER passes it, as the operator's
 explicit instruction to sign in, and Initialize-OERAuth declares and reads it. A third file that names
-it -- passing it, abbreviating it on an Initialize-OERAuth call, setting it in a splat or forwarding it --
-lets a command that names no tenant take another session back, or act on the previous tenant after a
-refused sign-in, with every other gate green. Pass it only from Connect-OER.
+it -- passing it, abbreviating it on an Initialize-OERAuth call or as a key of a hashtable splatted into
+one, setting it in a splat or forwarding it -- lets a command that names no tenant take another session
+back, or act on the previous tenant after a refused sign-in, with every other gate green. Pass it only
+from Connect-OER.
+'@
+    }
+
+    It 'calls Connect-OER from no file under source/, since it passes -ReclaimGraphSession on its own' {
+        # Known answers: the shapes the scan must see as a call of Connect-OER.
+        Resolve-OERTransportCommandName -Name 'Omnicit.EntraRBAC\Connect-OER' | Should -BeExactly 'Connect-OER'
+        $CallAst = [System.Management.Automation.Language.Parser]::ParseInput("& 'Connect-OER' -TenantId `$T", [ref]$null, [ref]$null)
+        @(Find-OERCallNamed -Ast $CallAst -Name 'Connect-OER').Count | Should -Be 1
+        $script:sourceUnits.Count | Should -BeGreaterThan 195 -Because 'the scan must have read the tree'
+        $script:connectOerCallers -join "`n" | Should -BeNullOrEmpty -Because @'
+Connect-OER passes -ReclaimGraphSession to Initialize-OERAuth on its own, as the operator's explicit
+instruction to sign in. A source file that calls Connect-OER is a second reclaim caller: it takes back a
+session another Connect-MgGraph started, and can clear the session-uncertain marker without naming a
+tenant, with every other gate green -- the reclaim name scan never sees it, since the switch is named
+only inside Connect-OER. Never call Connect-OER from module code.
 '@
     }
 
