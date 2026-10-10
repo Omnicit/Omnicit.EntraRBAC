@@ -6194,6 +6194,226 @@ reader marks the whole Groups section unread, never empty. The cost: `Get-OERInv
 catch on a path no known input reaches (its known output is unchanged), and the causes and unread
 names the reader had gathered before it stopped are lost; only `groups` survives.
 
+## export-role-policy-selection
+
+Sprint 10 step 9 (BL-107, decisions A8 and A14) made `Export-OERInventory` keep only the Azure role
+management policies of roles in use or changed, unless the new switch `-AllRolePolicies` is given.
+This anchor records the problem, the measurement, the change rule and the two signals rejected, the
+exact scope, the extra read and its place, how a policy that cannot be judged is named, the two
+paths, the known limits and rulings R1-R12, each with its cost if wrong.
+`Test-OERRolePolicyModified` is the single owner of whether a policy has been changed and
+`Select-OERInventoryRolePolicy` of which policies the export keeps (CLAUDE.md, Code Style).
+
+**The problem.** With `RoleManagementPolicies` in `-Include`, the export wrote the policy of every
+role at every scope the walk read: per scope, `Get-OERInventory -AllRolesAtScope` converts every row
+of the scope's one paged `roleManagementPolicyAssignments` list. That list carries the policies of
+roles nobody uses or has changed at the scope -- 963 of 967 on the subscription measured below -- so
+`roleManagementPolicies.json` and `inventory.json` grew by hundreds of default entries per scope
+(INFERRED from that one subscription), an LLM was handed each as if someone had chosen it, and every
+declared entry costs the apply engine a read of the live policy (`Sync-OERStructureRoleManagementPolicy`
+reads each declared entry with `Get-OERRoleManagementPolicy`; read in the code).
+
+**The measurement.** MEASURED live on 2026-10-10, read-only, as the dedicated certificate identity
+`oer-live-cc`, on the test tenant's subscription, before any code was written, from the list the
+export already reads per scope (`roleManagementPolicyAssignments`, api-version 2020-10-01, one paged
+list). The record is `docs/live-verification/feat-export-role-policies-in-use-checklist.md`, "The
+measurement this branch rests on".
+
+- 967 policy assignments, all of built-in roles, every one with its scope and its policy at the
+  subscription itself, and every row carrying `properties.policyAssignmentProperties.policy`.
+- 965 rows: `policy` has the keys `id` and `lastModifiedBy` only -- no `lastModifiedDateTime` key --
+  and `lastModifiedBy` is an EMPTY object (no `id`, no `displayName`, no `type`). All 965 carry one
+  identical effective rule set.
+- 2 rows: `policy` also carries `lastModifiedDateTime` (a date), and `lastModifiedBy` carries
+  `displayName` only (no `id`, no `type`). Both rule sets differ from the 965's (approval,
+  authentication context, expiration and notification rules).
+- The policies list (`roleManagementPolicies`) agrees row for row on `lastModifiedDateTime`, and
+  `isOrganizationDefault` is `false` on all 967.
+- Exactly at the subscription: 6 role assignments over 3 roles, and no eligibility schedule (3 are
+  listed, all below it). The rule below keeps 4 of the 967: 3 in use and 2 changed, 1 of them both.
+
+**R1 (the change rule).** A policy has been changed when the list row's
+`policyAssignmentProperties.policy` carries a non-empty `lastModifiedDateTime`, a non-empty
+`lastModifiedBy.id` or a non-empty `lastModifiedBy.displayName` -- the same three fields
+`Test-OERGroupPimInUse` reads for a PIM-for-Groups policy ([#pim-in-use-criterion](#pim-in-use-criterion)).
+White space counts as empty, and a hashtable and a PSCustomObject are read alike. The list the export
+already reads carries the fields, so the rule costs no request: `Get-OERRoleManagementPolicyForScope`
+hands the object on as `PolicyMetadata`. An empty `lastModifiedBy` object is not a change, since
+every untouched row carries one. A row with no `policy` object at all cannot be judged: the predicate
+returns `$null`, which no caller reads as "not changed" (R5). Cost if wrong: a policy changed without
+leaving a date or a name is omitted from the default export; the document then does not declare it,
+apply leaves it as it is, and `-AllRolePolicies` exports it.
+
+**Rejected: `isOrganizationDefault`.** It reads like the flag the rule needs, and the measurement
+shows it is not one: `false` on all 967 policies, the changed and the untouched alike. A rule on it
+would keep every policy.
+
+**Rejected: comparing rule sets.** The 965 untouched policies share one effective rule set and the 2
+changed ones differ from it, so "differs from the common rule set" would keep the same 2 here. It was
+rejected on reasoning, not on a measurement. It needs a reference rule set, which the module would
+either have to carry -- and a default Azure changes later would then read every untouched policy as
+changed, silently -- or infer per scope as the most common set, which makes a policy's fate depend on
+its neighbours and goes wrong at a scope where most policies were changed. It also compares every
+rule's nested settings, so a field ARM adds to a rule could move every policy at once. The record
+fields are on the row the export already reads, and on the subscription measured they marked exactly
+the policies whose rules differ. Cost if wrong: a policy whose rules differ from the default but that
+carries no record is omitted by default -- the measurement found none (every row without a record
+carried the one common rule set).
+
+**R2 (exact scope).** A policy is kept by a role assignment or an eligibility of its role EXACTLY at
+its scope. Every side is keyed on the scope in its canonical form (`ConvertTo-OERCanonicalScope`,
+[#role-assignment-key](#role-assignment-key)) and the role definition guid -- the last `/`-segment
+of the role definition id, compared without regard to letter case, so a subscription-scoped and a
+tenant-scoped id of one role match -- and a fact whose role definition id is empty is ignored (read in
+`Select-OERInventoryRolePolicy`). An assignment or eligibility at a management group above the scope,
+or at a resource group below it, does not keep the policy. Why: a policy is addressed by role AND
+scope (`Get-`/`Set-OERRoleManagementPolicy` take both), and the question is whether anybody relies on
+that policy at that scope; a use of the role elsewhere is not a use of it (reasoned, not measured).
+Cost if wrong: a role used only above or below a scope loses that scope's untouched policy from the
+default export; apply leaves the policy as it is, and `-AllRolePolicies` exports it.
+
+**R3 (the extra read).** An active assignment is a role assignment ARM lists at the scope: one paged
+`Get-OERRoleAssignment -Scope ... -AtScope` list per scope (`$filter=atScope()`, the assignments at
+or above the scope, api-version 2022-04-01), of which the selection counts those exactly at it --
+role definition guids, not display names, so the match is exact. The eligibilities come from the
+read the export already makes for `azurePimEligibility.json`: `Get-OERInventoryAzureEligibility`
+returns, in `RoleScopes`, the scope and role definition id of every row it read, before its
+deduplication, and writes nothing more to the bundle. So the selection adds exactly one list per
+scope and no request per policy. When `RoleAssignments` is included too, that is a second role
+assignment list per scope: `Get-OERInventory`'s own read projects each row to the document's shape,
+with the role's name in `role`, so the guid the selection keys on is not in it (read in the code).
+Cost if wrong: one more ARM list per scope than needed.
+
+**R4 (the role assignment read comes first).** In a scope the role assignment list is read before the
+policy list (and after the per-scope `Get-OERInventory` call when `RoleAssignments` is included; a
+failure there still skips the scope as before). `Get-OERRoleAssignment` is a public cmdlet whose
+`begin` calls `Initialize-OERAuth -IncludeARM`, whose cached return needs more than five minutes
+left on the token ([How a long run renews its token](#how-a-long-run-renews-its-token)), so a token
+near expiry is renewed there, just before the policy list -- as the per-scope
+`Get-OERRoleManagementPolicy` call inside `Get-OERInventory` does on the `-AllRolePolicies` path.
+`Get-OERInventoryRolePolicy` never signs in. A failure of the role assignment read costs the
+selection, not the scope: its `catch` scrubs the record first, writes one warning ("Could not read
+the role assignments at scope '...', so a role management policy there not kept by a use or a change
+is kept without being judged: ..." with the cause) and marks the scope unread for the selection, and
+the policy list is still read. A failed
+policy list reaches the per-scope `catch` and skips the scope exactly as a failed policy read always
+has. Cost if wrong: an interactive long export prompts at a 401 instead of five minutes before.
+
+**R5 (a policy that cannot be judged is kept).** A policy not kept by an assignment, an eligibility
+or a change is kept anyway, and its scope named once, when its `Modified` is `$null` (the row carried
+no `policy` object), its role definition guid is empty, or its scope is one whose role assignment
+read or eligibility read failed -- the eligibility read's own skipped scopes join the unread ones. An
+error is never dropped (G3). Cost if wrong: more policies kept than needed at such a scope, each
+scope named.
+
+**R6 (how it is named).** Each such scope becomes the `IncompleteReads` entry
+`roleManagementPolicies/role selection at <scope>`, the scope in its canonical form
+(`ConvertTo-OERCanonicalScope`, which trims a trailing `/` and keeps the letter case) -- for a
+subscription, `roleManagementPolicies/role selection at /subscriptions/<id>` -- in the shape of
+`Get-OERInventory`'s `directoryRoleManagementPolicies/role selection` entry. A scope is named when at
+least one policy there could not be judged, so the entry does not mean that every policy at the
+scope was kept: every policy there that could not be judged was kept, none of them left out, and
+where the scope's role assignment read or eligibility read failed that is every policy of a role
+neither used nor changed there. A single row with no `policy` object at a scope whose reads succeeded
+names the scope too, while the other unused, unchanged policies there are still left out (the test
+'keeps the input order of the policies and names each unjudged scope once, in the order first seen'
+in `tests/Unit/Private/Select-OERInventoryRolePolicy.Tests.ps1` shows it). The entries are kept in a
+list of their own and appended after every Entra ID entry, in the output's `IncompleteReads` and in
+the list the bundle README is given, so the Entra ID entries keep their documented order. They make
+the run `InventoryPartial`, with a clause of their own that names every entry and says that every
+policy there that could not be judged was kept, none of them left out -- at a scope whose role
+assignment or eligibility read failed, every policy of a role neither used nor changed there -- so
+`roleManagementPolicies.json` may hold policies of roles that are neither used nor changed at those
+scopes; the Entra ID clause still counts and words the Entra ID entries only. The bundle README lists
+each under a label of its own, "Azure role management policies
+kept without being judged" (an entry that starts with `roleManagementPolicies/`, compared ordinally;
+every other entry keeps "Entra ID"). No property of its own: the `Omnicit.EntraRBAC.InventoryBundle`
+object keeps exactly its properties, and no ErrorId is new (A8, A14). Cost if wrong: a caller that
+reads every `IncompleteReads` entry as Entra ID misfiles it.
+
+**R7 (the entry's form).** The first form built put the scope between `roleManagementPolicies/` and
+`/role selection`, which gave an ARM scope a double slash and read as a typo in every text that would
+quote it. The form above reads as prose and keeps the scope whole after a fixed prefix. Cost if
+wrong: one line, its test fixtures and these texts.
+
+**R8 (two paths).** `-AllRolePolicies` runs the per-scope `Get-OERInventory` call with
+`RoleManagementPolicies` and `-AllRolesAtScope` exactly as earlier versions did, and selects nothing.
+The default path reads the policies through the private `Get-OERInventoryRolePolicy` -- the same
+lister (`Get-OERRoleManagementPolicyForScope`, one paged list), the same two converters
+(`ConvertTo-OERRoleManagementPolicy`, then `ConvertTo-OERInventoryRoleManagementPolicy`) and the same
+scope-and-role deduplication -- and calls `Get-OERInventory` without `RoleManagementPolicies` and
+`-AllRolesAtScope`, or not at all when no section is left. A public cmdlet's output could not carry
+the change metadata without changing an output type, which A14 rules out, hence the private reader.
+The test 'returns exactly the entries Get-OERInventory -AllRolesAtScope returns for the same answer'
+(`tests/Unit/Private/Get-OERInventoryRolePolicy.Tests.ps1`) holds the two equal. Cost if wrong: the
+two paths could drift; that test is the net.
+
+**R9 (apply).** `Invoke-OERStructure` reads and writes only the policies a document declares:
+`Sync-OERStructureRoleManagementPolicy` reads each declared entry, writes it only when it differs,
+never emits `Created`, `Removed` or `Extra`, and takes `-Prune` as a no-op (read in the code). So a
+document with fewer policies leaves the others untouched. The Describe 'Invoke-OERStructure
+roleManagementPolicies touches only the declared policies (BL-107)' shows it with and without
+`-Prune`; it describes behaviour the engine already had, and it passed before this step. Cost if
+wrong (if a characterisation is not proof enough): a mutant run of the engine's handler against it,
+which this step did not make.
+
+**R10 (nulls).** `Select-OERInventoryRolePolicy` declares `[AllowNull()]` on its three object lists,
+so a null element binds and is skipped instead of failing the whole selection (a mandatory array
+refuses a null element at binding otherwise), and the export drops nulls and blank scopes at the call
+site too. Cost if wrong: three attributes and one guard come out, replaced by a test of the binding
+refusal.
+
+**R11 (wording).** The warning and the clause are short and fixed in the code; they do not quote the
+entry form, so R7 did not move them. The clause first read "the role management policies at N Azure
+scope(s) were kept without being judged", which reads as every policy at the scope; the review of
+the texts found that false where only one row could not be judged (R6), so it now says that every
+policy that could not be judged was kept, none of them left out (text only, no change in behaviour).
+The warning first read "so its role management policies are kept without being judged", which reads
+the same way although a policy kept there for an eligibility or a change was judged; the final
+review found it loose, so it now says that a policy there not kept by a use or a change is kept
+without being judged (text only). The help, the bundle README, the prompt template, README and the
+about topic say the same rule in their own words. Cost if wrong: text-only edits, plus the fragments
+the Export tests match.
+
+**R12 (no runspace proof without a `try`).** No new guard stops a public cmdlet: each keeps or omits
+an entry, or names a scope, so the no-`try` runspace proof other guards need was not made. Cost if
+wrong: one such test in a follow-up.
+
+**Known limits.**
+
+- A change that leaves no record (no date, no name) is omitted from the default export (R1). No
+  measurement can see such a change directly; what was measured is that every row without a record
+  carried the one common rule set.
+- A PIM active assignment scheduled to start later does not keep its role's policy until it starts:
+  the selection reads `roleAssignments` (read in the code), and such an assignment is a schedule, not
+  yet a role assignment (not measured here). The next export after it starts keeps the policy. The
+  eligibilities are read from `roleEligibilitySchedules` (read in the code).
+- `-AllRolePolicies` is the path earlier versions took, with their size and cost: every policy at
+  every scope the walk reads, and none of the selection's reads, warnings or `IncompleteReads`
+  entries. Without `RoleManagementPolicies` in `-Include` -- the default -- nothing changed at all.
+- Without `-Scope` the walk reads management groups and subscriptions only, on either path. A
+  resource group's policies, or those of any other scope, are exported only when `-Scope` names that
+  scope: `Resolve-OERInventoryScopeTree` then returns that one scope unchanged and the per-scope loop
+  reads it like any other (read in the code; the live checklist's sections 2.1 and 2.2 export a
+  resource group that way).
+- The row shape of a management group's policy assignment list is NOT measured: `oer-live-cc` is
+  refused the management group listing, so the measurement above read a subscription only. If such
+  rows carried no `policyAssignmentProperties.policy`, every policy at every management group the
+  walk reads would be kept and its scope named as unjudged (R5), so every export with
+  `RoleManagementPolicies` whose walk reads a management group would end `InventoryPartial`. That is
+  the safe direction -- more kept and named, nothing dropped -- and it is to be confirmed in the
+  maintainer's own tenant.
+- The live checklist (`docs/live-verification/feat-export-role-policies-in-use-checklist.md`) compares
+  the exports of the build before this step and of this step, and an apply of the exported document.
+  It was run as `oer-live-cc` on 2026-10-10, every check passed, and the teardown left nothing
+  (MEASURED): at the test subscription this step keeps the 4 policies the rule keeps out of 967, each
+  entry identical to the earlier build's; `-AllRolePolicies` writes the earlier build's file byte for
+  byte; at the step's own resource group the assigned role and the eligible role are kept, a role
+  assigned only above it is not, and a policy changed there through `Set-OERRoleManagementPolicy`
+  showed its change record on the list's first read afterwards and was kept from then on; the
+  exported document applied twice gave only `Unchanged`. A management-group scope and a failed read
+  are offline-only there (the checklist says why).
+
 ## typed-group-member-read
 
 Sprint 9 step 1 (BL-13) made `Get-OERGroupRelation` the single reader of a group's `members` and

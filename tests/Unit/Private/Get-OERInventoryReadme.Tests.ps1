@@ -256,7 +256,13 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
         # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
         $Collapsed = $Section -replace '\s+', ' '
         $Collapsed | Should -Match ([regex]::Escape('This bundle is PARTIAL: `Export-OERInventory` could not read, or could not write, everything it was asked to, so do not treat it as a full tenant snapshot.'))
-        $Collapsed | Should -Match ([regex]::Escape('Each entry below names collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name; none of them is stated as a fact in this bundle.'))
+        $Collapsed | Should -Match ([regex]::Escape('Apart from the entries labelled "Azure role management policies kept without being judged", each entry below names collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name; none of them is stated as a fact in this bundle.'))
+        # BL-107: the Azure role selection entry is the one kind that names no unread collection, so
+        # the intro says what it means instead of counting it among the reads that failed.
+        $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Azure role management policies kept without being judged" names an Azure scope where the export could not tell, for at least one policy, whether its role is used there or whether the policy was changed, since a read it needed failed or the policy list gave nothing to judge by. Every policy there that it could not judge was kept, none of them left out -- where a role assignment or eligibility read failed, that is every policy of a role neither used nor changed at the scope -- so `roleManagementPolicies.json` may hold policies of roles that are neither used nor changed there. It does not mean every policy at the scope was kept: when only one policy could not be judged, the other unused, unchanged policies there are still left out.'))
+        # A scope is named also when a single row could not be judged, so the intro never claims that
+        # nothing at the scope was left out.
+        $Collapsed | Should -Not -Match 'nothing is missing for that scope'
         # "Unread collections" covers an unread collection only; an object left out for a shared name
         # is said to be absent here, since that section does not describe it.
         $Collapsed | Should -Match ([regex]::Escape('"Unread collections" below says how an unread collection is written; an object left out for a shared name is absent from `inventory.json` and the per-area files, which does not mean the tenant has none.'))
@@ -290,6 +296,25 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
         $Collapsed | Should -Match ([regex]::Escape('Nothing. `Export-OERInventory` read everything it was asked to read: no collection, section, group roster or Azure scope was reported as unread, and no `InventoryPartial` error was raised. The coverage limits below still apply -- they describe what this bundle never captures, not a read that failed.'))
         @(Get-TestBullets -Section $Section).Count | Should -Be 0
         $Section | Should -Not -MatchExactly 'This bundle is PARTIAL'
+    }
+
+    It 'labels an IncompleteReads entry that starts with roleManagementPolicies/ as Azure role management policies kept without being judged, and every other entry Entra ID' {
+        # BL-107: the export appends one such entry per Azure scope whose role management policies were
+        # kept without being judged, after the Entra ID entries. directoryRoleManagementPolicies/... is
+        # an Entra ID entry: it only ends with the same words.
+        $Section = Get-TestSection -Readme (Get-TestReadme -IncompleteReads @(
+                'groupsRoster'
+                'directoryRoleManagementPolicies/role selection'
+                'roleManagementPolicies/role selection at /subscriptions/aaaaaaaa-0000-0000-0000-000000000001'
+            ) -SkippedScopes @('/subscriptions/aaaaaaaa-0000-0000-0000-000000000002'))
+        $Expected = @(
+            '- Entra ID: `groupsRoster`'
+            '- Entra ID: `directoryRoleManagementPolicies/role selection`'
+            '- Azure role management policies kept without being judged: `roleManagementPolicies/role selection at /subscriptions/aaaaaaaa-0000-0000-0000-000000000001`'
+            '- Azure scope, absent from `roleAssignments.json` and `roleManagementPolicies.json`: `/subscriptions/aaaaaaaa-0000-0000-0000-000000000002`'
+        )
+        ((Get-TestBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
+        $Section | Should -Match 'This bundle is PARTIAL'
     }
 
     It 'shows an entry that looks like an HTML tag, since every entry is a code span' {
@@ -391,6 +416,9 @@ Describe 'Get-OERInventoryReadme apply-document section list' {
             $Collapsed | Should -Not -Match 'apply-only for now'
             $Collapsed | Should -Not -Match 'does not read them'
             $Collapsed | Should -Match ([regex]::Escape('`directoryRoleManagementPolicies` (the PIM settings of Microsoft Entra directory roles) and `directoryRoleAssignments` (eligible and active assignments of Microsoft Entra directory roles) are both captured in `inventory.json` (policies for roles with at least one eligible or active assignment unless the export used `-AllDirectoryRolePolicies`; assignments that are direct and at tenant scope -- activations and assignments inherited through a group are not listed), and may be proposed.'))
+            # BL-107: which Azure role management policies the file holds, and that an absent one was
+            # left out by the export rather than missing from the tenant.
+            $Collapsed | Should -Match ([regex]::Escape('`roleManagementPolicies` (the PIM settings of Azure roles) holds, unless the export used `-AllRolePolicies`, only the policy of a role with an active role assignment or a PIM eligibility exactly at the policy''s scope, or whose policy has been changed, and every policy the export could not judge, at a scope listed under "What this export could not read" as kept without being judged. A policy absent from it was left out by the export, not missing from the tenant, and applying a document that does not declare it leaves it untouched.'))
         }
     }
 }

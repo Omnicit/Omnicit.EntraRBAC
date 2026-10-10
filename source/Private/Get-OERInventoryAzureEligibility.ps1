@@ -17,6 +17,11 @@ function Get-OERInventoryAzureEligibility {
     is read-only context, not an apply-document section: scope, role, principal, principalType,
     memberType, status, startDateTime and endDateTime (null for a permanent eligibility).
 
+    RoleScopes carries one object with the Scope and RoleDefinitionId of every row read, duplicates
+    included and before the deduplication above, for Export-OERInventory's role policy selection
+    (Select-OERInventoryRolePolicy keeps a policy whose role has an eligibility exactly at the policy's
+    scope). It is never written to a bundle file.
+
     .PARAMETER Scope
     The ARM scopes to read, as Resolve-OERInventoryScopeTree returns them.
 
@@ -33,6 +38,7 @@ function Get-OERInventoryAzureEligibility {
     $Seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $Items = [System.Collections.Generic.List[object]]::new()
     $Skipped = [System.Collections.Generic.List[string]]::new()
+    $RoleScopes = [System.Collections.Generic.List[object]]::new()
     foreach ($S in @($Scope)) {
         if ([string]::IsNullOrWhiteSpace($S)) { continue }
         $ReadParams = @{ Scope = $S; ErrorAction = 'Stop' }
@@ -47,6 +53,9 @@ function Get-OERInventoryAzureEligibility {
         }
         foreach ($Row in $Rows) {
             if ($null -eq $Row) { continue }
+            # Every row read, before the deduplication: the selection only needs where each role
+            # is eligible, and a duplicate costs nothing.
+            $RoleScopes.Add([PSCustomObject]@{ Scope = [string]$Row.Scope; RoleDefinitionId = [string]$Row.RoleDefinitionId })
             $Key = if ($Row.RoleEligibilityScheduleId) { [string]$Row.RoleEligibilityScheduleId }
                    else { '{0}|{1}|{2}' -f $Row.Scope, $Row.RoleDefinitionId, $Row.PrincipalId }
             if (-not $Seen.Add($Key)) { continue }
@@ -63,7 +72,7 @@ function Get-OERInventoryAzureEligibility {
         }
     }
     $Sorted = @($Items | Sort-Object -Property scope, role, principal)
-    $Out = [PSCustomObject]@{ Eligibilities = $Sorted; SkippedScopes = $Skipped.ToArray() }
+    $Out = [PSCustomObject]@{ Eligibilities = $Sorted; SkippedScopes = $Skipped.ToArray(); RoleScopes = $RoleScopes.ToArray() }
     $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.InventoryAzureEligibility')
     $Out
 }

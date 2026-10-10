@@ -9,51 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 A permanent group eligibility grant refused after `Add-OERGroupEligibility` opened the group's PIM
 policy now reports `PolicyOpenedButGrantFailed` first, naming the open policy, why the grant failed
-and how to close it (`Set-OERGroupPimPolicy` with `-AllowPermanentEligibility:$false`; the old
-advice left it open), even under `-ErrorAction Stop` and in `Invoke-OERStructure` results.
-`Invoke-OERStructure`'s wait on a group it created now says, in `GroupNotOnboarded` and in a later
+and how to close it (`Set-OERGroupPimPolicy -AllowPermanentEligibility:$false`; the old advice
+left it open), even under `-ErrorAction Stop` and in `Invoke-OERStructure` results.
+`Invoke-OERStructure`'s wait on a group it created now says, in `GroupNotOnboarded` and a later
 attempt's error, whether the policy was opened and, if so, how to close it. The Azure role
-assignment cmdlets no longer report a rollback that finds nothing to change as failed; they ask for
-a confirming read. No ErrorId changed.
+assignment cmdlets no longer report a rollback that finds nothing to change as failed but ask for a
+confirming read. No ErrorId changed.
 
-`Disconnect-OER` now ends only the Graph SDK session the module connected and warns when it leaves
-another. An Azure Resource Manager request without a token is refused (`ArmTokenAcquisitionFailed`),
-not sent. `New-`/`Set-OERConfiguration` refuse a white-space `-TenantId`. `SignInSuperseded` names
-its actual cause, and the `SignInRefused` after a failed sign-in no longer says the session may be
-the previous tenant's.
+`Disconnect-OER` now ends only the module's own Graph SDK session and warns when it leaves another.
+An ARM request without a token is refused (`ArmTokenAcquisitionFailed`), not sent.
+`New-`/`Set-OERConfiguration` refuse a white-space `-TenantId`. `SignInSuperseded` names its actual
+cause; `SignInRefused` after a failed sign-in no longer says the session may be the previous
+tenant's.
 
-Every device code sign-in, Microsoft Graph and Azure Resource Manager alike, now prints a new code,
-so a later one in the same session no longer reuses AzAuth's process-wide credential, which could
-hang with no code shown, and needs no `-Force`. The help and README say how a long run renews its
-token per sign-in type and what it asks of you.
+Every device code sign-in, Microsoft Graph and ARM alike, now prints a new code, so a later one in
+the same session no longer reuses AzAuth's process-wide credential, which could hang, showing no
+code, and needs no `-Force`. The help and README say how a long run renews its token per sign-in
+type and what it asks of you.
 
-`Invoke-OERStructure -WhatIf` now plans what the run does when an Azure role policy entry's
-approvers would name nobody: both report it `Failed` with `ApproverRequired` and change nothing.
-`Test-OERStructure` refuses a `tenantId` that is not a string, as the schema does, or that ends in a
-line break. The `NotDirectAssignment` example now parses for a role name with a curly apostrophe.
+`Invoke-OERStructure -WhatIf` now plans an Azure role policy entry whose approvers name nobody as
+the run does: `Failed` with `ApproverRequired`, and changes nothing. `Test-OERStructure` refuses a
+`tenantId` that is not a string, as the schema does, or that ends in a line break. The
+`NotDirectAssignment` example now parses for a role name with a curly apostrophe.
 
 `SemiAnnually` (every six months) is a new access review cadence for
 `New-`/`Set-OERAccessReviewDefinition` and a structure document's `recurrence`. A live six-month
-review now exports as `SemiAnnually` without a warning and applies as `Unchanged`; older exports
-approximated it as `Monthly`, so applying one skips the recurrence with a warning and leaves the
-review semi-annual.
+review now exports as `SemiAnnually` without a warning and applies as `Unchanged`; an older
+export's `Monthly` approximation is skipped on apply, with a warning, leaving the review
+semi-annual.
 
 `Get-OERManagementGroup` now shows the parent of every listed group (the tenant root group has
-none); a parent that cannot be read is reported as `ManagementGroupParentReadFailed`, not left
-empty. A script that passes `-Expand` or `-Recurse` without `-Name` now fails at parameter binding,
-or is asked for `-Name` where the host can prompt. An empty `-Name` is refused instead of listing
-every group.
+none); an unreadable parent is reported as `ManagementGroupParentReadFailed`, not left empty.
+`-Expand` or `-Recurse` without `-Name` now fails at parameter binding, or prompts for `-Name` where
+the host can. An empty `-Name` is refused instead of listing every group.
 
 `Get-OERGroup` now shows `OnPremisesSyncEnabled`, in its table too. `groupsRoster.json` marks every
 group `onPremisesSynced`, and `Export-OERInventory -IncludeSyncedGroups` keeps synchronized security
 groups in full detail in `inventory.json`, marked `onPremisesSynced: true`. `Invoke-OERStructure`
-writes nothing to a synchronized group: each change is reported `Skipped`, with one warning per
-group, and `-Prune` leaves it untouched.
+writes nothing to a synchronized group: each change is `Skipped`, one warning per group, and
+`-Prune` leaves it untouched.
 
 `Export-OERInventory` now reads members, owners and PIM policies only for the groups it keeps in
 full -- role-assignable, with PIM eligibility, found to use PIM for Groups, or synchronized under
 `-IncludeSyncedGroups` -- or cannot classify, and shows progress; `groupsRoster.json` gives the
 others `memberCount` null. The new `-GroupFilter` narrows the exported groups, never widens them.
+
+`Export-OERInventory` now keeps an Azure role's PIM policy at a scope only if the role is assigned
+or eligible exactly there or the policy changed, at one more role assignment read per scope; apply
+leaves the rest untouched. A policy it cannot judge is kept, its scope named in `IncompleteReads`
+and `InventoryPartial`. `-AllRolePolicies` keeps all, as before.
 
 ## [1.1.3] - 2026-10-07
 

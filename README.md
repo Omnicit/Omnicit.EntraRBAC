@@ -785,6 +785,17 @@ group the read does not show as security-enabled is left out with one warning, a
 `groupsRoster.json` still lists every group. To widen the document beyond security-enabled groups,
 read it with `Get-OERInventory -GroupFilter` instead.
 
+With `RoleManagementPolicies` in `-Include`, `Export-OERInventory` keeps a role's Azure PIM policy at
+a scope only when the role has an active role assignment or a PIM eligibility exactly at that scope,
+or the policy has been changed (it carries a modification date or names who modified it): Azure
+lists a policy for roles nobody uses there too. Deciding that costs one more paged role assignment
+list per scope; the policies are still read with one list per scope and nothing per policy. A
+policy the export cannot judge, because a read it needs failed or the list gives nothing to judge
+by, is kept, and its scope is named last in `IncompleteReads` as
+`roleManagementPolicies/role selection at <scope>` and in `InventoryPartial`. `-AllRolePolicies`
+exports every policy at every scope, as earlier versions did. `Invoke-OERStructure` reads and writes
+only the policies a document declares, so a policy the export left out stays as it is.
+
 ---
 
 ## Documentation

@@ -34,12 +34,16 @@ By default the Entra sections -- including the Microsoft Entra directory role se
 ARM token by themselves. `DirectoryRoleManagementPolicies` exports the policy of every directory
 role that is actually in use; add `-AllDirectoryRolePolicies` to export the policy of every
 directory role instead. Add `RoleManagementPolicies` to `-Include` to also read Azure PIM policies
-at every scope (slower). Only RBAC-relevant groups are detailed in `inventory.json`; the full
-landscape is in `groupsRoster.json`. The export decides which groups are relevant before it reads
-any group in full, so a group it finds not relevant costs two requests and has `memberCount` `null`
-in the roster; use `-AllGroupsDetailed` to read and keep every group in full detail. `-GroupFilter`
-narrows the groups `inventory.json` is read from and never widens them, and `groupsRoster.json` is
-never filtered.
+at every scope (slower); `roleManagementPolicies` then keeps a role's policy at a scope only when the
+role has an active role assignment or a PIM eligibility exactly at that scope, or the policy has been
+changed, at the cost of one more role assignment list per scope, and a policy that cannot be judged
+is kept and its scope named in `IncompleteReads`. Add `-AllRolePolicies` to export the policy of
+every Azure role at every scope instead. Only RBAC-relevant groups are detailed in `inventory.json`;
+the full landscape is in `groupsRoster.json`. The export decides which groups are relevant before it
+reads any group in full, so a group it finds not relevant costs two requests and has `memberCount`
+`null` in the roster; use `-AllGroupsDetailed` to read and keep every group in full detail.
+`-GroupFilter` narrows the groups `inventory.json` is read from and never widens them, and
+`groupsRoster.json` is never filtered.
 Add `-IncludeSyncedGroups` to also keep the security groups synchronized from on-premises Active
 Directory (`onPremisesSynced: true`); `Invoke-OERStructure` writes nothing to such a group.
 
@@ -462,9 +466,17 @@ deletion is proposed from it.
 The bundle's `README.md` lists every such report, and every Azure scope the export could not read
 (for `roleAssignments.json` and `roleManagementPolicies.json`, or for `azurePimEligibility.json`),
 under "What this export could not read" -- one bullet per entry, each written as a code span so an
-entry such as `<all Azure scopes: scope enumeration failed>` is shown as it is. When nothing was
-left unread, that section says so. The list is in the README alone: `inventory.json` and the other
-JSON files never carry it, so the apply document keeps exactly the shape the schema describes.
+entry such as `<all Azure scopes: scope enumeration failed>` is shown as it is. An Azure scope where
+at least one role management policy could not be judged is listed there too, after the Entra ID
+entries, as `roleManagementPolicies/role selection at <scope>` under a label of its own. Every policy
+there that could not be judged was kept, none of them left out -- where the scope's role assignment
+or eligibility read failed, that is every policy of a role neither used nor changed there -- so
+`roleManagementPolicies.json` may hold policies of roles that are neither used nor changed at that
+scope, and such a policy is no evidence that its role is in use. The entry does not mean every
+policy at the scope was kept: when only one policy could not be judged, the other unused, unchanged
+ones are still left out. When nothing was left unread, that section says so. The list is in the
+README alone: `inventory.json` and the other JSON files never carry it, so the apply document keeps
+exactly the shape the schema describes.
 
 ## Notes
 

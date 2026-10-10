@@ -1105,6 +1105,64 @@ Describe 'Invoke-OERStructure roleManagementPolicies approvers that name nobody 
     }
 }
 
+Describe 'Invoke-OERStructure roleManagementPolicies touches only the declared policies (BL-107)' {
+    # Export-OERInventory now writes, by default, only the Azure role management policies of roles in
+    # use or changed, so its document declares fewer policies than the scope holds. Apply reads and
+    # writes only the policies the document declares -- with and without -Prune -- so every policy it
+    # leaves out stays as it is. The engine, Sync-OERStructureRoleManagementPolicy and its diff run for
+    # real; only the live policy read and write, the approver resolution and the transports are mocked.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Mock Initialize-OERAuth {}
+            Mock Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+            Mock Invoke-OERArmRequest { throw 'unexpected ARM request' }
+            Mock Get-OERRoleManagementPolicy {
+                [PSCustomObject]@{
+                    RoleName           = $Role
+                    Scope              = '/subscriptions/11111111-1111-1111-1111-111111111111'
+                    ActivationMaxHours = 8
+                    RequireApproval    = $false
+                    Approvers          = @()
+                }
+            }
+            Mock Set-OERRoleManagementPolicy {}
+            Mock Resolve-OERDeclaredApprover { param($Declared) $Declared }
+        }
+    }
+
+    It 'reads and writes the policy of the one declared role and of no other (<Mode>)' -ForEach @(
+        @{ Mode = 'without -Prune'; Prune = $false }
+        @{ Mode = 'with -Prune'; Prune = $true }
+    ) {
+        $Json = '{ "version":"1.0", "roleManagementPolicies":[' +
+            '{"scope":"/subscriptions/11111111-1111-1111-1111-111111111111","role":"Reader","activationMaxHours":4} ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Prune:$Prune -Confirm:$false `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        # Reached: the declared policy was read, found to differ, and written.
+        $Rows.Count | Should -Be 1
+        $Rows[0].Section | Should -Be 'roleManagementPolicies'
+        $Rows[0].Item | Should -BeExactly 'Reader @ /subscriptions/11111111-1111-1111-1111-111111111111'
+        $Rows[0].Action | Should -Be 'Updated'
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
+            $Role -eq 'Reader' -and $Scope -eq '/subscriptions/11111111-1111-1111-1111-111111111111'
+        }
+        Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
+            $Role -eq 'Reader' -and $ActivationMaxHours -eq 4
+        }
+
+        # No other policy was read or written: no other role, no listing of every role at the scope.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0 -ParameterFilter {
+            $Role -ne 'Reader' -or $AllRolesAtScope -or $CommonRoles -or $PolicyId
+        }
+        Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 0 -ParameterFilter { $Role -ne 'Reader' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+    }
+}
+
 Describe 'Invoke-OERStructure roleAssignments grouped on the resolved scope' {
     # Two entries that spell one Azure scope differently must form ONE group with ONE prune pass.
     # Grouped on the text instead, each group's pass removed the other group's declared assignment
