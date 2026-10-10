@@ -71,6 +71,22 @@ BeforeAll {
         return $Bare
     }
 
+    # Pass 1's direct-transport classification of one file, held in ONE function so that the gate's
+    # known-answer It (in Bearer-token hygiene) runs the very test Pass 1 runs: true when any of the
+    # command names the file calls (GetCommandName() of each CommandAst) resolves, through
+    # Resolve-OERTransportCommandName, into $script:transportCommands. Every call is counted, and Pass 1
+    # records how many it made, so a Pass 1 that classifies a file without this function is seen too.
+    $script:transportClassificationCount = 0
+    function Test-OERCallsTransportDirectly {
+        param([string[]]$CommandNames)
+
+        $script:transportClassificationCount++
+        foreach ($Name in $CommandNames) {
+            if ($script:transportCommands -contains (Resolve-OERTransportCommandName -Name $Name)) { return $true }
+        }
+        return $false
+    }
+
     # Catch clauses that legitimately do NOT scrub. Keyed by file, but a file entry alone is NOT
     # enough to exempt: the catch's own try body must ALSO satisfy Test-OERResolveNameOnlyTry below,
     # and that structural shape IS the written justification. Keying on the file alone would silently
@@ -187,11 +203,11 @@ BeforeAll {
             source/Private/Remove-OERErrorRecord.ps1 carries the literal 'Invoke-MgGraphRequest
             @InvokeParams' inside its .EXAMPLE help block, so a grep scores it as a transport file and
             then reports its non-scrubbing catch as a violation. The AST never sees comment tokens.
-            The name is read through Resolve-OERTransportCommandName (above), so an alias the resolver
-            knows (irm, iwr, curl, wget) or a module-qualified transport name marks the file too. The
-            call edges of Pass 2 below still match a module function's literal name only, so a
-            module-qualified call of a MODULE function (Omnicit.EntraRBAC\Resolve-OERGroupId) creates
-            no edge.
+            The names are judged by Test-OERCallsTransportDirectly (above), through
+            Resolve-OERTransportCommandName, so an alias the resolver knows (irm, iwr, curl, wget) or a
+            module-qualified transport name marks the file too. The call edges of Pass 2 below still
+            match a module function's literal name only, so a module-qualified call of a MODULE
+            function (Omnicit.EntraRBAC\Resolve-OERGroupId) creates no edge.
 
             ONE FindAll walk collects all five node kinds into four buckets, filled with a plain
             foreach. Three separate walks cost 2.2s across source/ against 1.0s merged, and a
@@ -218,7 +234,6 @@ BeforeAll {
         # The Initialize-OERAuth call nodes themselves, kept for the Transport gate hygiene Describe's
         # sign-in call-site rule (Pass 9), which needs each call's place in the tree, not only its name.
         $SignInCalls = [System.Collections.Generic.List[object]]::new()
-        $CallsTransport = $false
         $IsDurationEncoder = (($File.RelativePath -replace '/', '\') -eq $script:durationFormatEncoderPath)
 
         foreach ($Node in $Nodes) {
@@ -226,9 +241,6 @@ BeforeAll {
                 $CommandName = $Node.GetCommandName()
                 if ($CommandName) {
                     $CommandNames.Add($CommandName)
-                    if (-not $CallsTransport -and $script:transportCommands -contains (Resolve-OERTransportCommandName -Name $CommandName)) {
-                        $CallsTransport = $true
-                    }
                     if (($CommandName -replace '^.*\\', '') -eq 'Initialize-OERAuth') {
                         $SignInCalls.Add($Node)
                     }
@@ -263,6 +275,9 @@ BeforeAll {
                 $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst]
             }, $false) | Select-Object -First 1
 
+        # The direct-transport test, through the one function the known-answer It runs as well.
+        $CallsTransport = Test-OERCallsTransportDirectly -CommandNames $CommandNames
+
         $script:sourceUnits.Add([PSCustomObject]@{
                 RelativePath   = ($File.RelativePath -replace '/', '\')
                 FunctionName   = if ($Definition) { $Definition.Name } else { $null }
@@ -276,6 +291,8 @@ BeforeAll {
                 SignInCalls    = $SignInCalls
             })
     }
+    # How many files Pass 1 classified through Test-OERCallsTransportDirectly: one per source unit.
+    $script:pass1TransportClassifications = $script:transportClassificationCount
 
     <#
         =====================================================================================
@@ -2632,25 +2649,51 @@ BeforeAll {
     # The command names Pass 1 collected per file decide which files call it (the name module-qualified
     # or not, and a quoted name after & as well); only those files are parsed again, from the text
     # already read, so each call is reported with its line. A name built at run time is not seen.
-    $script:connectOerCallers = [System.Collections.Generic.List[string]]::new()
-    foreach ($Unit in $script:sourceUnits) {
-        $Count = @($Unit.CommandNames | Where-Object { (Resolve-OERTransportCommandName -Name $_) -eq 'Connect-OER' }).Count
-        if ($Count -eq 0) { continue }
-        $CallerFile = @($script:hygieneFiles | Where-Object { ($_.RelativePath -replace '/', '\') -eq $Unit.RelativePath })[0]
-        $CallerTokens = $null
-        $CallerErrors = $null
-        $CallerAst = [System.Management.Automation.Language.Parser]::ParseInput(
-            $CallerFile.Text, $CallerFile.Path, [ref]$CallerTokens, [ref]$CallerErrors)
-        $CallerCalls = @(Find-OERCallNamed -Ast $CallerAst -Name 'Connect-OER')
-        foreach ($Call in $CallerCalls) {
-            $script:connectOerCallers.Add(('{0}:{1} -- calls Connect-OER: {2}' -f
-                    $Unit.RelativePath, $Call.Extent.StartLineNumber, ($Call.Extent.Text -split "`n")[0].Trim()))
+    # One function does the detection and the placement, for the real tree here and for the miniatures
+    # of the Connect-OER It, the pattern Get-OERSignInCallSiteReport follows. It reports how many units
+    # it examined (Units), how many Connect-OER calls their collected names hold (Named), how many of
+    # those it placed again in the parsed text (Placed), and one line per placed call plus one per file
+    # whose two counts differ (Lines). $TextByPath maps a unit's relative path to its text.
+    function Get-OERConnectOerCallerReport {
+        param([object[]]$Units, [hashtable]$TextByPath)
+
+        $Report = [PSCustomObject]@{
+            Units  = 0
+            Named  = 0
+            Placed = 0
+            Lines  = [System.Collections.Generic.List[string]]::new()
         }
-        if ($CallerCalls.Count -ne $Count) {
-            $script:connectOerCallers.Add(('{0} -- calls Connect-OER {1} time(s) by the names Pass 1 collected, and {2} call(s) were placed again' -f
-                    $Unit.RelativePath, $Count, $CallerCalls.Count))
+        foreach ($Unit in $Units) {
+            $Report.Units++
+            $Count = @($Unit.CommandNames | Where-Object { (Resolve-OERTransportCommandName -Name $_) -eq 'Connect-OER' }).Count
+            if ($Count -eq 0) { continue }
+            $Report.Named += $Count
+            $CallerText = $TextByPath[$Unit.RelativePath]
+            $CallerCalls = @()
+            if ($null -ne $CallerText) {
+                $CallerErrors = $null
+                $CallerAst = [System.Management.Automation.Language.Parser]::ParseInput($CallerText, [ref]$null, [ref]$CallerErrors)
+                $CallerCalls = @(Find-OERCallNamed -Ast $CallerAst -Name 'Connect-OER')
+            }
+            $Report.Placed += $CallerCalls.Count
+            foreach ($Call in $CallerCalls) {
+                $Report.Lines.Add(('{0}:{1} -- calls Connect-OER: {2}' -f
+                        $Unit.RelativePath, $Call.Extent.StartLineNumber, ($Call.Extent.Text -split "`n")[0].Trim()))
+            }
+            if ($CallerCalls.Count -ne $Count) {
+                $Report.Lines.Add(('{0} -- calls Connect-OER {1} time(s) by the names Pass 1 collected, and {2} call(s) were placed again' -f
+                        $Unit.RelativePath, $Count, $CallerCalls.Count))
+            }
         }
+        return $Report
     }
+
+    $SourceTextByPath = @{}
+    foreach ($File in $script:hygieneFiles) {
+        if ($File.RelativePath -match '^source[\\/]') { $SourceTextByPath[($File.RelativePath -replace '/', '\')] = $File.Text }
+    }
+    $script:connectOerReport = Get-OERConnectOerCallerReport -Units $script:sourceUnits -TextByPath $SourceTextByPath
+    $script:connectOerCallers = $script:connectOerReport.Lines
 
     # --- Known answers: the checker above must refuse each way of leaving a statement ungated. ---
     # A guard that has only ever been shown green is a guard-shaped-but-inert test, so every case
@@ -3252,11 +3295,38 @@ a written reason rather than deleting this assertion.
 '@
     }
 
-    It 'detects a transport call written as an alias or module-qualified, as gate 10 does' {
-        # Known answers for the resolver Pass 1's transport test reads (BL-93): each name must resolve,
-        # through the one resolver gate 10 uses, to a command in $script:transportCommands. They hold the
-        # resolver itself, not Pass 1's call of it: no file under source/ calls a transport command by an
-        # alias or a module-qualified name, so the real tree holds no positive control of that call.
+    It 'classifies a file that calls transport by an alias or a module-qualified name as Pass 1 does, through the resolver gate 10 uses' {
+        <#
+            Known answers for Pass 1's own direct-transport test (BL-93). No file under source/ calls a
+            transport command by an alias or a module-qualified name, so the real tree holds no positive
+            control of that test; these miniatures are the control. Each is parsed, its command names are
+            collected the way Pass 1 collects them (GetCommandName() of each CommandAst), and the very
+            function Pass 1 calls, Test-OERCallsTransportDirectly, must reach the verdict. Pass 1 must also
+            have classified every source unit through that function, so a Pass 1 that judges a file
+            without it fails here.
+        #>
+        $script:pass1TransportClassifications | Should -Be $script:sourceUnits.Count -Because (
+            'Pass 1 classifies every source file through Test-OERCallsTransportDirectly, the function the cases below run; a different count means Pass 1 judges transport some other way')
+        $Files = @(
+            @{ Text = 'function F { irm $U }'; Expect = $true }
+            @{ Text = 'function F { iwr $U }'; Expect = $true }
+            @{ Text = 'function F { Microsoft.PowerShell.Utility\Invoke-RestMethod -Uri $U }'; Expect = $true }
+            @{ Text = 'function F { Invoke-OERGraphRequest -Uri $U }'; Expect = $true }
+            @{ Text = 'function F { Get-ChildItem }'; Expect = $false }
+        )
+        foreach ($File in $Files) {
+            $FileErrors = $null
+            $FileAst = [System.Management.Automation.Language.Parser]::ParseInput($File.Text, [ref]$null, [ref]$FileErrors)
+            $FileErrors.Count | Should -Be 0 -Because ('the miniature {0} must parse' -f $File.Text)
+            $Names = @(foreach ($Call in $FileAst.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+                    $Name = $Call.GetCommandName()
+                    if ($Name) { $Name }
+                })
+            Test-OERCallsTransportDirectly -CommandNames $Names | Should -Be $File.Expect -Because (
+                'Pass 1 must judge {0} as calling transport: {1}' -f $File.Text, $File.Expect)
+        }
+
+        # And the resolver it reads: each name must resolve to a command in $script:transportCommands.
         $Cases = @(
             @{ Name = 'irm'; Expect = 'Invoke-RestMethod' }
             @{ Name = 'IRM'; Expect = 'Invoke-RestMethod' }
@@ -3931,7 +4001,39 @@ from Connect-OER.
         Resolve-OERTransportCommandName -Name 'Omnicit.EntraRBAC\Connect-OER' | Should -BeExactly 'Connect-OER'
         $CallAst = [System.Management.Automation.Language.Parser]::ParseInput("& 'Connect-OER' -TenantId `$T", [ref]$null, [ref]$null)
         @(Find-OERCallNamed -Ast $CallAst -Name 'Connect-OER').Count | Should -Be 1
+        <#
+            The detection itself: each miniature is parsed, its command names are collected the way
+            Pass 1 collects them (GetCommandName() of each CommandAst), and the function that scanned
+            the real tree, Get-OERConnectOerCallerReport, must report the exact counts, as
+            named/placed/lines. The real tree has no caller, so these are the scan's only positive
+            control.
+        #>
+        $Path = 'source\Public\Get-OERFixture.ps1'
+        $Cases = @(
+            @{ Case = 'a plain call'; Expect = '1/1/1'; Text = 'Connect-OER -TenantAlias x' }
+            @{ Case = 'a module-qualified call'; Expect = '1/1/1'; Text = 'Omnicit.EntraRBAC\Connect-OER' }
+            @{ Case = 'a quoted name after &'; Expect = '1/1/1'; Text = "& 'Connect-OER'" }
+            @{ Case = 'two calls, one in lower case'; Expect = '2/2/2'; Text = "function F { Connect-OER; connect-oer -Force }" }
+            @{ Case = 'the name as an argument'; Expect = '0/0/0'; Text = 'Get-Command Connect-OER' }
+            @{ Case = 'the name as a string'; Expect = '0/0/0'; Text = '$Name = ''Connect-OER''' }
+            @{ Case = 'the name in a comment'; Expect = '0/0/0'; Text = "# Connect-OER -TenantAlias x`n`$X = 1" }
+        )
+        foreach ($Case in $Cases) {
+            $CaseErrors = $null
+            $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$null, [ref]$CaseErrors)
+            $CaseErrors.Count | Should -Be 0 -Because ('the miniature for {0} must parse' -f $Case.Case)
+            $Names = @(foreach ($Call in $CaseAst.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+                    $Name = $Call.GetCommandName()
+                    if ($Name) { $Name }
+                })
+            $CaseReport = Get-OERConnectOerCallerReport -Units @([PSCustomObject]@{ RelativePath = $Path; CommandNames = $Names }) -TextByPath @{ $Path = $Case.Text }
+            ('{0}/{1}/{2}' -f $CaseReport.Named, $CaseReport.Placed, $CaseReport.Lines.Count) | Should -BeExactly $Case.Expect -Because (
+                'the Connect-OER scan must report {0} (named/placed/lines) for {1}' -f $Case.Expect, $Case.Case)
+        }
+
         $script:sourceUnits.Count | Should -BeGreaterThan 195 -Because 'the scan must have read the tree'
+        $script:connectOerReport.Units | Should -Be $script:sourceUnits.Count -Because (
+            'the Connect-OER scan examines every source unit Pass 1 parsed; fewer means it stopped reaching them')
         $script:connectOerCallers -join "`n" | Should -BeNullOrEmpty -Because @'
 Connect-OER passes -ReclaimGraphSession to Initialize-OERAuth on its own, as the operator's explicit
 instruction to sign in. A source file that calls Connect-OER is a second reclaim caller: it takes back a
