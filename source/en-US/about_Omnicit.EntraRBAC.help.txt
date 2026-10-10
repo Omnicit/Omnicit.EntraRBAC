@@ -126,6 +126,29 @@ SYNCHRONIZED GROUPS
     -IncludeSyncedGroups keeps the synchronized security groups in full detail in
     inventory.json.
 
+GROUPS IN AN EXPORT
+
+    Export-OERInventory details only RBAC-relevant security groups in
+    inventory.json: role-assignable ones, ones with PIM eligibility, ones found to
+    use PIM for Groups and, with -IncludeSyncedGroups, synchronized ones. It
+    decides that before it reads any group in full. Every group costs one request
+    for its PIM eligibility and, when that does not decide it, one for its
+    PIM-for-Groups policies; a group found not relevant costs those two and no
+    more, so its members, owners and policies are never read. A group whose
+    relevance could not be read is read in full, and what could not be read is
+    named in IncompleteReads. The export shows progress while it reads the groups.
+    -AllGroupsDetailed reads every security group in full, as earlier versions
+    did. In groupsRoster.json a group the export did not read in full has
+    memberCount null, meaning not known rather than zero.
+
+    -GroupFilter narrows the groups inventory.json is read from and never widens
+    them. The export lists groups with 'securityEnabled eq true and (your filter)'
+    and then keeps only those the read shows as security-enabled, with one
+    warning naming how many it left out. The filter is sent as typed: double a
+    single quote inside a quoted value yourself. It applies to the Groups section
+    only, and groupsRoster.json still lists every group. To widen the document
+    beyond security-enabled groups, use Get-OERInventory -GroupFilter instead.
+
 PERMISSIONS
 
     Ask the module rather than reading a table kept in step by hand:

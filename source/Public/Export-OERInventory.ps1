@@ -11,28 +11,48 @@ function Export-OERInventory {
     azurePimEligibility.json), a formal
     JSON Schema (schema.json), a predefined LLM prompt (rbac-architect-prompt.md), and a README. The
     bundle is designed to be handed to any LLM to produce appliable RBAC proposals. Only
-    RBAC-relevant groups (role-assignable, carrying a pimPolicy block, or with eligibility) are kept
-    in full detail in inventory.json. Microsoft Graph lists PIM-for-groups policies for a group that
-    was never used with PIM for Groups as well, so Get-OERInventory exports a pimPolicy block only
-    for a group that uses PIM for Groups -- one with PIM eligibility, or one whose PIM-for-Groups
-    policy has been modified -- and a group whose policies Graph merely lists is not kept in full
-    detail on that account. -IncludeSyncedGroups also keeps the security groups synchronized from
-    on-premises Active Directory. -AllGroupsDetailed keeps every group inventory.json covers. The
-    cmdlet reads only -- no tenant state changes -- and authenticates at entry; an ARM token is
-    acquired only when -Include names RoleAssignments or RoleManagementPolicies, the two Azure
-    sections.
+    RBAC-relevant groups are kept in full detail in inventory.json: a role-assignable group, a group
+    with PIM eligibility, a group carrying a pimPolicy block, and, with -IncludeSyncedGroups, a
+    security group synchronized from on-premises Active Directory. Microsoft Graph lists
+    PIM-for-groups policies for a group that was never used with PIM for Groups as well, so the
+    export writes a pimPolicy block only for a group found to use PIM for Groups -- one with PIM
+    eligibility, or one whose PIM-for-Groups policy has been modified -- and a group whose policies
+    Graph merely lists is not kept in full detail on that account. -AllGroupsDetailed keeps every
+    group inventory.json covers. The cmdlet reads only -- no tenant state changes -- and
+    authenticates at entry; an ARM token is acquired only when -Include names RoleAssignments or
+    RoleManagementPolicies, the two Azure sections.
+
+    HOW THE GROUPS ARE READ. Without -AllGroupsDetailed the export decides which groups are relevant
+    BEFORE it reads any group in full, so in a tenant with very many groups a group that is not
+    relevant is never read in full. For each listed group it reads the PIM eligibility (one
+    request); a group that is role-assignable, has eligibility, or is synchronized under
+    -IncludeSyncedGroups is decided by that. Any other group costs one more request, a listing of
+    its PIM-for-Groups policies that tells whether it uses PIM for Groups. A group the two requests
+    find not relevant costs exactly those two: its members, owners and PIM policies are not read,
+    and it is not in inventory.json. Every other group is read in full exactly as before. A group
+    whose relevance could not be read -- its eligibility read or the policy listing failed -- is
+    read in full as before too, kept or left out by the same criteria, and what could not be read
+    about it is named in IncompleteReads; it is never dropped on a guess. -AllGroupsDetailed reads
+    every listed security group in full, as before. While it reads the groups the export shows
+    progress (Write-Progress, activity Export-OERInventory, one 'Group n of N' record per listed
+    security group) and ends it when the read is done, also when the read stops on an error.
 
     WHICH GROUPS INVENTORY.JSON COVERS, AND WHICH IT DOES NOT. The Groups section is read with the
-    'securityEnabled eq true' filter Get-OERInventory applies by default, so it carries the
+    'securityEnabled eq true' filter, the one Get-OERInventory applies by default, so it carries the
     SECURITY-ENABLED groups only -- a distribution group, and a Microsoft 365 group whose
     securityEnabled is false, are absent from it at every detail level, -AllGroupsDetailed
     included. That scope is deliberate: inventory.json is the apply-engine document, and widening
-    it widens what Invoke-OERStructure reconciles and, under -Prune, deletes. To widen it anyway,
-    read the inventory yourself with Get-OERInventory -GroupFilter and supply the filter you want.
-    groupsRoster.json is NOT filtered: it lists every group in the tenant, of every type, as
-    read-only context, so the gap between the two files is visible rather than silent. Each of its
-    rows carries onPremisesSynced, true for a group synchronized from on-premises Active Directory
-    and false otherwise.
+    it widens what Invoke-OERStructure reconciles and, under -Prune, deletes. -GroupFilter narrows
+    that scope and never widens it. To widen it anyway, read the inventory yourself with
+    Get-OERInventory -GroupFilter and supply the filter you want. groupsRoster.json is NOT
+    filtered: it lists every group in the tenant, of every type, as read-only context, so the gap
+    between the two files is visible rather than silent. Each of its rows carries onPremisesSynced,
+    true for a group synchronized from on-premises Active Directory and false otherwise, and
+    memberCount: the group's member count when the export read the group in full, and null
+    otherwise -- for a group the export found not relevant, one outside -GroupFilter, one left out
+    because another group shares its name, one whose members could not be read, and every group
+    that is not security-enabled. Null means not known, which is not zero: a count would cost a
+    request per group.
 
     Azure coverage is reported, not assumed. ScopesEnumerated is how many ARM scopes the walk found,
     ScopeCount is how many of them were actually read, and SkippedScopes names the ones that were
@@ -79,9 +99,10 @@ function Export-OERInventory {
     section/displayName/key triples -- so a single read that lost three collections reports one
     entry listing all three, not three entries -- and the entry groupsRoster is added when the group
     roster could not be read. A section whose whole list could not be read appears in those entries
-    by its own name alone, and is written as an empty array that does not mean the tenant has none;
-    the entry groupsRoster likewise means groupsRoster.json is empty only because the roster read
-    failed. Its Count is therefore one for the Groups read when it left anything unread, plus the
+    by its own name alone (groups also when the group read stops on an unforeseen error, with the
+    warning 'Could not read groups: ...'), and is written as an empty array that does not mean the
+    tenant has none; the entry groupsRoster likewise means groupsRoster.json is empty only because
+    the roster read failed. Its Count is therefore one for the Groups read when it left anything unread, plus the
     number of partial reports from Get-OERInventory, plus one when the group roster could not be
     read, and not the number of unread collections; read the entries themselves for that. The same
     non-terminating InventoryPartial error is raised here when IncompleteReads, SkippedScopes or
@@ -135,19 +156,25 @@ function Export-OERInventory {
     and never acquire an ARM token by themselves.
 
     .PARAMETER AllGroupsDetailed
-    Keep every group the Groups section covers in full detail in inventory.json, not just the
-    RBAC-relevant ones. That section is security-enabled-scoped, so this switch does not reach a
-    distribution group or a Microsoft 365 group whose securityEnabled is false -- neither is in
-    inventory.json at any detail level. Use Get-OERInventory -GroupFilter to widen the scope
-    itself; groupsRoster.json already lists every group in the tenant unfiltered.
+    Read every group the Groups section covers in full, as earlier versions did, and keep each in
+    full detail in inventory.json, not just the RBAC-relevant ones. Without it the export decides
+    first which groups are relevant and reads only those in full (see HOW THE GROUPS ARE READ
+    above). With it, groupsRoster.json carries the member count of every security group the read
+    covers, null only for one whose members could not be read or that shares its name with another.
+    That section is security-enabled-scoped, so this switch does not reach a distribution group or a
+    Microsoft 365 group whose securityEnabled is false -- neither is in inventory.json at any detail
+    level. Use Get-OERInventory -GroupFilter to widen the scope itself; groupsRoster.json already
+    lists every group in the tenant unfiltered.
 
     .PARAMETER IncludeSyncedGroups
     Also keep, in full detail in inventory.json, every security group synchronized from on-premises
-    Active Directory (onPremisesSynced: true). Such a group is never RBAC-relevant by the default
-    criteria -- it cannot be role-assignable or managed in PIM for Groups -- so without this switch
-    it appears only in groupsRoster.json. It is managed on-premises: Invoke-OERStructure writes
-    nothing to it, and its onPremisesSynced key is information only. With -AllGroupsDetailed every
-    group is kept already and this switch changes nothing.
+    Active Directory (onPremisesSynced: true), and read its members and owners for that. Such a
+    group is never RBAC-relevant by the default criteria -- it cannot be role-assignable or managed
+    in PIM for Groups -- so without this switch it costs the two requests that decide it is not
+    relevant, appears only in groupsRoster.json, and has a null memberCount there. It is managed
+    on-premises: Invoke-OERStructure writes nothing to it, and its onPremisesSynced key is
+    information only. With -AllGroupsDetailed every group is read and kept already and this switch
+    changes nothing.
 
     .PARAMETER AllDirectoryRolePolicies
     For the DirectoryRoleManagementPolicies section, export the policy of every Microsoft Entra
@@ -179,8 +206,10 @@ function Export-OERInventory {
     parenthesis, for example 'x eq 1) or (securityEnabled eq false', cannot widen inventory.json to a
     group that is not security-enabled. Such a group is left out, with one warning that names how
     many were left out. The expression is yours: it is sent as typed and never escaped, so double a
-    single quote inside a quoted value yourself ('O''Brien'). groupsRoster.json is not filtered by
-    it and still lists every group in the tenant. An empty or white space value is refused at
+    single quote inside a quoted value yourself ('O''Brien'). It applies to the Groups section only:
+    it changes nothing when -Include leaves Groups out, and groupsRoster.json is not filtered by it
+    and still lists every group in the tenant, with a null memberCount for a security group the
+    filter left out, since that group was not read. An empty or white space value is refused at
     binding.
 
     .EXAMPLE

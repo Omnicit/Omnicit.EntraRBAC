@@ -22,33 +22,38 @@ not sent. `New-`/`Set-OERConfiguration` refuse a white-space `-TenantId`. `SignI
 its actual cause, and the `SignInRefused` after a failed sign-in no longer says the session may be
 the previous tenant's.
 
-Every device code sign-in now prints a new code, for Microsoft Graph and Azure Resource Manager
-alike, so a later one in the same PowerShell session no longer reuses the credential AzAuth keeps
-for the process, which could hang with no code shown, and needs no `-Force` to avoid that. The help
-and README now say how a long run renews its token for each sign-in type and what it asks of you.
+Every device code sign-in, Microsoft Graph and Azure Resource Manager alike, now prints a new code,
+so a later one in the same session no longer reuses AzAuth's process-wide credential, which could
+hang with no code shown, and needs no `-Force`. The help and README say how a long run renews its
+token per sign-in type and what it asks of you.
 
 `Invoke-OERStructure -WhatIf` now plans what the run does when an Azure role policy entry's
 approvers would name nobody: both report it `Failed` with `ApproverRequired` and change nothing.
 `Test-OERStructure` refuses a `tenantId` that is not a string, as the schema does, or that ends in a
 line break. The `NotDirectAssignment` example now parses for a role name with a curly apostrophe.
 
-`SemiAnnually` (every six months) is a new access review cadence for `New-OERAccessReviewDefinition`,
-`Set-OERAccessReviewDefinition` and a structure document's `recurrence`. A live six-month review now
-exports as `SemiAnnually` without a warning and applies as `Unchanged`; older exports approximated
-it as `Monthly`, so applying one skips the recurrence with a warning and leaves the review
-semi-annual.
+`SemiAnnually` (every six months) is a new access review cadence for
+`New-`/`Set-OERAccessReviewDefinition` and a structure document's `recurrence`. A live six-month
+review now exports as `SemiAnnually` without a warning and applies as `Unchanged`; older exports
+approximated it as `Monthly`, so applying one skips the recurrence with a warning and leaves the
+review semi-annual.
 
 `Get-OERManagementGroup` now shows the parent of every listed group (the tenant root group has
 none); a parent that cannot be read is reported as `ManagementGroupParentReadFailed`, not left
-silently empty. A script that passes `-Expand` or `-Recurse` without `-Name` now fails at parameter
-binding, or is asked for `-Name` where the host can prompt. An empty `-Name` is refused instead of
-listing every group.
+empty. A script that passes `-Expand` or `-Recurse` without `-Name` now fails at parameter binding,
+or is asked for `-Name` where the host can prompt. An empty `-Name` is refused instead of listing
+every group.
 
 `Get-OERGroup` now shows `OnPremisesSyncEnabled`, in its table too. `groupsRoster.json` marks every
-group `onPremisesSynced`, and `Export-OERInventory -IncludeSyncedGroups` keeps the synchronized
-security groups in full detail in `inventory.json`, where they carry `onPremisesSynced: true`.
-`Invoke-OERStructure` writes nothing to a synchronized group: each change is reported `Skipped`, with
-one warning per group, and `-Prune` leaves it untouched.
+group `onPremisesSynced`, and `Export-OERInventory -IncludeSyncedGroups` keeps synchronized security
+groups in full detail in `inventory.json`, marked `onPremisesSynced: true`. `Invoke-OERStructure`
+writes nothing to a synchronized group: each change is reported `Skipped`, with one warning per
+group, and `-Prune` leaves it untouched.
+
+`Export-OERInventory` now reads members, owners and PIM policies only for the groups it keeps in
+full -- role-assignable, with PIM eligibility, found to use PIM for Groups, or synchronized under
+`-IncludeSyncedGroups` -- or cannot classify, and shows progress; `groupsRoster.json` gives the
+others `memberCount` null. The new `-GroupFilter` narrows the exported groups, never widens them.
 
 ## [1.1.3] - 2026-10-07
 

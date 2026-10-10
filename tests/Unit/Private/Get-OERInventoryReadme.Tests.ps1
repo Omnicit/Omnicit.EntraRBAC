@@ -120,6 +120,24 @@ Describe 'Get-OERInventoryReadme' {
         }
     }
 
+    It 'explains in "Which groups are covered" how the export chose the groups it detailed, and that -GroupFilter only narrows (A13)' {
+        InModuleScope $script:moduleName {
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @()
+            $Section = (($Md -split '(?m)^## Which groups are covered\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
+            # Which groups are detailed, and that a group found not relevant was never read in full.
+            $Section | Should -Match ([regex]::Escape('Unless the export ran with `-AllGroupsDetailed`, `inventory.json` details only the RBAC-relevant security groups: role-assignable ones, ones with PIM eligibility, ones found to use PIM for Groups (written with a `pimPolicy` block), and synchronized ones when the export ran with `-IncludeSyncedGroups`.'))
+            $Section | Should -Match ([regex]::Escape('The export decided that before reading any group in full, so a group it found not relevant had no members, owners or PIM policy read at all, and its absence from `inventory.json` says nothing about them.'))
+            # An undecided group is read, and its gaps are listed, never guessed away.
+            $Section | Should -Match ([regex]::Escape('A group whose relevance could not be decided was read in full, and what could not be read about it is listed under "What this export could not read".'))
+            # The export's -GroupFilter narrows; the widening lever stays Get-OERInventory's.
+            $Section | Should -Match ([regex]::Escape('The export''s own `-GroupFilter` only narrows this scope: `inventory.json` then covers only security groups the filter matched, never a group that is not security-enabled, while `groupsRoster.json` still lists every group.'))
+            $Section.IndexOf('Unless the export ran with') | Should -BeGreaterThan $Section.IndexOf('Get-OERInventory -GroupFilter')
+            # The roster bullet names the filter's null count too.
+            $Bullet = (($Md -split '(?m)^- `groupsRoster\.json` ')[1] -split '(?m)^- ')[0] -replace '\s+', ' '
+            $Bullet | Should -Match ([regex]::Escape('So has a security group outside the export''s `-GroupFilter`, which was not read.'))
+        }
+    }
+
     It 'warns that an unread members, scopedRoles, resources or resourceRoles collection is written as null and must never be changed to []' {
         InModuleScope $script:moduleName {
             $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @()

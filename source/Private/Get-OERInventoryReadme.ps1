@@ -125,7 +125,8 @@ includes a predefined prompt that turns it into appliable improvement proposals.
   Its `memberCount` is the group's member count when the export read the group in full (every
   security group with `-AllGroupsDetailed`), and `null` otherwise -- not known, which is not zero:
   a count would cost a request per group. A group left out of `inventory.json` and `groups.json`
-  because another group shares its name has a `null` count too.
+  because another group shares its name has a `null` count too. So has a security group outside the
+  export's `-GroupFilter`, which was not read.
 - `scopeHierarchy.json` -- the management group / subscription tree. Read-only context, not an
   apply document.
 - `azurePimEligibility.json` -- the Azure PIM eligible role assignments at the scopes in
@@ -150,6 +151,17 @@ That scope is deliberate rather than an oversight. `inventory.json` is the apply
 widening it widens what `Invoke-OERStructure` reconciles and, under `-Prune`, deletes. To widen it
 anyway, read the inventory yourself and supply the filter you want:
 `Get-OERInventory -GroupFilter "<odata filter>"`.
+
+Unless the export ran with `-AllGroupsDetailed`, `inventory.json` details only the RBAC-relevant
+security groups: role-assignable ones, ones with PIM eligibility, ones found to use PIM for Groups
+(written with a `pimPolicy` block), and synchronized ones when the export ran with
+`-IncludeSyncedGroups`. The export decided that before reading any group in full, so a group it
+found not relevant had no members, owners or PIM policy read at all, and its absence from
+`inventory.json` says nothing about them. A group whose relevance could not be decided was read in
+full, and what could not be read about it is listed under "What this export could not read". The
+export's own `-GroupFilter` only narrows this scope: `inventory.json` then covers only security
+groups the filter matched, never a group that is not security-enabled, while `groupsRoster.json`
+still lists every group.
 
 A group synchronized from on-premises Active Directory (`onPremisesSynced` true in
 `groupsRoster.json`) is managed there and read-only in the cloud: it cannot be role-assignable or

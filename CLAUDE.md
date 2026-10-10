@@ -940,7 +940,10 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`ConvertTo-OERODataFilterValue` is the single owner of OData filter-value escaping.** Any Graph
   display-name lookup interpolating a caller-supplied value into a `$filter=... eq '...'` URL must
   escape through it. Four deliberate exceptions exist; a new unescaped site is a bug, not the house
-  style. `Why: docs/development/rationale.md#odata-escaping`
+  style. An operator's whole OData expression (`-Filter`, `-GroupFilter`) is never escaped through
+  it; `Export-OERInventory -GroupFilter`, ANDed as `securityEnabled eq true and (...)`, is guarded by
+  the post-read check that keeps only groups the read shows `securityEnabled` true, never by the
+  parentheses. `Why: docs/development/rationale.md#odata-escaping`
 - **A resolver on the cohort's list publishes its failure as itself and an ambiguous name as
   `Ambiguous*`, never as `*NotFound` -- a COHORT check holds that, not a helper.** The principal
   and Azure role definition lookups are the decided exception, still publishing a failed read as
@@ -1063,6 +1066,28 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   helper); it does NOT hold a read through `Select-Object`, `Where-Object` or
   `PSObject.Properties[...]`, which keeps by review.
   `Why: docs/development/rationale.md#synced-groups`
+- **`Get-OERInventoryGroup` is the single reader of the inventory's Groups section.**
+  `Get-OERInventory` calls it in its full mode (one `Get-OERGroup` call carrying the three include
+  switches; its output stays what it was). `Export-OERInventory` calls it with `-RelevantOnly` unless
+  `-AllGroupsDetailed`, and always with `-ExcludeSharedName`, `-SecurityEnabledOnly` and
+  `-ProgressActivity`: relevance decided first, from the group's PIM eligibility and then
+  `Test-OERGroupPimInUse`, so a group found not relevant costs exactly two requests and is never read
+  further, and a group whose relevance could not be read is read in full. The export's keep filter on
+  the projections stays the final say. The reader never writes an error record -- it returns
+  `Groups`, `Unread` and raw `Causes` -- and both callers catch a reader that stops and report the
+  groups section unread, never empty. Never read the Groups section, or decide relevance before a
+  full read, anywhere else. `Why: docs/development/rationale.md#export-group-selection`
+- **`Read-OERGroupCollection` is the single owner of reading one group collection** (members, owners
+  or PIM eligibility) **and of wording its failure** exactly as `Get-OERGroup` publishes it. It returns
+  the read or its failure and never writes an error record; `Get-OERGroup` and
+  `Get-OERInventoryGroup` call it. Never read one of the three collections inline.
+  `Why: docs/development/rationale.md#export-group-selection`
+- **`Format-OERUnreadCauseClause` is the single owner of the causes clause of an inventory's
+  `InventoryPartial` message** -- the deduplication with the failing object's id normalised away, the
+  cap and the wording -- and `Get-OERSharedNameCause` of the text for objects left out because two of
+  them share a name. The clause is built by `Get-OERInventory` and `Export-OERInventory`, the
+  shared-name text by `Get-OERInventory` and `Get-OERInventoryGroup`; never word either inline.
+  `Why: docs/development/rationale.md#export-group-selection`
 - **`Resolve-OERTenantDomain` is the single owner of the module's one network call outside the
   Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
   discovery lookup of a tenant named by domain at the cloud's Microsoft Entra ID authority, the host

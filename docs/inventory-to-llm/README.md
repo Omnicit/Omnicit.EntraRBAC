@@ -35,7 +35,11 @@ ARM token by themselves. `DirectoryRoleManagementPolicies` exports the policy of
 role that is actually in use; add `-AllDirectoryRolePolicies` to export the policy of every
 directory role instead. Add `RoleManagementPolicies` to `-Include` to also read Azure PIM policies
 at every scope (slower). Only RBAC-relevant groups are detailed in `inventory.json`; the full
-landscape is in `groupsRoster.json`. Use `-AllGroupsDetailed` to keep every group in full detail.
+landscape is in `groupsRoster.json`. The export decides which groups are relevant before it reads
+any group in full, so a group it finds not relevant costs two requests and has `memberCount` `null`
+in the roster; use `-AllGroupsDetailed` to read and keep every group in full detail. `-GroupFilter`
+narrows the groups `inventory.json` is read from and never widens them, and `groupsRoster.json` is
+never filtered.
 Add `-IncludeSyncedGroups` to also keep the security groups synchronized from on-premises Active
 Directory (`onPremisesSynced: true`); `Invoke-OERStructure` writes nothing to such a group.
 
