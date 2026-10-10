@@ -251,13 +251,16 @@ function Export-OERInventory {
         # other four: they are deliberately absent from the ARM-triggering check above, so naming
         # either one alone never acquires an ARM token.
         $EntraSections = @($Include | Where-Object { $_ -in @('AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments') })
-        # -IncludeId is threaded through, to the group reader above and to Get-OERInventory below,
-        # PURELY to key the roster member-count join on object id instead of display name below
-        # (Entra permits duplicate group display names -- Add-OERGroupMember.ps1:43-45 -- so a
+        # The ids the roster member-count join below is keyed on come from the group reader alone:
+        # it is asked for -IncludeId above, PURELY to key that join on object id instead of display
+        # name (Entra permits duplicate group display names -- Add-OERGroupMember.ps1:43-45 -- so a
         # display-name join can attribute one group's member count to a different, same-named
-        # group). inventory.json staying id-free is a documented portability property of the export
-        # (Get-OERInventory's own .DESCRIPTION), so every id -IncludeId stamps is stripped back out
-        # below, before the canonical inventory and the per-area files are assembled and written.
+        # group). Get-OERInventory below reads the other sections and is not asked for ids, since
+        # nothing here joins on them. inventory.json staying id-free is a documented portability
+        # property of the export (Get-OERInventory's own .DESCRIPTION), so the ids the reader
+        # stamped are stripped back out below, before the canonical inventory and the per-area files
+        # are assembled and written; the same strip also covers any other section that arrives with
+        # an id.
         $InventoryReadErrors = $null
         $Inv = if ($EntraSections.Count -gt 0) {
             # -ErrorAction Continue is PINNED here, not inherited, and deliberately not Stop.
@@ -281,7 +284,6 @@ function Export-OERInventory {
             # -ParameterFilter, so adding it only when true keeps every existing call site untouched.
             $InvParams = @{
                 Include       = $EntraSections
-                IncludeId     = $true
                 ErrorAction   = 'Continue'
                 ErrorVariable = 'InventoryReadErrors'
             }
@@ -454,13 +456,24 @@ function Export-OERInventory {
             }
         )
 
-        # Member-count map keyed on object id (from the -IncludeId-stamped projection gathered
-        # above), with a display-name map kept only as a fallback for a roster group the detailed
-        # projection did not include -- zero extra calls either way. id is the correct join key:
-        # Entra permits duplicate group display names (Add-OERGroupMember.ps1:43-45), so a
-        # display-name-only join silently attributes one same-named group's member count to another.
+        # Member-count map keyed on object id (from the -IncludeId-stamped projection the group
+        # reader returned): zero extra calls. id is the only join key: Entra permits duplicate group
+        # display names (Add-OERGroupMember.ps1:43-45), so a display-name join would attribute one
+        # same-named group's member count to another -- to a Microsoft 365 group the security-enabled
+        # listing never held, for one.
+        #
+        # R3: the map holds the groups the reader READ IN FULL and nothing else. A group it did not
+        # read in full -- every group of the roster that is not security-enabled, a security group
+        # found not relevant (without -AllGroupsDetailed: decided from two requests, its members
+        # never asked for), and a group left out for a shared name -- has no entry, so its roster
+        # row gets $null below: the roster's existing "not known" value. A count for those would
+        # cost a request per group, and the one-request form (groups/{id}/members/$count) needs the
+        # ConsistencyLevel: eventual header, which this module's single Graph transport never sends,
+        # answers from an index that can lag behind recent changes, and is not measured for service
+        # principals, which the full read counts. Never fill an absent entry with 0: that states an
+        # emptiness nothing measured. A group whose relevance could not be read IS read in full
+        # (R2), so it has its count here although inventory.json may not keep it.
         $CountById = @{}
-        $CountByName = @{}
         foreach ($G in $AllGroups) {
             # members is null when the live read failed (issue #76). @($null).Count is 1, so a bare
             # count would report a group whose membership is UNKNOWN as having exactly one member.
@@ -469,16 +482,15 @@ function Export-OERInventory {
             if ($G.PSObject.Properties.Name -contains 'id' -and $G.id) {
                 $CountById[[string]$G.id] = $MemberCount
             }
-            $CountByName[[string]$G.displayName] = $MemberCount
         }
 
         # inventory.json staying id-free is a documented portability property of the export
-        # (Get-OERInventory's own .DESCRIPTION) -- -IncludeId above exists purely to key the join,
-        # so every id it stamped is removed again here, from the groups the reader returned and
-        # from the other sections of $Inv, before the canonical inventory is assembled. -IncludeId
-        # stamps more than the top-level id: a Groups eligibility entry gets one too
-        # (Get-OERInventoryGroup.ps1's $EligProj.id), so the strip reaches that nested collection as
-        # well.
+        # (Get-OERInventory's own .DESCRIPTION) -- the reader's -IncludeId above exists purely to key
+        # the join, so every id it stamped is removed again here, from the groups the reader
+        # returned and, as a guard, from the other sections of $Inv, before the canonical inventory
+        # is assembled. -IncludeId stamps more than the top-level id: a Groups eligibility entry
+        # gets one too (Get-OERInventoryGroup.ps1's $EligProj.id), so the strip reaches that nested
+        # collection as well.
         $StampedSections = @(
             $AllGroups, $Inv.AdministrativeUnits, $Inv.Catalogs,
             $Inv.AccessPackages, $Inv.AccessReviews,
@@ -521,13 +533,8 @@ function Export-OERInventory {
             $Roster = @(foreach ($Rg in $RosterGroups) {
                 $RgId = [string]$Rg.Id
                 $RgName = [string]$Rg.DisplayName
-                $MemberCount = if ($CountById.ContainsKey($RgId)) {
-                    $CountById[$RgId]
-                } elseif ($CountByName.ContainsKey($RgName)) {
-                    $CountByName[$RgName]
-                } else {
-                    $null
-                }
+                # A roster group with no entry was not read in full: $null, not 0 (R3, above).
+                $MemberCount = if ($CountById.ContainsKey($RgId)) { $CountById[$RgId] } else { $null }
                 [PSCustomObject]@{
                     displayName      = $RgName
                     roleAssignable   = [bool]$Rg.IsAssignableToRole

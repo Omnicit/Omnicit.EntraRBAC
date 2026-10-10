@@ -122,6 +122,10 @@ includes a predefined prompt that turns it into appliable improvement proposals.
 - `groupsRoster.json` -- a lightweight roster of EVERY group in the tenant, of every group type
   (names + flags, including `onPremisesSynced`), read unfiltered. Read-only context, not an apply
   document. It is deliberately wider than `inventory.json`: see "Which groups are covered" below.
+  Its `memberCount` is the group's member count when the export read the group in full (every
+  security group with `-AllGroupsDetailed`), and `null` otherwise -- not known, which is not zero:
+  a count would cost a request per group. A group left out of `inventory.json` and `groups.json`
+  because another group shares its name has a `null` count too.
 - `scopeHierarchy.json` -- the management group / subscription tree. Read-only context, not an
   apply document.
 - `azurePimEligibility.json` -- the Azure PIM eligible role assignments at the scopes in

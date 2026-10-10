@@ -92,6 +92,23 @@ Describe 'Get-OERInventoryReadme' {
         }
     }
 
+    It 'says in the file roster that memberCount is null for a group the export did not read in full, and why (R3)' {
+        InModuleScope $script:moduleName {
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @()
+            # The groupsRoster.json bullet alone: from its own marker to the next bullet, whitespace
+            # collapsed so the assertion does not depend on where the line wraps.
+            $Md | Should -Match '(?m)^- `groupsRoster\.json` '
+            $Bullet = (($Md -split '(?m)^- `groupsRoster\.json` ')[1] -split '(?m)^- ')[0] -replace '\s+', ' '
+            $Bullet | Should -Match ([regex]::Escape('Its `memberCount` is the group''s member count when the export read the group in full (every security group with `-AllGroupsDetailed`), and `null` otherwise -- not known, which is not zero: a count would cost a request per group.'))
+            # A group the export read and then left out for a shared name has no count either.
+            $Bullet | Should -Match ([regex]::Escape('A group left out of `inventory.json` and `groups.json` because another group shares its name has a `null` count too.'))
+            # The bullet is the roster's, and the sentence about the flags stays in front of it.
+            $Bullet | Should -Match ([regex]::Escape('(names + flags, including `onPremisesSynced`)'))
+            # The text is Markdown: no bare angle bracket, which GitHub would render as a tag.
+            $Bullet | Should -Not -Match '[<>]'
+        }
+    }
+
     It 'explains in "Which groups are covered" that a synchronized group is detailed only on request and is never written by the apply (A15)' {
         InModuleScope $script:moduleName {
             $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @()

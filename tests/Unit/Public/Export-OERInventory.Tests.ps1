@@ -1186,7 +1186,7 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
         # administrative unit's, and the run includes AdministrativeUnits to reach that call. The
         # group read reports its own unread collection beside it, through the reader's Unread list.
         Mock -ModuleName $script:moduleName Get-OERInventory {
-            param($Include, $IncludeId, $ErrorAction)
+            param($Include, $ErrorAction)
             $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
             Write-Error -Message 'This inventory is PARTIAL: administrativeUnits/AU-One scopedRoles could not be read.' `
                 -ErrorId 'InventoryPartial' -Category LimitsExceeded `
@@ -1217,8 +1217,11 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
 
         $Root = Join-Path $TestDrive 'eastop'
         $Caught = $null
+        # 2>$null keeps the inner record out of the test output: the pin makes it a visible
+        # non-terminating error. It does not touch the exception -ErrorAction Stop raises, which the
+        # catch below receives.
         try {
-            Export-OERInventory -OutputPath $Root -Include Groups, AdministrativeUnits -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+            Export-OERInventory -OutputPath $Root -Include Groups, AdministrativeUnits -WarningAction SilentlyContinue -ErrorAction Stop 2>$null | Out-Null
         } catch {
             $Caught = $PSItem
         }
@@ -1256,8 +1259,11 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
             $inv
         }
 
+        # 2>$null keeps the inner record out of the test output: the export pins that call to
+        # -ErrorAction Continue, so the record is a visible non-terminating error whatever this call's
+        # own -ErrorAction is.
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'ir2') -Include AdministrativeUnits `
-            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue 2>$null
         @($Bundle.IncompleteReads).Count | Should -Be 1
         @($Bundle.IncompleteReads)[0] | Should -Not -BeNullOrEmpty
         @($Bundle.IncompleteReads)[0] | Should -Match 'AU-One'
@@ -1504,13 +1510,15 @@ Describe 'Export-OERInventory (directory role sections)' {
             }
         }
         Mock -ModuleName $script:moduleName Get-OERInventory {
-            param($Include, $IncludeId, $AllDirectoryRolePolicies)
+            param($Include, $AllDirectoryRolePolicies)
             $Policy = [PSCustomObject]@{ role = 'Reports Reader'; activationMaxHours = 8 }
             $Assignment = [PSCustomObject]@{ role = 'Reports Reader'; principal = 'person26@example.com'; assignmentType = 'Eligible' }
-            if ($IncludeId) {
-                $Policy | Add-Member -NotePropertyName id -NotePropertyValue 'pol-1' -Force
-                $Assignment | Add-Member -NotePropertyName id -NotePropertyValue 'sched-1' -Force
-            }
+            # The export does not ask Get-OERInventory for ids any more, so a real one stamps none. The
+            # mock stamps them whatever it is asked, so the strip below (kept as a guard: a section that
+            # arrived with an id must never write it into inventory.json) is still proven by the
+            # 'strips id from both directory sections' test.
+            $Policy | Add-Member -NotePropertyName id -NotePropertyValue 'pol-1' -Force
+            $Assignment | Add-Member -NotePropertyName id -NotePropertyValue 'sched-1' -Force
             $inv = [PSCustomObject]@{
                 Version                          = '1.0'
                 Groups                           = @()
@@ -2009,10 +2017,12 @@ Describe 'Export-OERInventory (an unread collection is never applied as empty)' 
 }
 
 Describe 'Export-OERInventory (a section whose list could not be read is partial)' {
-    # BL-05 / decision A9. The export reads through the REAL Get-OERInventory, so what is mocked is the
-    # three readers it calls, healthy (and empty) by default; a test swaps in the one that fails. A
-    # list that could not be read is written as [] -- the same file a tenant with none produces -- so
-    # the only thing that tells the two apart is the partial signal reaching the bundle summary.
+    # BL-05 / decision A9. The export reads through the REAL Get-OERInventory (the administrative units
+    # and the access reviews) and the REAL group reader Get-OERInventoryGroup (the groups), so what is
+    # mocked is the three readers they call, healthy (and empty) by default; a test swaps in the one
+    # that fails. A list that could not be read is written as [] -- the same file a tenant with none
+    # produces -- so the only thing that tells the two apart is the partial signal reaching the
+    # bundle summary.
     #
     # The failure is a record the reader PUBLISHED, built with its FullyQualifiedErrorId and written
     # with Write-Error -ErrorRecord: the section counts a record only when the id names the reader, and
@@ -2413,6 +2423,16 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
             Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 0 -ParameterFilter { $Include -contains 'Groups' }
         }
 
+        It 'asks Get-OERInventory for the other sections without ids, the roster join taking its ids from the group reader' {
+            Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-no-id') -WarningAction SilentlyContinue | Out-Null
+            # Reach proof: the call that reads the other sections ran, once, and the reader got the ids.
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Exactly -Times 1 -ParameterFilter {
+                $Include -contains 'AdministrativeUnits' -and $Include -contains 'DirectoryRoleAssignments'
+            }
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter { $IncludeId -eq $true }
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Exactly -Times 0 -ParameterFilter { $IncludeId }
+        }
+
         It 'asks for every group in full under -AllGroupsDetailed' {
             Export-OERInventory -OutputPath (Join-Path $TestDrive 'ask-all') -Include Groups -AllGroupsDetailed | Out-Null
             Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter {
@@ -2455,9 +2475,15 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
             $script:E2EIdSync = '55555555-5555-5555-5555-555555555555'
             $script:E2EIdDyn = '66666666-6666-6666-6666-666666666666'
             $script:E2EEligPrincipal = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            # The groups a test adds to the mixed tenant: a pair of names that differ only in letter
+            # case, and a Microsoft 365 group (securityEnabled false) named like G-RA.
+            $script:E2EIdDupRa = '77777777-7777-7777-7777-777777777777'
+            $script:E2EIdDupPlain = '88888888-8888-8888-8888-888888888888'
+            $script:E2EIdM365 = '99999999-9999-9999-9999-999999999999'
 
             # The mixed fixture tenant, in list order (the same set as Get-OERInventoryGroup.Tests.ps1).
-            # Every group is security-enabled, so the security-enabled filter keeps all of them.
+            # Every group is security-enabled, so the security-enabled filter keeps all of them (a
+            # test adds a group marked NotSecurity where it needs one the filter leaves out).
             $script:E2ENewTenant = {
                 @(
                     @{ Id = $script:E2EIdRa; Name = 'G-RA'; RoleAssignable = $true; Synced = $false; Dynamic = $false
@@ -2505,14 +2531,17 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
                     return [PSCustomObject]@{ value = @(foreach ($PrincipalId in @($Body.ids)) { @{ id = $PrincipalId; userPrincipalName = 'person13@contoso.com' } }) }
                 }
                 if ($Uri.StartsWith('v1.0/groups?') -or $Uri -eq 'v1.0/groups') {
+                    # A group a test marks NotSecurity (a Microsoft 365 group) is left out of a listing
+                    # that carries the security-enabled filter and kept by the unfiltered roster read.
+                    $Listed = @($script:E2ETenant | Where-Object { -not ($Uri -like '*securityEnabled*' -and $_.NotSecurity) })
                     return [PSCustomObject]@{
-                        value = @(foreach ($G in $script:E2ETenant) {
+                        value = @(foreach ($G in $Listed) {
                                 @{
                                     id                            = $G.Id
                                     displayName                   = $G.Name
                                     description                   = "$($G.Name) team"
                                     mailNickname                  = $G.Name.Replace('-', '').ToLowerInvariant()
-                                    securityEnabled               = $true
+                                    securityEnabled               = -not $G.NotSecurity
                                     isAssignableToRole            = $G.RoleAssignable
                                     groupTypes                    = [string[]]@(if ($G.Dynamic) { 'DynamicMembership' })
                                     membershipRule                = $(if ($G.Dynamic) { 'user.department -eq "IT"' } else { $null })
@@ -2529,8 +2558,10 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
                     & $RefuseIfAsked "$($Rel):$Id"
                     if ($Typed) { return [PSCustomObject]@{ value = @() } }
                     $G = & $GroupOf $Id
-                    $Upn = if ($Rel -eq 'members') { $G.Member } else { $G.Owner }
-                    return [PSCustomObject]@{ value = @(@{ id = "u-$Rel-$($G.Name)"; displayName = $Upn; userPrincipalName = $Upn; '@odata.type' = '#microsoft.graph.user' }) }
+                    # Member and Owner hold one name or a list of them (an empty list answers an
+                    # empty collection), so a test can give a group any number of members.
+                    $Upns = @(if ($Rel -eq 'members') { $G.Member } else { $G.Owner })
+                    return [PSCustomObject]@{ value = @(foreach ($Upn in $Upns) { @{ id = "u-$Rel-$($G.Name)-$Upn"; displayName = $Upn; userPrincipalName = $Upn; '@odata.type' = '#microsoft.graph.user' } }) }
                 }
                 if ($Uri.StartsWith('beta/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?') -and $Uri -match "groupId eq '(?<Id>[^']*)'") {
                     $Id = $Matches.Id
@@ -2585,6 +2616,19 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
                     }) | Sort-Object
             }
 
+            # The rows of a written groupsRoster.json, and a name -> memberCount map of them (a null
+            # count is kept as a null entry, so a test can tell a null from a missing row).
+            function Read-E2ERoster {
+                param([string]$BundlePath)
+                @(Get-Content (Join-Path $BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
+            }
+            function ConvertTo-E2ECountMap {
+                param([object[]]$Roster)
+                $Map = @{}
+                foreach ($Row in $Roster) { $Map[[string]$Row.displayName] = $Row.memberCount }
+                $Map
+            }
+
             # Today's selection, applied to the groups Get-OERInventory returns: the predicate the
             # export used on them before the reader decided relevance first.
             function Select-TodayRelevantGroup {
@@ -2614,17 +2658,34 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
         }
 
         It 'writes the same groups, with the same content, as the export did before it decided relevance first' {
+            # The tenant also holds a pair of groups whose names differ only in letter case, one
+            # relevant (role-assignable) and one not. The rule that leaves a shared name out lives in
+            # two places -- the reader's -ExcludeSharedName and Get-OERInventory's own -- so the
+            # oracle and the export are compared on the pair too: both must leave both groups out,
+            # and both must report the name.
+            $script:E2ETenant = @($script:E2ETenant) + @(
+                @{ Id = $script:E2EIdDupRa; Name = 'G-DUP'; RoleAssignable = $true; Synced = $false; Dynamic = $false
+                    Member = 'person15@contoso.com'; Owner = 'person16@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                @{ Id = $script:E2EIdDupPlain; Name = 'g-dup'; RoleAssignable = $false; Synced = $false; Dynamic = $false
+                    Member = 'person17@contoso.com'; Owner = 'person18@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+            )
             $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'e2e-default') -Include Groups `
                 -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
             $Written = @((Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json).groups)
             @($Written | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD')
 
-            $Oracle = Select-TodayRelevantGroup -Group @((Get-OERInventory -Include Groups -ErrorAction SilentlyContinue).Groups)
+            $OracleRead = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable OracleErr
+            $Oracle = Select-TodayRelevantGroup -Group @($OracleRead.Groups)
+            @($Oracle | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD') -Because 'Get-OERInventory leaves both groups of the shared name out'
             $Expected = @(ConvertTo-GroupLine -Group $Oracle)
             $Expected.Count | Should -Be 3
             @(ConvertTo-GroupLine -Group $Written) | Should -Be $Expected
-            @($Bundle.IncompleteReads).Count | Should -Be 0
-            @($ExErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+            # Both name the shared name once, with the spelling of the first group, and nothing else.
+            @($Bundle.IncompleteReads) | Should -Be @('groups/G-DUP')
+            @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' }).Count | Should -Be 1
+            $OraclePartial = @($OracleErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $OraclePartial.Count | Should -Be 1
+            $OraclePartial[0].Exception.Message | Should -Match 'groups/G-DUP'
         }
 
         It 'writes every group Get-OERInventory returns, with the same content, under -AllGroupsDetailed' {
@@ -2702,6 +2763,131 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
             $Partial.Count | Should -Be 1
             $Partial[0].Exception.Message | Should -BeLike '*Causes of the unread group reads: Could not read members for group*'
             [regex]::Matches($Partial[0].Exception.Message, 'Could not read members for group').Count | Should -Be 1
+        }
+
+        Context 'the roster''s member count (R3)' {
+            # groupsRoster.json lists every group in the tenant, but a count is written only for a
+            # group the export read in full: counting the others would cost a request per group, and
+            # the one-request count (members/$count) needs a header the module's transport never
+            # sends, answers from an index that can lag, and is not measured for service principals.
+            # So the others get null, the roster's existing "not known" value.
+            BeforeEach {
+                # Counts that tell the rows apart: G-RA two members, G-MOD none (a real zero),
+                # G-PLAIN three (a group the export does not keep, so its count shows whether it was read).
+                $Fixture = @{}
+                foreach ($Group in $script:E2ETenant) { $Fixture[$Group.Name] = $Group }
+                $Fixture['G-RA'].Member = @('person1@contoso.com', 'person19@contoso.com')
+                $Fixture['G-MOD'].Member = @()
+                $Fixture['G-PLAIN'].Member = @('person7@contoso.com', 'person20@contoso.com', 'person21@contoso.com')
+            }
+
+            It 'gives a group the export read in full its member count, a count of zero included' {
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'roster-kept') -Include Groups `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+                $Roster = Read-E2ERoster -BundlePath $Bundle.BundlePath
+                # Non-vacuity: every group of the tenant has a row.
+                $Roster.Count | Should -Be 6
+                $Counts = ConvertTo-E2ECountMap -Roster $Roster
+                $Counts['G-RA'] | Should -Be 2
+                $Counts['G-EL'] | Should -Be 1
+                $null -ne $Counts['G-MOD'] | Should -BeTrue -Because 'a membership read and found empty is a count of zero, not an unknown one'
+                $Counts['G-MOD'] | Should -Be 0
+                # The kept groups are the ones the document holds, so the count is the document's own.
+                $Inv = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+                @($Inv.groups | Where-Object { $_.displayName -eq 'G-RA' })[0].members.Count | Should -Be 2
+            }
+
+            It 'writes memberCount null, the key present, for a group the export did not read in full' {
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'roster-null') -Include Groups `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+                $Roster = Read-E2ERoster -BundlePath $Bundle.BundlePath
+                $Counts = ConvertTo-E2ECountMap -Roster $Roster
+                foreach ($NotKept in @('G-PLAIN', 'G-SYNC', 'G-DYN')) {
+                    $Counts.ContainsKey($NotKept) | Should -BeTrue -Because "$NotKept has a row in the roster"
+                    $Row = @($Roster | Where-Object { $_.displayName -eq $NotKept })[0]
+                    $Row.PSObject.Properties.Name | Should -Contain 'memberCount' -Because "the key is written as null for $NotKept, never left out"
+                    $null -eq $Row.memberCount | Should -BeTrue -Because "$NotKept was not read in full"
+                }
+                [regex]::Matches((Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw), '"memberCount"\s*:\s*null').Count | Should -Be 3
+                # Reach proofs: the null is a count nobody took, not a read that failed. G-PLAIN cost
+                # its two requests (eligibility and the criterion) and its members were never asked for.
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 2 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 0 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444/members*' }
+                # A count that was not taken is not a gap in the export.
+                @($Bundle.IncompleteReads).Count | Should -Be 0
+                @($ExErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+            }
+
+            It 'gives a group whose relevance could not be read its full count (R2), and reports the gap' {
+                $script:E2ERefuse["eligibility:$script:E2EIdPlain"] = 'Too many requests (429)'
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'roster-undecided') -Include Groups `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+                # Reach proof: the refusal was served, and the group was then read in full.
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/44444444-4444-4444-4444-444444444444/members' }
+                $Counts = ConvertTo-E2ECountMap -Roster (Read-E2ERoster -BundlePath $Bundle.BundlePath)
+                $Counts['G-PLAIN'] | Should -Be 3
+                $Counts['G-RA'] | Should -Be 2
+                $Counts['G-SYNC'] | Should -BeNullOrEmpty
+                # It is still not a kept group: the document is what it was.
+                $Inv = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+                @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD')
+                @($Bundle.IncompleteReads).Count | Should -Be 1
+                @($Bundle.IncompleteReads)[0] | Should -Match 'G-PLAIN'
+            }
+
+            It 'gives every security group its member count under -AllGroupsDetailed' {
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'roster-all') -Include Groups -AllGroupsDetailed `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+                $Roster = Read-E2ERoster -BundlePath $Bundle.BundlePath
+                $Roster.Count | Should -Be 6
+                $Counts = ConvertTo-E2ECountMap -Roster $Roster
+                $Counts['G-RA'] | Should -Be 2
+                $Counts['G-EL'] | Should -Be 1
+                $Counts['G-MOD'] | Should -Be 0
+                $Counts['G-PLAIN'] | Should -Be 3
+                $Counts['G-SYNC'] | Should -Be 1
+                $Counts['G-DYN'] | Should -Be 1
+                @($Roster | Where-Object { $null -eq $_.memberCount }).Count | Should -Be 0
+            }
+
+            It 'gives a group left out for a shared name a null count, in both modes' {
+                $script:E2ETenant = @($script:E2ETenant) + @(
+                    @{ Id = $script:E2EIdDupRa; Name = 'G-DUP'; RoleAssignable = $true; Synced = $false; Dynamic = $false
+                        Member = @('person22@contoso.com', 'person23@contoso.com'); Owner = 'person24@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                    @{ Id = $script:E2EIdDupPlain; Name = 'g-dup'; RoleAssignable = $false; Synced = $false; Dynamic = $false
+                        Member = 'person25@contoso.com'; Owner = 'person26@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                )
+                foreach ($Mode in @(@{ Name = 'default'; Detailed = $false }, @{ Name = 'all'; Detailed = $true })) {
+                    $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive "roster-dup-$($Mode.Name)") -Include Groups `
+                        -AllGroupsDetailed:$Mode.Detailed -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+                    $Roster = Read-E2ERoster -BundlePath $Bundle.BundlePath
+                    # Non-vacuity: the pair is in the roster, and the group beside it still has its count.
+                    $Roster.Count | Should -Be 8
+                    $Counts = ConvertTo-E2ECountMap -Roster $Roster
+                    $Counts['G-RA'] | Should -Be 2 -Because "the mode is $($Mode.Name)"
+                    foreach ($Row in @($Roster | Where-Object { $_.displayName -like 'g-dup' })) {
+                        $null -eq $Row.memberCount | Should -BeTrue -Because "$($Row.displayName) shares its name, in the $($Mode.Name) mode"
+                    }
+                    @($Roster | Where-Object { $_.displayName -like 'g-dup' }).Count | Should -Be 2
+                }
+            }
+
+            It 'does not give a Microsoft 365 group the count of a security group that shares its name' {
+                # The security-enabled listing never holds this group, so the export did not read it, and
+                # a name is no key: it must not be counted as the security group that shares its name.
+                $script:E2ETenant = @($script:E2ETenant) + @(
+                    @{ Id = $script:E2EIdM365; Name = 'G-RA'; RoleAssignable = $false; Synced = $false; Dynamic = $false; NotSecurity = $true
+                        Member = 'person27@contoso.com'; Owner = 'person28@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                )
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'roster-m365') -Include Groups `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+                $Roster = Read-E2ERoster -BundlePath $Bundle.BundlePath
+                $Roster.Count | Should -Be 7
+                $Twins = @($Roster | Where-Object { $_.displayName -eq 'G-RA' })
+                $Twins.Count | Should -Be 2
+                @($Twins | Where-Object { $null -eq $_.memberCount }).Count | Should -Be 1 -Because 'the Microsoft 365 group was not read'
+                @($Twins | Where-Object { $_.memberCount -eq 2 }).Count | Should -Be 1 -Because 'the security group keeps its own count'
+            }
         }
     }
 }

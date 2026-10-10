@@ -82,8 +82,8 @@ function Get-OERInventoryGroup {
 
     .EXAMPLE
     $Read = Get-OERInventoryGroup -Filter 'securityEnabled eq true' -IncludeId -ExcludeSharedName -RelevantOnly
-    Reads only the RBAC-relevant security-enabled groups in full, after two requests per listed group,
-    stamps their ids, and leaves out every group whose name another shares.
+    Reads only the RBAC-relevant security-enabled groups in full, after at most two requests per
+    listed group, stamps their ids, and leaves out every group whose name another shares.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
