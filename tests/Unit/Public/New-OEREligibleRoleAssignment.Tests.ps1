@@ -40,7 +40,7 @@ Describe 'New-OEREligibleRoleAssignment' {
         }
         It 'PUTs a roleEligibilityScheduleRequests request with AdminAssign and no principalType in the body' {
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'anna@contoso.com' -Subscription 'Prod' -Permanent -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
                 $Method -eq 'PUT' -and
                 $Path -like '/subscriptions/s1/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/*`?api-version=2020-10-01' -and
                 $Body.properties.requestType -eq 'AdminAssign' -and
@@ -60,14 +60,14 @@ Describe 'New-OEREligibleRoleAssignment' {
         }
         It 'defaults to NoExpiration (permanent) when no schedule param is given' {
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'anna@contoso.com' -Subscription 'Prod' -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
                 $Body.properties.scheduleInfo.expiration.type -eq 'NoExpiration'
             }
         }
         It 'populates justification, ticketInfo, and condition when supplied' {
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'anna@contoso.com' -Subscription 'Prod' -Permanent `
                 -Justification 'audit-123' -TicketNumber 'T1' -TicketSystem 'Jira' -Condition "@Resource[x]" -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
                 $Body.properties.justification -eq 'audit-123' -and
                 $Body.properties.ticketInfo.ticketNumber -eq 'T1' -and
                 $Body.properties.ticketInfo.ticketSystem -eq 'Jira' -and
@@ -84,20 +84,20 @@ Describe 'New-OEREligibleRoleAssignment' {
         }
         It 'converts -DurationDays to an AfterDuration ISO day duration' {
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'anna@contoso.com' -Subscription 'Prod' -DurationDays 365 -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
                 $Body.properties.scheduleInfo.expiration.type -eq 'AfterDuration' -and
                 $Body.properties.scheduleInfo.expiration.duration -eq 'P365D'
             }
         }
         It 'passes a raw ISO -Duration through unchanged' {
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'anna@contoso.com' -Subscription 'Prod' -Duration 'P6M' -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
                 $Body.properties.scheduleInfo.expiration.duration -eq 'P6M'
             }
         }
         It 'forwards -ResourceType/-ResourceName to Resolve-OERScope' {
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'a' -Subscription 'Prod' -ResourceGroup 'rg1' -ResourceType 'Microsoft.Storage/storageAccounts' -ResourceName 'stg1' -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 1 -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 1 -Exactly -ParameterFilter {
                 $ResourceType -eq 'Microsoft.Storage/storageAccounts' -and $ResourceName -eq 'stg1'
             }
         }
@@ -176,10 +176,10 @@ Describe 'New-OEREligibleRoleAssignment' {
             }
             $Sub.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Subscription')
             $Sub | New-OEREligibleRoleAssignment -Role 'Reader' -User 'anna@contoso.com' -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 1 -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 1 -Exactly -ParameterFilter {
                 $Subscription -eq '00000000-0000-0000-0000-000000000060'
             }
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter { $Method -eq 'PUT' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PUT' }
         }
     }
 
@@ -201,23 +201,23 @@ Describe 'New-OEREligibleRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState { [PSCustomObject]@{ PolicyId = '/pol1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false } }
             Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'pol-1' } }
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'a' -Subscription 'Prod' -Permanent -Confirm:$false
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 1 -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
                 $PolicyId -eq '/pol1' -and $AllowPermanentEligibility -eq $true
             }
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -ParameterFilter { $Method -eq 'PUT' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PUT' }
         }
         It 'does NOT open the policy when permanent is already allowed' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState { [PSCustomObject]@{ PolicyId = '/pol1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $true } }
             Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'pol-1' } }
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'a' -Subscription 'Prod' -Permanent -Confirm:$false
             Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 0
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
         }
         It 'does NOT pre-check for a time-bound grant' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState { }
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'a' -Subscription 'Prod' -DurationDays 365 -Confirm:$false
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState -Times 0
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
         }
         It 'errors PolicyOpenFailed and does NOT grant when opening fails' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState { [PSCustomObject]@{ PolicyId = '/pol1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false } }
@@ -231,7 +231,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'pol-1' } }
             New-OEREligibleRoleAssignment -Role 'Reader' -User 'a' -Subscription 'Prod' -Permanent -Confirm:$false
             Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 0
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
         }
     }
 
@@ -339,7 +339,7 @@ Describe 'New-OEREligibleRoleAssignment' {
         It 'STILL shows the policy open in the -WhatIf plan (PR #19 behaviour must not regress)' {
             $Warnings = New-OEREligibleRoleAssignment -Role 'Reader' -Subscription 'Prod' -User 'anna@contoso.com' -Permanent -WhatIf 3>&1 |
                 Where-Object { $_ -is [System.Management.Automation.WarningRecord] }
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 1 -Exactly
             ($Warnings.Message -join ' ') | Should -BeLike '*affects ALL eligible assignments for this role at this scope*'
         }
 
