@@ -102,9 +102,9 @@ function Export-OERInventory {
     by its own name alone (groups also when the group read stops on an unforeseen error, with the
     warning 'Could not read groups: ...'), and is written as an empty array that does not mean the
     tenant has none; the entry groupsRoster likewise means groupsRoster.json is empty only because
-    the roster read failed. Its Count is therefore one for the Groups read when it left anything unread, plus the
-    number of partial reports from Get-OERInventory, plus one when the group roster could not be
-    read, and not the number of unread collections; read the entries themselves for that. The same
+    the roster read failed. Its Count is therefore one for the Groups read when it left anything
+    unread, plus the number of partial reports from Get-OERInventory, plus one when the group roster
+    could not be read, and not the number of unread collections; read the entries for that. The same
     non-terminating InventoryPartial error is raised here when IncompleteReads, SkippedScopes or
     SkippedEligibilityScopes is non-empty, and its message gives the causes of the unread group
     reads (Get-OERInventory's own InventoryPartial gives those of the other sections). A members,

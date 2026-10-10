@@ -1077,11 +1077,13 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Groups`, `Unread` and raw `Causes` -- and both callers catch a reader that stops and report the
   groups section unread, never empty. Never read the Groups section, or decide relevance before a
   full read, anywhere else. `Why: docs/development/rationale.md#export-group-selection`
-- **`Read-OERGroupCollection` is the single owner of reading one group collection** (members, owners
-  or PIM eligibility) **and of wording its failure** exactly as `Get-OERGroup` publishes it. It returns
-  the read or its failure and never writes an error record; `Get-OERGroup` and
-  `Get-OERInventoryGroup` call it. Never read one of the three collections inline.
-  `Why: docs/development/rationale.md#export-group-selection`
+- **`Read-OERGroupCollection` is the single owner of the three per-group collection reads
+  `Get-OERGroup` attaches and the inventory's group reader uses** (members, owners and PIM
+  eligibility) **and of wording their failure** exactly as `Get-OERGroup` publishes it. It returns the
+  read or its failure and never writes an error record; `Get-OERGroup` and `Get-OERInventoryGroup`
+  call it, and neither reads one of the three inline. `Get-OERGroupRelation` stays the single reader
+  of the members and owners requests: `Read-OERGroupCollection` calls it, and `Get-OERGroupMember`
+  calls it directly. `Why: docs/development/rationale.md#export-group-selection`
 - **`Format-OERUnreadCauseClause` is the single owner of the causes clause of an inventory's
   `InventoryPartial` message** -- the deduplication with the failing object's id normalised away, the
   cap and the wording -- and `Get-OERSharedNameCause` of the text for objects left out because two of

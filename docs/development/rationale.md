@@ -6042,9 +6042,12 @@ path and is asked like any other existing group.
 Sprint 10 step 8 (decision A13) made `Export-OERInventory` decide which groups are RBAC-relevant
 before it reads any group in full. This anchor records the problem, the requests per group before
 and after, the design, and rulings R1-R9 each with its cost if wrong. `Get-OERInventoryGroup` is the
-single reader of the inventory's Groups section, `Read-OERGroupCollection` the single reader of one
-group collection, and `Format-OERUnreadCauseClause` and `Get-OERSharedNameCause` the single owners of
-two texts (CLAUDE.md, Code Style).
+single reader of the inventory's Groups section; `Read-OERGroupCollection` owns the three per-group
+collection reads `Get-OERGroup` attaches and that reader uses, and the wording of their failure,
+while `Get-OERGroupRelation` stays the single reader of the members and owners requests
+([#typed-group-member-read](#typed-group-member-read)) and `Get-OERGroupMember` calls it directly;
+`Format-OERUnreadCauseClause` and `Get-OERSharedNameCause` are the single owners of two texts
+(CLAUDE.md, Code Style).
 
 **The problem.** The export read the Groups section through `Get-OERInventory`, which reads every
 security group in full -- members, owners, PIM eligibility and the PIM-in-use criterion -- and only
@@ -6132,8 +6135,10 @@ measuring that it counts service principals.
 first, naming the same triples `Get-OERInventory` would have named; its causes, deduplicated and
 capped by `Format-OERUnreadCauseClause` under the same rule as `Get-OERInventory`'s, go into the
 export's own `InventoryPartial` message as 'Causes of the unread group reads'. `Get-OERInventory`'s
-record now covers the other Entra ID sections only. Cost if wrong: the `IncompleteReads` count of a
-run with gaps in both is one higher than before.
+record now covers the other Entra ID sections only. The decision's cost: the `IncompleteReads` count
+of a run with gaps in both is one higher than before. Cost if wrong: join the group read's names to
+the `Get-OERInventory` entry, so the count stays what it was and one entry mixes two reads, with the
+group causes still in the export's own message.
 
 **R5 (`-GroupFilter` and escaping).** `-GroupFilter` is an operator's whole OData expression, not a
 value interpolated into `eq '...'`, so it is never escaped through `ConvertTo-OERODataFilterValue`
@@ -7040,14 +7045,17 @@ decides on it (`schema.json` types it as a boolean, and says so). If wrong: writ
 every exported group entry grows a key and the existing tests that pin entries change.
 
 **R5 (the export filter reads the projection key).** `Export-OERInventory -IncludeSyncedGroups` keeps
-a synchronized security group in full detail in `inventory.json`. `Export-OERInventory` receives only
-`Get-OERInventory`'s projection, so the filter reads its `onPremisesSynced` key (only a boolean
-`true` counts), which the predicate wrote: the rule still has one owner. The switch is on request
-because a default criterion that kept every synchronized security group would fill `inventory.json`,
-and an LLM's context, with groups no proposal can change. The Groups section is security-enabled
-only, so a synchronized distribution group stays in the roster alone; with `-AllGroupsDetailed` every
-group is kept already and the switch changes nothing. If wrong: the export would need the live
-objects, which Sprint 10 step 8 restructures anyway.
+a synchronized security group in full detail in `inventory.json`. `Export-OERInventory` receives the
+group reader's projection (`Get-OERInventoryGroup`, since Sprint 10 step 8; `Get-OERInventory`'s
+before it), so its keep filter reads the `onPremisesSynced` key (only a boolean `true` counts), which
+the predicate wrote; under `-RelevantOnly` the reader's relevance decision asks the same predicate,
+`Test-OERGroupOnPremisesSynced`, on the live group before any projection exists
+([#export-group-selection](#export-group-selection)). Either way the rule has one owner. The switch
+is on request because a default criterion that kept every synchronized security group would fill
+`inventory.json`, and an LLM's context, with groups no proposal can change. The Groups section is
+security-enabled only, so a synchronized distribution group stays in the roster alone; with
+`-AllGroupsDetailed` every group is kept already and the switch changes nothing. If wrong: the group
+reader, which holds the live group, hands the export the predicate's verdict instead of the key.
 
 **R6 (one warning per item).** The handler writes one warning for a synchronized group, before the
 first `Skipped` write and, under `-Prune`, before the first withheld prune, under `-WhatIf` too. A

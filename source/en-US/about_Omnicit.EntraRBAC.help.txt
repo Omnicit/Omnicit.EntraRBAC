@@ -128,10 +128,11 @@ SYNCHRONIZED GROUPS
 
 GROUPS IN AN EXPORT
 
-    Export-OERInventory details only RBAC-relevant security groups in
-    inventory.json: role-assignable ones, ones with PIM eligibility, ones found to
-    use PIM for Groups and, with -IncludeSyncedGroups, synchronized ones. It
-    decides that before it reads any group in full. Every group costs one request
+    Unless -AllGroupsDetailed is given, Export-OERInventory details only
+    RBAC-relevant security groups in inventory.json: role-assignable ones, ones
+    with PIM eligibility, ones found to use PIM for Groups and, with
+    -IncludeSyncedGroups, synchronized ones. It decides that before it reads any
+    group in full. Every group costs one request
     for its PIM eligibility and, when that does not decide it, one for its
     PIM-for-Groups policies; a group found not relevant costs those two and no
     more, so its members, owners and policies are never read. A group whose
