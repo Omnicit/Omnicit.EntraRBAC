@@ -5,10 +5,12 @@ function Read-OERGroupCollection {
     failure.
 
     .DESCRIPTION
-    The single reader of the three per-group collections Get-OERGroup attaches: the members and the
-    owners (through Get-OERGroupRelation, which reads the untyped and the typed service principal
-    collection and emits nothing unless both succeed) and the PIM-for-Groups eligibility schedule
-    instances (one Invoke-OERGraphRequest read).
+    The single reader of the three per-group collections Get-OERGroup attaches (and, in a later
+    step, the inventory's group reader): the members and the owners (through Get-OERGroupRelation,
+    which reads the untyped and the typed service principal collection and emits nothing unless
+    both succeed) and the PIM-for-Groups eligibility schedule instances (one Invoke-OERGraphRequest
+    read). Get-OERGroupMember reads a group's members through Get-OERGroupRelation directly and does
+    not use it.
 
     It returns ONE tagged Omnicit.EntraRBAC.GroupCollectionRead object and never writes an error
     record: a failed read comes back with Read false, Value null, and the ErrorId, Message and
@@ -25,7 +27,10 @@ function Read-OERGroupCollection {
     command must already have signed in (Initialize-OERAuth).
 
     .PARAMETER GroupId
-    The object id of the group whose collection is read.
+    The object id of the group whose collection is read. An empty or null id is accepted and
+    behaves as it did inside Get-OERGroup: the members and owners reads return their failure (the
+    reader's own binding error is caught), and the eligibility request is sent with the id as
+    given.
 
     .PARAMETER Collection
     Which collection to read: Members, Owners or PimEligibility.
@@ -38,7 +43,14 @@ function Read-OERGroupCollection {
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
     param(
+        # An empty or null id is bound, not refused here: before the reads moved out of Get-OERGroup
+        # an empty id reached each read INSIDE its try, so Get-OERGroupRelation's own binding error
+        # became a GroupMemberReadFailed / GroupOwnerReadFailed result, and the eligibility request
+        # was built with the id as given. Refusing it at this function's binding would raise a
+        # terminating error in the caller, outside any try, instead.
         [Parameter(Mandatory)]
+        [AllowNull()]
+        [AllowEmptyString()]
         [string]$GroupId,
 
         [Parameter(Mandatory)]
@@ -135,8 +147,9 @@ function Read-OERGroupCollection {
                 # marker and never reaches this catch at all. Softening only this block instead
                 # leaves PimEligibility = @() with 5 records. The wrapper's gate is the one that
                 # fires in production. Keep the token rule here and in the wrapper in step, and
-                # never delete either one on the strength of the other. Every other failure omits
-                # the property and errors, same as members and owners above.
+                # never delete either one on the strength of the other. Every other failure is
+                # returned as unread, same as members and owners above; the caller omits the
+                # property and writes the error.
                 #
                 # MATCHED ON THE GRAPH ERROR CODE AS A WHOLE TOKEN, not on one exact
                 # FullyQualifiedErrorId spelling. The code is the reliable signal; where the

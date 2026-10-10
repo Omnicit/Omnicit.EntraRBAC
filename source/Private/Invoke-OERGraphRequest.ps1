@@ -533,8 +533,8 @@ function Invoke-OERGraphRequest {
     # softening. Graph named that failure Authorization_RequestDenied; when Graph has named the
     # failure, its name is the answer and the prose is not consulted.
     #
-    # Get-OERGroup carries the same TOKEN RULE inline, but for a DIFFERENT ARRIVAL SHAPE, and
-    # NEITHER GUARD BACKS UP THE OTHER. This gate answers a record that arrives as a MARKER, which
+    # Read-OERGroupCollection (the reader Get-OERGroup calls for PIM eligibility) carries the same
+    # TOKEN RULE inline, but for a DIFFERENT ARRIVAL SHAPE, and NEITHER GUARD BACKS UP THE OTHER. This gate answers a record that arrives as a MARKER, which
     # is the only shape a live read produces once a code is declared here; the inline copy answers
     # one that arrives THROWN, which happens when this wrapper is mocked or a frame between the two
     # re-raises. Measured in both directions rather than reasoned: softening THIS gate to an
@@ -1256,8 +1256,9 @@ function Invoke-OERGraphRequest {
         # therefore a FAILURE and is raised.
         #
         # ITS ERROR ID IS DELIBERATELY NOT THE GRAPH CODE. Naming it 'ResourceTypeNotSupported'
-        # would let the caller's own last-line-of-defence test (Get-OERGroup's inline match) read it
-        # back as the expected answer and re-create the very loss this raise exists to report.
+        # would let the caller's own last-line-of-defence test (the inline match in
+        # Read-OERGroupCollection, the reader Get-OERGroup calls) read it back as the expected
+        # answer and re-create the very loss this raise exists to report.
         if (@($Page.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') {
             if ($PageNumber -eq 1) { return $Page }
             $PartialSnapshot = $AllValues.ToArray()

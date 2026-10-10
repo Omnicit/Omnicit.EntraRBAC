@@ -63,6 +63,60 @@ Describe 'Read-OERGroupCollection' {
         }
     }
 
+    Context 'an empty or null group id (as inside Get-OERGroup before the reads moved here)' {
+        # Get-OERGroup used to make each read INSIDE a try, so an empty id's binding error in
+        # Get-OERGroupRelation became a failure result, and the eligibility request was built with
+        # the id as given. The parameter allows null and empty so the same outcome holds here, rather
+        # than a terminating binding error in the caller, outside any try.
+        It 'returns the members failure, naming the empty id, and sends no request (<Label>)' -ForEach @(
+            @{ Label = 'empty'; Id = '' }
+            @{ Label = 'null'; Id = $null }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Id = $Id } {
+                param($Id)
+                Mock Invoke-OERGraphRequest { throw 'no request expected' }
+                $R = Read-OERGroupCollection -GroupId $Id -Collection Members
+                $R.Read | Should -BeFalse
+                $R.ErrorId | Should -Be 'GroupMemberReadFailed'
+                $R.Message | Should -BeLike 'Could not read members for group : * The Members property is omitted rather than reported as empty.'
+                $R.Exception | Should -BeOfType ([System.Management.Automation.ParameterBindingException])
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 0
+            }
+        }
+
+        It 'returns the owners failure, naming the empty id, and sends no request (<Label>)' -ForEach @(
+            @{ Label = 'empty'; Id = '' }
+            @{ Label = 'null'; Id = $null }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Id = $Id } {
+                param($Id)
+                Mock Invoke-OERGraphRequest { throw 'no request expected' }
+                $R = Read-OERGroupCollection -GroupId $Id -Collection Owners
+                $R.Read | Should -BeFalse
+                $R.ErrorId | Should -Be 'GroupOwnerReadFailed'
+                $R.Message | Should -BeLike 'Could not read owners for group : * The Owners property is omitted rather than reported as empty.'
+                $R.Exception | Should -BeOfType ([System.Management.Automation.ParameterBindingException])
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 0
+            }
+        }
+
+        It 'sends the eligibility request with the id as given (<Label>)' -ForEach @(
+            @{ Label = 'empty'; Id = '' }
+            @{ Label = 'null'; Id = $null }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Id = $Id } {
+                param($Id)
+                Mock Invoke-OERGraphRequest { @{ value = @() } }
+                $R = Read-OERGroupCollection -GroupId $Id -Collection PimEligibility
+                $R.Read | Should -BeTrue
+                @($R.Value).Count | Should -Be 0
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter {
+                    $Uri -eq "beta/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?`$filter=groupId eq ''"
+                }
+            }
+        }
+    }
+
     Context 'Owners' {
         It 'returns the owners read, from the owners relation only' {
             InModuleScope Omnicit.EntraRBAC {
