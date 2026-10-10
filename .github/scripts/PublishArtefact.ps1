@@ -6,7 +6,7 @@
         by file, and proves that the package the Gallery serves is that build before it is tagged.
 
     .DESCRIPTION
-        The publish job must ship the bytes the three required checks tested, and nothing else.
+        The publish job must ship the bytes the four required checks tested, and nothing else.
         Both halves of that proof live in this one file so they cannot drift apart: a recorder and
         a verifier that enumerated or hashed differently would fail on honest artefacts and agree
         on tampered ones.

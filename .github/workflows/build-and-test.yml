@@ -11,7 +11,7 @@
 #
 # A PUBLISHED VERSION IS PERMANENT. The Gallery can unlist a version but it cannot delete one, so
 # everything between the Test step and Publish-PSResource is about proving that the bytes being
-# published are the bytes the three required checks actually tested.
+# published are the bytes the four required checks actually tested.
 #
 # Every action is pinned to a full commit SHA, with the release it was verified against in the
 # trailing comment; a tag can be moved, a SHA cannot. Bump the SHA and the comment together, after
@@ -32,9 +32,9 @@ on:
     tags: ['v*', '!v*-*']
   pull_request:
     branches: [main]
-    # NEVER add paths-ignore here. ubuntu-latest, windows-latest and macos-latest are REQUIRED
-    # checks on main, and a workflow run that never happens never reports them -- a required check
-    # that never reports stays Pending forever and blocks the pull request permanently.
+    # NEVER add paths-ignore here. ubuntu-latest, windows-latest, macos-latest and package are the
+    # four REQUIRED checks on main, and a workflow run that never happens never reports them -- a
+    # required check that never reports stays Pending forever and blocks the pull request permanently.
   workflow_dispatch:
 
 permissions:
@@ -309,7 +309,7 @@ jobs:
     # main and the v<X.Y.Z> tag patterns, none of which admits a hyphen. A ref outside them is
     # refused at deployment, before any step runs, and the secret is never handed out.
     #
-    # The gate for a preview is the pull request and the three required checks on main. The gate
+    # The gate for a preview is the pull request and the four required checks on main. The gate
     # for a full release is the tag itself: the 'Stable Version' tag ruleset lets only its bypass
     # list create, move or delete a v<X.Y.Z> tag. Both live in repository settings on purpose. A
     # tag push runs the workflow file AT the tagged commit, so a check written here is removed by
