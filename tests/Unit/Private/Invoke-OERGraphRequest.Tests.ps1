@@ -3938,7 +3938,7 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no Graph or ARM request may leave for a command whose sign-in failed, nor for a cmdlet it calls'
     }
 
-    It 'H4: the second of two documents piped to Invoke-OERStructure -TenantId signs in again and is applied after the first document''s sign-in failed (BL-74, Review Focus 5), unchanged under A10, and a command after it that names no tenant sends' {
+    It 'H4: the second of two documents piped to Invoke-OERStructure -TenantId signs in again and is planned after the first document''s sign-in failed (BL-74, Review Focus 5), unchanged under A10, and a command after it that names no tenant sends' {
         # Also H9 of A10 (BL-89): the first document's failed sign-in leaves the session uncertain, and the
         # second document's sign-in, which names its tenant, is attempted all the same and clears it, so
         # a command after the pipeline that names no tenant is answered from that session.
@@ -5143,7 +5143,7 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
         # Invoke-OERStructure and marks the session uncertain (A10). The second document's sign-in names
         # no tenant either, so it is refused for the uncertain session before any token call, and its
         # group read is refused by the latch. H4 is the control: the same pipeline WITH -TenantId, whose
-        # second document signs in again and is applied. The token stub fails ONLY its first call and
+        # second document signs in again and is planned. The token stub fails ONLY its first call and
         # answers every later one, so a second document that got past the refusal would sign in, connect
         # and send its group read. Nothing up the stack catches anything.
         $HitsBefore = @($global:OERTransportTripwireHits).Count

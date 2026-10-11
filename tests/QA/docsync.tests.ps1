@@ -16,7 +16,7 @@ BeforeAll {
     # complete-looking. The two documents were hand-synchronised twice on the fix/tenant-switch-warning
     # branch alone, which is the point at which a convention stops being a convention.
     #
-    # Two bindings, chosen because they are the two places the drift actually happened:
+    # Three bindings, chosen because they are the three places the drift actually happened:
     #
     #   1. THE ROSTER. Every exported cmdlet is rostered in README's '## Available Cmdlets' AND in
     #      the about topic's 'COMMAND COHORTS' -- in those SECTIONS, not merely somewhere in the
