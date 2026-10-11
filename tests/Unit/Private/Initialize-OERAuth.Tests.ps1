@@ -1252,11 +1252,24 @@ Describe 'Initialize-OERAuth sovereign clouds' {
             $script:PublicPathConnectEnvironment = $Environment
         }
 
-        InModuleScope $script:moduleName {
-            Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'Interactive' -IncludeARM
-            $script:_OERAuthState.Environment    | Should -Be 'Global'
-            $script:_OERAuthState.ArmResourceUrl | Should -Be 'https://management.azure.com/'
-        }
+        # The sentinel is not the commercial authority, so this Global sign-in warns about it, by design
+        # ('warns when AZURE_AUTHORITY_HOST is set to a non-commercial authority on a Global sign-in').
+        # Captured and pinned here, so it is asserted rather than printed into the test output.
+        $PublicPathWarnings = @(InModuleScope $script:moduleName {
+                Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'Interactive' -IncludeARM `
+                    -WarningVariable Captured -WarningAction SilentlyContinue
+                $script:_OERAuthState.Environment    | Should -Be 'Global'
+                $script:_OERAuthState.ArmResourceUrl | Should -Be 'https://management.azure.com/'
+                $Captured | ForEach-Object { [string]$_.Message }
+            })
+        $PublicPathWarnings.Count | Should -Be 1 -Because 'the Global sign-in writes exactly one warning, the one about the sentinel authority'
+        $PublicPathWarnings[0] | Should -BeExactly (
+            "AZURE_AUTHORITY_HOST is set to 'https://sentinel.invalid/' in this process, which is not the " +
+            "commercial-cloud authority 'https://login.microsoftonline.com/'. Microsoft Entra ID sign-in " +
+            "follows that variable, so this 'Global' sign-in will be sent to that authority instead. " +
+            'Omnicit.EntraRBAC does not change the variable on the Global cloud. If this is not what you ' +
+            'intended, clear it with Remove-Item Env:AZURE_AUTHORITY_HOST and sign in again; if you meant ' +
+            'to target a sovereign cloud, use Connect-OER -Environment instead.')
 
         Should -Invoke -ModuleName $script:moduleName Get-AzToken -Exactly -Times 1 -ParameterFilter {
             $Resource -eq 'https://graph.microsoft.com/'
@@ -2043,25 +2056,35 @@ Describe 'Initialize-OERAuth device-code instruction visibility' {
         # The public, non-device-code path staying byte-identical is the invariant this change must
         # not spend. An Interactive sign-in that warns keeps its warning on the WARNING stream and
         # writes nothing to the information stream.
+        # Module-qualified on purpose: a mock body resolves commands from the test's scope, where a build
+        # runner may define a Write-Warning of its own -- Invoke-Build does, and counts every message it
+        # carries as a build warning, whatever -WarningAction says. The cmdlet writes the same record.
         Mock -ModuleName $script:moduleName Get-AzToken {
-            Write-Warning 'some unrelated AzAuth warning'
+            Microsoft.PowerShell.Utility\Write-Warning 'some unrelated AzAuth warning'
             [pscustomobject]@{ Token = 'fake'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = 'contoso' }
         }
 
         $Captured = InModuleScope $script:moduleName {
             $InfoVar = $null
             $WarnVar = $null
-            Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'Interactive' `
-                -InformationVariable InfoVar -WarningVariable WarnVar `
-                -WarningAction SilentlyContinue 6>$null
+            # 3>&1 merges the warning stream into the output: the warning is asserted below as a record
+            # on that stream, and is not printed to the console. A mock body does not see the
+            # -WarningAction bound here (see the first test of this Describe), so -WarningAction
+            # SilentlyContinue alone never kept it off the console.
+            $Merged = @(Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'Interactive' `
+                    -InformationVariable InfoVar -WarningVariable WarnVar `
+                    -WarningAction SilentlyContinue 6>$null 3>&1)
             [pscustomobject]@{
                 Information = @($InfoVar | ForEach-Object { [string]$_.MessageData })
                 Warning     = @($WarnVar | ForEach-Object { [string]$_.Message })
+                Streamed    = @($Merged | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
                 Account     = $script:_OERAuthState.Account
             }
         }
 
         ($Captured.Warning -join "`n") | Should -Match 'some unrelated AzAuth warning'
+        $Captured.Streamed | Should -Be @('some unrelated AzAuth warning') -Because (
+            'the warning stays on the warning stream, exactly once, and is not turned into anything else')
         ($Captured.Information -join "`n") | Should -Not -Match 'some unrelated AzAuth warning'
         $Captured.Account | Should -Be 'admin@contoso.com'
         # And the splat itself is untouched: the device-code branch's -WarningAction Continue must
@@ -2101,7 +2124,9 @@ Describe 'Initialize-OERAuth device-code instruction visibility' {
                   $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
                   $Scope, $Force, $Claim)
             if ($Resource -match 'management') {
-                Write-Warning 'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code ARMCODE99 to authenticate.'
+                # Module-qualified, for the reason given in 'leaves every other credential type calling
+                # Get-AzToken with no pipeline in between'.
+                Microsoft.PowerShell.Utility\Write-Warning 'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code ARMCODE99 to authenticate.'
             }
             [pscustomobject]@{ Token = 'fake'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = 'contoso' }
         }
@@ -3779,9 +3804,15 @@ Describe 'Initialize-OERAuth tenant-switch warnings' {
                 $AuthorityHostBefore = [System.Environment]::GetEnvironmentVariable('AZURE_AUTHORITY_HOST')
 
                 $StopCaught = $null
+                $StopWarnings = 'not-run'
                 try {
+                    # -WarningVariable captures the warning, which is asserted below; 3>$null keeps it off
+                    # the console. Under Stop the warning is written, added to the variable and only then
+                    # turned into the stop, so both hold the record (measured: an assignment of a 3>&1
+                    # merge gets nothing under Stop, and -WarningVariable with 3>$null keeps the record
+                    # and the ActionPreferenceStopException alike).
                     Initialize-OERAuth -TenantId 'tenant-b.example.com' -AuthMethod 'ClientSecret' -ClientId 'app-client-1' `
-                        -ClientSecret $Secret -Environment $Environment -WarningAction Stop
+                        -ClientSecret $Secret -Environment $Environment -WarningAction Stop -WarningVariable StopWarnings 3>$null
                 }
                 catch {
                     $StopCaught = $PSItem
@@ -3791,6 +3822,17 @@ Describe 'Initialize-OERAuth tenant-switch warnings' {
                 $StopCaught.Exception | Should -BeOfType [System.Management.Automation.ActionPreferenceStopException]
                 $StopCaught.Exception.Message | Should -Match ([regex]::Escape(
                     "names tenant 'tenant-b.example.com', but the credential AzAuth holds for that application in this PowerShell session was built for tenant 'tenant-a.example.com'"))
+                @($StopWarnings).Count | Should -Be 1 -Because 'the stopped switch writes exactly one warning, the pre-call one it is stopped at'
+                $StopWarnings[0].Message | Should -BeExactly (
+                    "This client secret sign-in for application 'app-client-1' names tenant " +
+                    "'tenant-b.example.com', but the credential AzAuth holds for that application in this " +
+                    "PowerShell session was built for tenant 'tenant-a.example.com'. AzAuth reuses that " +
+                    "credential for the same application until it is told to rebuild it, so this sign-in " +
+                    "does not reach 'tenant-b.example.com': by default it fails with 'The current " +
+                    "credential is not configured to acquire tokens for tenant', and where multi-tenant " +
+                    "authentication is disabled (AZURE_IDENTITY_DISABLE_MULTITENANTAUTH) the token is " +
+                    "requested from 'tenant-a.example.com' instead. Run Connect-OER again with -Force to " +
+                    "rebuild the credential for 'tenant-b.example.com'. Disconnect-OER does not clear it.")
 
                 [object]::ReferenceEquals($script:_OERAuthState, $StateBefore) | Should -BeTrue
                 [object]::ReferenceEquals($script:_OERLastTokenRequest, $RequestBefore) | Should -BeTrue
@@ -4612,14 +4654,19 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
     Context 'what the latch table stores' {
         # The keys are the commands' own invocation objects, which carry their bound parameters (a
         # tenant among them); what this checks is that every value is $true, every key is an
-        # InvocationInfo, and no other module variable is added -- not that a key holds nothing.
-        It 'stores the boolean $true as every value, keys every entry on an InvocationInfo, and adds no module variable but _OERSignInLatch' {
+        # InvocationInfo, and no module variable is added but the two below -- not that a key holds
+        # nothing. The latch adds one, _OERSignInLatch; the session-uncertain marker's own helper,
+        # Set-OERSessionUncertain, adds the other, _OERSessionUncertain, on its first use. Both are
+        # removed before the measurement, so it does not depend on this Describe's BeforeEach, or an
+        # earlier test, having created the marker's variable already.
+        It 'stores the boolean $true as every value, keys every entry on an InvocationInfo, and adds no module variable but _OERSignInLatch and the session-uncertain marker''s _OERSessionUncertain' {
             Mock -ModuleName $script:moduleName Get-AzToken {
                 [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = '22222222-2222-2222-2222-222222222222' }
             }
 
             $R = InModuleScope $script:moduleName {
                 Remove-Variable -Scope Script -Name _OERSignInLatch -ErrorAction Ignore
+                Remove-Variable -Scope Script -Name _OERSessionUncertain -ErrorAction Ignore
                 $Before = @((Get-Variable -Scope Script).Name)
                 $Caught = $null
                 try {
@@ -4631,6 +4678,7 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
                 @{
                     Caught   = $Caught
                     Refusal  = $Refusal
+                    Before   = $Before
                     Added    = @($After | Where-Object { $_ -notin $Before })
                     Values   = @($Entries | ForEach-Object { $_.Value })
                     KeyTypes = @($Entries | ForEach-Object { $_.Key.GetType().FullName })
@@ -4641,7 +4689,9 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
             $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch,Initialize-OERAuth'
             $R.Caught.Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'
             $R.Refusal | Should -Not -BeNullOrEmpty
-            $R.Added | Should -Be @('_OERSignInLatch')
+            # Not vacuous: the marker's variable did not exist when the measurement began.
+            $R.Before | Should -Not -Contain '_OERSessionUncertain'
+            @($R.Added | Sort-Object) | Should -Be @('_OERSessionUncertain', '_OERSignInLatch')
             $R.Values.Count | Should -BeGreaterThan 0
             foreach ($Value in $R.Values) {
                 $Value | Should -BeOfType ([bool])

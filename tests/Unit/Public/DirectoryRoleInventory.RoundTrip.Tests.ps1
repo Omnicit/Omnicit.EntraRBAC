@@ -17,9 +17,16 @@ AfterAll {
 # everything between them -- Select-OERManagedDirectoryRoleAssignment, the projection helpers, the
 # validator, both Sync-OERStructure* handlers and their diff helpers -- runs for real. The transport
 # is stubbed to throw, so any read the fixture does not answer fails loudly instead of passing.
-# No id below is version-4 shaped.
+# It runs with a session (BL-101): a state the test sets for one tenant, with Initialize-OERAuth
+# still mocked, so the export names that tenant (tenantId, Get-OERInventoryTenantId) and the apply
+# compares it with the session's (Get-OERDocumentTenantMismatch, after the mocked sign-in). The
+# export applied under another tenant is refused with DocumentTenantMismatch, reading and writing
+# nothing. No id below is version-4 shaped.
 Describe 'Directory role inventory round trip' {
     BeforeAll {
+        # The tenant the session is set for, and the one the refusal test moves it to.
+        $script:Tenant = 'ffffffff-0000-0000-0000-000000000001'
+        $script:OtherTenant = 'ffffffff-0000-0000-0000-000000000002'
         $script:RoleA = '11111111-1111-1111-1111-111111111111'
         $script:RoleB = '22222222-2222-2222-2222-222222222222'
         $script:User1 = 'aaaaaaaa-0000-0000-0000-000000000001'
@@ -172,50 +179,88 @@ Describe 'Directory role inventory round trip' {
         $script:LiveActive = @($Converted.Active)
         $script:LivePolicies = @($Converted.Policies)
 
-        # Exports, then serializes the two sections the way a bundle does.
+        # Exports, then serializes the sections the way a bundle does: tenantId directly after version
+        # and only when the inventory carries it (Get-OERInventory leaves the key out when the session's
+        # token reports no tenant ID), then the two directory sections.
         function script:Export-DirectoryDocument {
             $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments -ErrorAction Stop
-            [PSCustomObject]@{
-                version                         = '1.0'
-                directoryRoleManagementPolicies = $Inv.directoryRoleManagementPolicies
-                directoryRoleAssignments        = $Inv.directoryRoleAssignments
-            } | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+            $Doc = [ordered]@{ version = '1.0' }
+            if ($Inv.PSObject.Properties['tenantId']) { $Doc.tenantId = $Inv.tenantId }
+            $Doc.directoryRoleManagementPolicies = $Inv.directoryRoleManagementPolicies
+            $Doc.directoryRoleAssignments = $Inv.directoryRoleAssignments
+            [PSCustomObject]$Doc | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+        }
+
+        # Every read mock calls this first. Once the refusal test sets $script:RefuseReads, a read is
+        # recorded and refused: the refused document must read nothing, and a read that some layer
+        # catches is still on the record.
+        function script:Assert-ReadAllowed {
+            param([string]$Name)
+            if ($script:RefuseReads) {
+                $script:ReadsAfterRefusal.Add($Name)
+                throw "read after refusal: $Name"
+            }
         }
     }
 
-    BeforeEach {
+    AfterAll {
         InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+    }
+
+    BeforeEach {
+        # A session for the fixture tenant, as Initialize-OERAuth would leave it: the export names the
+        # tenant its Microsoft Graph token was issued for (TokenTenantId), and the apply compares the
+        # document's tenantId with it after the mocked sign-in.
+        InModuleScope $script:moduleName -Parameters @{ T = $script:Tenant } {
+            param($T)
+            $script:_OERAuthState = @{ TenantId = $T; AuthMethod = 'Interactive'; ClientId = ''; Environment = 'Global'; TokenTenantId = $T }
+        }
+        $script:RefuseReads = $false
+        $script:ReadsAfterRefusal = [System.Collections.Generic.List[string]]::new()
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected transport call: $Uri" }
 
         # The readers answer the export (unfiltered) and the apply (filtered by -Role and -PrincipalId)
         # from the same fixture list.
         Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment {
+            Assert-ReadAllowed -Name 'Get-OEREligibleDirectoryRoleAssignment'
             @($script:LiveEligible | Where-Object {
                     (-not $Role -or $_.RoleDefinitionId -eq $Role) -and (-not $PrincipalId -or $_.PrincipalId -eq $PrincipalId)
                 })
         }
         Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment {
+            Assert-ReadAllowed -Name 'Get-OERActiveDirectoryRoleAssignment'
             @($script:LiveActive | Where-Object {
                     (-not $Role -or $_.RoleDefinitionId -eq $Role) -and (-not $PrincipalId -or $_.PrincipalId -eq $PrincipalId)
                 })
         }
         Mock -ModuleName $script:moduleName Get-OERDirectoryRoleManagementPolicy {
+            Assert-ReadAllowed -Name 'Get-OERDirectoryRoleManagementPolicy'
             if ($All) { return $script:LivePolicies }
             $RoleId = $script:RoleIdByReference[[string]$Role]
             @($script:LivePolicies | Where-Object { $_.RoleDefinitionId -eq $RoleId })
         }
         Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            Assert-ReadAllowed -Name 'Resolve-OERPrincipalName'
             $Map = @{}
             foreach ($One in @($Id)) {
                 $Map[$One] = $(if ($script:NameById.ContainsKey($One)) { $script:NameById[$One] } else { $One })
             }
             $Map
         }
-        Mock -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId { $script:RoleIdByReference[[string]$Role] }
-        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { $script:PrincipalIdByReference[[string]$Reference] }
-        Mock -ModuleName $script:moduleName Get-OERSignedInObjectId { $script:SignedIn }
-        Mock -ModuleName $script:moduleName Get-OERMemberGroupId {}
+        Mock -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId {
+            Assert-ReadAllowed -Name 'Resolve-OERDirectoryRoleDefinitionId'
+            $script:RoleIdByReference[[string]$Role]
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal {
+            Assert-ReadAllowed -Name 'Resolve-OERStructurePrincipal'
+            $script:PrincipalIdByReference[[string]$Reference]
+        }
+        Mock -ModuleName $script:moduleName Get-OERSignedInObjectId {
+            Assert-ReadAllowed -Name 'Get-OERSignedInObjectId'
+            $script:SignedIn
+        }
+        Mock -ModuleName $script:moduleName Get-OERMemberGroupId { Assert-ReadAllowed -Name 'Get-OERMemberGroupId' }
 
         # The writers: any call is visible, and none is expected.
         Mock -ModuleName $script:moduleName New-OEREligibleDirectoryRoleAssignment {}
@@ -227,6 +272,8 @@ Describe 'Directory role inventory round trip' {
 
     It 'exports the managed rows and the policies of the roles in use, and nothing else' {
         $Doc = Export-DirectoryDocument
+        # The export names the tenant the session's Microsoft Graph token was issued for (BL-88, A14).
+        $Doc.tenantId | Should -BeExactly $script:Tenant
         @($Doc.directoryRoleManagementPolicies).role | Should -Be @('Fixture Custom Role', 'Reports Reader')
         @($Doc.directoryRoleAssignments | ForEach-Object {
                 "$($_.role)|$($_.assignmentType)|$($_.principal)|$($_.principalType)|$($_.durationDays)"
@@ -282,6 +329,44 @@ Describe 'Directory role inventory round trip' {
         @($Results | ForEach-Object { "$($_.Section)|$($_.Item)" } | Sort-Object) | Should -Be @($ExpectedItems | Sort-Object)
         @($ApplyErr) | Should -BeNullOrEmpty
         @($ApplyWarn) | Should -BeNullOrEmpty
+
+        Should -Invoke -ModuleName $script:moduleName New-OEREligibleDirectoryRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERActiveDirectoryRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERActiveDirectoryRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERDirectoryRoleManagementPolicy -Times 0
+    }
+
+    It 'refuses the export in another tenant with DocumentTenantMismatch, reading and writing nothing for it' {
+        $Doc = Export-DirectoryDocument
+        $Doc.tenantId | Should -BeExactly $script:Tenant
+
+        # The session moves to another tenant before the apply: Invoke-OERStructure begins under it, so
+        # the pipeline session rule (BL-76) has nothing to refuse, and with the sign-in mocked only the
+        # comparison of the document's tenantId with the token's tenant after it stands between this
+        # document and a -Prune run in the wrong tenant. From here on every read is recorded and refused.
+        InModuleScope $script:moduleName -Parameters @{ T = $script:OtherTenant } {
+            param($T)
+            $script:_OERAuthState.TenantId = $T
+            $script:_OERAuthState.TokenTenantId = $T
+        }
+        $script:RefuseReads = $true
+
+        $Results = @(Invoke-OERStructure -InputObject $Doc -Prune -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable ApplyErr -WarningAction SilentlyContinue -WarningVariable ApplyWarn)
+
+        $Results | Should -BeNullOrEmpty -Because 'a refused document is applied to no section'
+        $script:ReadsAfterRefusal -join ', ' | Should -BeNullOrEmpty -Because 'nothing is read for a refused document'
+        # The command's own record, narrowed by the command that wrote it (rationale #bearer-scrub-tests).
+        $Own = @($ApplyErr | Where-Object { $_.InvocationInfo.MyCommand.Name -eq 'Invoke-OERStructure' })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -BeExactly 'DocumentTenantMismatch,Invoke-OERStructure'
+        $Own[0].Exception.Message | Should -Match ([regex]::Escape("names tenant '$($script:Tenant)'"))
+        $Own[0].Exception.Message | Should -Match ([regex]::Escape("issued for tenant '$($script:OtherTenant)'"))
+        @($ApplyWarn) | Should -BeNullOrEmpty -Because 'the refusal is an error record, and nothing that could warn runs after it'
+        # One sign-in for the export and one for the apply: the refusal is the comparison after the
+        # apply's sign-in, since no -TenantId was named for the one before it.
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 2 -Exactly
 
         Should -Invoke -ModuleName $script:moduleName New-OEREligibleDirectoryRoleAssignment -Times 0
         Should -Invoke -ModuleName $script:moduleName New-OERActiveDirectoryRoleAssignment -Times 0

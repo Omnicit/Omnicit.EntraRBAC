@@ -1,7 +1,43 @@
 BeforeDiscovery {
-    # The twelve cmdlets that send a PIM schedule request and emit its answer (BL-33). Each must ask
-    # the owner whether the answer is a failure; a thirteenth joins this list.
+    # The cohort is DERIVED from the files (BL-99), never listed by hand: every cmdlet under
+    # source/Public whose syntax tree holds a string -- single-quoted, double-quoted or expandable --
+    # that matches ScheduleRequests, case-insensitively. That is how each of them names the PIM
+    # schedule request resource it sends to, whether the path is written out (Graph v1.0, ARM) or
+    # handed to Get-OERPimGroupsGraphPath (Graph beta). Each must ask the owner whether the answer is
+    # a failure (BL-33). A new sender is found by this derivation and must call the owner; nothing
+    # joins a list by hand. Static only: the files are parsed and nothing in them runs.
+    #
+    # What the derivation does NOT see: a path assembled at run time from pieces, a path held in a
+    # Private helper, and any file outside source/Public. Send-OERNewGroupEligibilityRequest is such
+    # a helper; the one wait of Sync-OERStructureGroup that calls it asks the owner itself, and that
+    # wait is held by the behaviour tests in Sync-OERStructureGroup.Tests.ps1, not here. The
+    # derivation can also be too wide: a cmdlet that only READS a schedule request resource would
+    # join the cohort and fail the owner check below. That red is the prompt to narrow the
+    # derivation to senders, never to hand-list an exemption.
+    $SourceRootAtDiscovery = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../../source')).Path
     $script:ScheduleRequestCohort = @(
+        foreach ($File in (Get-ChildItem -LiteralPath (Join-Path $SourceRootAtDiscovery 'Public') -Filter '*.ps1' -File | Sort-Object -Property Name)) {
+            $Tokens = $null
+            $ParseErrors = $null
+            $Ast = [System.Management.Automation.Language.Parser]::ParseFile($File.FullName, [ref]$Tokens, [ref]$ParseErrors)
+            if (@($ParseErrors).Count -gt 0) {
+                throw "Cannot derive the schedule request cohort: $($File.Name) does not parse ($($ParseErrors[0].Message))."
+            }
+            $PathStrings = @($Ast.FindAll({
+                        param($Node)
+                        ($Node -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                        $Node -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) -and
+                        $Node.Value -match '(?i)ScheduleRequests'
+                    }, $true))
+            if ($PathStrings.Count -gt 0) { $File.BaseName }
+        }
+    )
+
+    # The twelve cmdlets the rule was written for in BL-33, listed by hand ONCE as a CONTROL on the
+    # derivation above, not as the cohort: every one of them must be in the derived set, so a
+    # derivation that stops matching cannot silently shrink the cohort and leave every check green
+    # on the smaller set.
+    $script:ScheduleRequestKnownSenders = @(
         'Add-OERGroupEligibility'
         'Remove-OERGroupEligibility'
         'New-OEREligibleDirectoryRoleAssignment'
@@ -72,10 +108,11 @@ Describe 'Test-OERScheduleRequestFailed' {
 }
 
 Describe 'Test-OERScheduleRequestFailed cohort: the single owner of the Failed-status rule (BL-33)' -ForEach @(
-    @{ Cohort = $script:ScheduleRequestCohort }
+    @{ Cohort = $script:ScheduleRequestCohort; KnownSenders = $script:ScheduleRequestKnownSenders }
 ) {
-    # Static: the source files are read and parsed, nothing in them runs. The cohort list comes in as
-    # this block's data, so the run phase sees the same list that discovery expanded.
+    # Static: the source files are read and parsed, nothing in them runs. The derived cohort and the
+    # known-senders control come in as this block's data, so the run phase sees the same sets that
+    # discovery expanded.
     BeforeAll {
         $script:SourceRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../../source')).Path
         $script:OwnerFile = Join-Path $script:SourceRoot 'Private/Test-OERScheduleRequestFailed.ps1'
@@ -96,8 +133,13 @@ Describe 'Test-OERScheduleRequestFailed cohort: the single owner of the Failed-s
         }
     }
 
-    It 'lists the twelve cmdlets of the cohort' {
-        @($Cohort).Count | Should -Be 12
+    It 'derives at least the twelve senders known when the rule was written, all of them' {
+        # The control for the derivation in BeforeDiscovery: a pattern that stopped matching, or a
+        # path moved into a helper, would shrink the cohort, and every check below would stay green
+        # on the smaller set. A thirteenth sender raises the count and fails nothing here.
+        $Missing = @($KnownSenders | Where-Object { $_ -notin @($Cohort) })
+        $Missing | Should -BeNullOrEmpty -Because 'every cmdlet the rule was written for must still be found by the derivation'
+        @($Cohort).Count | Should -BeGreaterOrEqual 12
     }
 
     It '<_> asks Test-OERScheduleRequestFailed whether the answer is a failure' -ForEach $Cohort {

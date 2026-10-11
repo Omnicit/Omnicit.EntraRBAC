@@ -4,7 +4,7 @@
 
 `Omnicit.EntraRBAC` manages Entra ID groups, PIM (eligibility and activation), Administrative
 Units, Entitlement Management (catalogs, access packages, assignments), Access Reviews, and Azure
-RBAC across customer tenants. Used as intended, it operates with Global-Admin-class privilege in
+RBAC across many tenants. Used as intended, it operates with Global-Admin-class privilege in
 every tenant it is pointed at. A vulnerability here -- an authentication bypass, a token leak, a
 scope-widening bug in the apply engine, or anything that lets it act against the wrong tenant -- is
 a tenant-compromise vulnerability, not an ordinary bug.

@@ -13,7 +13,7 @@ Entitlement Management (Catalogs, Access Packages, Resources), Access Reviews, A
 RBAC, Azure PIM, plus a JSON inventory and a declarative apply engine. It is built and maintained by
 Omnicit AB, is MIT licensed, and is published on the public PowerShell Gallery for anyone to use.
 
-All 92 cmdlets carry the `OER` command prefix. Every cmdlet has full comment-based help, so
+All 98 cmdlets carry the `OER` command prefix. Every cmdlet has full comment-based help, so
 `Get-Help <cmdlet> -Full` and `Get-Help about_Omnicit.EntraRBAC` are authoritative for details this
 README summarises. `Get-OERRequiredScope` is authoritative for permissions -- see
 [Permissions](#permissions).

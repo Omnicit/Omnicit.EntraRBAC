@@ -52,6 +52,41 @@ BeforeAll {
         'Invoke-RestMethod', 'Get-AzToken', 'Connect-MgGraph', 'Connect-AzAccount'
     )
 
+    # ONE resolver of what a call really names, for this gate (Pass 1 below) and for the transport gate
+    # hygiene scans (Pass 9) alike, so the two can never disagree about what a transport call is (BL-93):
+    # a call written `irm` or `Microsoft.PowerShell.Utility\Invoke-RestMethod` reaches the wire exactly
+    # as `Invoke-RestMethod` does. A module-qualified name is the same command, and so is one of the
+    # Invoke-WebRequest aliases (iwr, curl, wget) or irm, the Invoke-RestMethod alias. Nothing else is
+    # resolved: any other alias, and a name built at run time, stay what GetCommandName() returns. The
+    # map is a default hashtable, so its keys match in any letter case, as PowerShell resolves them.
+    $script:transportCommandAliases = @{ iwr = 'Invoke-WebRequest'; curl = 'Invoke-WebRequest'; wget = 'Invoke-WebRequest'; irm = 'Invoke-RestMethod' }
+
+    # The bare, alias-resolved name of a command, or $null for none.
+    function Resolve-OERTransportCommandName {
+        param([string]$Name)
+
+        if ([string]::IsNullOrEmpty($Name)) { return $null }
+        $Bare = $Name -replace '^.*\\', ''
+        if ($script:transportCommandAliases.ContainsKey($Bare)) { return $script:transportCommandAliases[$Bare] }
+        return $Bare
+    }
+
+    # Pass 1's direct-transport classification of one file, held in ONE function so that the gate's
+    # known-answer It (in Bearer-token hygiene) runs the very test Pass 1 runs: true when any of the
+    # command names the file calls (GetCommandName() of each CommandAst) resolves, through
+    # Resolve-OERTransportCommandName, into $script:transportCommands. Every call is counted, and Pass 1
+    # records how many it made, so a Pass 1 that classifies a file without this function is seen too.
+    $script:transportClassificationCount = 0
+    function Test-OERCallsTransportDirectly {
+        param([string[]]$CommandNames)
+
+        $script:transportClassificationCount++
+        foreach ($Name in $CommandNames) {
+            if ($script:transportCommands -contains (Resolve-OERTransportCommandName -Name $Name)) { return $true }
+        }
+        return $false
+    }
+
     # Catch clauses that legitimately do NOT scrub. Keyed by file, but a file entry alone is NOT
     # enough to exempt: the catch's own try body must ALSO satisfy Test-OERResolveNameOnlyTry below,
     # and that structural shape IS the written justification. Keying on the file alone would silently
@@ -168,6 +203,11 @@ BeforeAll {
             source/Private/Remove-OERErrorRecord.ps1 carries the literal 'Invoke-MgGraphRequest
             @InvokeParams' inside its .EXAMPLE help block, so a grep scores it as a transport file and
             then reports its non-scrubbing catch as a violation. The AST never sees comment tokens.
+            The names are judged by Test-OERCallsTransportDirectly (above), through
+            Resolve-OERTransportCommandName, so an alias the resolver knows (irm, iwr, curl, wget) or a
+            module-qualified transport name marks the file too. The call edges of Pass 2 below still
+            match a module function's literal name only, so a module-qualified call of a MODULE
+            function (Omnicit.EntraRBAC\Resolve-OERGroupId) creates no edge.
 
             ONE FindAll walk collects all five node kinds into four buckets, filled with a plain
             foreach. Three separate walks cost 2.2s across source/ against 1.0s merged, and a
@@ -194,7 +234,6 @@ BeforeAll {
         # The Initialize-OERAuth call nodes themselves, kept for the Transport gate hygiene Describe's
         # sign-in call-site rule (Pass 9), which needs each call's place in the tree, not only its name.
         $SignInCalls = [System.Collections.Generic.List[object]]::new()
-        $CallsTransport = $false
         $IsDurationEncoder = (($File.RelativePath -replace '/', '\') -eq $script:durationFormatEncoderPath)
 
         foreach ($Node in $Nodes) {
@@ -202,9 +241,6 @@ BeforeAll {
                 $CommandName = $Node.GetCommandName()
                 if ($CommandName) {
                     $CommandNames.Add($CommandName)
-                    if (-not $CallsTransport -and $script:transportCommands -contains $CommandName) {
-                        $CallsTransport = $true
-                    }
                     if (($CommandName -replace '^.*\\', '') -eq 'Initialize-OERAuth') {
                         $SignInCalls.Add($Node)
                     }
@@ -239,6 +275,9 @@ BeforeAll {
                 $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst]
             }, $false) | Select-Object -First 1
 
+        # The direct-transport test, through the one function the known-answer It runs as well.
+        $CallsTransport = Test-OERCallsTransportDirectly -CommandNames $CommandNames
+
         $script:sourceUnits.Add([PSCustomObject]@{
                 RelativePath   = ($File.RelativePath -replace '/', '\')
                 FunctionName   = if ($Definition) { $Definition.Name } else { $null }
@@ -250,8 +289,13 @@ BeforeAll {
                 Edges          = $null
                 Definition     = $Definition
                 SignInCalls    = $SignInCalls
+                # The whole file's tree, for the tenant-forward rule (Pass 9), which reads every call of
+                # a command that signs in wherever in the file it stands.
+                Ast            = $FileAst
             })
     }
+    # How many files Pass 1 classified through Test-OERCallsTransportDirectly: one per source unit.
+    $script:pass1TransportClassifications = $script:transportClassificationCount
 
     <#
         =====================================================================================
@@ -332,8 +376,10 @@ BeforeAll {
 
         It is also not a cost. Over source/ it settles in 3 passes (two productive, one confirming no
         change), and alternating cold runs put it within noise of the DFS it replaced -- both around
-        4s for the whole BeforeAll, which the single AST walk in pass 1 dominates. Census is
-        identical either way: 117 transport-reaching files, 318 of the 338 catches in source/.
+        4s for the whole BeforeAll, which the single AST walk in pass 1 dominates. The census was
+        identical either way when that was measured: 117 transport-reaching files, 318 of the 338
+        catches in source/. The tree has grown since: 151 transport-reaching files and 408 of the
+        438 catches, measured with the fixed point alone in Sprint 10 step 10.
     #>
     $script:transportReach = @{}
     foreach ($Unit in $script:sourceUnits) {
@@ -1439,9 +1485,13 @@ BeforeAll {
         Get-OERDocumentTenantMismatch, the single owner of the comparison of a document's tenantId
         (BL-88, A14), is called only by Invoke-OERStructure, so a second apply path cannot compare -- or
         skip comparing -- on rules of its own.
-        Each row of $script:transportGateOwners is enforced only by its own It below, which asserts that
-        the command has no caller outside its owners and that its owners really call it: no assertion
-        reads the table as a whole, so a new row needs its own It, and a row without one is inert.
+        Every row of $script:transportGateOwners is enforced by the It that reads the table as a whole
+        (BL-101): for each row, no caller outside its owners and every owner really calling it, with
+        at least thirteen rows, one row per command, and a call found for every row's command. So a
+        row added without an It of its own is enforced all the same -- before BL-101 such a row was
+        inert, since each row was asserted only by its own It. The per-row Its below still assert
+        their own row and carry that row's reason: a new row still gets one, for its explanation, but
+        no longer needs one to be enforced.
 
         WHO MAY NAME THE RECLAIM (Sprint 9 step 3, final review I2, Ruling F2). -ReclaimGraphSession
         is the one way past the session gate's refusal in Initialize-OERAuth (A18) and past the
@@ -1451,7 +1501,38 @@ BeforeAll {
         it, and both must really name it. A parameter of that name on any command, a prefix of it on an
         Initialize-OERAuth call (PowerShell binds -R to it), a variable or parameter declaration in any
         scope, and a string constant or expandable string holding it -- a member name, a hashtable key,
-        an index -- each count; comments do not, since the AST never sees them.
+        an index -- each count; comments do not, since the AST never sees them. A shorter prefix of it
+        written as a key of a hashtable splatted into an Initialize-OERAuth call counts too (BL-93), since
+        a splat binds an abbreviated key as the command line binds an abbreviated parameter: a key the
+        call's own function writes into the splat variable by a literal ($P = @{ Recl = $true }, or +=),
+        a member or index assignment, or .Add (Find-OERSplatKeyWrite). And since Connect-OER passes the
+        switch on its own, no file under source/ may call Connect-OER at all (BL-93): a call of it is a
+        second reclaim caller that no name scan sees.
+
+        WHO MAY FORWARD A TENANT (BL-96). An internal call passes -TenantId on to a command that signs in
+        only when it is set -- if ($TenantId) { $AuthParams.TenantId = $TenantId } -- never an empty
+        value: Initialize-OERAuth reads an empty -TenantId as no tenant named and acts on the current
+        session's tenant, and every public -TenantId but Connect-OER's carries [ValidateNotNullOrEmpty()],
+        which stops the cmdlet at binding. The commands that sign in ($script:signInCommands) are
+        Initialize-OERAuth and every module function that calls it, directly (by a name that resolves to
+        it) or through the call edges of Pass 2, found by a boolean fixed point as transportReach is. A
+        site is a parameter whose name is a prefix of TenantId (-TenantId, -Tenant, -TenantId:$X) on a
+        call of one of them, and a TenantId key, in any letter case, that the call's own function writes
+        into a variable it splats into one, in the four shapes Find-OERSplatKeyWrite reads. A positional
+        argument written on a call of Initialize-OERAuth is a site too, and always a violation: -TenantId
+        is Initialize-OERAuth's first parameter, so it binds by position 0, and the value is never judged.
+        A value that follows a parameter is that parameter's, unless the parameter's name is a prefix of
+        one of Initialize-OERAuth's switches, which take none ($script:signInSwitchParameters: the
+        switches its param block declares, and -Verbose and -Debug, which its [CmdletBinding()] adds),
+        or is vb or db, their aliases (final review F1: Initialize-OERAuth -Verbose $TenantId binds
+        $TenantId to -TenantId by position). A site is
+        guarded when its value is a non-empty string literal, or a variable and the site lies in the body
+        of an if or elseif clause -- never an else -- whose condition is that variable alone, at any
+        depth. Any other site is a violation, unless an entry of $script:tenantForwardExemptions names it
+        by its file, its splat variable and the exact text of its value: Connect-OER's own call, the
+        documented exception, and the three transport refreshes, which renew the session's own sign-in
+        with the state's tenant label. Each entry must match exactly one site, so an entry cannot unguard
+        another site of its file, and one that matches none is stale.
 
         THE MARKER IS SET WHERE THE LATCH IS SET, AND PUT BACK WHERE IT IS RELEASED. In
         Initialize-OERAuth exactly three Set-OERSessionUncertain calls stand, each a statement of its own
@@ -1495,11 +1576,44 @@ BeforeAll {
         that, so a new success end is a deliberate edit of that number. A command name built at run
         time (a call through a variable) is invisible to GetCommandName(), the same limit the Az
         context gate records. The ownership scan resolves a module-qualified name, the three
-        Invoke-WebRequest aliases and the Invoke-RestMethod alias irm, and nothing else. A bearer read
-        spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a marker. The
-        reclaim rule cannot see a name built at run time ('Reclaim' + 'GraphSession'), an abbreviated
-        key in a hashtable splatted into Initialize-OERAuth (@{ Recl = $true }, which binds), or a
-        call of Connect-OER itself from another source file, which passes the switch on its own.
+        Invoke-WebRequest aliases and the Invoke-RestMethod alias irm, and nothing else -- through
+        Resolve-OERTransportCommandName, which the bearer-scrub gate's transport detection shares. A
+        bearer read spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a
+        marker. The reclaim rule cannot see a name or a key built at run time ('Reclaim' +
+        'GraphSession'), a key merged into the splat from another variable ($P += $Other), a hashtable
+        literal wrapped in a cast or [ordered], a key written into the splat variable outside the
+        function that calls Initialize-OERAuth, a key that reaches the splat through parameter binding
+        (a parameter named with a prefix of the switch, forwarded with @PSBoundParameters), a shorter
+        prefix written as a key in any shape other than the four Find-OERSplatKeyWrite reads -- for
+        example through a second variable holding the same hashtable ($Q = $P; $Q.Rec = $true), as a
+        hashtable from a command, a parenthesised or sub-expression or a + expression
+        ($P = (@{ Rec = $true }), $P = $P + @{ Rec = $true }), with .set_Item() or .Item(...) =, or as
+        a parameter default (param($P = @{ Rec = $true })) -- or a call of Connect-OER through a name
+        built at run time. The tenant-forward rule judges the variable a guard tests, not what was
+        assigned to it: a variable reassigned between the if and the write
+        passes, and an exemption names the text of its value, not where that variable got its value
+        (the claims step-up's $TenantId). It cannot see a splat built outside the function that calls the
+        command (in another function, or handed in as a parameter), a key merged in from another
+        variable ($A += $Other), a hashtable literal wrapped in a cast or [ordered], a key or a
+        parameter name built at run time, an abbreviated key in a splat (@{ Tenant = $T }; an
+        abbreviated parameter is seen), a tenant forwarded with @PSBoundParameters or @args, any
+        TenantId key written in a shape other than the four Find-OERSplatKeyWrite reads -- for example
+        through a second variable holding the same hashtable ($B = $A; $B.TenantId = $T), as a
+        hashtable from a command, a parenthesised or sub-expression or a + expression
+        ($A = (@{ TenantId = $T }), $A = $A + @{ TenantId = $T }), with .set_Item() or .Item(...) =,
+        or as a parameter default (param($A = @{ TenantId = $T })) -- or a call through a name built
+        at run time; and a module function that reaches a sign-in only through a module-qualified call
+        of another module function (Omnicit.EntraRBAC\Get-OERGroup) gets no call edge for that call, so
+        the fixed point leaves it out of the set. A positional argument is seen on Initialize-OERAuth
+        alone, and there only when it is written on the call, not handed over in an array splat: on
+        every other command that signs in it can bind -TenantId by position unseen -- by an automatic
+        position where a function declares none, and on Get-OERManagementGroup by the Position 1 its
+        -TenantId declares. The switch list reads no [Alias()] declared on a switch and no -WhatIf or
+        -Confirm, which SupportsShouldProcess would add; Initialize-OERAuth declares neither, and a
+        positional argument after either would be read as its value. The guard walk climbs from the
+        site to the top of the file, across function and script-block boundaries ("at any depth"), so an
+        if ($TenantId) around a nested function or a script block guards a site inside it, though that
+        code may run where the test no longer holds.
         =====================================================================================
     #>
     $script:transportGateGraphPath = 'source\Private\Invoke-OERGraphRequest.ps1'
@@ -1530,19 +1644,8 @@ BeforeAll {
         [PSCustomObject]@{ Command = 'Set-OERSessionUncertain'; Owners = @('source\Private\Initialize-OERAuth.ps1', 'source\Public\Connect-OER.ps1', 'source\Public\Disconnect-OER.ps1') }
         [PSCustomObject]@{ Command = 'Get-OERDocumentTenantMismatch'; Owners = @('source\Public\Invoke-OERStructure.ps1') }
     )
-    $script:transportGateAliases = @{ iwr = 'Invoke-WebRequest'; curl = 'Invoke-WebRequest'; wget = 'Invoke-WebRequest'; irm = 'Invoke-RestMethod' }
-
-    # The command a call really names: a module-qualified call (Microsoft.PowerShell.Utility\Invoke-WebRequest)
-    # is the same command, and so is one of the Invoke-WebRequest aliases or irm, the Invoke-RestMethod alias.
-    function Resolve-OERTransportCommandName {
-        param([string]$Name)
-
-        if ([string]::IsNullOrEmpty($Name)) { return $null }
-        $Bare = $Name -replace '^.*\\', ''
-        if ($script:transportGateAliases.ContainsKey($Bare)) { return $script:transportGateAliases[$Bare] }
-        return $Bare
-    }
-
+    # The command a call really names, through Resolve-OERTransportCommandName -- defined once, ahead of
+    # Pass 1, and shared with the bearer-scrub gate's transport detection.
     function Get-OERCallName {
         param($CommandAst)
 
@@ -2398,14 +2501,123 @@ BeforeAll {
             }, $true)
     }
 
+    # True when $Ast is the variable $Name, read without any scope: prefix and in any letter case.
+    function Test-OERVariableNamed {
+        param($Ast, [string]$Name)
+
+        return ($Ast -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            (($Ast.VariablePath.UserPath -replace '^[A-Za-z]+:', '') -eq ($Name -replace '^[A-Za-z]+:', '')))
+    }
+
+    # THE FOUR WAYS A KEY IS WRITTEN INTO A SPLAT (BL-93). Every key node -- a constant string -- that
+    # $Scope writes into the hashtable held in the variable $Variable (named without its scope: prefix,
+    # in any letter case), in these four shapes and no other:
+    #   1. a member assignment            $V.Key = ...
+    #   2. an index assignment            $V['Key'] = ...
+    #   3. a hashtable literal assigned   $V = @{ Key = ... }   or   $V += @{ Key = ... }
+    #   4. an Add call                    $V.Add('Key', ...)
+    # Not returned: a key that is not a constant (held in a variable, or built at run time), a key merged
+    # in from another variable ($V += $Other), a literal wrapped in a cast or [ordered], and a write made
+    # outside $Scope. The whole scope is searched, nested script blocks and functions included.
+    function Find-OERSplatKeyWrite {
+        param($Scope, [string]$Variable)
+
+        $Writes = $Scope.FindAll({
+                $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] -or
+                $args[0] -is [System.Management.Automation.Language.InvokeMemberExpressionAst]
+            }, $true)
+        foreach ($Write in $Writes) {
+            if ($Write -is [System.Management.Automation.Language.InvokeMemberExpressionAst]) {
+                # 4. $V.Add('Key', ...)
+                $Arguments = @($Write.Arguments)
+                if ((Test-OERVariableNamed -Ast $Write.Expression -Name $Variable) -and
+                    $Write.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                    $Write.Member.Value -eq 'Add' -and $Arguments.Count -gt 0 -and
+                    $Arguments[0] -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                    $Arguments[0]
+                }
+                continue
+            }
+            $Left = $Write.Left
+            if ($Left -is [System.Management.Automation.Language.MemberExpressionAst]) {
+                # 1. $V.Key = ...
+                if ((Test-OERVariableNamed -Ast $Left.Expression -Name $Variable) -and
+                    $Left.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                    $Left.Member
+                }
+            } elseif ($Left -is [System.Management.Automation.Language.IndexExpressionAst]) {
+                # 2. $V['Key'] = ...
+                if ((Test-OERVariableNamed -Ast $Left.Target -Name $Variable) -and
+                    $Left.Index -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                    $Left.Index
+                }
+            } elseif ((Test-OERVariableNamed -Ast $Left -Name $Variable) -and
+                $Write.Operator -in [System.Management.Automation.Language.TokenKind]::Equals, [System.Management.Automation.Language.TokenKind]::PlusEquals) {
+                # 3. $V = @{ Key = ... } or $V += @{ Key = ... }: the hashtable must be the whole
+                # right-hand side, so a literal handed to a command is not the splat's. The parser gives
+                # a lone expression as a CommandExpressionAst, not as a pipeline of one element; both
+                # forms are read.
+                $Elements = if ($Write.Right -is [System.Management.Automation.Language.PipelineAst]) { @($Write.Right.PipelineElements) } else { @($Write.Right) }
+                if ($Elements.Count -eq 1 -and $Elements[0] -is [System.Management.Automation.Language.CommandExpressionAst] -and
+                    $Elements[0].Expression -is [System.Management.Automation.Language.HashtableAst]) {
+                    foreach ($Pair in $Elements[0].Expression.KeyValuePairs) {
+                        if ($Pair.Item1 -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $Pair.Item1 }
+                    }
+                }
+            }
+        }
+    }
+
+    # Every abbreviated ReclaimGraphSession key written into a hashtable that is splatted into a call of
+    # Initialize-OERAuth (BL-93): a splat binds an abbreviated key exactly as the command line binds an
+    # abbreviated parameter, so `$P = @{ Recl = $true }; Initialize-OERAuth @P` passes the switch. For
+    # each splatted variable of each such call, the writes are read (Find-OERSplatKeyWrite) in the
+    # call's nearest enclosing function, or in $Ast itself when there is none. A key is reported when it
+    # is a shorter prefix of the name in any letter case: the full name is a string constant, so
+    # Find-OERReclaimGraphSessionName already reports it, and counting it twice would only double an
+    # owner's sites. Each key node is reported once, however many calls splat its variable. -Census, when
+    # given, counts the splatted variables read (Calls) and the distinct keys read from their writes
+    # (Keys), whatever their names, so the real tree's scan can show it read the tree's splats.
+    function Find-OERReclaimSplatKey {
+        param($Ast, [hashtable]$Census)
+
+        $FullName = 'ReclaimGraphSession'
+        $Read = [System.Collections.Generic.HashSet[object]]::new()
+        foreach ($Call in @(Find-OERCallNamed -Ast $Ast -Name 'Initialize-OERAuth')) {
+            foreach ($Element in $Call.CommandElements) {
+                if ($Element -isnot [System.Management.Automation.Language.VariableExpressionAst] -or -not $Element.Splatted) { continue }
+                if ($null -ne $Census) { $Census.Calls++ }
+                $Scope = $Call.Parent
+                while ($null -ne $Scope -and -not [System.Object]::ReferenceEquals($Scope, $Ast) -and
+                    $Scope -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                    $Scope = $Scope.Parent
+                }
+                if ($null -eq $Scope) { $Scope = $Ast }
+                foreach ($Key in @(Find-OERSplatKeyWrite -Scope $Scope -Variable $Element.VariablePath.UserPath)) {
+                    if (-not $Read.Add($Key)) { continue }
+                    if ($null -ne $Census) { $Census.Keys++ }
+                    $Value = [string]$Key.Value
+                    if ($Value.Length -gt 0 -and $Value.Length -lt $FullName.Length -and
+                        $FullName.StartsWith($Value, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $Key
+                    }
+                }
+            }
+        }
+    }
+
     # A file whose text names ReclaimGraphSession is parsed again and searched whole. Any other file can
     # bind the switch only through an abbreviated parameter on an Initialize-OERAuth call, so only the
-    # call nodes Pass 1 kept for the sign-in call-site rule are searched there.
+    # call nodes Pass 1 kept for the sign-in call-site rule are searched there -- or through an
+    # abbreviated key splatted into one, so its top-level function is searched for those
+    # (Find-OERReclaimSplatKey). A call outside that function is a violation of the sign-in call-site
+    # rule below on its own.
     $script:reclaimOwnerPaths = @('source\Private\Initialize-OERAuth.ps1', 'source\Public\Connect-OER.ps1')
     $script:reclaimOwnerSites = @{}
     foreach ($Owner in $script:reclaimOwnerPaths) { $script:reclaimOwnerSites[$Owner] = 0 }
     $script:reclaimViolations = [System.Collections.Generic.List[string]]::new()
     $script:reclaimFilesSearched = 0
+    $script:reclaimSplatCensus = @{ Calls = 0; Keys = 0 }
     $ReclaimUnits = @{}
     foreach ($Unit in $script:sourceUnits) { $ReclaimUnits[$Unit.RelativePath] = $Unit }
     foreach ($File in $script:hygieneFiles) {
@@ -2413,6 +2625,7 @@ BeforeAll {
         if ($File.Extension -notin '.ps1', '.psm1', '.psd1') { continue }
         $Relative = $File.RelativePath -replace '/', '\'
         $References = @()
+        $SplatKeys = @()
         if ($File.Text -match 'ReclaimGraphSession') {
             $script:reclaimFilesSearched++
             $ReclaimTokens = $null
@@ -2424,14 +2637,26 @@ BeforeAll {
                 continue
             }
             $References = @(Find-OERReclaimGraphSessionName -Ast $ReclaimAst)
+            $SplatKeys = @(Find-OERReclaimSplatKey -Ast $ReclaimAst -Census $script:reclaimSplatCensus)
         } elseif ($ReclaimUnits.ContainsKey($Relative)) {
             $References = @(foreach ($Call in $ReclaimUnits[$Relative].SignInCalls) { Find-OERReclaimGraphSessionName -Ast $Call })
+            if ($null -ne $ReclaimUnits[$Relative].Definition) {
+                $SplatKeys = @(Find-OERReclaimSplatKey -Ast $ReclaimUnits[$Relative].Definition -Census $script:reclaimSplatCensus)
+            }
         }
-        foreach ($Reference in $References) {
+        # A splat key counts exactly as a reference does; its line names the key and the splat.
+        $Sites = @(
+            foreach ($Reference in $References) { '{0}:{1} -- {2}' -f $Relative, $Reference.Extent.StartLineNumber, $Reference.Extent.Text }
+            foreach ($Key in $SplatKeys) {
+                "{0}:{1} -- key '{2}' of a hashtable splatted into Initialize-OERAuth, which binds -ReclaimGraphSession" -f
+                $Relative, $Key.Extent.StartLineNumber, $Key.Value
+            }
+        )
+        foreach ($Site in $Sites) {
             if ($script:reclaimOwnerSites.ContainsKey($Relative)) {
                 $script:reclaimOwnerSites[$Relative]++
             } else {
-                $script:reclaimViolations.Add(('{0}:{1} -- {2}' -f $Relative, $Reference.Extent.StartLineNumber, $Reference.Extent.Text))
+                $script:reclaimViolations.Add($Site)
             }
         }
     }
@@ -2459,16 +2684,447 @@ BeforeAll {
         @{ Case = 'an abbreviation on another command'; Expect = 0; Text = 'Get-ChildItem -R' }
         @{ Case = 'another switch of Initialize-OERAuth'; Expect = 0; Text = 'Initialize-OERAuth -IncludeARM -ForceRefresh' }
         @{ Case = 'a longer variable name'; Expect = 0; Text = '$ReclaimGraphSessionAfter = 1' }
+        @{ Case = 'an abbreviated key in a hashtable literal splatted into Initialize-OERAuth'; Expect = 1; Text = '$P = @{ Recl = $true }; Initialize-OERAuth @P' }
+        @{ Case = 'an abbreviated key set as a member of the splat'; Expect = 1; Text = '$P = @{}; $P.Rec = $true; Initialize-OERAuth @P' }
+        @{ Case = 'a one-letter key set by index, in lower case'; Expect = 1; Text = '$P = @{}; $P[''r''] = $true; Initialize-OERAuth @P' }
+        @{ Case = 'an abbreviated key added with Add'; Expect = 1; Text = '$P = @{}; $P.Add(''Reclaim'', $true); Initialize-OERAuth @P' }
+        @{ Case = 'an abbreviated key added with += on a module-qualified call'; Expect = 1; Text = '$P = @{ TenantId = $T }; $P += @{ ReclaimGraph = $true }; Omnicit.EntraRBAC\Initialize-OERAuth @P' }
+        @{ Case = 'an abbreviated key inside the function that splats it'; Expect = 1; Text = 'function F { $P = @{ Rec = $true }; Initialize-OERAuth @P }' }
+        @{ Case = 'other keys splatted into Initialize-OERAuth'; Expect = 0; Text = '$P = @{ TenantId = $T; IncludeARM = $true }; $P.ForceRefresh = $true; Initialize-OERAuth @P' }
+        @{ Case = 'an abbreviated key splatted into another command'; Expect = 0; Text = '$P = @{ Recl = $true }; Get-Thing @P' }
+        @{ Case = 'an abbreviated key in a hashtable that is not the splat'; Expect = 0; Text = '$Q = @{ Recl = $true }; $P = @{}; Initialize-OERAuth @P' }
+        @{ Case = 'an abbreviated key written in another function'; Expect = 0; Text = 'function G { $P = @{ Rec = $true } }; function F { Initialize-OERAuth @P }' }
     )
     $script:reclaimKnownAnswerFailures = [System.Collections.Generic.List[string]]::new()
     foreach ($Case in $script:reclaimKnownAnswers) {
         $CaseTokens = $null
         $CaseErrors = $null
         $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
-        $Got = @(Find-OERReclaimGraphSessionName -Ast $CaseAst).Count
+        $Got = @(Find-OERReclaimGraphSessionName -Ast $CaseAst).Count + @(Find-OERReclaimSplatKey -Ast $CaseAst).Count
         if ($CaseErrors.Count -gt 0 -or $Got -ne $Case.Expect) {
             $script:reclaimKnownAnswerFailures.Add(('{0} -- expected {1} reference(s), got {2}{3}' -f
                     $Case.Case, $Case.Expect, $Got, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
+        }
+    }
+
+    # --- No file under source/ calls Connect-OER (BL-93; see WHO MAY NAME THE RECLAIM). ---
+    # Connect-OER passes -ReclaimGraphSession on its own, so a call of it is a reclaim no name scan sees.
+    # The command names Pass 1 collected per file decide which files call it (the name module-qualified
+    # or not, and a quoted name after & as well); only those files are parsed again, from the text
+    # already read, so each call is reported with its line. A name built at run time is not seen.
+    # One function does the detection and the placement, for the real tree here and for the miniatures
+    # of the Connect-OER It, the pattern Get-OERSignInCallSiteReport follows. It reports how many units
+    # it examined (Units), how many Connect-OER calls their collected names hold (Named), how many of
+    # those it placed again in the parsed text (Placed), and one line per placed call plus one per file
+    # whose two counts differ (Lines). $TextByPath maps a unit's relative path to its text.
+    function Get-OERConnectOerCallerReport {
+        param([object[]]$Units, [hashtable]$TextByPath)
+
+        $Report = [PSCustomObject]@{
+            Units  = 0
+            Named  = 0
+            Placed = 0
+            Lines  = [System.Collections.Generic.List[string]]::new()
+        }
+        foreach ($Unit in $Units) {
+            $Report.Units++
+            $Count = @($Unit.CommandNames | Where-Object { (Resolve-OERTransportCommandName -Name $_) -eq 'Connect-OER' }).Count
+            if ($Count -eq 0) { continue }
+            $Report.Named += $Count
+            $CallerText = $TextByPath[$Unit.RelativePath]
+            $CallerCalls = @()
+            if ($null -ne $CallerText) {
+                $CallerErrors = $null
+                $CallerAst = [System.Management.Automation.Language.Parser]::ParseInput($CallerText, [ref]$null, [ref]$CallerErrors)
+                $CallerCalls = @(Find-OERCallNamed -Ast $CallerAst -Name 'Connect-OER')
+            }
+            $Report.Placed += $CallerCalls.Count
+            foreach ($Call in $CallerCalls) {
+                $Report.Lines.Add(('{0}:{1} -- calls Connect-OER: {2}' -f
+                        $Unit.RelativePath, $Call.Extent.StartLineNumber, ($Call.Extent.Text -split "`n")[0].Trim()))
+            }
+            if ($CallerCalls.Count -ne $Count) {
+                $Report.Lines.Add(('{0} -- calls Connect-OER {1} time(s) by the names Pass 1 collected, and {2} call(s) were placed again' -f
+                        $Unit.RelativePath, $Count, $CallerCalls.Count))
+            }
+        }
+        return $Report
+    }
+
+    $SourceTextByPath = @{}
+    foreach ($File in $script:hygieneFiles) {
+        if ($File.RelativePath -match '^source[\\/]') { $SourceTextByPath[($File.RelativePath -replace '/', '\')] = $File.Text }
+    }
+    $script:connectOerReport = Get-OERConnectOerCallerReport -Units $script:sourceUnits -TextByPath $SourceTextByPath
+    $script:connectOerCallers = $script:connectOerReport.Lines
+
+    # --- A tenant is forwarded only when it is set (BL-96; see WHO MAY FORWARD A TENANT in the Pass 9
+    # comment). ---
+    # The commands that sign in: Initialize-OERAuth, every module function whose collected command names
+    # include a name that resolves to it, and every module function that reaches one of those along
+    # $script:callEdges. A boolean fixed point, the shape transportReach takes in Pass 2, so a cycle is
+    # a non-event.
+    $SignInReach = @{ 'Initialize-OERAuth' = $true }
+    foreach ($Unit in $script:sourceUnits) {
+        if (-not $Unit.FunctionName) { continue }
+        $Direct = $SignInReach[$Unit.FunctionName] -eq $true
+        foreach ($Name in $Unit.CommandNames) {
+            if ((Resolve-OERTransportCommandName -Name $Name) -eq 'Initialize-OERAuth') { $Direct = $true; break }
+        }
+        $SignInReach[$Unit.FunctionName] = $Direct
+    }
+    # The seeds alone -- Initialize-OERAuth and its direct callers -- so the It can tell the set the call
+    # edges add from the set the seeds already are.
+    $script:signInDirectCommands = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($Name in @($SignInReach.Keys)) {
+        if ($SignInReach[$Name]) { $null = $script:signInDirectCommands.Add($Name) }
+    }
+    $Changed = $true
+    while ($Changed) {
+        $Changed = $false
+        foreach ($Unit in $script:sourceUnits) {
+            if (-not $Unit.FunctionName) { continue }
+            if ($SignInReach[$Unit.FunctionName]) { continue }
+            foreach ($Edge in $script:callEdges[$Unit.FunctionName]) {
+                if ($SignInReach[$Edge]) {
+                    $SignInReach[$Unit.FunctionName] = $true
+                    $Changed = $true
+                    break
+                }
+            }
+        }
+    }
+    $script:signInCommands = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($Name in @($SignInReach.Keys)) {
+        if ($SignInReach[$Name]) { $null = $script:signInCommands.Add($Name) }
+    }
+
+    # Initialize-OERAuth's switch parameters: a switch takes no value, so the element after one on a call
+    # of Initialize-OERAuth is a positional argument, not its value. The switches its own param block
+    # declares are read from it, and -Verbose and -Debug join them when that param block carries
+    # [CmdletBinding()], which adds both as common switches (final review F1: measured on a throwaway
+    # function of the same shape, -Verbose 'x', -vb, -Debug, -db and the prefixes -V and -D each leave
+    # the string to bind -TenantId by position). Their aliases vb and db are kept apart and matched whole
+    # (Test-OERSignInSwitchName); PowerShell binds a prefix of an alias too, but the one shorter prefix
+    # of either, v or d, is a prefix of Verbose or Debug already. Not read: an [Alias()] declared on a
+    # switch, and -WhatIf and -Confirm, which SupportsShouldProcess would add; Initialize-OERAuth
+    # declares neither.
+    $script:signInSwitchParameters = [System.Collections.Generic.List[string]]::new()
+    $script:signInSwitchAliases = [System.Collections.Generic.List[string]]::new()
+    $SignInUnit = @($script:sourceUnits | Where-Object { $_.FunctionName -eq 'Initialize-OERAuth' })[0]
+    if ($null -ne $SignInUnit -and $null -ne $SignInUnit.Definition.Body.ParamBlock) {
+        foreach ($Parameter in $SignInUnit.Definition.Body.ParamBlock.Parameters) {
+            if ($Parameter.StaticType -eq [System.Management.Automation.SwitchParameter]) {
+                $script:signInSwitchParameters.Add($Parameter.Name.VariablePath.UserPath)
+            }
+        }
+        foreach ($Attribute in $SignInUnit.Definition.Body.ParamBlock.Attributes) {
+            if ($Attribute.TypeName.GetReflectionAttributeType() -eq [System.Management.Automation.CmdletBindingAttribute]) {
+                $script:signInSwitchParameters.Add('Verbose')
+                $script:signInSwitchParameters.Add('Debug')
+                $script:signInSwitchAliases.Add('vb')
+                $script:signInSwitchAliases.Add('db')
+                break
+            }
+        }
+    }
+
+    # The sites that pass an unguarded tenant on by design. Each entry is matched on its file, its splat
+    # variable and the exact text of its value, and must match exactly one site of the real tree.
+    $script:tenantForwardExemptions = @(
+        [PSCustomObject]@{ Path = 'source\Public\Connect-OER.ps1'; Splat = 'AuthParams'; Value = '$ResolvedTenant'
+            Reason = 'Connect-OER''s own sign-in, the documented exception (CLAUDE.md, A10): $ResolvedTenant is the -TenantId it was given, a bound blank one refused first with InvalidTenantId, or the TenantId of the profile -TenantAlias names, which Get-OERConfiguration returns only when it is set; it is empty only when neither -TenantId nor -TenantAlias is bound, and Initialize-OERAuth reads that as no tenant named' }
+        [PSCustomObject]@{ Path = 'source\Private\Invoke-OERGraphRequest.ps1'; Splat = 'ClaimsParams'; Value = '$TenantId'
+            Reason = 'the Graph transport''s claims step-up renews the session''s own sign-in with the state''s tenant label as it is ($TenantId is assigned from $script:_OERAuthState.TenantId directly above), which a state Initialize-OERAuth built never holds empty (the tenant named, the label of the session it inherited, or organizations); the step-up has no state check of its own, but with no state its AuthMethod is $null as well, which the ValidateSet on Initialize-OERAuth''s -AuthMethod refuses at parameter binding, so that call fails before its body runs and the $null tenant is never read; this clears the tenant only, not that path: what the wrapper does after that binding failure is a separate, open finding (Sprint 10 step 10 final review, O1, read in the code and not run: outside a try and under a preference other than Stop it carries on past the error and retries the request without a step-up)' }
+        [PSCustomObject]@{ Path = 'source\Private\Invoke-OERGraphRequest.ps1'; Splat = 'RefreshParams'; Value = '$script:_OERAuthState.TenantId'
+            Reason = 'the Graph transport''s token-rejected refresh renews the session''s own sign-in with the state''s tenant label as it is; it runs only with a state ($TokenInvalid -and $script:_OERAuthState), whose label Initialize-OERAuth never leaves empty' }
+        [PSCustomObject]@{ Path = 'source\Private\Invoke-OERArmRequest.ps1'; Splat = 'RefreshParams'; Value = '$script:_OERAuthState.TenantId'
+            Reason = 'the ARM transport''s 401 refresh renews the session''s own sign-in with the state''s tenant label as it is; Invoke-ArmCallWithRefresh returns before it when there is no state, and Initialize-OERAuth never leaves the label of a state empty' }
+    )
+    foreach ($Exemption in $script:tenantForwardExemptions) {
+        $Exemption | Add-Member -NotePropertyName Id -NotePropertyValue ('{0} @{1} TenantId = {2}' -f $Exemption.Path, $Exemption.Splat, $Exemption.Value)
+    }
+
+    # The expression a statement holds when it is one lone expression -- a pipeline of one
+    # CommandExpressionAst, or that CommandExpressionAst itself (the parser gives the right-hand side of
+    # an assignment either way) -- and the node unchanged otherwise.
+    function Get-OERLoneExpression {
+        param($Ast)
+
+        if ($Ast -is [System.Management.Automation.Language.PipelineAst]) {
+            $Elements = @($Ast.PipelineElements)
+            if ($Elements.Count -eq 1) { $Ast = $Elements[0] }
+        }
+        if ($Ast -is [System.Management.Automation.Language.CommandExpressionAst] -and @($Ast.Redirections).Count -eq 0) {
+            return $Ast.Expression
+        }
+        return $Ast
+    }
+
+    # The value a key node returned by Find-OERSplatKeyWrite is written with: the right-hand side of the
+    # member or index assignment, the value of its pair in the hashtable literal, or the second argument
+    # of .Add -- each as its lone expression. $null when the write carries none (an .Add with one
+    # argument).
+    function Get-OERSplatKeyValue {
+        param($Key)
+
+        $Parent = $Key.Parent
+        $Value = $null
+        if ($Parent -is [System.Management.Automation.Language.InvokeMemberExpressionAst]) {
+            $Arguments = @($Parent.Arguments)
+            if ($Arguments.Count -gt 1) { $Value = $Arguments[1] }
+        } elseif ($Parent -is [System.Management.Automation.Language.HashtableAst]) {
+            foreach ($Pair in $Parent.KeyValuePairs) {
+                if ([System.Object]::ReferenceEquals($Pair.Item1, $Key)) { $Value = $Pair.Item2; break }
+            }
+        } elseif ($Parent.Parent -is [System.Management.Automation.Language.AssignmentStatementAst]) {
+            $Value = $Parent.Parent.Right
+        }
+        if ($null -eq $Value) { return $null }
+        return (Get-OERLoneExpression -Ast $Value)
+    }
+
+    # True when $Anchor lies in the body of an if or elseif clause -- never an else -- whose condition is
+    # the lone variable $Value names (if ($TenantId) { ... }), at any depth above it.
+    function Test-OERTenantForwardGuard {
+        param($Anchor, $Value)
+
+        $Child = $Anchor
+        $Node = $Anchor.Parent
+        while ($null -ne $Node) {
+            if ($Node -is [System.Management.Automation.Language.IfStatementAst]) {
+                foreach ($Clause in $Node.Clauses) {
+                    if (-not [System.Object]::ReferenceEquals($Clause.Item2, $Child)) { continue }
+                    $Condition = Get-OERLoneExpression -Ast $Clause.Item1
+                    if ($Condition -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        [string]::Equals($Condition.VariablePath.UserPath, $Value.VariablePath.UserPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        return $true
+                    }
+                }
+            }
+            $Child = $Node
+            $Node = $Node.Parent
+        }
+        return $false
+    }
+
+    # True when $Name is a prefix, in any letter case, of one of Initialize-OERAuth's switch parameters
+    # ($script:signInSwitchParameters), or one of their aliases whole ($script:signInSwitchAliases):
+    # PowerShell binds it to that switch, which takes no value.
+    function Test-OERSignInSwitchName {
+        param([string]$Name)
+
+        if ($Name.Length -eq 0) { return $false }
+        foreach ($Switch in $script:signInSwitchParameters) {
+            if ($Switch.StartsWith($Name, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+        foreach ($Alias in $script:signInSwitchAliases) {
+            if ([string]::Equals($Alias, $Name, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+        return $false
+    }
+
+    # Every site under $Ast that passes -TenantId to a command in $SignInCommand: a parameter whose name
+    # is a prefix of TenantId on such a call (its value the -TenantId:$X argument, or else the next
+    # element), a TenantId key (any letter case) written by the call's nearest enclosing function -- or
+    # $Ast, when there is none -- into a variable splatted into the call, in the four shapes
+    # Find-OERSplatKeyWrite reads, and a positional argument written on a call of Initialize-OERAuth, whose
+    # first parameter, -TenantId, binds by position 0 (one handed over in an array splat is not read). The
+    # element after a parameter is that parameter's value -- never a positional argument -- unless the
+    # parameter has one already (-Name:$X), the element is a parameter or a splat, or the call is of
+    # Initialize-OERAuth and the name is a prefix of one of its switches, -Verbose and -Debug among them,
+    # or one of their aliases vb and db whole (Test-OERSignInSwitchName). Each key node counts once,
+    # however many calls splat its variable. A positional argument read here is always a violation, its
+    # value never judged. Any other site is
+    # guarded when its value is a non-empty string literal, or a variable and the site lies in the body of
+    # an if or elseif clause whose condition is that variable alone (Test-OERTenantForwardGuard). An
+    # unguarded site that an entry of $script:tenantForwardExemptions names exactly -- this $RelativePath,
+    # the splat variable and the value's text -- goes to Exempted as that entry's Id; any other is a
+    # violation. SignInCalls counts the calls of Initialize-OERAuth read for positional arguments.
+    function Get-OERTenantForwardReport {
+        param($Ast, [string[]]$SignInCommand, [string]$RelativePath)
+
+        $Report = [PSCustomObject]@{
+            Sites       = 0
+            Violations  = [System.Collections.Generic.List[string]]::new()
+            Exempted    = [System.Collections.Generic.List[string]]::new()
+            SignInCalls = 0
+        }
+        $SignIn = [System.Collections.Generic.HashSet[string]]::new([string[]]@($SignInCommand), [System.StringComparer]::OrdinalIgnoreCase)
+        $Read = [System.Collections.Generic.HashSet[object]]::new()
+        $Found = [System.Collections.Generic.List[object]]::new()
+        foreach ($Call in @($Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true))) {
+            $Command = Get-OERCallName -CommandAst $Call
+            if (-not $Command -or -not $SignIn.Contains($Command)) { continue }
+            $IsInitialize = [string]::Equals($Command, 'Initialize-OERAuth', [System.StringComparison]::OrdinalIgnoreCase)
+            if ($IsInitialize) { $Report.SignInCalls++ }
+            $Elements = @($Call.CommandElements)
+            for ($Index = 1; $Index -lt $Elements.Count; $Index++) {
+                $Element = $Elements[$Index]
+                if ($Element -is [System.Management.Automation.Language.CommandParameterAst]) {
+                    $Next = $null
+                    if ($null -eq $Element.Argument -and $Index + 1 -lt $Elements.Count -and
+                        -not ($IsInitialize -and (Test-OERSignInSwitchName -Name $Element.ParameterName))) {
+                        $Candidate = $Elements[$Index + 1]
+                        if ($Candidate -isnot [System.Management.Automation.Language.CommandParameterAst] -and
+                            -not ($Candidate -is [System.Management.Automation.Language.VariableExpressionAst] -and $Candidate.Splatted)) {
+                            $Next = $Candidate
+                        }
+                    }
+                    if ($Element.ParameterName.Length -gt 0 -and
+                        'TenantId'.StartsWith($Element.ParameterName, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $Value = if ($null -ne $Element.Argument) { $Element.Argument } else { $Next }
+                        $Found.Add([PSCustomObject]@{ Anchor = $Element; Value = $Value; Splat = ''; Command = $Command; Positional = $false
+                                Through = ('the parameter -{0}' -f $Element.ParameterName) })
+                    }
+                    # The value is the parameter's, so it is never read again as a positional argument.
+                    if ($null -ne $Next) { $Index++ }
+                } elseif ($Element -is [System.Management.Automation.Language.VariableExpressionAst] -and $Element.Splatted) {
+                    $Scope = $Call.Parent
+                    while ($null -ne $Scope -and -not [System.Object]::ReferenceEquals($Scope, $Ast) -and
+                        $Scope -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                        $Scope = $Scope.Parent
+                    }
+                    if ($null -eq $Scope) { $Scope = $Ast }
+                    $Splat = $Element.VariablePath.UserPath
+                    foreach ($Key in @(Find-OERSplatKeyWrite -Scope $Scope -Variable $Splat)) {
+                        if (-not [string]::Equals([string]$Key.Value, 'TenantId', [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+                        if (-not $Read.Add($Key)) { continue }
+                        $Found.Add([PSCustomObject]@{ Anchor = $Key; Value = (Get-OERSplatKeyValue -Key $Key); Splat = $Splat; Command = $Command; Positional = $false
+                                Through = ('the key {0} of the splat @{1}' -f $Key.Value, $Splat) })
+                    }
+                } elseif ($IsInitialize) {
+                    $Found.Add([PSCustomObject]@{ Anchor = $Element; Value = $Element; Splat = ''; Command = $Command; Positional = $true
+                            Through = 'a positional argument' })
+                }
+            }
+        }
+        foreach ($Site in $Found) {
+            $Report.Sites++
+            if ($Site.Positional) {
+                $Report.Violations.Add(("{0}:{1} -- passes the positional argument '{2}' to {3}, which binds it by position, the first to -TenantId; name the parameter" -f
+                        $RelativePath, $Site.Anchor.Extent.StartLineNumber, $Site.Anchor.Extent.Text, $Site.Command))
+                continue
+            }
+            $Value = $Site.Value
+            if ($Value -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $Value.Value.Length -gt 0) { continue }
+            if ($Value -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                (Test-OERTenantForwardGuard -Anchor $Site.Anchor -Value $Value)) { continue }
+            $ValueText = if ($null -ne $Value) { $Value.Extent.Text } else { '' }
+            $Exemption = @($script:tenantForwardExemptions | Where-Object {
+                    [string]::Equals($_.Path, $RelativePath, [System.StringComparison]::OrdinalIgnoreCase) -and
+                    [string]::Equals($_.Splat, $Site.Splat, [System.StringComparison]::OrdinalIgnoreCase) -and
+                    [string]::Equals($_.Value, $ValueText, [System.StringComparison]::Ordinal) })
+            if ($Exemption.Count -gt 0) {
+                $Report.Exempted.Add($Exemption[0].Id)
+                continue
+            }
+            $Report.Violations.Add(("{0}:{1} -- passes -TenantId to {2} through {3} as '{4}', which is neither a non-empty literal nor a variable an enclosing if tests" -f
+                    $RelativePath, $Site.Anchor.Extent.StartLineNumber, $Site.Command, $Site.Through, $ValueText))
+        }
+        return $Report
+    }
+
+    # The real tree: every unit whose collected command names include a command that signs in is read
+    # whole, from the tree Pass 1 parsed.
+    $script:tenantForwardSites = 0
+    $script:tenantForwardFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $script:tenantForwardSiteFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $script:tenantForwardViolations = [System.Collections.Generic.List[string]]::new()
+    $script:tenantForwardExempted = [System.Collections.Generic.List[string]]::new()
+    $script:tenantForwardSignInCalls = 0
+    foreach ($Unit in $script:sourceUnits) {
+        $CallsSignIn = $false
+        foreach ($Name in $Unit.CommandNames) {
+            if ($script:signInCommands.Contains([string](Resolve-OERTransportCommandName -Name $Name))) { $CallsSignIn = $true; break }
+        }
+        if (-not $CallsSignIn) { continue }
+        $null = $script:tenantForwardFiles.Add($Unit.RelativePath)
+        $ForwardReport = Get-OERTenantForwardReport -Ast $Unit.Ast -SignInCommand @($script:signInCommands) -RelativePath $Unit.RelativePath
+        $script:tenantForwardSites += $ForwardReport.Sites
+        $script:tenantForwardSignInCalls += $ForwardReport.SignInCalls
+        if ($ForwardReport.Sites -gt 0) { $null = $script:tenantForwardSiteFiles.Add($Unit.RelativePath) }
+        foreach ($Violation in $ForwardReport.Violations) { $script:tenantForwardViolations.Add($Violation) }
+        foreach ($Id in $ForwardReport.Exempted) { $script:tenantForwardExempted.Add($Id) }
+    }
+    # Every exemption matches exactly one site: none is stale, and none covers a second site.
+    $script:tenantForwardExemptionFailures = [System.Collections.Generic.List[string]]::new()
+    foreach ($Exemption in $script:tenantForwardExemptions) {
+        $Matched = @($script:tenantForwardExempted | Where-Object { $_ -eq $Exemption.Id }).Count
+        if ($Matched -ne 1) {
+            $script:tenantForwardExemptionFailures.Add(('{0} -- matched {1} site(s), not exactly one; reason it was written for: {2}' -f
+                    $Exemption.Id, $Matched, $Exemption.Reason))
+        }
+    }
+
+    # Known answers for the tenant-forward checker: the sites, the violations and the exempted sites
+    # (none unless a case says so) each miniature must report, with three commands that sign in --
+    # Initialize-OERAuth, a public cmdlet and a private helper -- in source\Public\Get-OERFixture.ps1
+    # unless a case names another file.
+    $script:tenantForwardKnownAnswers = @(
+        @{ Case = 'a guarded member write'; Sites = 1; Violations = 0; Text = 'function F { $A = @{}; if ($TenantId) { $A.TenantId = $TenantId }; Initialize-OERAuth @A }' }
+        @{ Case = 'an unguarded member write'; Sites = 1; Violations = 1; Text = 'function F { $A = @{}; $A.TenantId = $TenantId; Initialize-OERAuth @A }' }
+        @{ Case = 'an unguarded direct parameter'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -TenantId $TenantId }' }
+        @{ Case = 'a guarded direct parameter'; Sites = 1; Violations = 0; Text = 'function F { if ($TenantId) { Initialize-OERAuth -TenantId $TenantId } else { Initialize-OERAuth } }' }
+        @{ Case = 'an unguarded hashtable literal'; Sites = 1; Violations = 1; Text = 'function F { $A = @{ TenantId = $TenantId }; Initialize-OERAuth @A }' }
+        @{ Case = 'an unguarded index write'; Sites = 1; Violations = 1; Text = 'function F { $A = @{}; $A[''TenantId''] = $TenantId; Initialize-OERAuth @A }' }
+        @{ Case = 'a write guarded by another variable'; Sites = 1; Violations = 1; Text = 'function F { $A = @{}; if ($Other) { $A.TenantId = $TenantId }; Initialize-OERAuth @A }' }
+        @{ Case = 'a write in the else branch'; Sites = 1; Violations = 1; Text = 'function F { $A = @{}; if ($TenantId) { } else { $A.TenantId = $TenantId }; Initialize-OERAuth @A }' }
+        @{ Case = 'a literal tenant'; Sites = 1; Violations = 0; Text = 'function F { Initialize-OERAuth -TenantId ''organizations'' }' }
+        @{ Case = 'an abbreviated parameter'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -Tenant $TenantId }' }
+        @{ Case = 'the colon form'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -TenantId:$TenantId }' }
+        @{ Case = 'a public cmdlet that signs in'; Sites = 1; Violations = 1; Text = 'function F { Get-OERGroup -TenantId $TenantId -All }' }
+        @{ Case = 'a command that does not sign in'; Sites = 0; Violations = 0; Text = 'function F { ConvertTo-OERInventory -TenantId $DocumentTenantId }' }
+        @{ Case = 'a hashtable not splatted into a sign-in'; Sites = 0; Violations = 0; Text = 'function F { $C = @{ TenantId = $TenantId }; Export-Thing @C }' }
+        @{ Case = 'the write in another function'; Sites = 0; Violations = 0; Text = 'function F { $A = @{}; $A.TenantId = $TenantId }; function G { Initialize-OERAuth @A }' }
+        @{ Case = 'a key added with Add'; Sites = 1; Violations = 1; Text = 'function F { $A = @{}; $A.Add(''TenantId'', $TenantId); Initialize-OERAuth @A }' }
+        @{ Case = 'a key added with +='; Sites = 1; Violations = 1; Text = 'function F { $A = @{}; $A += @{ TenantId = $TenantId }; Initialize-OERAuth @A }' }
+        @{ Case = 'a module-qualified call'; Sites = 1; Violations = 1; Text = 'function F { Omnicit.EntraRBAC\Initialize-OERAuth -TenantId $TenantId }' }
+        @{ Case = 'a guarded private sign-in'; Sites = 1; Violations = 0; Text = 'function F { $R = @{}; if ($TenantId) { $R.TenantId = $TenantId }; Resolve-OERReviewerScope @R }' }
+        @{ Case = 'an empty literal'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -TenantId '''' }' }
+        # The exemption matcher: file, splat variable and value text must all match an entry.
+        @{ Case = 'the exempt ARM refresh shape in its own file'; Path = 'source\Private\Invoke-OERArmRequest.ps1'; Sites = 1; Violations = 0; Exempted = 1
+            Text = 'function Invoke-ArmCallWithRefresh { $RefreshParams = @{ TenantId = $script:_OERAuthState.TenantId; ForceRefresh = $true }; Initialize-OERAuth @RefreshParams }' }
+        @{ Case = 'the exempt value in another splat of that file'; Path = 'source\Private\Invoke-OERArmRequest.ps1'; Sites = 1; Violations = 1
+            Text = 'function F { $Params = @{ TenantId = $script:_OERAuthState.TenantId }; Initialize-OERAuth @Params }' }
+        @{ Case = 'another value in the exempt splat of that file'; Path = 'source\Private\Invoke-OERArmRequest.ps1'; Sites = 1; Violations = 1
+            Text = 'function F { $RefreshParams = @{ TenantId = $CallTenant }; Initialize-OERAuth @RefreshParams }' }
+        @{ Case = 'the exempt ARM refresh shape in another file'; Sites = 1; Violations = 1
+            Text = 'function F { $RefreshParams = @{ TenantId = $script:_OERAuthState.TenantId }; Initialize-OERAuth @RefreshParams }' }
+        @{ Case = 'a write guarded by an elseif'; Sites = 1; Violations = 0; Text = 'function F { $A = @{}; if ($Other) { } elseif ($TenantId) { $A.TenantId = $TenantId }; Initialize-OERAuth @A }' }
+        @{ Case = 'a guarded colon form'; Sites = 1; Violations = 0; Text = 'function F { if ($TenantId) { Initialize-OERAuth -TenantId:$TenantId } }' }
+        @{ Case = 'one key, its splat used by two calls'; Sites = 1; Violations = 1; Text = 'function F { $A = @{ TenantId = $TenantId }; Initialize-OERAuth @A; Initialize-OERAuth @A -IncludeARM }' }
+        @{ Case = 'the key written twice into a splat used once'; Sites = 2; Violations = 1; Text = 'function F { $A = @{}; if ($TenantId) { $A.TenantId = $TenantId }; $A[''TenantId''] = $TenantId; Initialize-OERAuth @A }' }
+        @{ Case = 'a -TenantId with no value'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -TenantId -IncludeARM }' }
+        # A positional argument on Initialize-OERAuth binds -TenantId by position, and is always refused.
+        @{ Case = 'a positional variable'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth $TenantId }' }
+        @{ Case = 'a positional empty literal'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth '''' }' }
+        @{ Case = 'a positional variable under an if on it'; Sites = 1; Violations = 1; Text = 'function F { if ($TenantId) { Initialize-OERAuth $TenantId } }' }
+        @{ Case = 'a positional argument after a switch'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -IncludeARM $TenantId }' }
+        # -Verbose and -Debug, which [CmdletBinding()] adds, are switches too, by name, by prefix and by
+        # their aliases vb and db (final review F1).
+        @{ Case = 'a positional argument after -Verbose'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -Verbose $TenantId }' }
+        @{ Case = 'a positional argument after the alias -vb'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -vb $TenantId }' }
+        @{ Case = 'a positional argument after -D, a prefix of -Debug'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -D $TenantId }' }
+        @{ Case = 'a positional argument after the alias -DB'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -DB $TenantId }' }
+        @{ Case = 'a guarded splat after -Verbose'; Sites = 1; Violations = 0; Text = 'function F { $A = @{}; if ($TenantId) { $A.TenantId = $TenantId }; Initialize-OERAuth -Verbose @A }' }
+        @{ Case = 'a positional argument on a module-qualified call'; Sites = 1; Violations = 1; Text = 'function F { Omnicit.EntraRBAC\Initialize-OERAuth $TenantId }' }
+        @{ Case = 'a guarded splat, a named value and a switch'; Sites = 1; Violations = 0; Text = 'function F { $A = @{}; if ($TenantId) { $A.TenantId = $TenantId }; Initialize-OERAuth @A -AuthMethod Interactive -IncludeARM }' }
+        @{ Case = 'a positional argument on another command that signs in, a stated limit'; Sites = 0; Violations = 0; Text = 'function F { Get-OERGroup $TenantId }' }
+    )
+    $script:tenantForwardKnownAnswerFailures = [System.Collections.Generic.List[string]]::new()
+    foreach ($Case in $script:tenantForwardKnownAnswers) {
+        $CaseErrors = $null
+        $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$null, [ref]$CaseErrors)
+        $CasePath = if ($Case.ContainsKey('Path')) { $Case.Path } else { 'source\Public\Get-OERFixture.ps1' }
+        $CaseExempted = if ($Case.ContainsKey('Exempted')) { $Case.Exempted } else { 0 }
+        $CaseReport = Get-OERTenantForwardReport -Ast $CaseAst -SignInCommand @('Initialize-OERAuth', 'Get-OERGroup', 'Resolve-OERReviewerScope') `
+            -RelativePath $CasePath
+        if ($CaseErrors.Count -gt 0 -or $CaseReport.Sites -ne $Case.Sites -or $CaseReport.Violations.Count -ne $Case.Violations -or
+            $CaseReport.Exempted.Count -ne $CaseExempted) {
+            $script:tenantForwardKnownAnswerFailures.Add(('{0} -- expected {1} site(s), {2} violation(s) and {3} exempted, got {4}, {5} and {6}{7}' -f
+                    $Case.Case, $Case.Sites, $Case.Violations, $CaseExempted, $CaseReport.Sites, $CaseReport.Violations.Count,
+                    $CaseReport.Exempted.Count, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
         }
     }
 
@@ -3023,8 +3679,11 @@ exclude the file.
             vacuously -- prove a guard can FAIL, not just that it can pass.
 
             The previous thresholds (50 files, 200 catches) tolerated losing 46% and 22% of the scan
-            respectively. These sit just under the measured values after the call-closure widening:
-            117 transport-reaching files, 318 catches of the 338 in source/.
+            respectively. These were set just under the values measured after the call-closure
+            widening (117 transport-reaching files, 318 catches of the 338 in source/). Measured again
+            in Sprint 10 step 10: 151 transport-reaching files and 408 catches of the 438 in source/,
+            so the floors now sit well under them -- a scan that lost up to 40 of those files, or up
+            to 97 of those catches, would still pass.
         #>
         $script:scrubTransportFileCount | Should -BeGreaterThan 110
         $script:scrubCatchCount | Should -BeGreaterThan 310
@@ -3070,6 +3729,57 @@ PowerShell appended to the caller's $global:Error, so reference-equality removal
 If a catch is genuinely exempt (no HTTP record can reach it), add it to $script:scrubExemptions with
 a written reason rather than deleting this assertion.
 '@
+    }
+
+    It 'classifies a file that calls transport by an alias or a module-qualified name as Pass 1 does, through the resolver gate 10 uses' {
+        <#
+            Known answers for Pass 1's own direct-transport test (BL-93). No file under source/ calls a
+            transport command by an alias or a module-qualified name, so the real tree holds no positive
+            control of that test; these miniatures are the control. Each is parsed, its command names are
+            collected the way Pass 1 collects them (GetCommandName() of each CommandAst), and the very
+            function Pass 1 calls, Test-OERCallsTransportDirectly, must reach the verdict. Pass 1 must also
+            have classified every source unit through that function, so a Pass 1 that judges a file
+            without it fails here.
+        #>
+        $script:pass1TransportClassifications | Should -Be $script:sourceUnits.Count -Because (
+            'Pass 1 classifies every source file through Test-OERCallsTransportDirectly, the function the cases below run; a different count means Pass 1 judges transport some other way')
+        $Files = @(
+            @{ Text = 'function F { irm $U }'; Expect = $true }
+            @{ Text = 'function F { iwr $U }'; Expect = $true }
+            @{ Text = 'function F { Microsoft.PowerShell.Utility\Invoke-RestMethod -Uri $U }'; Expect = $true }
+            @{ Text = 'function F { Invoke-OERGraphRequest -Uri $U }'; Expect = $true }
+            @{ Text = 'function F { Get-ChildItem }'; Expect = $false }
+        )
+        foreach ($File in $Files) {
+            $FileErrors = $null
+            $FileAst = [System.Management.Automation.Language.Parser]::ParseInput($File.Text, [ref]$null, [ref]$FileErrors)
+            $FileErrors.Count | Should -Be 0 -Because ('the miniature {0} must parse' -f $File.Text)
+            $Names = @(foreach ($Call in $FileAst.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+                    $Name = $Call.GetCommandName()
+                    if ($Name) { $Name }
+                })
+            Test-OERCallsTransportDirectly -CommandNames $Names | Should -Be $File.Expect -Because (
+                'Pass 1 must judge {0} as calling transport: {1}' -f $File.Text, $File.Expect)
+        }
+
+        # And the resolver it reads: each name must resolve to a command in $script:transportCommands.
+        $Cases = @(
+            @{ Name = 'irm'; Expect = 'Invoke-RestMethod' }
+            @{ Name = 'IRM'; Expect = 'Invoke-RestMethod' }
+            @{ Name = 'iwr'; Expect = 'Invoke-WebRequest' }
+            @{ Name = 'curl'; Expect = 'Invoke-WebRequest' }
+            @{ Name = 'wget'; Expect = 'Invoke-WebRequest' }
+            @{ Name = 'Microsoft.PowerShell.Utility\Invoke-RestMethod'; Expect = 'Invoke-RestMethod' }
+            @{ Name = 'Omnicit.EntraRBAC\Invoke-OERGraphRequest'; Expect = 'Invoke-OERGraphRequest' }
+            @{ Name = 'Get-AzToken'; Expect = 'Get-AzToken' }
+        )
+        foreach ($Case in $Cases) {
+            $Resolved = Resolve-OERTransportCommandName -Name $Case.Name
+            $Resolved | Should -BeExactly $Case.Expect -Because ('{0} must resolve to {1}' -f $Case.Name, $Case.Expect)
+            $script:transportCommands -contains $Resolved | Should -BeTrue -Because ('{0} is a transport command, so a file that calls it must scrub in every catch' -f $Case.Name)
+        }
+        Resolve-OERTransportCommandName -Name 'Get-ChildItem' | Should -BeExactly 'Get-ChildItem'
+        $script:transportCommands -contains (Resolve-OERTransportCommandName -Name 'Get-ChildItem') | Should -BeFalse
     }
 }
 
@@ -3268,7 +3978,7 @@ Describe 'suffix.ps1 / psm1 mirror sync' -Tags 'SourceHygiene' {
 
     It 'keeps the whole mirrored region byte-identical between suffix.ps1 and the dev-mode psm1' {
         <#
-            CLAUDE.md:59-60 describes suffix.ps1 as "Update-TypeData -Force blocks +
+            CLAUDE.md ## Module Layout describes suffix.ps1 as "Update-TypeData -Force blocks +
             Register-ArgumentCompleter calls, each mirrored verbatim in the dev-mode psm1", and
             CLAUDE.md ## Argument Completion rule 4 repeats the requirement for the completers
             specifically ("Register in suffix.ps1 AND mirror it in the dev-mode psm1. Drift means
@@ -3543,6 +4253,51 @@ rest on, so fix it rather than the case; a case is changed only when the rule it
 '@
     }
 
+    It 'holds every row of the owner table: no caller outside its owners, and every owner really calls it' {
+        <#
+            The owner table read as a whole (BL-101). Each per-row It below asserts one row and carries
+            that row's reason; this one asserts every row, so a row added to $script:transportGateOwners
+            without an It of its own is enforced all the same. Measured in Sprint 9 step 6b, before this
+            It existed: the Get-OERDocumentTenantMismatch row alone, with its owner list emptied, left
+            the gate green, since nothing read the row. Non-vacuity: the table holds at least the
+            thirteen rows it held when this It was written. A row deleted from the table is seen by its
+            own It only where that It also asserts the row's call count (Get-MgContext, Lock-OERSignIn,
+            Unlock-OERSignIn, Invoke-MgGraphRequest, Invoke-WebRequest, Invoke-RestMethod), which then
+            reads $null; the Its of the other seven rows read those rows only through the violation
+            and stale lists, whose missing key joins to an empty string, and stay green (all thirteen
+            measured, BL-101). For those seven only this count sees a deletion, and not when a new row
+            is added in the same edit. One row per command (a second row for a command replaces the
+            first one's owners in the scan above), and the owners of every row really call its
+            command, so no row is a rule over nothing. That last check is the only one that sees a row
+            with no owner at all for a command nothing calls: such a row reports neither a foreign
+            caller nor a stale owner.
+        #>
+        @($script:transportGateOwners).Count | Should -BeGreaterOrEqual 13 -Because (
+            'the owner table held thirteen rows when this It was written; fewer means a rule was dropped, and a new row is enforced here without a further edit')
+        $Commands = @($script:transportGateOwners | ForEach-Object { $_.Command })
+        $Duplicates = @($Commands | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+        $Duplicates -join ', ' | Should -BeNullOrEmpty -Because (
+            'each command has one row: the scan keys its counts on the command, so a second row replaces the owners of the first, and widening a rule is an edit of its one row')
+
+        $Failures = [System.Collections.Generic.List[string]]::new()
+        $NoCall = [System.Collections.Generic.List[string]]::new()
+        foreach ($Rule in $script:transportGateOwners) {
+            foreach ($Line in $script:transportOwnerViolations[$Rule.Command]) { $Failures.Add($Line) }
+            foreach ($Line in $script:transportOwnerStale[$Rule.Command]) { $Failures.Add($Line) }
+            if (-not ($script:transportOwnerSites[$Rule.Command] -gt 0)) { $NoCall.Add($Rule.Command) }
+        }
+        $Failures -join "`n" | Should -BeNullOrEmpty -Because @'
+Each command in the owner table may be called only in its owner files, and every owner listed must
+really call it (WHO MAY CALL WHAT in the Pass 9 comment, and CLAUDE.md ## Testing Conventions). Each
+line names a file that calls a command it does not own, or an owner that calls its command nowhere. The
+per-row It of that command, where there is one, gives the reason the rule exists. Route the call through
+an owner, or remove the stale owner from its row. A row is widened only deliberately, with the reason
+written into the gate's text, never to make this pass.
+'@
+        $NoCall -join ', ' | Should -BeNullOrEmpty -Because (
+            'the owners of every row must really call its command, or that row is a rule over nothing; a row listed here has no call by any owner')
+    }
+
     It 'reads the Graph SDK session with Get-MgContext only in Get-OERGraphSessionFingerprint.ps1' {
         $script:transportOwnerSites['Get-MgContext'] | Should -BeGreaterThan 0 -Because (
             'the owner must really call Get-MgContext, or this rule has nothing to be the only owner of')
@@ -3697,21 +4452,141 @@ call back as a statement of its own in one of those three places.
     It 'names ReclaimGraphSession only in Connect-OER.ps1 and Initialize-OERAuth.ps1' {
         $script:reclaimKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because (
             'the reclaim scan no longer reaches the count a known-answer case requires, so a green result below would prove nothing; fix the scan rather than the case')
-        @($script:reclaimKnownAnswers).Count | Should -Be 16 -Because (
-            'the known-answer table holds sixteen cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        @($script:reclaimKnownAnswers).Count | Should -Be 26 -Because (
+            'the known-answer table holds twenty-six cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
         $script:reclaimStale -join "`n" | Should -BeNullOrEmpty -Because (
             'Connect-OER, which passes the switch, and Initialize-OERAuth, which declares and reads it, must each really name it; an owner listed here that names it nowhere is a stale rule, not a pass')
         $script:reclaimFilesSearched | Should -BeGreaterThan 1 -Because (
             'at least the two owner files name ReclaimGraphSession in their text; fewer files searched means the scan lost them')
+        # Non-vacuity of the splat-key scan (BL-93), measured when it was written: 92 splatted
+        # Initialize-OERAuth calls under source/ and 114 keys written into their splats.
+        $script:reclaimSplatCensus.Calls | Should -BeGreaterThan 85 -Because (
+            'the Initialize-OERAuth calls under source/ splat their parameters (92 splatted calls when this was written); fewer read means the splat-key scan stopped reaching the files')
+        $script:reclaimSplatCensus.Keys | Should -BeGreaterThan 100 -Because (
+            'the splats of those calls are written with 114 keys (TenantId, IncludeARM and the rest) when this was written; fewer read means the splat-key scan stopped reading the writes')
         $script:reclaimViolations -join "`n" | Should -BeNullOrEmpty -Because @'
 -ReclaimGraphSession is the one way past two of Initialize-OERAuth's refusals: the Graph SDK session gate
 (A18), which refuses a session another Connect-MgGraph started, and the session-uncertain refusal (A10,
 BL-89), which refuses a sign-in that names no tenant after a refused one. It is also the one key that
 clears the session-uncertain marker without naming a tenant. Connect-OER passes it, as the operator's
 explicit instruction to sign in, and Initialize-OERAuth declares and reads it. A third file that names
-it -- passing it, abbreviating it on an Initialize-OERAuth call, setting it in a splat or forwarding it --
-lets a command that names no tenant take another session back, or act on the previous tenant after a
-refused sign-in, with every other gate green. Pass it only from Connect-OER.
+it -- passing it, abbreviating it on an Initialize-OERAuth call or as a key of a hashtable splatted into
+one, setting it in a splat or forwarding it -- lets a command that names no tenant take another session
+back, or act on the previous tenant after a refused sign-in, with every other gate green. Pass it only
+from Connect-OER.
+'@
+    }
+
+    It 'calls Connect-OER from no file under source/, since it passes -ReclaimGraphSession on its own' {
+        # Known answers: the shapes the scan must see as a call of Connect-OER.
+        Resolve-OERTransportCommandName -Name 'Omnicit.EntraRBAC\Connect-OER' | Should -BeExactly 'Connect-OER'
+        $CallAst = [System.Management.Automation.Language.Parser]::ParseInput("& 'Connect-OER' -TenantId `$T", [ref]$null, [ref]$null)
+        @(Find-OERCallNamed -Ast $CallAst -Name 'Connect-OER').Count | Should -Be 1
+        <#
+            The detection itself: each miniature is parsed, its command names are collected the way
+            Pass 1 collects them (GetCommandName() of each CommandAst), and the function that scanned
+            the real tree, Get-OERConnectOerCallerReport, must report the exact counts, as
+            named/placed/lines. The real tree has no caller, so these are the scan's only positive
+            control.
+        #>
+        $Path = 'source\Public\Get-OERFixture.ps1'
+        $Cases = @(
+            @{ Case = 'a plain call'; Expect = '1/1/1'; Text = 'Connect-OER -TenantAlias x' }
+            @{ Case = 'a module-qualified call'; Expect = '1/1/1'; Text = 'Omnicit.EntraRBAC\Connect-OER' }
+            @{ Case = 'a quoted name after &'; Expect = '1/1/1'; Text = "& 'Connect-OER'" }
+            @{ Case = 'two calls, one in lower case'; Expect = '2/2/2'; Text = "function F { Connect-OER; connect-oer -Force }" }
+            @{ Case = 'the name as an argument'; Expect = '0/0/0'; Text = 'Get-Command Connect-OER' }
+            @{ Case = 'the name as a string'; Expect = '0/0/0'; Text = '$Name = ''Connect-OER''' }
+            @{ Case = 'the name in a comment'; Expect = '0/0/0'; Text = "# Connect-OER -TenantAlias x`n`$X = 1" }
+        )
+        foreach ($Case in $Cases) {
+            $CaseErrors = $null
+            $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$null, [ref]$CaseErrors)
+            $CaseErrors.Count | Should -Be 0 -Because ('the miniature for {0} must parse' -f $Case.Case)
+            $Names = @(foreach ($Call in $CaseAst.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+                    $Name = $Call.GetCommandName()
+                    if ($Name) { $Name }
+                })
+            $CaseReport = Get-OERConnectOerCallerReport -Units @([PSCustomObject]@{ RelativePath = $Path; CommandNames = $Names }) -TextByPath @{ $Path = $Case.Text }
+            ('{0}/{1}/{2}' -f $CaseReport.Named, $CaseReport.Placed, $CaseReport.Lines.Count) | Should -BeExactly $Case.Expect -Because (
+                'the Connect-OER scan must report {0} (named/placed/lines) for {1}' -f $Case.Expect, $Case.Case)
+        }
+
+        $script:sourceUnits.Count | Should -BeGreaterThan 195 -Because 'the scan must have read the tree'
+        $script:connectOerReport.Units | Should -Be $script:sourceUnits.Count -Because (
+            'the Connect-OER scan examines every source unit Pass 1 parsed; fewer means it stopped reaching them')
+        $script:connectOerCallers -join "`n" | Should -BeNullOrEmpty -Because @'
+Connect-OER passes -ReclaimGraphSession to Initialize-OERAuth on its own, as the operator's explicit
+instruction to sign in. A source file that calls Connect-OER is a second reclaim caller: it takes back a
+session another Connect-MgGraph started, and can clear the session-uncertain marker without naming a
+tenant, with every other gate green -- the reclaim name scan never sees it, since the switch is named
+only inside Connect-OER. Never call Connect-OER from module code.
+'@
+    }
+
+    It 'passes -TenantId on to a command that signs in only when it is set, except where the rule names it' {
+        @($script:tenantForwardKnownAnswers).Count | Should -Be 41 -Because (
+            'the known-answer table holds forty-one cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        $script:tenantForwardKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because (
+            'the tenant-forward checker no longer reaches the verdict a known-answer case requires, so a green result below would prove nothing; fix the checker rather than the case')
+        foreach ($Switch in 'IncludeARM', 'ForceRefresh', 'ReclaimGraphSession') {
+            $script:signInSwitchParameters -contains $Switch | Should -BeTrue -Because (
+                'Initialize-OERAuth declares -{0} as a switch, which takes no value; a switch list read without it would take the element after it for its value and miss a positional argument there' -f $Switch)
+        }
+        foreach ($Switch in 'Verbose', 'Debug') {
+            $script:signInSwitchParameters -contains $Switch | Should -BeTrue -Because (
+                'the [CmdletBinding()] on Initialize-OERAuth''s param block adds -{0}, a switch that takes no value; a switch list without it reads Initialize-OERAuth -{0} $TenantId as -{0} with a value and misses the positional argument that binds -TenantId' -f $Switch)
+        }
+        @($script:signInSwitchAliases) | Should -Be @('vb', 'db') -Because (
+            'vb and db are the aliases of -Verbose and -Debug, and PowerShell binds Initialize-OERAuth -vb $TenantId as the switch followed by a positional argument; a switch list without them misses it')
+
+        # Non-vacuity, measured when the rule was written: 150 commands sign in, 92 of them
+        # Initialize-OERAuth and its direct callers and 58 only through the call edges, and the real tree
+        # holds 97 forwarding sites in 94 files, every one of them a TenantId key of a splat, and 92
+        # calls of Initialize-OERAuth, none with a positional argument.
+        $script:signInCommands.Count | Should -BeGreaterThan 120 -Because (
+            'Initialize-OERAuth and the module functions that reach it numbered 150 when this rule was written, 92 of them Initialize-OERAuth and its direct callers; a set at or below 120 has lost most of what only the call edges add')
+        $script:signInCommands.Count | Should -BeGreaterThan $script:signInDirectCommands.Count -Because (
+            'the fixed point adds every module function that reaches a sign-in only through the call edges (58 when this rule was written) to Initialize-OERAuth and its direct callers; a set no larger than those seeds has stopped following the edges')
+        foreach ($Control in 'Initialize-OERAuth', 'Get-OERGroup', 'Resolve-OERReviewerScope', 'Invoke-OERStructure') {
+            $script:signInCommands.Contains($Control) | Should -BeTrue -Because (
+                '{0} signs in, directly or through the functions it calls, so the set of commands that sign in must hold it' -f $Control)
+        }
+        # Controls in the set ONLY through the call edges: Get-OERGroupRelation two hops away
+        # (Invoke-OERGraphRequest, which signs in again for its refreshes), New-OERAccessReviewStage two
+        # (Resolve-OERReviewerScope) and Resolve-OERDeclaredApprover four (Resolve-OERPrincipal,
+        # Resolve-OERUserId, Invoke-OERGraphRequest).
+        foreach ($Control in 'Get-OERGroupRelation', 'New-OERAccessReviewStage', 'Resolve-OERDeclaredApprover') {
+            $script:signInDirectCommands.Contains($Control) | Should -BeFalse -Because (
+                '{0} is a control for the call edges, so it must not call Initialize-OERAuth itself' -f $Control)
+            $script:signInCommands.Contains($Control) | Should -BeTrue -Because (
+                '{0} reaches Initialize-OERAuth only through the functions it calls, so the fixed point over the call edges must add it' -f $Control)
+        }
+        $script:signInCommands.Contains('ConvertTo-OERInventory') | Should -BeFalse -Because (
+            'ConvertTo-OERInventory takes a -TenantId of its own and signs in nowhere, so a set that holds it no longer separates the commands that sign in from the rest')
+        $script:tenantForwardSites | Should -BeGreaterThan 80 -Because (
+            'the real tree forwarded a tenant at 97 sites when this rule was written; fewer means the scan stopped reaching the calls or reading their splats')
+        $script:tenantForwardSiteFiles.Contains('source\Public\Invoke-OERStructure.ps1') | Should -BeTrue -Because (
+            'Invoke-OERStructure forwards -TenantId to Initialize-OERAuth, and a refused or misdirected sign-in there applies one tenant''s document in another, so its site must be among those judged')
+        foreach ($CallFile in $script:signInCallFiles) {
+            $script:tenantForwardFiles.Contains($CallFile) | Should -BeTrue -Because (
+                '{0} calls Initialize-OERAuth, so the tenant-forward scan must read it' -f $CallFile)
+        }
+        $script:tenantForwardSignInCalls | Should -Be $script:signInCallSites -Because (
+            'the positional-argument check reads every call of Initialize-OERAuth, as many as the call-site rule places (92 when this rule was written); fewer means calls went unread')
+
+        $script:tenantForwardExemptionFailures -join "`n" | Should -BeNullOrEmpty -Because (
+            'each exemption names one site by its file, its splat variable and the exact text of its value; one that matches no site is stale and is deleted with the site, and one that matches two covers a site nobody exempted')
+        $script:tenantForwardViolations -join "`n" | Should -BeNullOrEmpty -Because @'
+An internal call passes -TenantId on to a command that signs in only when it is set (CLAUDE.md, A10).
+An empty -TenantId reaches Initialize-OERAuth as no tenant named, so the sign-in acts on the current
+session's tenant -- a reading the module allows for Connect-OER's own call alone -- and every public
+-TenantId but Connect-OER's carries [ValidateNotNullOrEmpty()], so an empty one stops that cmdlet at
+binding. Forward the tenant under a test of the same variable:
+if ($TenantId) { $AuthParams.TenantId = $TenantId }. Never hand Initialize-OERAuth a positional
+argument, after a switch included (-IncludeARM, -Verbose, -Debug): it binds -TenantId by position,
+where no test of the value is seen. Connect-OER's own call
+and the three transport refreshes are the named exemptions; do not add one to make this pass.
 '@
     }
 

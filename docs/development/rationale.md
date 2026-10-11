@@ -489,9 +489,9 @@ state. They all run off one shared `BeforeAll` that enumerates and parses the tr
 first six gates; the seventh, eighth and ninth each run their own additional parse pass, kept
 deliberately separate from that shared walk so a mistake in new detection logic cannot perturb the
 other gates' proven reachability closure or catch-clause scan. The tenth reads the command names
-that shared walk already collected for its ownership checks and the `Initialize-OERAuth` call nodes
-it keeps for its call-site check, and parses the two wrapper files again, from the text that walk
-read, for its structural check.
+that shared walk already collected for its ownership checks, the `Initialize-OERAuth` call nodes
+it keeps for its call-site check and the file trees it keeps for its tenant-forward check, and
+parses the two wrapper files again, from the text that walk read, for its structural check.
 
 **1. Encoding.** Every authored `.ps1`/`.psd1`/`.psm1`/`.ps1xml` under `source/` and `tests/` must
 be ASCII-only and carry no UTF-8 BOM. It is a byte-level check because PSScriptAnalyzer cannot do
@@ -510,11 +510,20 @@ failed request can carry the request message.
 
 Transport is detected from `CommandAst.GetCommandName()`, **never a text grep**:
 `source/Private/Remove-OERErrorRecord.ps1` carries a literal `Invoke-MgGraphRequest` in its
-`.EXAMPLE` block, and a grep would false-positive it into a violation. A known limit of that
-detection: it matches the command's literal name, so an alias -- `irm` for `Invoke-RestMethod`, as
-`iwr`, `curl` or `wget` for `Invoke-WebRequest` -- does not mark a file as reaching transport here.
-Gate 10's ownership scan does resolve those aliases, so such an alias anywhere but in its owner's file
-is a violation there.
+`.EXAMPLE` block, and a grep would false-positive it into a violation. Since Sprint 10 step 10
+(BL-93) that name is read through `Resolve-OERTransportCommandName`, the one resolver gate 10's
+ownership scan uses too, so the two gates cannot disagree about what a transport call is: a
+module-qualified name (`Microsoft.PowerShell.Utility\Invoke-RestMethod`), `irm` for
+`Invoke-RestMethod`, and `iwr`, `curl` or `wget` for `Invoke-WebRequest` mark a file as reaching
+transport, in any letter case. A known-answer `It` runs Pass 1's own test,
+`Test-OERCallsTransportDirectly`, on parsed miniatures of each shape, checks that Pass 1 classified
+every source file through it, and holds the resolver to each name; no file under `source/` calls a
+transport command by an alias or a module-qualified name, so those miniatures are the scan's only
+positive control. Before, gate 2 matched the literal name only, so `irm` in a file whose catch did
+not scrub passed it. The census did not move: 151 transport-reaching files and 408 catches, before and after. What it still
+does not see: a command name built at run time, any other alias, and a module-qualified call of a
+module function outside the transport set (`Omnicit.EntraRBAC\Resolve-OERGroupId`), which creates
+no call edge, since the closure below matches a module function's literal name only.
 
 The gate carries a small, justified exemption list -- currently the four `Resolve-OERName` catches
 in `New-OERGroup`, `New-OERCatalog`, `New-OERAccessPackage` and `New-OERAdministrativeUnit`, whose
@@ -617,7 +626,9 @@ so a matcher that stopped matching cannot pass by finding nothing to complain ab
 
 **10. Transport gate hygiene** (Sprint 8 step 4b, A18, A19 and A20; two owner lists widened in
 Sprint 9 step 2; the tenant lookup, the session-uncertain marker and the session reclaim added in
-Sprint 9 step 3; the document tenant comparison added in Sprint 9 step 6b). The
+Sprint 9 step 3; the document tenant comparison added in Sprint 9 step 6b; the reclaim splat key,
+the `Connect-OER` caller rule, the tenant-forward rule and the owner table read as a whole added in
+Sprint 10 step 10). The
 gates that stand in front of every request -- the Graph SDK session gate in the Graph transport, and
 the sign-in latch gate and the sign-in supersession gate in both transports, all described under
 [#auth-state](#auth-state) -- are only as good as the claim that no request can go around them, and
@@ -633,12 +644,26 @@ only in the ARM wrapper; `Invoke-RestMethod` only in `Resolve-OERTenantDomain`, 
 `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`; `Get-OERDocumentTenantMismatch` only in
 `Invoke-OERStructure` -- and every listed owner must really call its command, so a rule cannot hold
 over nothing and a stale owner is a failure. Two of those lists were widened by one owner each in
-Sprint 9 step 2, each widening justified in the gate's own text. Each row of the owner table is
-enforced only by its own `It`, which asserts that the command has no caller outside its owners and
-that its owners really call it: no assertion reads the table as a whole, so a row without an `It`
-asserts nothing. MEASURED in Sprint 9 step 6b: the `Get-OERDocumentTenantMismatch` row alone, with
-its owner list emptied, left the gate green, so it got its own `It`, and the gate's comment now
-says that a new row needs one.
+Sprint 9 step 2, each widening justified in the gate's own text. Every row of the owner table is
+enforced by one `It` that reads the table as a whole (Sprint 10 step 10, BL-101): for each row, no
+caller outside its owners and every owner really calling it, with at least thirteen rows, one row
+per command (the scan keys its counts on the command, so a second row would replace the first
+one's owners) and a call by its owners found for every row's command. So a row added without an
+`It` of its own is enforced all the same. Before BL-101 each row was enforced only by its own `It`
+and nothing read the table as a whole, so a row without an `It` asserted nothing -- MEASURED in
+Sprint 9 step 6b: the `Get-OERDocumentTenantMismatch` row alone, with its owner list emptied, left
+the gate green, and it got its own `It` then. A row deleted from the table is seen by its own `It`
+only where that `It` also asserts the row's call count -- the `Get-MgContext`, `Lock-OERSignIn`,
+`Unlock-OERSignIn`, `Invoke-MgGraphRequest`, `Invoke-WebRequest` and `Invoke-RestMethod` rows --
+since that count then reads `$null` and fails. The `It`s of the other seven rows read those rows
+only through the violation and stale lists, where a missing key joins to an empty string, so they
+stay green: `Register-OERSignInIdentity`, `Get-OERSignInRefusal`, `Get-OERSignInSupersession`,
+`Get-OERSignInIdentity`, `Resolve-OERTenantDomain`, `Set-OERSessionUncertain` and
+`Get-OERDocumentTenantMismatch` (all thirteen measured, BL-101, each row deleted with a valid row
+added). For those seven the thirteen-row floor is what sees a deletion, and a deletion made in the
+same edit as a new row keeps the count, so nothing sees it.
+The per-row `It`s stay and carry each row's reason; a new row still gets one for its explanation,
+but no longer needs one to be enforced.
 `Initialize-OERAuth` reads the latch once, before `Lock-OERSignIn`, to refuse a SIGN-IN under a
 latched outer command (BL-74); it refuses no request, and the transports' latch gates, which this
 gate places, still do, so the reason a reader elsewhere is refused -- a gate no static check places
@@ -666,8 +691,18 @@ appears under `source/` only in `Connect-OER.ps1`, which passes it, and `Initial
 which declares and reads it, and both must really name it. A parameter of that name on any command, a
 prefix of it on an `Initialize-OERAuth` call (PowerShell binds `-R` to the switch), a variable or a
 parameter declaration in any scope, and a string constant or expandable string holding it -- a member
-name, a hashtable key, an index -- each count, read from the AST, so comments do not; a known-answer
-table of sixteen miniatures runs that scan in every run. A pairing rule, read from
+name, a hashtable key, an index -- each count, read from the AST, so comments do not. Since Sprint 10
+step 10 (BL-93) a shorter prefix of it written as a key of a hashtable splatted into an
+`Initialize-OERAuth` call counts too, since a splat binds an abbreviated key as the command line binds
+an abbreviated parameter: a key the calling function writes into the splat variable as a hashtable
+literal (`$P = @{ Recl = $true }`, or `+=`), by a member or an index assignment, or with `.Add`. And
+no file under `source/` may call `Connect-OER`, which passes the switch on its own, so a call of it is
+a second reclaim caller that no name scan sees. Parsed miniatures run the scan's own function,
+`Get-OERConnectOerCallerReport`, with exact counts, since the real tree has no caller. A known-answer
+table of twenty-six miniatures runs the
+name and splat-key scans in every run, and the splat-key scan must read more than 85 splatted
+`Initialize-OERAuth` calls and 100 keys written into them on the real tree (92 and 114 when it was
+written). A pairing rule, read from
 `Initialize-OERAuth`: each `Register-OERSignInIdentity` call is the statement directly after an
 `Unlock-OERSignIn` call in the same block, each call standing alone and both passing `-Invocation`
 the same variable, and the two are called equally often -- two pairs, counted exactly, so a new success end is a deliberate edit of
@@ -709,11 +744,110 @@ unit suites' job, and so is the proof that `Get-OERSignInSupersession` walks eve
 call stack; the pairing rule proves where `Register-OERSignInIdentity` stands, not what it stores;
 a command name built at run time is invisible to it, as to the Az context gate;
 the ownership scan resolves a module-qualified name, the three `Invoke-WebRequest` aliases and the
-`Invoke-RestMethod` alias `irm`, and nothing else (gate 2, which decides where a scrub is required,
-matches only the literal names); a bearer read spelled any other way (`.Item('ArmToken')`, a key
-held in a variable) is not a marker; and the reclaim rule cannot see a name built at run time, an
-abbreviated key in a hashtable splatted into `Initialize-OERAuth` (`@{ Recl = $true }`, which binds),
-or a call of `Connect-OER` itself from another source file, which passes the switch on its own.
+`Invoke-RestMethod` alias `irm`, and nothing else, through the resolver gate 2 shares; a bearer read
+spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a marker; and the
+reclaim rule cannot see a name or a key built at run time, a key merged into the splat from another
+variable (`$P += $Other`), a hashtable literal wrapped in a cast or `[ordered]`, a key written into
+the splat variable outside the function that calls `Initialize-OERAuth`, a key that reaches the
+splat through parameter binding (a parameter named with a prefix of the switch, forwarded with
+`@PSBoundParameters`), a shorter prefix written as a key in any shape other than the four it
+reads -- for example through a second variable holding the same hashtable
+(`$Q = $P; $Q.Rec = $true`), as a hashtable from a command, a parenthesised or sub-expression or a
+`+` expression (`$P = (@{ Rec = $true })`, `$P = $P + @{ Rec = $true }`), with `.set_Item()` or
+`.Item(...) =`, or as a parameter default (`param($P = @{ Rec = $true })`) -- or a call of
+`Connect-OER` through a name built at run time.
+
+**The tenant-forward rule** (Sprint 10 step 10, BL-96), held until then by review alone. An internal
+call passes `-TenantId` on to a command that signs in only when it is set (CLAUDE.md, A10):
+`Initialize-OERAuth` reads an empty `-TenantId` as no tenant named and acts on the current session's
+tenant, and every public `-TenantId` but `Connect-OER`'s carries `[ValidateNotNullOrEmpty()]`, which
+stops the cmdlet at binding. The commands that sign in are `Initialize-OERAuth` and every module
+function that calls it, by a name that resolves to it (module-qualified included), or that reaches
+such a function along the shared walk's call edges -- found by the same kind of boolean fixed point
+that decides which files reach transport: 150 of the module's 282 functions when the rule was
+written, 92 of them `Initialize-OERAuth` and its direct callers and 58 added by the call edges alone.
+A site is a parameter whose name is a prefix of `TenantId` on a call of one of them (`-TenantId`,
+`-Tenant`, `-TenantId:$X`; no shorter prefix stood on any such call when it was measured), a
+`TenantId` key, in any letter case, that the call's own function writes into a variable it splats
+into the call, in the four shapes `Find-OERSplatKeyWrite` reads for the reclaim rule (a member or an
+index assignment, a hashtable literal assigned with `=` or `+=`, and `.Add`), and a positional
+argument written on a call of `Initialize-OERAuth` (Sprint 10 step 10, Ruling R16): `-TenantId` is its
+first parameter and binds by position 0, so `Initialize-OERAuth $TenantId` forwards a tenant no other
+shape shows. A positional argument it reads is always a violation, its value never judged. The
+element after a parameter is that parameter's value, not a positional argument, unless the parameter
+carries its value already (`-AuthMethod:$M`), the element is a parameter or a splat, or the parameter
+is one of `Initialize-OERAuth`'s switches, which take none: those its own param block declares
+(`-IncludeARM`, `-ForceRefresh`, `-ReclaimGraphSession`), each by any prefix of its name, and
+`-Verbose` and `-Debug`, which its `[CmdletBinding()]` adds, by any prefix of the name or by the
+alias `vb` or `db` (final review of step 10, F1: measured on a throwaway function of the same shape,
+`-Verbose 'x'`, `-vb`, `-Debug`, `-db`, `-V` and `-D` each left the string to bind `-TenantId` by
+position, so `Initialize-OERAuth -Verbose $TenantId` passed a gate that read only the declared
+switches). Every other site is guarded when its value is a non-empty string literal, or a variable
+and the site lies in the body of an `if` or `elseif` clause -- never an `else` -- whose condition is
+that variable alone, at any depth:
+`if ($TenantId) { $AuthParams.TenantId = $TenantId }`. Any other site is a violation unless an
+exemption names it by its file, its splat variable and the exact text of its value, and each of the
+four exemptions must match exactly one site, so none can cover a second site of its file or outlive
+the code it names. `Connect-OER`'s `@AuthParams` with `$ResolvedTenant` is the documented exception:
+it is empty only when neither `-TenantId` nor `-TenantAlias` is bound, since a bound blank
+`-TenantId` is refused with `InvalidTenantId` and `Get-OERConfiguration` returns a profile only when
+its `TenantId` is set. The three transport refreshes -- the Graph claims step-up's `@ClaimsParams`
+with `$TenantId`, assigned from the state's tenant label directly above it, and the Graph and ARM
+`@RefreshParams` with `$script:_OERAuthState.TenantId` -- renew the session's own sign-in with the
+state's tenant label, which a state `Initialize-OERAuth` built never holds empty (the tenant named,
+the label of the session it inherited, or `organizations`). The two `@RefreshParams` refreshes run
+only with a state. The claims step-up has no state check of its own, but with no state its
+`AuthMethod` is `$null` as well, which the `ValidateSet` on `Initialize-OERAuth`'s `-AuthMethod`
+refuses at parameter binding, so that call fails before its body runs and the `$null` tenant is
+never read. That clears the tenant only, not the path: what the wrapper does after that binding
+failure is a separate, open finding (O1 of the step's final review, read in the code and not run:
+outside a `try` and under a preference other than `Stop` it carries on past the error and retries
+the request without a step-up). On the real tree the rule judged 97 sites in 94 files when it was
+written, every one a splatted `TenantId` key, and read all 92 calls of `Initialize-OERAuth`, none
+with a positional argument. Its non-vacuity: more than 120 commands that sign in, and more of them than
+`Initialize-OERAuth` and its direct callers alone; three controls in the set only through the call
+edges (`Get-OERGroupRelation` and `New-OERAccessReviewStage` two calls away, and
+`Resolve-OERDeclaredApprover` four), each checked not to call `Initialize-OERAuth` itself; more than
+80 sites; `Invoke-OERStructure.ps1` among the files with a site; every file that calls
+`Initialize-OERAuth` among the files read, and as many of its calls read as the call-site rule
+places; and `ConvertTo-OERInventory`, which takes a `-TenantId` of its own and signs in nowhere,
+outside the set; and `-Verbose` and `-Debug` in the switch list, and `vb` and `db` beside them. A
+known-answer table of forty-one miniatures runs the checker in every run, each with the sites,
+violations and exempted sites it must report: every write shape unguarded (a member,
+an index, a hashtable literal with `=` and with `+=`, and `.Add`) and the member write guarded, also
+by an `elseif`; a direct parameter guarded and not, the colon form guarded and not, an abbreviated
+parameter, a `-TenantId` with no value, a literal tenant and an empty one; a guard on another
+variable and a write in an `else`; a public cmdlet and a private helper that sign in, and a
+module-qualified call; one key whose splat two calls use (one site) and one key written twice (two);
+the exemption matched in its own file and refused for another splat, another value and another file;
+positional arguments -- a variable, an empty literal, one under an `if` on itself, one after a
+switch, one after `-Verbose`, after the alias `-vb`, after `-D` (a prefix of `-Debug`) and after the
+alias `-DB`, one on a module-qualified call -- and a guarded splat beside a named value and a switch,
+and one after `-Verbose`; and four shapes that are no site at all, among them a positional argument
+on another command that signs in. Its limits: it judges the variable a guard tests, not what was
+assigned to it, so a variable reassigned between the `if` and the write passes, and an exemption
+names the text of its value, not
+where a variable it names got its value; the guard walk climbs from the site to the top of the file,
+across function and script-block boundaries ("at any depth"), so an `if ($TenantId)` around a nested
+function or a script block guards a site inside it, though that code may run where the test no
+longer holds; it cannot see a splat built outside the function that calls the command (in another
+function, or handed in as a parameter), a key merged in from another variable (`$A += $Other`), a
+hashtable literal wrapped in a cast or `[ordered]`, a key or a parameter name built at run time, an
+abbreviated key in a splat (`@{ Tenant = $T }`; an abbreviated parameter is seen), a tenant
+forwarded with `@PSBoundParameters` or `@args`, any `TenantId` key written in a shape other than the
+four it reads -- for example through a second variable holding the same hashtable
+(`$B = $A; $B.TenantId = $T`), as a hashtable from a command, a parenthesised or sub-expression or a
+`+` expression (`$A = (@{ TenantId = $T })`, `$A = $A + @{ TenantId = $T }`), with `.set_Item()` or
+`.Item(...) =`, or as a parameter default (`param($A = @{ TenantId = $T })`) -- or a call through a
+name built at run time; a positional argument is seen on `Initialize-OERAuth` alone, and there only
+when it is written on the call, not handed over in an array splat, so on every other command that
+signs in it can bind `-TenantId` by position unseen -- by an automatic position where a function
+declares none, and on `Get-OERManagementGroup` by the `Position = 1` its `-TenantId` declares; the
+switch list reads no `[Alias()]` declared on a switch and no `-WhatIf` or `-Confirm`, which
+`SupportsShouldProcess` would add -- `Initialize-OERAuth` declares neither, and a positional argument
+after either would be read as its value; and a function that reaches a sign-in only through a
+module-qualified call of another module function gets no call edge for that call, so the fixed point
+leaves it out of the set.
 
 Every gate asserts its own non-vacuity (per-root file counts, named control files, catch-clause and
 token counts, region-content checks) so a detection bug fails loudly instead of passing over an
@@ -3250,9 +3384,11 @@ that step (A13) a renewal of the Graph token carries the cached ARM token only f
 token's tenant -- both under
 [Requested tenant vs granted tenant](#requested-tenant-vs-granted-tenant). One tenant named by GUID
 on one command and by domain on another, or not named at all, is then ONE identity to the
-supersession gate and to the snapshot, and P18 below pins the measured pipeline sending. What did not
-change is the session cache, still keyed on the tenant as named: a command that names its tenant
-differently from the session inherits nothing from it and signs in again, with the default
+supersession gate and to the snapshot, and P18 and P18c below pin the measured pipeline sending --
+P18 for a tenant named by its ID on one command and by its domain on the other, P18c for the command
+that names no tenant. What did not change is the session cache, still keyed on the tenant as named:
+a command that names its tenant differently from the session inherits nothing from it and signs in
+again, with the default
 interactive method when it names no credential -- on an app-only session, a browser prompt, and then
 an identity that differs in its method, which the gate does refuse. So the rule to name the tenant
 explicitly and consistently (the README's Sovereign Clouds section, the about topic's SOVEREIGN
@@ -3407,16 +3543,24 @@ goes out, the retry included. Mutation-proved: a refresh that stops forwarding t
 P7 or P8 red, and an identity that also carried the Graph token's exact expiry turns all three red,
 and none of P1 to P6. Gate 10 of [#static-source-gates](#static-source-gates) keeps the three gates,
 their order, the pairing of each memory write with its latch release, and the helpers' owners in
-place. P10 to P17, in the same Describe, belong to the next subsection. P18 and P18b belong to BL-77:
+place. P10 to P17, in the same Describe, belong to the next subsection. P18 to P18d belong to BL-77:
 P18 pipes a command naming one tenant by its tenant ID into one naming it by its domain, the stubbed
 lookup resolving the domain to that tenant, and both commands send every request, with no
 `SignInSuperseded`; P18b, the control, has the domain's token come back from another tenant, and the
-second sign-in is refused with `TenantMismatch` while nothing is replaced silently. The unit Context
+second sign-in is refused with `TenantMismatch` while nothing is replaced silently. P18c and P18d
+(Sprint 10 step 10, BL-93) do the same for a sign-in that names no tenant, whose token requests carry
+no tenant at all: P18c pipes a command that names no tenant, its stubbed tokens issued for tenant A,
+into one naming tenant A by its tenant ID, and both commands send every request, with no
+`SignInSuperseded`, although the second signs in again, since the session cache is still keyed on the
+tenant as named; P18d, the control, has the no-tenant tokens issued for tenant B, and every request of
+both commands is refused with `SignInSuperseded`, each record naming the first command, inside whose
+output the second runs. The unit Context
 `the tenant term (BL-77)` in `tests/Unit/Private/Get-OERSignInIdentity.Tests.ps1` pins the term
 itself: the granted tenant for a domain and for no tenant named, one identity for one tenant named
 two ways, the fall-back to the name for a granted value that is not a GUID, never the ARM token's
 tenant, and two granted tenants still told apart. Mutation-proved: the tenant term always the name
-turns four of those tests and P18 red; the ARM tenant first turns the ARM tests red; dropping the GUID
+turns four of those tests and P18 red, and, measured on a copy of the built module for BL-93, P18c
+red while P18b and P18d stay green; the ARM tenant first turns the ARM tests red; dropping the GUID
 check turns the fall-back cases red.
 
 ### A command acts under the session it began with
@@ -3755,7 +3899,9 @@ from an earlier sign-in, must not refuse it. A document with no Azure section un
 
 **The gate (Ruling R6).** The single owner is held by one row in gate 10's owner table --
 `Get-OERDocumentTenantMismatch` called only in `Invoke-OERStructure`, which must really call it --
-with an `It` of its own, since a row alone asserts nothing (measured, below). There is no rule on
+with an `It` of its own, since at the time a row alone asserted nothing (measured, below); since
+Sprint 10 step 10 (BL-101) the `It` that reads the owner table as a whole enforces the row too, and
+its own `It` carries the reason. There is no rule on
 the `DocumentTenantMismatch` literal or on a read of a document's `tenantId`. If wrong: a second
 comparison written inline, without calling the owner, is caught only by review and the CLAUDE.md
 rule.
@@ -3798,8 +3944,12 @@ rule.
   tested. The capture stays in `begin` (R7, and the reason under "The export"). If wrong: the
   exported `tenantId` can name the previous session's tenant for an empty bundle.
 - Nothing machine-checks who calls `Get-OERInventoryTenantId`; gate 10 holds only the comparison.
-  `tests/Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` runs with no state, so its
-  export-to-apply round trip carries no `tenantId` and never reaches the comparison.
+  Since Sprint 10 step 10 (BL-101) `tests/Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1`
+  runs with a session, so its export names the session's tenant and its apply compares it, and an
+  `It` of its own applies the export under another tenant and is refused with
+  `DocumentTenantMismatch`, reading and writing nothing. The session is a state the test sets, with
+  `Initialize-OERAuth` mocked, so the round trip proves the export and the comparison meeting, not a
+  sign-in.
 
 **The user-facing texts.** `Invoke-OERStructure`'s help states the document tenant rule in a
 paragraph of its own beside its pipeline session rule, and its `-TenantId` and `-InputObject` point
@@ -4023,7 +4173,9 @@ cleared the marker. The two halves of the rule split on where the refusal must s
   `ConvertTo-OERTenantConfiguration`. The one deliberate exception is `Connect-OER`, which always
   passes `TenantId` to `Initialize-OERAuth`, as `''` when neither `-TenantId` nor `-TenantAlias` is
   bound: `Initialize-OERAuth` reads emptiness, not presence, as "no tenant named", and that is the
-  case A12 leaves as it was. Nothing machine-checks the forwarding; the cohort below holds the
+  case A12 leaves as it was. Since Sprint 10 step 10 (BL-96) gate 10 of
+  [#static-source-gates](#static-source-gates) machine-checks the forwarding, with `Connect-OER`'s
+  call and the three transport refreshes as its named exemptions; the cohort below holds the
   attribute, which fails closed at binding whatever a caller forwards.
 
 `tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds the rule from the source: it reads every
@@ -4055,7 +4207,18 @@ token failed, or where another `Connect-MgGraph` replaced the session; naming th
 every document's sign-in names the tenant, so A19's same-frame retry is unchanged: after one
 document's sign-in failed, the next one signs in again, and a success clears the marker. Without
 `-TenantId`, every document after one whose sign-in was refused is refused too, and the batch sends
-nothing more.
+nothing more. H13, in the Describe
+`A command whose sign-in was refused sends nothing through either transport (A19, F1)` of
+`tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` (Sprint 10 step 10, BL-93), proves that half in
+a script with no `try`, for two documents piped to `Invoke-OERStructure -WhatIf` without `-TenantId`
+from a process that holds no session: the first document's token call fails, the one token call made
+is that one, the second document's sign-in is refused for the uncertain session before any token
+call, nothing connects, and neither document's group read is sent. H4, the same pipeline with
+`-TenantId`, is its control: there the second document signs in again, reads its group and is
+planned (`would create`), since H4 runs under `-WhatIf` too and nothing is applied.
+Mutation-proved on a copy of the built module: the condition of the session-uncertain refusal made
+`$false` turns H13 red -- the second document signs in, connects, reads its group and plans its
+creation -- and leaves H4 green.
 
 **Known limits.**
 
@@ -5154,8 +5317,8 @@ publish happens on a runner, from a verified artefact, or it does not happen.
 
 `GitVersion.yml` runs `mode: ContinuousDelivery`, and in that mode the preview counter does NOT
 advance per commit -- it advances when a tag gives the next build a new base. Two merges in a row
-with no tag between them therefore compute the SAME version, and the second publish is refused by
-the Gallery.
+with no tag between them therefore compute the SAME version, and the second run's publish step finds
+it already on the Gallery and skips the upload, since a version cannot be published twice.
 
 Measured on 2026-09-22 with GitVersion 5.12.0 -- the release CI pins -- in a throwaway clone of
 this repository, starting from `main` at `838c55f` with `v1.0.0` reachable:
@@ -6907,8 +7070,9 @@ decide what a failed request is, and fourteen places to drift apart on case, on 
 twelve cmdlets and the two waits all ask it.
 
 What holds that is the cohort check in `tests/Unit/Private/Test-OERScheduleRequestFailed.Tests.ps1`,
-and only that much of it: the twelve cmdlet files call the owner, and no other file under `source/`
-compares a status to a `Failed` literal in the shapes the check scans, which are a status-named
+and only that much of it: every cmdlet under `source/Public` with a string that matches
+`ScheduleRequests` calls the owner (the twelve senders of BL-33, today), and no other file under
+`source/` compares a status to a `Failed` literal in the shapes the check scans, which are a status-named
 operand against a literal that starts with `Failed`, in either order, with `-eq`, `-ne`, `-like`,
 `-notlike`, `-match` or `-notmatch` (and their case-sensitive and explicitly case-insensitive forms).
 A comparison written in another shape, such as `-in`, `-contains`, a `switch`, `StartsWith` or a
@@ -6916,6 +7080,16 @@ pattern anchored with a caret, is not seen by it and stays a matter for review. 
 hold that the two engine waits call the owner. The behaviour tests in
 `tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` do, by driving each wait with `FAILED` and
 `FailedAsResourceIsLocked` answers.
+
+Until Sprint 10 step 10 (BL-99) the twelve were a hand-kept list, so a thirteenth sender was held
+only if someone added it. The cohort is now derived from the files, and the twelve known senders are
+kept by hand once, as a control: the derived set must still contain every one of them, so a
+derivation that stops matching cannot shrink the cohort and leave the checks green on the smaller
+set. The derivation does NOT see a path assembled at run time from pieces, a path held in a Private
+helper (`Send-OERNewGroupEligibilityRequest` is one) or a file outside `source/Public`. It can also be
+too wide: a cmdlet that only reads a schedule request resource would join the cohort and fail the
+owner check, and the repair is then to narrow the derivation to senders, never to hand-list an
+exemption.
 
 **The engine's two waits.** They are the replication waits of `Sync-OERStructureGroup` for a group
 created in the same run, where Graph can take an eligibility request and fail it at once because the
@@ -7188,9 +7362,18 @@ access type, that value stands in for the read's: true plans no warning, false p
 policy is listed (R10). Whether the policy is listed always comes from the read. Once the warning is
 planned for an access type, that access type counts as open, so a later permanent entry of it plans
 none: in a real run the first entry's `Add-OERGroupEligibility` opens the policy and the later ones
-find it open (R11). Each access type is decided on its own. The plan assumes the open succeeds; if it
-fails (`PolicyOpenFailed`), a real run warns again for the next entry of that access type, which the
-plan cannot know.
+find it open (R11). Each access type is decided on its own. A read that fails or lists no policy
+plans no warning and records nothing, so the next entry of that access type is decided by its own
+read, as the real run's next `Add-OERGroupEligibility` is. The record belongs to one group item: the
+handler is called once per item, so a second group's policy is decided by its own read. The plan
+assumes the open succeeds; if it fails (`PolicyOpenFailed`), a real run warns again for the next
+entry of that access type, which the plan cannot know. The Context `a permanent eligibility after
+step 4 of the same item changes the permanent-eligibility setting` in
+`tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` holds R10 and R11 as plan and real run from one
+live state: a step-4 change of either access type, several entries of one access type, entries of
+both access types in either order, a first entry whose policy read fails or lists no policy, and two
+group items of one document through `Invoke-OERStructure` (BL-100). It does not hold the
+`PolicyOpenFailed` divergence above, which the plan cannot know.
 
 **What the engine rule does not cover.** A handler decides from the inputs the cmdlet's warning uses,
 not from every refusal the cmdlet can make before it. Where the real cmdlet refuses first --

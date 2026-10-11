@@ -84,7 +84,7 @@ BuildWorkflow:
   #
   # `./build.ps1 -Tasks publish` therefore stays unresolvable on purpose. There is NO local
   # publishing path at all: a publish happens on a runner, from an artefact whose per-file SHA-256
-  # matches what the three required checks tested, or it does not happen.
+  # matches what the four required checks tested, or it does not happen.
   #
   # RESTORING Publish_Release_To_GitHub AND publish_module_to_gallery INSTEAD WAS CONSIDERED AND
   # REJECTED. Every reason below is measured behaviour, not a reading of the documentation:
