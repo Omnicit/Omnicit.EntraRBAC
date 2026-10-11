@@ -750,7 +750,12 @@ reclaim rule cannot see a name or a key built at run time, a key merged into the
 variable (`$P += $Other`), a hashtable literal wrapped in a cast or `[ordered]`, a key written into
 the splat variable outside the function that calls `Initialize-OERAuth`, a key that reaches the
 splat through parameter binding (a parameter named with a prefix of the switch, forwarded with
-`@PSBoundParameters`), or a call of `Connect-OER` through a name built at run time.
+`@PSBoundParameters`), a shorter prefix written as a key in any shape other than the four it
+reads -- for example through a second variable holding the same hashtable
+(`$Q = $P; $Q.Rec = $true`), as a hashtable from a command, a parenthesised or sub-expression or a
+`+` expression (`$P = (@{ Rec = $true })`, `$P = $P + @{ Rec = $true }`), with `.set_Item()` or
+`.Item(...) =`, or as a parameter default (`param($P = @{ Rec = $true })`) -- or a call of
+`Connect-OER` through a name built at run time.
 
 **The tenant-forward rule** (Sprint 10 step 10, BL-96), held until then by review alone. An internal
 call passes `-TenantId` on to a command that signs in only when it is set (CLAUDE.md, A10):
@@ -766,15 +771,20 @@ A site is a parameter whose name is a prefix of `TenantId` on a call of one of t
 `TenantId` key, in any letter case, that the call's own function writes into a variable it splats
 into the call, in the four shapes `Find-OERSplatKeyWrite` reads for the reclaim rule (a member or an
 index assignment, a hashtable literal assigned with `=` or `+=`, and `.Add`), and a positional
-argument on a call of `Initialize-OERAuth` (Sprint 10 step 10, Ruling R16): `-TenantId` is its first
-parameter and binds by position 0, so `Initialize-OERAuth $TenantId` forwards a tenant no other shape
-shows. A positional argument is always a violation, its value never judged. The element after a
-parameter is that parameter's value, not a positional argument, unless the parameter carries its
-value already (`-AuthMethod:$M`), the element is a parameter or a splat, or the parameter is one of
-`Initialize-OERAuth`'s switches, read from its own param block (`-IncludeARM`, `-ForceRefresh`,
-`-ReclaimGraphSession`), which take none. Every other site is guarded when its value is a non-empty
-string literal, or a variable and the site lies in the body of an `if` or `elseif` clause -- never an
-`else` -- whose condition is that variable alone, at any depth:
+argument written on a call of `Initialize-OERAuth` (Sprint 10 step 10, Ruling R16): `-TenantId` is its
+first parameter and binds by position 0, so `Initialize-OERAuth $TenantId` forwards a tenant no other
+shape shows. A positional argument it reads is always a violation, its value never judged. The
+element after a parameter is that parameter's value, not a positional argument, unless the parameter
+carries its value already (`-AuthMethod:$M`), the element is a parameter or a splat, or the parameter
+is one of `Initialize-OERAuth`'s switches, which take none: those its own param block declares
+(`-IncludeARM`, `-ForceRefresh`, `-ReclaimGraphSession`), each by any prefix of its name, and
+`-Verbose` and `-Debug`, which its `[CmdletBinding()]` adds, by any prefix of the name or by the
+alias `vb` or `db` (final review of step 10, F1: measured on a throwaway function of the same shape,
+`-Verbose 'x'`, `-vb`, `-Debug`, `-db`, `-V` and `-D` each left the string to bind `-TenantId` by
+position, so `Initialize-OERAuth -Verbose $TenantId` passed a gate that read only the declared
+switches). Every other site is guarded when its value is a non-empty string literal, or a variable
+and the site lies in the body of an `if` or `elseif` clause -- never an `else` -- whose condition is
+that variable alone, at any depth:
 `if ($TenantId) { $AuthParams.TenantId = $TenantId }`. Any other site is a violation unless an
 exemption names it by its file, its splat variable and the exact text of its value, and each of the
 four exemptions must match exactly one site, so none can cover a second site of its file or outlive
@@ -789,17 +799,21 @@ the label of the session it inherited, or `organizations`). The two `@RefreshPar
 only with a state. The claims step-up has no state check of its own, but with no state its
 `AuthMethod` is `$null` as well, which the `ValidateSet` on `Initialize-OERAuth`'s `-AuthMethod`
 refuses at parameter binding, so that call fails before its body runs and the `$null` tenant is
-never read. On the real tree the rule judged 97 sites in 94 files when it was written, every one a
-splatted `TenantId` key, and read all 92 calls of `Initialize-OERAuth`, none with a positional
-argument. Its non-vacuity: more than 120 commands that sign in, and more of them than
+never read. That clears the tenant only, not the path: what the wrapper does after that binding
+failure is a separate, open finding (O1 of the step's final review, read in the code and not run:
+outside a `try` and under a preference other than `Stop` it carries on past the error and retries
+the request without a step-up). On the real tree the rule judged 97 sites in 94 files when it was
+written, every one a splatted `TenantId` key, and read all 92 calls of `Initialize-OERAuth`, none
+with a positional argument. Its non-vacuity: more than 120 commands that sign in, and more of them than
 `Initialize-OERAuth` and its direct callers alone; three controls in the set only through the call
 edges (`Get-OERGroupRelation` and `New-OERAccessReviewStage` two calls away, and
 `Resolve-OERDeclaredApprover` four), each checked not to call `Initialize-OERAuth` itself; more than
 80 sites; `Invoke-OERStructure.ps1` among the files with a site; every file that calls
 `Initialize-OERAuth` among the files read, and as many of its calls read as the call-site rule
 places; and `ConvertTo-OERInventory`, which takes a `-TenantId` of its own and signs in nowhere,
-outside the set. A known-answer table of thirty-six miniatures runs the checker in every run, each
-with the sites, violations and exempted sites it must report: every write shape unguarded (a member,
+outside the set; and `-Verbose` and `-Debug` in the switch list, and `vb` and `db` beside them. A
+known-answer table of forty-one miniatures runs the checker in every run, each with the sites,
+violations and exempted sites it must report: every write shape unguarded (a member,
 an index, a hashtable literal with `=` and with `+=`, and `.Add`) and the member write guarded, also
 by an `elseif`; a direct parameter guarded and not, the colon form guarded and not, an abbreviated
 parameter, a `-TenantId` with no value, a literal tenant and an empty one; a guard on another
@@ -807,10 +821,12 @@ variable and a write in an `else`; a public cmdlet and a private helper that sig
 module-qualified call; one key whose splat two calls use (one site) and one key written twice (two);
 the exemption matched in its own file and refused for another splat, another value and another file;
 positional arguments -- a variable, an empty literal, one under an `if` on itself, one after a
-switch, one on a module-qualified call -- and a guarded splat beside a named value and a switch; and
-four shapes that are no site at all, among them a positional argument on another command that signs
-in. Its limits: it judges the variable a guard tests, not what was assigned to it, so a variable
-reassigned between the `if` and the write passes, and an exemption names the text of its value, not
+switch, one after `-Verbose`, after the alias `-vb`, after `-D` (a prefix of `-Debug`) and after the
+alias `-DB`, one on a module-qualified call -- and a guarded splat beside a named value and a switch,
+and one after `-Verbose`; and four shapes that are no site at all, among them a positional argument
+on another command that signs in. Its limits: it judges the variable a guard tests, not what was
+assigned to it, so a variable reassigned between the `if` and the write passes, and an exemption
+names the text of its value, not
 where a variable it names got its value; the guard walk climbs from the site to the top of the file,
 across function and script-block boundaries ("at any depth"), so an `if ($TenantId)` around a nested
 function or a script block guards a site inside it, though that code may run where the test no
@@ -818,12 +834,20 @@ longer holds; it cannot see a splat built outside the function that calls the co
 function, or handed in as a parameter), a key merged in from another variable (`$A += $Other`), a
 hashtable literal wrapped in a cast or `[ordered]`, a key or a parameter name built at run time, an
 abbreviated key in a splat (`@{ Tenant = $T }`; an abbreviated parameter is seen), a tenant
-forwarded with `@PSBoundParameters` or `@args`, or a call through a name built at run time; a
-positional argument is seen on `Initialize-OERAuth` alone, so on every other command that signs in
-it can bind `-TenantId` by position unseen -- by an automatic position where a function declares
-none, and on `Get-OERManagementGroup` by the `Position = 1` its `-TenantId` declares; and a function
-that reaches a sign-in only through a module-qualified call of another module function gets no call
-edge for that call, so the fixed point leaves it out of the set.
+forwarded with `@PSBoundParameters` or `@args`, any `TenantId` key written in a shape other than the
+four it reads -- for example through a second variable holding the same hashtable
+(`$B = $A; $B.TenantId = $T`), as a hashtable from a command, a parenthesised or sub-expression or a
+`+` expression (`$A = (@{ TenantId = $T })`, `$A = $A + @{ TenantId = $T }`), with `.set_Item()` or
+`.Item(...) =`, or as a parameter default (`param($A = @{ TenantId = $T })`) -- or a call through a
+name built at run time; a positional argument is seen on `Initialize-OERAuth` alone, and there only
+when it is written on the call, not handed over in an array splat, so on every other command that
+signs in it can bind `-TenantId` by position unseen -- by an automatic position where a function
+declares none, and on `Get-OERManagementGroup` by the `Position = 1` its `-TenantId` declares; the
+switch list reads no `[Alias()]` declared on a switch and no `-WhatIf` or `-Confirm`, which
+`SupportsShouldProcess` would add -- `Initialize-OERAuth` declares neither, and a positional argument
+after either would be read as its value; and a function that reaches a sign-in only through a
+module-qualified call of another module function gets no call edge for that call, so the fixed point
+leaves it out of the set.
 
 Every gate asserts its own non-vacuity (per-root file counts, named control files, catch-clause and
 token counts, region-content checks) so a detection bug fails loudly instead of passing over an

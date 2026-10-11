@@ -376,8 +376,10 @@ BeforeAll {
 
         It is also not a cost. Over source/ it settles in 3 passes (two productive, one confirming no
         change), and alternating cold runs put it within noise of the DFS it replaced -- both around
-        4s for the whole BeforeAll, which the single AST walk in pass 1 dominates. Census is
-        identical either way: 117 transport-reaching files, 318 of the 338 catches in source/.
+        4s for the whole BeforeAll, which the single AST walk in pass 1 dominates. The census was
+        identical either way when that was measured: 117 transport-reaching files, 318 of the 338
+        catches in source/. The tree has grown since: 151 transport-reaching files and 408 of the
+        438 catches, measured with the fixed point alone in Sprint 10 step 10.
     #>
     $script:transportReach = @{}
     foreach ($Unit in $script:sourceUnits) {
@@ -1517,11 +1519,13 @@ BeforeAll {
         site is a parameter whose name is a prefix of TenantId (-TenantId, -Tenant, -TenantId:$X) on a
         call of one of them, and a TenantId key, in any letter case, that the call's own function writes
         into a variable it splats into one, in the four shapes Find-OERSplatKeyWrite reads. A positional
-        argument on a call of Initialize-OERAuth is a site too, and always a violation: -TenantId is
-        Initialize-OERAuth's first parameter, so it binds by position 0, and the value is never judged.
+        argument written on a call of Initialize-OERAuth is a site too, and always a violation: -TenantId
+        is Initialize-OERAuth's first parameter, so it binds by position 0, and the value is never judged.
         A value that follows a parameter is that parameter's, unless the parameter's name is a prefix of
-        one of Initialize-OERAuth's switches ($script:signInSwitchParameters, read from its param block),
-        which take none. A site is
+        one of Initialize-OERAuth's switches, which take none ($script:signInSwitchParameters: the
+        switches its param block declares, and -Verbose and -Debug, which its [CmdletBinding()] adds),
+        or is vb or db, their aliases (final review F1: Initialize-OERAuth -Verbose $TenantId binds
+        $TenantId to -TenantId by position). A site is
         guarded when its value is a non-empty string literal, or a variable and the site lies in the body
         of an if or elseif clause -- never an else -- whose condition is that variable alone, at any
         depth. Any other site is a violation, unless an entry of $script:tenantForwardExemptions names it
@@ -1579,21 +1583,34 @@ BeforeAll {
         'GraphSession'), a key merged into the splat from another variable ($P += $Other), a hashtable
         literal wrapped in a cast or [ordered], a key written into the splat variable outside the
         function that calls Initialize-OERAuth, a key that reaches the splat through parameter binding
-        (a parameter named with a prefix of the switch, forwarded with @PSBoundParameters), or a call
-        of Connect-OER through a name built at run time. The tenant-forward rule judges the variable a
-        guard tests, not what was assigned to it: a variable reassigned between the if and the write
+        (a parameter named with a prefix of the switch, forwarded with @PSBoundParameters), a shorter
+        prefix written as a key in any shape other than the four Find-OERSplatKeyWrite reads -- for
+        example through a second variable holding the same hashtable ($Q = $P; $Q.Rec = $true), as a
+        hashtable from a command, a parenthesised or sub-expression or a + expression
+        ($P = (@{ Rec = $true }), $P = $P + @{ Rec = $true }), with .set_Item() or .Item(...) =, or as
+        a parameter default (param($P = @{ Rec = $true })) -- or a call of Connect-OER through a name
+        built at run time. The tenant-forward rule judges the variable a guard tests, not what was
+        assigned to it: a variable reassigned between the if and the write
         passes, and an exemption names the text of its value, not where that variable got its value
         (the claims step-up's $TenantId). It cannot see a splat built outside the function that calls the
         command (in another function, or handed in as a parameter), a key merged in from another
         variable ($A += $Other), a hashtable literal wrapped in a cast or [ordered], a key or a
         parameter name built at run time, an abbreviated key in a splat (@{ Tenant = $T }; an
-        abbreviated parameter is seen), a tenant forwarded with @PSBoundParameters or @args, or a call
-        through a name built at run time; and a module function that reaches a sign-in only through a
-        module-qualified call of another module function (Omnicit.EntraRBAC\Get-OERGroup) gets no call
-        edge for that call, so the fixed point leaves it out of the set. A positional argument is seen
-        on Initialize-OERAuth alone: on every other command that signs in it can bind -TenantId by
-        position unseen -- by an automatic position where a function declares none, and on
-        Get-OERManagementGroup by the Position 1 its -TenantId declares. The guard walk climbs from the
+        abbreviated parameter is seen), a tenant forwarded with @PSBoundParameters or @args, any
+        TenantId key written in a shape other than the four Find-OERSplatKeyWrite reads -- for example
+        through a second variable holding the same hashtable ($B = $A; $B.TenantId = $T), as a
+        hashtable from a command, a parenthesised or sub-expression or a + expression
+        ($A = (@{ TenantId = $T }), $A = $A + @{ TenantId = $T }), with .set_Item() or .Item(...) =,
+        or as a parameter default (param($A = @{ TenantId = $T })) -- or a call through a name built
+        at run time; and a module function that reaches a sign-in only through a module-qualified call
+        of another module function (Omnicit.EntraRBAC\Get-OERGroup) gets no call edge for that call, so
+        the fixed point leaves it out of the set. A positional argument is seen on Initialize-OERAuth
+        alone, and there only when it is written on the call, not handed over in an array splat: on
+        every other command that signs in it can bind -TenantId by position unseen -- by an automatic
+        position where a function declares none, and on Get-OERManagementGroup by the Position 1 its
+        -TenantId declares. The switch list reads no [Alias()] declared on a switch and no -WhatIf or
+        -Confirm, which SupportsShouldProcess would add; Initialize-OERAuth declares neither, and a
+        positional argument after either would be read as its value. The guard walk climbs from the
         site to the top of the file, across function and script-block boundaries ("at any depth"), so an
         if ($TenantId) around a nested function or a script block guards a site inside it, though that
         code may run where the test no longer holds.
@@ -2782,14 +2799,32 @@ BeforeAll {
         if ($SignInReach[$Name]) { $null = $script:signInCommands.Add($Name) }
     }
 
-    # Initialize-OERAuth's switch parameters, read from its own param block: a switch takes no value, so
-    # the element after one on a call of Initialize-OERAuth is a positional argument, not its value.
+    # Initialize-OERAuth's switch parameters: a switch takes no value, so the element after one on a call
+    # of Initialize-OERAuth is a positional argument, not its value. The switches its own param block
+    # declares are read from it, and -Verbose and -Debug join them when that param block carries
+    # [CmdletBinding()], which adds both as common switches (final review F1: measured on a throwaway
+    # function of the same shape, -Verbose 'x', -vb, -Debug, -db and the prefixes -V and -D each leave
+    # the string to bind -TenantId by position). Their aliases vb and db are kept apart and matched whole
+    # (Test-OERSignInSwitchName); PowerShell binds a prefix of an alias too, but the one shorter prefix
+    # of either, v or d, is a prefix of Verbose or Debug already. Not read: an [Alias()] declared on a
+    # switch, and -WhatIf and -Confirm, which SupportsShouldProcess would add; Initialize-OERAuth
+    # declares neither.
     $script:signInSwitchParameters = [System.Collections.Generic.List[string]]::new()
+    $script:signInSwitchAliases = [System.Collections.Generic.List[string]]::new()
     $SignInUnit = @($script:sourceUnits | Where-Object { $_.FunctionName -eq 'Initialize-OERAuth' })[0]
     if ($null -ne $SignInUnit -and $null -ne $SignInUnit.Definition.Body.ParamBlock) {
         foreach ($Parameter in $SignInUnit.Definition.Body.ParamBlock.Parameters) {
             if ($Parameter.StaticType -eq [System.Management.Automation.SwitchParameter]) {
                 $script:signInSwitchParameters.Add($Parameter.Name.VariablePath.UserPath)
+            }
+        }
+        foreach ($Attribute in $SignInUnit.Definition.Body.ParamBlock.Attributes) {
+            if ($Attribute.TypeName.GetReflectionAttributeType() -eq [System.Management.Automation.CmdletBindingAttribute]) {
+                $script:signInSwitchParameters.Add('Verbose')
+                $script:signInSwitchParameters.Add('Debug')
+                $script:signInSwitchAliases.Add('vb')
+                $script:signInSwitchAliases.Add('db')
+                break
             }
         }
     }
@@ -2800,7 +2835,7 @@ BeforeAll {
         [PSCustomObject]@{ Path = 'source\Public\Connect-OER.ps1'; Splat = 'AuthParams'; Value = '$ResolvedTenant'
             Reason = 'Connect-OER''s own sign-in, the documented exception (CLAUDE.md, A10): $ResolvedTenant is the -TenantId it was given, a bound blank one refused first with InvalidTenantId, or the TenantId of the profile -TenantAlias names, which Get-OERConfiguration returns only when it is set; it is empty only when neither -TenantId nor -TenantAlias is bound, and Initialize-OERAuth reads that as no tenant named' }
         [PSCustomObject]@{ Path = 'source\Private\Invoke-OERGraphRequest.ps1'; Splat = 'ClaimsParams'; Value = '$TenantId'
-            Reason = 'the Graph transport''s claims step-up renews the session''s own sign-in with the state''s tenant label as it is ($TenantId is assigned from $script:_OERAuthState.TenantId directly above), which a state Initialize-OERAuth built never holds empty (the tenant named, the label of the session it inherited, or organizations); the step-up has no state check of its own, but with no state its AuthMethod is $null as well, which the ValidateSet on Initialize-OERAuth''s -AuthMethod refuses at parameter binding, so that call fails before its body runs and the $null tenant is never read' }
+            Reason = 'the Graph transport''s claims step-up renews the session''s own sign-in with the state''s tenant label as it is ($TenantId is assigned from $script:_OERAuthState.TenantId directly above), which a state Initialize-OERAuth built never holds empty (the tenant named, the label of the session it inherited, or organizations); the step-up has no state check of its own, but with no state its AuthMethod is $null as well, which the ValidateSet on Initialize-OERAuth''s -AuthMethod refuses at parameter binding, so that call fails before its body runs and the $null tenant is never read; this clears the tenant only, not that path: what the wrapper does after that binding failure is a separate, open finding (Sprint 10 step 10 final review, O1, read in the code and not run: outside a try and under a preference other than Stop it carries on past the error and retries the request without a step-up)' }
         [PSCustomObject]@{ Path = 'source\Private\Invoke-OERGraphRequest.ps1'; Splat = 'RefreshParams'; Value = '$script:_OERAuthState.TenantId'
             Reason = 'the Graph transport''s token-rejected refresh renews the session''s own sign-in with the state''s tenant label as it is; it runs only with a state ($TokenInvalid -and $script:_OERAuthState), whose label Initialize-OERAuth never leaves empty' }
         [PSCustomObject]@{ Path = 'source\Private\Invoke-OERArmRequest.ps1'; Splat = 'RefreshParams'; Value = '$script:_OERAuthState.TenantId'
@@ -2874,13 +2909,17 @@ BeforeAll {
     }
 
     # True when $Name is a prefix, in any letter case, of one of Initialize-OERAuth's switch parameters
-    # ($script:signInSwitchParameters): PowerShell binds it to that switch, which takes no value.
+    # ($script:signInSwitchParameters), or one of their aliases whole ($script:signInSwitchAliases):
+    # PowerShell binds it to that switch, which takes no value.
     function Test-OERSignInSwitchName {
         param([string]$Name)
 
         if ($Name.Length -eq 0) { return $false }
         foreach ($Switch in $script:signInSwitchParameters) {
             if ($Switch.StartsWith($Name, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+        foreach ($Alias in $script:signInSwitchAliases) {
+            if ([string]::Equals($Alias, $Name, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
         }
         return $false
     }
@@ -2889,12 +2928,14 @@ BeforeAll {
     # is a prefix of TenantId on such a call (its value the -TenantId:$X argument, or else the next
     # element), a TenantId key (any letter case) written by the call's nearest enclosing function -- or
     # $Ast, when there is none -- into a variable splatted into the call, in the four shapes
-    # Find-OERSplatKeyWrite reads, and a positional argument on a call of Initialize-OERAuth, whose first
-    # parameter, -TenantId, binds by position 0. The element after a parameter is that parameter's value
-    # -- never a positional argument -- unless the parameter has one already (-Name:$X), the element is a
-    # parameter or a splat, or the call is of Initialize-OERAuth and the name is a prefix of one of its
-    # switches (Test-OERSignInSwitchName). Each key node counts once, however many calls splat its
-    # variable. A positional argument is always a violation, its value never judged. Any other site is
+    # Find-OERSplatKeyWrite reads, and a positional argument written on a call of Initialize-OERAuth, whose
+    # first parameter, -TenantId, binds by position 0 (one handed over in an array splat is not read). The
+    # element after a parameter is that parameter's value -- never a positional argument -- unless the
+    # parameter has one already (-Name:$X), the element is a parameter or a splat, or the call is of
+    # Initialize-OERAuth and the name is a prefix of one of its switches, -Verbose and -Debug among them,
+    # or one of their aliases vb and db whole (Test-OERSignInSwitchName). Each key node counts once,
+    # however many calls splat its variable. A positional argument read here is always a violation, its
+    # value never judged. Any other site is
     # guarded when its value is a non-empty string literal, or a variable and the site lies in the body of
     # an if or elseif clause whose condition is that variable alone (Test-OERTenantForwardGuard). An
     # unguarded site that an entry of $script:tenantForwardExemptions names exactly -- this $RelativePath,
@@ -3060,6 +3101,13 @@ BeforeAll {
         @{ Case = 'a positional empty literal'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth '''' }' }
         @{ Case = 'a positional variable under an if on it'; Sites = 1; Violations = 1; Text = 'function F { if ($TenantId) { Initialize-OERAuth $TenantId } }' }
         @{ Case = 'a positional argument after a switch'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -IncludeARM $TenantId }' }
+        # -Verbose and -Debug, which [CmdletBinding()] adds, are switches too, by name, by prefix and by
+        # their aliases vb and db (final review F1).
+        @{ Case = 'a positional argument after -Verbose'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -Verbose $TenantId }' }
+        @{ Case = 'a positional argument after the alias -vb'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -vb $TenantId }' }
+        @{ Case = 'a positional argument after -D, a prefix of -Debug'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -D $TenantId }' }
+        @{ Case = 'a positional argument after the alias -DB'; Sites = 1; Violations = 1; Text = 'function F { Initialize-OERAuth -DB $TenantId }' }
+        @{ Case = 'a guarded splat after -Verbose'; Sites = 1; Violations = 0; Text = 'function F { $A = @{}; if ($TenantId) { $A.TenantId = $TenantId }; Initialize-OERAuth -Verbose @A }' }
         @{ Case = 'a positional argument on a module-qualified call'; Sites = 1; Violations = 1; Text = 'function F { Omnicit.EntraRBAC\Initialize-OERAuth $TenantId }' }
         @{ Case = 'a guarded splat, a named value and a switch'; Sites = 1; Violations = 0; Text = 'function F { $A = @{}; if ($TenantId) { $A.TenantId = $TenantId }; Initialize-OERAuth @A -AuthMethod Interactive -IncludeARM }' }
         @{ Case = 'a positional argument on another command that signs in, a stated limit'; Sites = 0; Violations = 0; Text = 'function F { Get-OERGroup $TenantId }' }
@@ -3631,8 +3679,11 @@ exclude the file.
             vacuously -- prove a guard can FAIL, not just that it can pass.
 
             The previous thresholds (50 files, 200 catches) tolerated losing 46% and 22% of the scan
-            respectively. These sit just under the measured values after the call-closure widening:
-            117 transport-reaching files, 318 catches of the 338 in source/.
+            respectively. These were set just under the values measured after the call-closure
+            widening (117 transport-reaching files, 318 catches of the 338 in source/). Measured again
+            in Sprint 10 step 10: 151 transport-reaching files and 408 catches of the 438 in source/,
+            so the floors now sit well under them -- a scan that lost up to 40 of those files, or up
+            to 97 of those catches, would still pass.
         #>
         $script:scrubTransportFileCount | Should -BeGreaterThan 110
         $script:scrubCatchCount | Should -BeGreaterThan 310
@@ -4474,14 +4525,20 @@ only inside Connect-OER. Never call Connect-OER from module code.
     }
 
     It 'passes -TenantId on to a command that signs in only when it is set, except where the rule names it' {
-        @($script:tenantForwardKnownAnswers).Count | Should -Be 36 -Because (
-            'the known-answer table holds thirty-six cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        @($script:tenantForwardKnownAnswers).Count | Should -Be 41 -Because (
+            'the known-answer table holds forty-one cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
         $script:tenantForwardKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because (
             'the tenant-forward checker no longer reaches the verdict a known-answer case requires, so a green result below would prove nothing; fix the checker rather than the case')
         foreach ($Switch in 'IncludeARM', 'ForceRefresh', 'ReclaimGraphSession') {
             $script:signInSwitchParameters -contains $Switch | Should -BeTrue -Because (
                 'Initialize-OERAuth declares -{0} as a switch, which takes no value; a switch list read without it would take the element after it for its value and miss a positional argument there' -f $Switch)
         }
+        foreach ($Switch in 'Verbose', 'Debug') {
+            $script:signInSwitchParameters -contains $Switch | Should -BeTrue -Because (
+                'the [CmdletBinding()] on Initialize-OERAuth''s param block adds -{0}, a switch that takes no value; a switch list without it reads Initialize-OERAuth -{0} $TenantId as -{0} with a value and misses the positional argument that binds -TenantId' -f $Switch)
+        }
+        @($script:signInSwitchAliases) | Should -Be @('vb', 'db') -Because (
+            'vb and db are the aliases of -Verbose and -Debug, and PowerShell binds Initialize-OERAuth -vb $TenantId as the switch followed by a positional argument; a switch list without them misses it')
 
         # Non-vacuity, measured when the rule was written: 150 commands sign in, 92 of them
         # Initialize-OERAuth and its direct callers and 58 only through the call edges, and the real tree
@@ -4527,7 +4584,8 @@ session's tenant -- a reading the module allows for Connect-OER's own call alone
 -TenantId but Connect-OER's carries [ValidateNotNullOrEmpty()], so an empty one stops that cmdlet at
 binding. Forward the tenant under a test of the same variable:
 if ($TenantId) { $AuthParams.TenantId = $TenantId }. Never hand Initialize-OERAuth a positional
-argument: it binds -TenantId by position, where no test of the value is seen. Connect-OER's own call
+argument, after a switch included (-IncludeARM, -Verbose, -Debug): it binds -TenantId by position,
+where no test of the value is seen. Connect-OER's own call
 and the three transport refreshes are the named exemptions; do not add one to make this pass.
 '@
     }

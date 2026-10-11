@@ -741,8 +741,9 @@ value -- except `Connect-OER`'s own call of `Initialize-OERAuth`, which passes `
 Gate 10 of `tests/QA/sourcehygiene.tests.ps1` holds it (BL-96) for a `-TenantId` parameter, or a
 `TenantId` key the calling function writes into a hashtable it splats, on a call of a command that
 signs in, with `Connect-OER`'s call and the two transports' refreshes as its named exemptions, and
-refuses any positional argument on a call of `Initialize-OERAuth`, whose `-TenantId` binds by
-position 0; what it cannot see is listed in `docs/development/rationale.md#static-source-gates`.
+refuses any positional argument written on a call of `Initialize-OERAuth`, whose `-TenantId` binds
+by position 0 -- after a switch too, `-Verbose` and `-Debug` (`-vb`, `-db`) among them; what it
+cannot see is listed in `docs/development/rationale.md#static-source-gates`.
 `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 
 | Parameter set | Key parameters | Use case |
@@ -1428,7 +1429,8 @@ bug.
   a parameter whose name is a prefix of it, or a `TenantId` key the calling function writes into a
   hashtable it splats -- a non-empty literal or a variable written under an `if` on that same
   variable, with `Connect-OER`'s call and the three transport refreshes as named exemptions that
-  must each match exactly one site, and no positional argument on any `Initialize-OERAuth` call.
+  must each match exactly one site, and no positional argument written on any `Initialize-OERAuth`
+  call, after a switch included (`-Verbose` and `-Debug` among them).
   Two further gates in the
   same file check rules stated only in
   `docs/development/rationale.md` (every ARM api-version is documented under `#arm-transport`) or in
