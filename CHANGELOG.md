@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 1.2.0. A preview published from this point differs from 1.2.0 only
+in documentation, tests or the build.
+
+## [1.2.0] - 2026-10-11
+
 A permanent group eligibility grant refused after `Add-OERGroupEligibility` opened the group's PIM
 policy now reports `PolicyOpenedButGrantFailed` first, naming the open policy, why the grant failed
 and how to close it (`Set-OERGroupPimPolicy -AllowPermanentEligibility:$false`; the old advice
