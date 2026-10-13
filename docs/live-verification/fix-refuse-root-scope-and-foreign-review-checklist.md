@@ -236,6 +236,41 @@ function Get-S112Ids {
     [PSCustomObject]@{ GroupId = ([string]$Gs[0]['id']).ToLowerInvariant(); PackageId = $PackageId; PolicyId = ([string]$Pol[0]['id']).ToLowerInvariant() }
 }
 
+function ConvertTo-S112Canonical {
+    # The value with every dictionary's keys in ordinal order, recursively: Microsoft Graph's answer arrives
+    # as a hashtable whose keys enumerate in no fixed order (measured: the same definition read twice gave
+    # its settings in two orders), so two reads compare equal only in this form.
+    param([AllowNull()][object]$Value)
+    if ($Value -is [System.Collections.IDictionary]) {
+        $Keys = [string[]]@($Value.Keys | ForEach-Object { [string]$_ })
+        [System.Array]::Sort($Keys, [System.StringComparer]::Ordinal)
+        $Out = [ordered]@{}
+        foreach ($K in $Keys) { $Out[$K] = ConvertTo-S112Canonical -Value $Value[$K] }
+        return $Out
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        return , @(foreach ($I in $Value) { ConvertTo-S112Canonical -Value $I })
+    }
+    $Value
+}
+
+function Compare-S112ReviewShape {
+    # Prints, field by field, whether two recorded shapes are equal (settings and reviewers compared in
+    # their canonical form), and returns $true only when every field is.
+    param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][string]$Before, [Parameter(Mandatory)][string]$Now)
+    $B = $Before | ConvertFrom-Json -AsHashtable
+    $N = $Now | ConvertFrom-Json -AsHashtable
+    $All = $true
+    foreach ($K in 'descriptionForAdmins', 'descriptionForReviewers', 'scopeQuery', 'reviewers', 'settings', 'lastModifiedDateTime') {
+        $Equal = if ($K -in 'reviewers', 'settings') {
+            (ConvertTo-Json -InputObject (ConvertTo-S112Canonical -Value ([string]$B[$K] | ConvertFrom-Json -AsHashtable)) -Depth 20 -Compress) -ceq
+            (ConvertTo-Json -InputObject (ConvertTo-S112Canonical -Value ([string]$N[$K] | ConvertFrom-Json -AsHashtable)) -Depth 20 -Compress)
+        } else { [string]$B[$K] -ceq [string]$N[$K] }
+        Write-OerLiveStep "$Label $($K): equal $Equal"
+        if (-not $Equal) { $All = $false }
+    }
+    $All
+}
 function Get-S112ReviewShape {
     # What a write would change on a definition, as one comparable string, and its readable summary.
     param([Parameter(Mandatory)][object]$Definition, [Parameter(Mandatory)][object]$Ids)
@@ -243,8 +278,8 @@ function Get-S112ReviewShape {
         descriptionForAdmins    = [string]$Definition['descriptionForAdmins']
         descriptionForReviewers = [string]$Definition['descriptionForReviewers']
         scopeQuery              = [string]$Definition['scope']['query']
-        reviewers               = ConvertTo-Json -InputObject @($Definition['reviewers']) -Depth 10 -Compress
-        settings                = ConvertTo-Json -InputObject $Definition['settings'] -Depth 10 -Compress
+        reviewers               = ConvertTo-Json -InputObject (ConvertTo-S112Canonical -Value @($Definition['reviewers'])) -Depth 20 -Compress
+        settings                = ConvertTo-Json -InputObject (ConvertTo-S112Canonical -Value $Definition['settings']) -Depth 20 -Compress
         lastModifiedDateTime    = [string]$Definition['lastModifiedDateTime']
     }
     [PSCustomObject]@{
@@ -474,11 +509,12 @@ $Ids = Get-S112Ids
 $S = Get-S112ReviewShape -Definition (Get-S112Definition -Name $Review) -Ids $Ids
 $Before = [System.IO.File]::ReadAllText((Join-Path $Raw 'review-before.json'))
 Write-OerLiveStep "1.4 reviews the members of $($GroupName): $($S.ReviewsTheGroup); description: $($S.Description)"
-Write-OerLiveStep "1.4 descriptions, scope, reviewers, settings and lastModifiedDateTime equal to 1.1: $($S.Text -ceq $Before)"
+$Same = Compare-S112ReviewShape -Label '1.4' -Before $Before -Now $S.Text
+Write-OerLiveStep "1.4 descriptions, scope, reviewers, settings and lastModifiedDateTime equal to 1.1: $Same"
 Disconnect-OerLive
 ```
 
-**Expect:** `reviews the members of oer-s112-group: True`, the description of 1.1, and `equal to 1.1: True`.
+**Expect:** `reviews the members of oer-s112-group: True`, the description of 1.1, every field `equal True` (settings and reviewers compared with their keys in one order) and `equal to 1.1: True`.
 **Failure looks like:** `False` -- a write reached the group review.
 
 Result:
