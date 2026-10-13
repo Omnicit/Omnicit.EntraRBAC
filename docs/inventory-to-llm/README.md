@@ -270,7 +270,12 @@ resolves, remove `previousDisplayName`: a group created later under the old name
 fail. `Get-OERInventory` never exports `previousDisplayName`, and `Test-OERStructure` reports an empty
 or non-string one as an error and one equal to `displayName` (ignoring case) as a warning -- a
 case-only rename is not possible through the document; use `Set-OERGroup -NewDisplayName`.
-Administrative units, catalogs and access packages cannot be renamed through the document.
+Only a group can be renamed through the document. `Test-OERStructure` reports `previousDisplayName`
+on an administrative unit, a catalog, an access package, an assignment policy of an access package
+or an access review as an error: renaming is not supported there yet, and `Invoke-OERStructure`
+would create a new object beside the old one. A group's `mailNickname` does not follow a rename: a
+renamed group keeps its alias unless the document declares one, which is 1 to 64 characters without
+`@ ( ) \ [ ] " ; : < > ,` or white space.
 
 `previousDisplayName` also accepts the group's object id instead of its old name. That is the way to
 rename a group whose old name is ambiguous, since a name that matches several groups fails the

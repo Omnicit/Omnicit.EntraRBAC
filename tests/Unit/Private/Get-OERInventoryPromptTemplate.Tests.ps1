@@ -421,6 +421,21 @@ Describe 'Get-OERInventoryPromptTemplate group rename through previousDisplayNam
     }
 }
 
+Describe 'Get-OERInventoryPromptTemplate renames outside groups and the mail alias (BL-128, BL-132)' {
+    # Sprint 11 step 3: Test-OERStructure refuses previousDisplayName outside groups, so the prompt
+    # must not let a model propose a rename there, and a renamed group keeps its mail alias unless the
+    # proposal declares one Microsoft Graph accepts.
+    It 'teaches that only groups rename in place, and that a mail alias does not follow a rename' {
+        InModuleScope $script:moduleName {
+            # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('Renaming in place is supported only for groups, for now. previousDisplayName in any other section (administrativeUnits, catalogs, accessPackages and their assignmentPolicies, accessReviews) is refused by Test-OERStructure as an Error, and without it a changed displayName there creates a new object beside the old one. Do not propose a rename in those sections.'))
+            $T | Should -Match ([regex]::Escape('A mail alias does not follow a rename. A renamed group keeps its mailNickname unless the proposal declares the new one'))
+            $T | Should -Match ([regex]::Escape('A declared mailNickname must be 1 to 64 characters and must not contain @ ( ) \ [ ] " ; : < > , or white space; Test-OERStructure refuses it as an Error otherwise.'))
+        }
+    }
+}
+
 Describe 'Get-OERInventoryPromptTemplate root scope and access review target (BL-126, BL-127)' {
     # BL-126: the export leaves a role assignment at the Azure root scope '/' out of inventory.json and
     # lists it in the bundle README; a model that recreated or declared one would propose elevated

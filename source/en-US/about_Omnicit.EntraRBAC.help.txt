@@ -224,6 +224,31 @@ ACCESS REVIEWS ARE MATCHED BY NAME
     package or the policy by id. Give a new review a display name no other
     review in the tenant uses.
 
+RENAMES, MAIL ALIASES AND SCOPE SPELLING
+
+    Only a group can be renamed through a structure document
+    (previousDisplayName). Test-OERStructure reports previousDisplayName in
+    administrativeUnits, catalogs, accessPackages, their assignmentPolicies and
+    accessReviews as an Error: renaming is not supported there yet, and
+    Invoke-OERStructure would create a new object beside the old one.
+
+    A group's mail alias does not follow a rename. Declare mailNickname for the
+    new name; the validator warns when a renamed group keeps the alias derived
+    from its old name or declares none. A mailNickname Microsoft Graph refuses
+    (more than 64 characters, any of @ ( ) \ [ ] " ; : < > , or white space) is
+    an Error, and New-OERGroup refuses to derive an alias that would be empty
+    or longer than 64 characters (DerivedMailNicknameInvalid), creating
+    nothing: pass -MailNickname for such a name.
+
+    A roleAssignments or roleManagementPolicies scope written as a path with a
+    '.' or '..' segment, a '%' escape or white space is an Error too, beside
+    the existing rule against a trailing or doubled '/'. The mg:, sub: and
+    subscription: forms are resolved by a lookup and are not checked for those
+    three.
+
+    A -WhatIf plan reports an access package declared in a catalog the same
+    document creates as 'would create access package' instead of Failed.
+
 PERMISSIONS
 
     Ask the module rather than reading a table kept in step by hand:
@@ -714,14 +739,22 @@ ACCESS PACKAGE ASSIGNMENT POLICY -- GRANULAR SETTINGS
 
     Set-OERAccessPackageAssignmentPolicy is a read-modify-write (GET then PUT):
     fields you do not supply are preserved from the live policy (including the
-    out-of-scope reviewSettings and custom questions). On both
+    out-of-scope reviewSettings, custom questions and custom extension stages
+    and, while -RequestorScope is not passed, an automatic assignment policy's
+    settings). Microsoft Graph removes custom extension stages on an update
+    that does not send them, so the read expands each stage's custom extension
+    and the update sends every stage back; a stage whose custom extension id
+    could not be read is refused with InvalidPolicyInput, also under -WhatIf,
+    and no update is sent. A declared -RequestorScope never inherits the
+    automatic assignment settings. On both
     New- and Set-OERAccessPackageAssignmentPolicy the Description parameter
     defaults to the policy display name when omitted.
 
-    Limitations: policy-embedded access reviews (reviewSettings) and custom
-    requestor questions cannot be expressed in an apply document -- they are
-    preserved by the read-modify-write. Fallback approvers are preserved when
-    their stage is unchanged but are dropped when the stage is rebuilt.
+    Limitations: policy-embedded access reviews (reviewSettings), custom
+    requestor questions and custom extension stages cannot be expressed in an
+    apply document -- they are preserved by the read-modify-write. Fallback
+    approvers are preserved when their stage is unchanged but are dropped when
+    the stage is rebuilt.
 
 DURATION VOCABULARY
 

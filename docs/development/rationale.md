@@ -6929,6 +6929,39 @@ or the same. The root scope `/` itself, where `//` would have landed, is never a
 either since Sprint 11 step 2, and `//` draws that rule's `Warning` beside its `Error`: see
 [#root-scope-is-not-in-the-document](#root-scope-is-not-in-the-document).
 
+**A scope written with a dot segment, a percent escape or white space is refused (A13, BL-141).** The
+slash rule above leaves three more spellings that name another scope than the text says. A scope
+written as an Azure Resource Manager path is sent as written, and the request URI is a `System.Uri`,
+which removes a `.` or `..` segment (reading `\` as `/`) and decodes a `%` escape; no scope carries
+white space. So `/subscriptions/ID/resourceGroups/rg/../other` is sent as
+`/subscriptions/ID/resourceGroups/other`, while the engine groups entries on the canonical form of the
+TEXT, which keeps the segment. Two spellings of one scope then form two groups, and under `-Prune`
+each group's pass can remove what the other declares: the mechanism of BL-01.
+`Test-OERStructureSchema` therefore reports each of the three as an `Error` at the entry's scope path,
+in `roleAssignments` and `roleManagementPolicies` alike, and the whole document is refused before it
+signs in. The three tests are independent, so a scope that breaks all of them reports three `Error`s.
+The dot segment test splits the scope at `/` and at `\` and compares each piece ordinally, so `rg.name`,
+`a..b` and `.hidden` are not segments; the white space test is `[char]::IsWhiteSpace`, which includes
+a line feed.
+
+The rule applies only to a scope NOT written in the `mg:`, `sub:` or `subscription:` form (R9). Those
+forms name a management group or a subscription by id, name or display name, and a display name may
+hold spaces, so `sub:Visual Studio Enterprise` and `mg:Contoso Root` stay valid. They are resolved by a
+lookup and never sent as written; the `mg:` value is escaped into one path segment before it is sent.
+The exemption is decided by `ConvertTo-OERScopeSplat`, the owner of that syntax, and not by a second
+copy of its prefix pattern: only the text it returns as `Scope`, the text that is sent as written, is
+checked. The two differ on degenerate text only -- `mg:` followed by a line break, or `mg:` with nothing
+after it, is no friendly form to the owner and is checked. The prefix is read in any letter case.
+The slash rule is not exempted: a trailing or doubled `/` is refused in every spelling, `mg:` included.
+
+If wrong: a scope with a dot segment, a `%` or white space that an operator wrote on purpose stops
+applying until it is written plainly; Azure Resource Manager returns plain scopes, so an exported
+document is not expected to be hit. Known limit, outside A13: a lone `\`, a `?` and a `#` in a path
+are not refused. By URI syntax a backslash is read as `/`, and a `?` or `#` ends the path, so a scope holding one may name
+another scope than the text says too; that was not measured against Azure Resource Manager and is left
+as a finding. `/.`, `/..` and `/%2e` in `roleAssignments` now carry this `Error` beside the root scope
+`Warning` of [#root-scope-is-not-in-the-document](#root-scope-is-not-in-the-document).
+
 **A failed read of the assignments at a scope is `Failed`, never an empty list (A14).**
 `Get-OERRoleAssignment` reports a failed read, for instance a 403 at a management group, as a
 non-terminating error and returns nothing. The handler read it without `-ErrorAction Stop`, so its
@@ -7786,8 +7819,11 @@ else. A scope that cannot form a URI is not the
 root: the transport could not send it either. With the wider predicate, the validator's Warning
 (Rule 5), the engine's guard (Rule 6) and the export's filter (Rule 2) cover these spellings with no
 other change. A dot segment, a `%` escape or white space in a scope that is NOT the root -- such as
-`/subscriptions/<id>/..`, which is sent as `/subscriptions` -- is not refused: that would be a new
-validator rule outside decision A4, and it is left as a finding. If wrong: a spelling that System.Uri
+`/subscriptions/<id>/..`, which is sent as `/subscriptions` -- was not refused when this step was
+written: that would have been a new validator rule outside decision A4, and it was left as a finding.
+It is refused now, as an `Error`, by the validator rule of Sprint 11 step 3 (BL-141, decision A13; see
+[#role-assignment-key](#role-assignment-key)), which also covers the root's own spellings `/.`, `/..`
+and `/%2e` and stands beside this rule's `Warning` for them. If wrong: a spelling that System.Uri
 leaves alone but Azure Resource Manager itself reads as the root (an escape System.Uri keeps encoded,
 such as `%2f` or `%5c`) would still slip through; that is not measured.
 
@@ -7834,8 +7870,11 @@ file, output property or parameter. If wrong: a later step adds a read-only file
 a `Warning` at `roleAssignments[N].scope`, not an `Error`: an older export that holds such a row still
 applies for the rest, and the engine never writes there (Rule 6). `roleManagementPolicies` on `/` is
 not reported. `//` keeps its slash `Error` and gets this `Warning` too, since both are true, and so
-does `/./`; `/.`, `/..` and `/%2e` get the `Warning` alone (Rule 1). If wrong: change the severity;
-the engine's guard stands either way.
+does `/./`; `/.`, `/..` and `/%2e` got the `Warning` alone (Rule 1) when this step was written, and
+since Sprint 11 step 3 (BL-141, A13) get the `Warning` AND an `Error`: the dot segment `Error` for `/.`
+and `/..`, the percent escape `Error` for `/%2e`, so a document that spells the root that way is
+refused before the engine sees it. If wrong: change the severity; the engine's guard stands either way,
+and its proof for these three spellings is kept end to end with the validator stood in for.
 
 **Rule 6 (the engine: one guard, in the handler).** `Sync-OERStructureRoleAssignment` tests the
 resolved scope with `Test-OERAzureRootScope` as its first step for each entry: one warning, one
@@ -7959,3 +7998,214 @@ instead. `Get-OERAccessReviewTargetMismatch` reads `accessPackage` and `assignme
 ([#static-source-gates](#static-source-gates)). If wrong: one guard case to add.
 
 Nothing here was measured live: the rules were derived from the code and proven with mocked tests.
+
+## policy-update-keeps-custom-extensions
+
+Sprint 11 step 3 made `Set-OERAccessPackageAssignmentPolicy` stop dropping what Microsoft Graph
+removes from an assignment policy on a full PUT. The cmdlet is a read-modify-write: it reads the live
+policy once, and `ConvertTo-OERPolicyBody` carries whatever the command line did not name into the
+body of the PUT. Until this step that was the scope, the requestor and approval settings, the
+expiration, `reviewSettings` and `questions`, and nothing else the read held. So a description-only
+update of a policy with a custom extension stage removed the stage, and an automatic assignment policy
+could not be updated at all. `Invoke-OERStructure` reaches a policy through the same cmdlet, so it
+follows the rules below too. The facts marked M1 to M5 were measured live on 2026-10-13 as the test
+identity `oer-live-cc` in the operator's test tenant, and no tenant value is recorded here. The rest
+was derived from the code and proven with mocked tests.
+
+**M1 (what the read returns).** `GET .../assignmentPolicies/{id}` with no query, with
+`$expand=accessPackage` (the module's read) and with `$expand=customExtensionStageSettings` returns
+`automaticRequestSettings` (null on a request-based policy, the object on an automatic one),
+`questions` (in full) and `customExtensionStageSettings`, the last as `[{ id, stage }]` only: the
+custom extension's own id is read only with
+`$expand=customExtensionStageSettings($expand=customExtension)`.
+`$expand=accessPackage,customExtensionStageSettings($expand=customExtension)` answers 200 with both.
+`$expand=questions` is refused (400 InvalidFilter, "not a navigation property or complex property").
+The policy carries `notificationSettings`; there is no `accessPackageNotificationSettings`.
+
+**M2 (a description-only update loses the stages).** A description-only
+`Set-OERAccessPackageAssignmentPolicy` (the code of this branch's base, d9a13cc) on a request-based
+policy with one custom extension stage (`assignmentRequestCreated`) and one text question sent a PUT
+body that carried `accessPackage, allowedTargetScope, description, displayName, expiration, id,
+notificationSettings, questions, requestApprovalSettings, requestorSettings, specificAllowedTargets`.
+Afterwards `customExtensionStageSettings` read `[]` -- REMOVED by Microsoft Graph -- and every other
+field, the question included, was unchanged.
+
+**M3 (an automatic policy's update is refused without its settings).** The same update on an automatic
+assignment policy (`allowedTargetScope` specificDirectoryUsers, one `attributeRuleMembers` target,
+`automaticRequestSettings` set) was refused: 400 `InvalidSpecificAllowedTargets`, "If the allowed
+target scope is set to specific targets, at least one valid target must be provided." Nothing changed.
+
+**M4 (with the settings it is accepted).** The body `ConvertTo-OERPolicyBody` builds for that update,
+plus the live `automaticRequestSettings`, sent raw: 200. `automaticRequestSettings`,
+`specificAllowedTargets` and `allowedTargetScope` were unchanged and the description changed.
+
+**M5 (the stages go back in the documented shape).** A raw PUT of the request-based policy carrying
+`customExtensionStageSettings` with one entry, `stage` `assignmentRequestCreated` and a
+`customExtension` holding `@odata.type` `#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension`
+and the extension's id (the documented shape, Microsoft Learn "Update accessPackageAssignmentPolicy",
+example 3) answered 200, and the stage was back on the next read.
+
+**Rule 1 (the stages are carried; `ConvertTo-OERPolicyBody`).** The live `customExtensionStageSettings`
+is carried into the PUT whenever it holds at least one stage, in the shape of M5: per stage the
+`stage` and a `customExtension` holding the extension's `@odata.type` (when the read returned one) and
+its `id`, and nothing else -- no stage id, no display name, no endpoint configuration. A stage with no
+`customExtension`, or one with no `id`, makes the helper throw instead: dropping it would disconnect
+the extension, which is the loss this rule exists to prevent, so the helper fails closed.
+`Set-OERAccessPackageAssignmentPolicy` publishes that as a non-terminating `InvalidPolicyInput`, before
+its `ShouldProcess` gate and so also under `-WhatIf`, and sends no update. An empty or absent list adds
+no key, so a policy without stages is PUT exactly as before. If wrong: a policy whose extension id the
+read cannot return (a permission, say) cannot be updated by this cmdlet until that is fixed, which is
+a refusal with nothing sent where the old code sent a silent loss. The shape was measured only for one
+stage name and one extension type (M5); other stages and the other extension type are carried in the
+same documented shape, which is not measured.
+
+**Rule 2 (the automatic settings travel with the scope).** The live `automaticRequestSettings` is
+carried into the PUT only when it is non-null AND `-RequestorScope` was not passed. It goes as one unit
+with the carried `allowedTargetScope` and `specificAllowedTargets` (M3, M4), so an automatic policy is
+updated without losing its rule. A declared scope never inherits automatic assignment: the declared
+scope replaces the allowed targets, and carrying the settings over would let the package be assigned
+automatically to whoever the new scope names. A request-based policy has the value null and gets no
+key. If wrong: an operator who passes `-RequestorScope` for an automatic policy sends a body without
+the settings, and Microsoft Graph decides; M3 shows it refuses an automatic policy's update without
+them when the target is a specific one, and the outcome with a declared scope was not measured. A
+refused update changes nothing (M3).
+
+**Rule 3 (the read expands the extension; one GET).** `Set-OERAccessPackageAssignmentPolicy` still
+reads the policy once, for the access package id and as the baseline of the update, and the request is
+now `v1.0/identityGovernance/entitlementManagement/assignmentPolicies/{id}` with
+`$expand=accessPackage,customExtensionStageSettings($expand=customExtension)`, the combined expansion
+M1 measured as 200. `$expand=accessPackage` alone returns a stage as `{ id, stage }` without the
+extension's own id, and the id is what Rule 1 sends back. `$expand=questions` is refused, so `questions`
+is read without it (it comes in full). If wrong: a Graph version that refused the combined expansion
+would fail the read for every policy, visibly and with nothing sent; restoring the narrower expansion
+would bring the loss back unless the id is read another way.
+
+**What the document cannot say.** `Invoke-OERStructure` has no key for a custom extension stage or for
+automatic assignment, so neither is ever declared: they are only preserved, like `reviewSettings` and
+`questions`.
+
+## rename-refused-outside-groups
+
+Sprint 11 step 3 (BL-128, decision A5) made `Test-OERStructureSchema` refuse a `previousDisplayName`
+where the engine cannot rename, and made a `-WhatIf` plan report a package in a new catalog as
+created. This anchor records the problem, the rules, and what each costs if it is wrong. Nothing here
+was measured live; the rules were derived from the code and proven with mocked tests.
+
+**The problem (BL-128).** Only the groups handler reads `previousDisplayName`. The other sections --
+`administrativeUnits`, `catalogs`, `accessPackages` and an access package's `assignmentPolicies`, and
+`accessReviews` -- match an entry by its `displayName` (a package within its catalog, a policy within
+its package) and create what they do not find. A document that declared `previousDisplayName` there,
+copied from a group rename say, was accepted without a word: the key was ignored, nothing was found
+under the new name, and the engine created a second object beside the one the operator meant to
+rename. The old object stayed in place, unreported.
+
+**Rule 1 (the refusal; `Test-OERStructureSchema`).** A `previousDisplayName` present and not null on
+an administrative unit, a catalog, an access package, an assignment policy of an access package or an
+access review is an `Error` at `previousDisplayName` under that entry's path, so the whole document is
+refused before authentication and before any write. The message states two facts and no more: renaming
+is not supported there yet, and the engine would create a new object beside the old one. A group keeps
+its `previousDisplayName`, which is the rename the engine supports. An explicit null is not declared,
+as for every other key (`Test-HasProp` is present and not null), and is not reported. If wrong: a
+document that carried the key in one of those sections used to apply and now fails validation; the fix
+is to remove the key and, when the object is to be renamed, rename it outside the document first.
+The refusal stands until those sections support a rename, which a later step is to add.
+
+**Rule 2 (a package in a catalog the same plan creates; R4).** Under `-WhatIf` a catalog the document
+creates does not exist yet, so the catalog-scoped lookup of a package declared in it failed with
+`CatalogNotFound` and the plan reported the package `Failed`, "the access package was NOT created",
+while the real run creates the catalog and then the package. `Invoke-OERStructure` now makes one list
+of catalog names per document and hands it, as `-PlannedCatalog`, to the catalogs handler and the
+access package handler only. `Sync-OERStructureCatalog` adds a name to it only when `$WhatIfPreference`
+is true and it reports `would create catalog`. `Sync-OERStructureAccessPackage` compares the package's
+catalog with the list without regard to letter case and, when it is there, skips the catalog-scoped
+lookup and takes the create branch, which under `-WhatIf` reports the plan and returns. A real run
+never fills the list, so it is unchanged. A declined `-Confirm` leaves `ShouldProcess` false with
+`$WhatIfPreference` false, so it adds nothing and the package stays `Failed`, as a real run would find
+it. A package whose catalog the document does not declare and the tenant does not hold is still
+`Failed`, and so is one in a declared catalog when `-Include` leaves the catalogs section out, since
+the list is then empty. If wrong: a plan can promise a package that the real run reports `Failed`
+because its catalog could not be created (a refused write, say); a plan reports what a run would do if
+the rows before it succeed, and it cannot know otherwise.
+
+**Rule 3 (the policy rows say create; R5).** In that create branch the policy rows read
+`would create assignmentPolicy`, the policy's name in quotes and `after access package is created`; they
+read `would configure assignmentPolicy` before. The policy is created, not configured, and the rows now
+appear in the plan of a package in a new catalog. The resource role rows keep their `would configure
+resourceRole` text. If wrong: a script that matched the old row text no longer matches. The historical
+live-verification checklists under `docs/live-verification/` quote the old text as a record of what a
+past run printed, and are not edited.
+
+## mail-nickname
+
+Sprint 11 step 3 (BL-132, decision A9) validated `mailNickname`, made `New-OERGroup` refuse an alias it
+cannot derive, and made the validator warn when a renamed group keeps an alias that does not follow
+the rename. This anchor records the problem, the measurement, the rules and what each costs if it is
+wrong.
+
+**The problem (BL-132).** `New-OERGroup` derived the alias from the display name inline, removing every
+character outside A-Z, a-z, 0-9, `.`, `_` and `-`, and sent it. A name with none of those characters
+derives the empty string, and a long one derives more than 64 characters: Microsoft Graph refuses such
+an alias (M6), and the create, after the administrative unit was resolved, was the first place the
+module learned of it. The validator accepted
+any string for a declared `mailNickname`, so a bad alias failed only at apply. And a group keeps its
+alias when it is renamed, so a document that renames a group and leaves `mailNickname` alone leaves the
+old name in the group's mail alias, which is rarely what the operator wants.
+
+**M6 (what Microsoft Graph accepts; measured 2026-10-13, as `oer-live-cc`).** `mailNickname`, PATCH on a
+security group, app-only: refused (400 Request_BadRequest, "Invalid value specified for property
+'mailNickname' of resource 'Group'") for each of `@ ( ) \ [ ] " ; : < > ,`, a space, a tab, the empty
+string and 65 characters; accepted (204) for `. - _ / ' ~ ! # $ % & * + = ? ^ { | }`, the backtick, the
+non-ASCII letter U+00E5 and 64 characters. The refusal was measured on an update; the create is
+expected to apply the same rule and was not measured separately. Two Microsoft Learn pages describe
+the property and differ from each other and from the measurement. The "group resource type" page
+(`mailNickname`) lists exactly the refused printable set (`@ () \ [] " ; : <> , SPACE`) and says
+"maximum length is 64 characters"; it also says ASCII only, which the measurement contradicts (U+00E5
+was accepted). The "Update group" page also excludes `.`, which the measurement contradicts too (`.`
+was accepted). The rules below follow the measurement, and the printable set is the one the first
+page and the measurement agree on.
+
+**Rule 1 (one owner of the derivation; R6).** `Get-OERDerivedMailNickname` is the single owner of the
+alias derived from a display name: `-replace '[^A-Za-z0-9._-]', ''`. `New-OERGroup` and the validator
+both call it, so the alias the validator compares a rename against is the alias `New-OERGroup` would
+have created. It is pure and returns the empty string or a long one as it is; the callers decide what
+that means. If wrong: a second copy of the derivation drifts from the first, and the validator would
+warn about, or miss, an alias `New-OERGroup` never creates.
+
+**Rule 2 (the refusal in `New-OERGroup`; R7).** When `-MailNickname` is not given and the derived alias
+is empty or longer than 64 characters, the command writes the non-terminating `DerivedMailNicknameInvalid`
+(category `InvalidArgument`, target the resolved display name) and returns, with nothing sent, also
+under `-WhatIf`. The message names the length, or says the alias is empty, says that Microsoft Graph
+accepts 1 to 64 characters, and asks for `-MailNickname`. The refusal stands AFTER the idempotent
+existence lookup, so a group that already exists is still returned whatever its name derives to (an
+existing group needs no alias and a re-run of an apply must stay idempotent), and BEFORE the
+administrative unit lookup and the create. An explicit `-MailNickname` is sent as given: the command
+does not validate it, and Microsoft Graph refuses a bad one at the create; the document validator is
+what catches it for a document (Rule 3). If wrong: moved before the lookup, the check would refuse an
+existing group; moved after the unit lookup, it would spend requests on a call that cannot succeed.
+A document group that declares no `mailNickname` and whose name derives to an invalid alias is not
+caught offline: `Test-OERStructure` and the `-WhatIf` plan accept it, since the plan reports
+`would create group` without calling `New-OERGroup`, and the real run reports the entry `Failed` with
+`DerivedMailNicknameInvalid`. That is a known limit, not a decision.
+
+**Rule 3 (the validator refuses what Graph refuses; R8).** A declared `mailNickname` that is a string is
+an `Error` at its path when it is empty, when it is longer than 64 characters (the message names the
+length), and when it contains any of `@ ( ) \ [ ] " ; : < > ,`, white space (`[char]::IsWhiteSpace`) or
+a control character (`[char]::IsControl`); the message names each such character once, white space and
+control characters by code point. Each rule is its own `Error`, so a value that breaks two reports two.
+A non-string value keeps the existing "must be a string" `Error`. A non-ASCII letter and `.` are
+accepted, as Microsoft Graph accepted them (M6). White space other than the space and the tab, and
+control characters other than the tab, were not measured one by one: they follow the measured refusals
+and are refused on the ground that no alias needs them. The schema declares `minLength` 1 and
+`maxLength` 64 and describes the characters, and the character set is enforced by the offline
+validator alone. If wrong: a document whose alias holds such a character that Graph would accept is
+refused by the validator; remove the character.
+
+**Rule 4 (the alias does not follow a rename; A5).** A `groups[]` entry with a `previousDisplayName`
+that is a non-empty string and differs from `displayName` without regard to letter case is renamed. It
+gets a `Warning` at its `mailNickname` path when it declares no `mailNickname` (it keeps its current
+alias) or declares one equal, without regard to letter case, to the alias `Get-OERDerivedMailNickname`
+derives from the old name. It is a `Warning`, not an `Error`, since keeping the alias can be deliberate
+and the document is valid either way. The message says the alias does not follow a rename and what to
+declare. A `previousDisplayName` that is an object id, and a template-based group with no
+`mailNickname`, warn too although there is no old name to derive an alias from; the message hedges
+("if that alias was derived from the old name"). If wrong: one Warning too many on such a document.

@@ -1112,3 +1112,67 @@ Describe 'Get-OERStructureSchemaJson tenantId (BL-88, A14)' {
         }
     }
 }
+
+Describe 'Get-OERStructureSchemaJson renames, mail aliases and scope spelling (BL-128, BL-132, BL-141)' {
+    # Sprint 11 step 3. The offline validator refuses previousDisplayName outside groups, a mailNickname
+    # Microsoft Graph refuses, and a scope spelled with a dot segment, a percent escape or white space;
+    # the schema says so in its descriptions and bounds the alias length. It carries no regular-expression
+    # pattern for the characters, which the validator alone enforces.
+    It 'bounds a group mailNickname to 1 to 64 characters and declares no pattern' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Nick = ($Schema | ConvertFrom-Json).properties.groups.items.properties.mailNickname
+            $Nick.type | Should -BeExactly 'string'
+            $Nick.minLength | Should -Be 1
+            $Nick.maxLength | Should -Be 64
+            $Nick.PSObject.Properties.Name | Should -Not -Contain 'pattern'
+            $At64 = '{ "version": "1.0", "groups": [ { "displayName": "g", "mailNickname": "' + ('a' * 64) + '" } ] }'
+            $At65 = '{ "version": "1.0", "groups": [ { "displayName": "g", "mailNickname": "' + ('a' * 65) + '" } ] }'
+            $Empty = '{ "version": "1.0", "groups": [ { "displayName": "g", "mailNickname": "" } ] }'
+            Test-Json -Json $At64 -Schema $Schema | Should -BeTrue
+            Test-Json -Json $At65 -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+            Test-Json -Json $Empty -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+        }
+    }
+
+    It 'describes the refused characters and says the alias is not derived again on a rename' {
+        InModuleScope $script:moduleName {
+            $Description = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.groups.items.properties.mailNickname.description
+            $Description | Should -Match ([regex]::Escape('1 to 64 characters, none of @ ( ) \ [ ] " ; : < > , and no white space or control character'))
+            $Description | Should -Match ([regex]::Escape('The alias is not derived again on a rename: a renamed group keeps its alias unless the document declares one'))
+            $Description | Should -Match 'DerivedMailNicknameInvalid'
+        }
+    }
+
+    It 'says in every section that cannot rename that renaming is not supported and previousDisplayName is refused, and not in groups' {
+        InModuleScope $script:moduleName {
+            $Props = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties
+            $Descriptions = [ordered]@{
+                administrativeUnits = $Props.administrativeUnits.description
+                catalogs            = $Props.catalogs.description
+                accessPackages      = $Props.accessPackages.description
+                assignmentPolicies  = $Props.accessPackages.items.properties.assignmentPolicies.description
+                accessReviews       = $Props.accessReviews.description
+            }
+            foreach ($Name in $Descriptions.Keys) {
+                $Descriptions[$Name] | Should -Match ([regex]::Escape('Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a')) -Because "the $Name description says so"
+                $Descriptions[$Name] | Should -Match 'would create a new .+ beside the old one' -Because "the $Name description names the consequence"
+            }
+            $Props.groups.description | Should -Not -Match ([regex]::Escape('Renaming is not supported yet'))
+        }
+    }
+
+    It 'states the refused scope spellings in the roleAssignments and roleManagementPolicies scope descriptions' {
+        InModuleScope $script:moduleName {
+            $Props = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties
+            $Scopes = [ordered]@{
+                roleAssignments        = $Props.roleAssignments.items.properties.scope.description
+                roleManagementPolicies = $Props.roleManagementPolicies.items.properties.scope.description
+            }
+            foreach ($Name in $Scopes.Keys) {
+                $Scopes[$Name] | Should -Match ([regex]::Escape("without a trailing or doubled '/', without a '.' or '..' segment, without a '%' escape and without white space")) -Because "the $Name scope names the spellings"
+                $Scopes[$Name] | Should -Match ([regex]::Escape('The mg:, sub: and subscription: forms are resolved by a lookup and never sent as written, so only the rule about ''/'' applies to them.')) -Because "the $Name scope names the exempt forms"
+            }
+        }
+    }
+}

@@ -73,6 +73,17 @@ function Get-OERStructureSchemaJson {
     name matches fails and creates nothing. Get-OERInventory never exports it.
     A groups[] item may carry onPremisesSynced, a boolean the export writes for a group synchronized
     from on-premises; it is information only.
+    Only a group can be renamed through the document. The descriptions of administrativeUnits,
+    catalogs, accessPackages (and its assignmentPolicies) and accessReviews each say that renaming is
+    not supported yet and that Test-OERStructure refuses previousDisplayName there as an Error, since
+    the engine would create a new object beside the old one; the schema keeps those items open and
+    does not declare the key, so only the offline validator refuses it. A groups[] mailNickname is
+    typed with minLength 1 and maxLength 64, and its description lists the characters Microsoft Graph
+    refuses and says the alias is not derived again on a rename; the characters themselves are
+    checked by the offline validator alone, since the schema carries no regular-expression pattern
+    for them. The scope descriptions of roleAssignments and roleManagementPolicies state the
+    spellings the validator refuses: a trailing or doubled '/', and in a path a '.' or '..' segment,
+    a '%' escape or white space.
     Exactly five keys are typed [ "array", "null" ] rather than "array": groups[].members,
     administrativeUnits[].members, administrativeUnits[].scopedRoles, catalogs[].resources and
     accessPackages[].resourceRoles. For those five an omitted key still reconciles and still PRUNES,
@@ -169,7 +180,7 @@ function Get-OERStructureSchemaJson {
           "description": { "type": [ "string", "null" ] },
           "membershipRule": { "type": "string" },
           "membershipRuleProcessingState": { "type": "string", "enum": [ "On", "Paused" ] },
-          "mailNickname": { "type": "string" },
+          "mailNickname": { "type": "string", "minLength": 1, "maxLength": 64, "description": "The group's mail alias: 1 to 64 characters, none of @ ( ) \\ [ ] \" ; : < > , and no white space or control character, since Microsoft Graph refuses each of them. When a new group declares none, the alias is derived from its display name by removing every character outside A-Z, a-z, 0-9, '.', '_' and '-'; a name whose derived alias would be empty or longer than 64 characters is refused (DerivedMailNicknameInvalid), so declare mailNickname for it. The alias is not derived again on a rename: a renamed group keeps its alias unless the document declares one, and Test-OERStructure warns when a renamed group declares none or the alias derived from its previous name." },
           "administrativeUnit": {
             "type": "string",
             "description": "Administrative unit (display name or id) the group is created in. Create-only: it is applied when the group is created and is not captured by Get-OERInventory, so it never round-trips. Because of that, the SAME document's administrativeUnits[] entry that this value names -- by its declared id when the value parses as a GUID (compared as a GUID, so braced and dash-less forms match), otherwise by its displayName, ignoring case -- must also list this group's displayName in its own members array -- otherwise every later apply sees the group as an undeclared member of that unit and -Prune removes the membership, since nothing re-applies this create-only field to self-heal it. Only the apply run that creates the group keeps it: that run withholds the prune of the membership it created (Skipped, prune withheld)."
@@ -234,7 +245,7 @@ function Get-OERStructureSchemaJson {
     },
     "administrativeUnits": {
       "type": "array",
-      "description": "Administrative units. displayName is the match key: an existing unit is matched and updated by it. Renaming through the document is not possible -- changing displayName creates a new unit and leaves the old one in place, unreported.",
+      "description": "Administrative units. displayName is the match key: an existing unit is matched and updated by it. Renaming through the document is not possible -- changing displayName creates a new unit and leaves the old one in place, unreported. Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a unit as an Error, since the engine would create a new unit beside the old one.",
       "items": {
         "type": "object",
         "required": [ "displayName" ],
@@ -268,7 +279,7 @@ function Get-OERStructureSchemaJson {
     },
     "catalogs": {
       "type": "array",
-      "description": "Entitlement Management catalogs. displayName is the match key: an existing catalog is matched and updated by it. Renaming through the document is not possible -- changing displayName creates a new catalog and leaves the old one in place, unreported.",
+      "description": "Entitlement Management catalogs. displayName is the match key: an existing catalog is matched and updated by it. Renaming through the document is not possible -- changing displayName creates a new catalog and leaves the old one in place, unreported. Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a catalog as an Error, since the engine would create a new catalog beside the old one.",
       "items": {
         "type": "object",
         "required": [ "displayName" ],
@@ -300,7 +311,7 @@ function Get-OERStructureSchemaJson {
     },
     "accessPackages": {
       "type": "array",
-      "description": "Entitlement Management access packages. displayName is the match key within the declared catalog (names are unique per catalog, not tenant-wide): an existing package is matched and updated by it. Renaming through the document is not possible -- changing displayName creates a new package and leaves the old one in place, unreported; there is no top-level Extra reporting for this section either.",
+      "description": "Entitlement Management access packages. displayName is the match key within the declared catalog (names are unique per catalog, not tenant-wide): an existing package is matched and updated by it. Renaming through the document is not possible -- changing displayName creates a new package and leaves the old one in place, unreported; there is no top-level Extra reporting for this section either. Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a package as an Error, since the engine would create a new package beside the old one.",
       "items": {
         "type": "object",
         "required": [ "displayName", "catalog" ],
@@ -323,6 +334,7 @@ function Get-OERStructureSchemaJson {
           },
           "assignmentPolicies": {
             "type": "array",
+            "description": "Assignment policies of the package. displayName is the match key within the package: an existing policy is matched and updated by it. Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a policy as an Error, since the engine would create a new policy beside the old one.",
             "items": {
               "type": "object",
               "required": [ "displayName" ],
@@ -392,7 +404,7 @@ function Get-OERStructureSchemaJson {
     },
     "accessReviews": {
       "type": "array",
-      "description": "Access review series. displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy; otherwise the entry fails and nothing is written. The update is a full-object PUT (read-modify-write), so every writable property the module models or explicitly carries forward is preserved. A writable top-level property added to the Microsoft Graph accessReviewScheduleDefinition resource in future and not yet modelled here would be dropped by that PUT.",
+      "description": "Access review series. displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy; otherwise the entry fails and nothing is written. The update is a full-object PUT (read-modify-write), so every writable property the module models or explicitly carries forward is preserved. A writable top-level property added to the Microsoft Graph accessReviewScheduleDefinition resource in future and not yet modelled here would be dropped by that PUT. Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a review as an Error, since the engine would create a new review beside the old one.",
       "items": {
         "type": "object",
         "required": [ "displayName", "accessPackage", "assignmentPolicy" ],
@@ -428,7 +440,7 @@ function Get-OERStructureSchemaJson {
         "type": "object",
         "required": [ "scope", "role", "principal" ],
         "properties": {
-          "scope": { "type": "string" },
+          "scope": { "type": "string", "description": "The Azure scope of the assignment: a path such as /subscriptions/ID/resourceGroups/NAME, or the mg:, sub: or subscription: form. A path is written without a trailing or doubled '/', without a '.' or '..' segment, without a '%' escape and without white space: Test-OERStructure refuses each of them as an Error, since the request would name another scope than the one written. The mg:, sub: and subscription: forms are resolved by a lookup and never sent as written, so only the rule about '/' applies to them." },
           "role": { "type": "string" },
           "principal": { "type": "string" },
           "principalType": { "type": "string", "enum": [ "User", "Group", "ServicePrincipal" ] },
@@ -444,7 +456,7 @@ function Get-OERStructureSchemaJson {
         "type": "object",
         "required": [ "scope", "role" ],
         "properties": {
-          "scope": { "type": "string" },
+          "scope": { "type": "string", "description": "The Azure scope of the policy: a path such as /subscriptions/ID/resourceGroups/NAME, or the mg:, sub: or subscription: form. A path is written without a trailing or doubled '/', without a '.' or '..' segment, without a '%' escape and without white space: Test-OERStructure refuses each of them as an Error, since the request would name another scope than the one written. The mg:, sub: and subscription: forms are resolved by a lookup and never sent as written, so only the rule about '/' applies to them." },
           "role": { "type": "string" },
           "allowPermanentEligibility": { "type": "boolean" },
           "eligibleDurationDays": { "type": "integer", "minimum": 1, "maximum": 3650 },

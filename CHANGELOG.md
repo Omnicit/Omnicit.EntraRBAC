@@ -21,6 +21,12 @@ and `Invoke-OERStructure` never creates or prunes there. It updates an access re
 only if it reviews the declared package and policy (a non-unique name must be an id), else fails it
 (`AccessReviewScopeMismatch`), writing nothing.
 
+`Set-OERAccessPackageAssignmentPolicy` no longer drops custom extension stages and can update an
+automatic assignment policy. `Test-OERStructure` refuses `previousDisplayName` outside groups, an
+invalid `mailNickname` and a scope with a dot segment, `%` or white space, and warns when a renamed
+group keeps its alias. `New-OERGroup` refuses an underivable alias. `-WhatIf` now plans a package in
+a new catalog as created.
+
 ## [1.2.0] - 2026-10-11
 
 A permanent group eligibility grant refused after `Add-OERGroupEligibility` opened the group's PIM

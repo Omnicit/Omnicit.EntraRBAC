@@ -222,6 +222,17 @@ document.
     different groups the entry fails and nothing is changed (two groups are never merged), and when
     neither matches the entry fails and nothing is created: a rename names an existing group. A NEW
     group is declared without previousDisplayName.
+  - Renaming in place is supported only for groups, for now. previousDisplayName in any other
+    section (administrativeUnits, catalogs, accessPackages and their assignmentPolicies,
+    accessReviews) is refused by Test-OERStructure as an Error, and without it a changed
+    displayName there creates a new object beside the old one. Do not propose a rename in those
+    sections.
+  - A mail alias does not follow a rename. A renamed group keeps its mailNickname unless the
+    proposal declares the new one, so when a proposal renames a group, declare mailNickname with
+    the alias the new name should carry (Test-OERStructure warns when a renamed group declares no
+    mailNickname, or the alias derived from its old name). A declared mailNickname must be 1 to 64
+    characters and must not contain @ ( ) \ [ ] " ; : < > , or white space; Test-OERStructure
+    refuses it as an Error otherwise.
   - When a proposal renames a group, every other reference to it in the same document uses the NEW
     name: administrativeUnits members, catalog resources[] and access package resourceRoles[],
     eligibility, owner, member and approver entries, and roleAssignments and

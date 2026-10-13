@@ -816,6 +816,26 @@ tenant, nor an assignment policy name in its access package, and the export writ
 when such a name is shared, the entry is reported `Failed` with `AmbiguousName` until it gives the
 package or the policy by id. Give a new review a display name no other review in the tenant uses.
 
+Only a group can be renamed through the document (`previousDisplayName`). `Test-OERStructure`
+reports `previousDisplayName` in `administrativeUnits`, `catalogs`, `accessPackages`, their
+`assignmentPolicies` and `accessReviews` as an `Error`: renaming is not supported there yet, and
+`Invoke-OERStructure` would create a new object beside the old one. A group's mail alias does not
+follow a rename: declare `mailNickname` for the new name, and the validator warns when a renamed
+group keeps the alias derived from its old name or declares none. A `mailNickname` Microsoft Graph
+refuses (more than 64 characters, `@ ( ) \ [ ] " ; : < > ,` or white space) is an `Error`, and
+`New-OERGroup` refuses to derive an alias that would be empty or longer than 64 characters
+(`DerivedMailNicknameInvalid`). A scope written as a path with a `.` or `..` segment, a `%` escape
+or white space is an `Error` too (the `mg:`, `sub:` and `subscription:` forms are not checked for
+these three).
+
+`Set-OERAccessPackageAssignmentPolicy`, and `Invoke-OERStructure` through it, keeps a policy's
+custom extension stages, which Microsoft Graph removes on an update that does not send them, and,
+while no `-RequestorScope` is passed, an automatic assignment policy's settings, without which
+Microsoft Graph refuses the update. A stage whose custom extension id cannot be read is refused
+with `InvalidPolicyInput`, also under `-WhatIf`, and no update is sent. A `-WhatIf` plan reports an
+access package declared in a catalog the same document creates as `would create access package`
+instead of `Failed`.
+
 `Export-OERInventory` stays fast in a large tenant by deciding which security groups are
 RBAC-relevant before it reads any group in full: role-assignable groups, groups with PIM
 eligibility, groups found to use PIM for Groups and, with `-IncludeSyncedGroups`, synchronized
