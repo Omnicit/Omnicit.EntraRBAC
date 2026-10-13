@@ -29,6 +29,16 @@ function Get-OERInventoryReadme {
     It names groups only, never a principal. When -PimLeftOut is empty it says that none was left out.
     That parameter is mandatory for the same reason as the three above.
 
+    Directly after it comes the section "Role assignments at the root scope (elevated access)"
+    (BL-126). It says what the Azure root scope '/' is, that a role assignment there is elevated
+    access and a finding to review, that inventory.json and roleAssignments.json never carry one and
+    Invoke-OERStructure never creates or removes one, and that leaving them out changes nothing in the
+    tenant. Then it gives the count and one bullet per -RootScopeAssignments row, in the order given:
+    the role and the principal as code spans (the same fence rule as the entries above), and the
+    principal type in parentheses when it is known. It never writes the role assignment id. When
+    -RootScopeAssignments is empty it says that none was read. That parameter is mandatory for the same
+    reason as the four above.
+
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
     collections or objects that could not be read, could not be written without an empty name, or
@@ -56,20 +66,34 @@ function Get-OERInventoryReadme {
     one object per group with Group (the display name), Members and Owners (how many were left out)
     and Basis ('Assignments' or 'Eligibility'). Pass an empty array when there are none.
 
-    .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
-    Returns the README Markdown as a single string. Its "What this export could not read" section
-    says that nothing was left unread, and its "Members and owners left out as PIM for Groups access"
-    section that none was left out.
+    .PARAMETER RootScopeAssignments
+    The role assignments at the Azure root scope '/' the export left out of inventory.json and
+    roleAssignments.json (BL-126), deduplicated by Export-OERInventory from the information records
+    Get-OERInventory writes: one object per assignment with Role (the role name, or the role
+    definition id when it has no name), Principal (the principal name as the export writes it) and
+    PrincipalType (the principal type, or an empty string when unknown). Any other property, such as
+    RoleAssignmentId, is not written. Pass an empty array when there are none.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
+    Returns the README Markdown as a single string. Its "What this export could not read" section
+    says that nothing was left unread, its "Members and owners left out as PIM for Groups access"
+    section that none was left out, and its "Role assignments at the root scope (elevated access)"
+    section that none was read.
+
+    .EXAMPLE
+    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @() -RootScopeAssignments @()
     Returns the README Markdown with one bullet per entry under "What this export could not read".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut -RootScopeAssignments @()
     Returns the README Markdown with one bullet per group under "Members and owners left out as PIM
     for Groups access".
+
+    .EXAMPLE
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @([PSCustomObject]@{ Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' })
+    Returns the README Markdown with the count and one bullet per role assignment under "Role
+    assignments at the root scope (elevated access)".
     #>
     [OutputType([string])]
     [CmdletBinding()]
@@ -77,7 +101,8 @@ function Get-OERInventoryReadme {
         [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$IncompleteReads,
         [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$SkippedScopes,
         [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$SkippedEligibilityScopes,
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$PimLeftOut
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$PimLeftOut,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RootScopeAssignments
     )
 
     # A text written as a Markdown code span, so '<all Azure scopes: scope enumeration failed>' is
@@ -188,6 +213,32 @@ member or owner in the tenant: leaving it out of the export changes nothing ther
         $PimIntro + "`n`n" + 'None. This export left no member or owner out as PIM for Groups access.'
     }
 
+    # BL-126 (R4): the role assignments at the Azure root scope '/' the export left out, one bullet per
+    # row in the order the export holds them (sorted and deduplicated there): the role and the
+    # principal as code spans, and the type in parentheses when it is known. Never the role assignment
+    # id. The parameter is mandatory, so binding has already refused a null entry.
+    $RootBullets = [System.Collections.Generic.List[string]]::new()
+    foreach ($Entry in @($RootScopeAssignments)) {
+        $RootType = [string]$Entry.PrincipalType
+        $RootBullets.Add("- $(Format-CodeSpan -Text ([string]$Entry.Role)) for $(Format-CodeSpan -Text ([string]$Entry.Principal))" + $(if ($RootType) { " ($RootType)" } else { '' }))
+    }
+    $RootIntro = @'
+## Role assignments at the root scope (elevated access)
+
+The root scope `/` stands above every management group and subscription in the tenant, so a role
+assignment there reaches every Azure resource. It is elevated access -- most often User Access
+Administrator, which the Microsoft Entra setting "Access management for Azure resources" grants a
+Global Administrator -- and a finding to review, not part of the RBAC model this bundle describes.
+`inventory.json` and `roleAssignments.json` never carry a role assignment at the root scope, and
+`Invoke-OERStructure` never creates or removes one, even when a document declares it. Leaving them
+out of the export changes nothing in the tenant.
+'@
+    $RootScopeSection = if ($RootBullets.Count -gt 0) {
+        $RootIntro + "`n`n" + "This export read $($RootBullets.Count) role assignment(s) at the root scope:" + "`n`n" + ($RootBullets -join "`n")
+    } else {
+        $RootIntro + "`n`n" + "None. No role assignment this export read is at the root scope ``/``. Role assignments are read only`nwhen the export includes ``RoleAssignments``."
+    }
+
     $Readme = @'
 # OER RBAC Inventory Bundle
 
@@ -198,6 +249,8 @@ includes a predefined prompt that turns it into appliable improvement proposals.
 @@COULD-NOT-READ@@
 
 @@PIM-LEFT-OUT@@
+
+@@ROOT-SCOPE@@
 
 ## Files
 
@@ -334,5 +387,5 @@ came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in anothe
 remove `tenantId` first.
 '@
 
-    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection)
+    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection)
 }

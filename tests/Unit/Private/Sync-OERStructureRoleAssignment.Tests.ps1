@@ -1550,6 +1550,164 @@ Describe 'Sync-OERStructureRoleAssignment' {
             }
         }
     }
+
+    Context 'the root scope is never written or pruned (BL-126)' {
+        # The Azure root scope '/' stands above every management group and subscription: a role
+        # assignment there is elevated access, which the apply engine never creates, edits or removes.
+        # The handler's first statement refuses an entry whose resolved scope is the root scope: one
+        # warning and one Skipped row, before the principal and role lookups, the read at the scope (an
+        # ARM call at '/'), any write and the prune pass -- the same in a plan and a real run, since no
+        # ShouldProcess is involved. No id below is version-4 shaped.
+        BeforeAll {
+            . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+            $script:RootItemLabel = 'User Access Administrator -> person1@example.com @ /'
+            $script:RootGuardWarning = "Sync-OERStructureRoleAssignment: 'User Access Administrator' for 'person1@example.com' names the root " +
+                "scope '/' (elevated access); the apply engine never creates or removes a role assignment there. Nothing was read or written for this entry."
+            $script:RootGuardDetail = "the root scope '/' grants access over every management group and subscription in the tenant (elevated " +
+                'access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or ' +
+                'written for this entry'
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncRaRoot {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [string]$ResolvedScope, [switch]$Prune, [switch]$ReconcileScope, [object[]]$DeclaredAtScope = @())
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune `
+                        -ReconcileScope:$ReconcileScope -DeclaredAtScope $DeclaredAtScope
+                }
+                # One run of the handler: its rows, and the text of every warning that reached the stream.
+                function script:Invoke-SyncRaRootCapture {
+                    param([hashtable]$Splat)
+                    $All = @(Invoke-SyncRaRoot @Splat -WarningAction Continue -ErrorAction Stop 3>&1)
+                    [PSCustomObject]@{
+                        Rows     = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+                        Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                    }
+                }
+            }
+        }
+
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERStructurePrincipal { 'dddd6666-0000-0000-0000-000000000001' }
+                Mock Resolve-OERRoleDefinitionId { '/providers/Microsoft.Authorization/roleDefinitions/bbbb6666-0000-0000-0000-000000000001' }
+                # An undeclared assignment at the root scope, which a prune pass that ran would remove.
+                Mock Get-OERRoleAssignment {
+                    [PSCustomObject]@{
+                        Scope = '/'; PrincipalId = 'dddd6666-0000-0000-0000-000000000009'
+                        RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/bbbb6666-0000-0000-0000-000000000001'
+                        RoleAssignmentId = '/providers/Microsoft.Authorization/roleAssignments/cccc6666-0000-0000-0000-000000000009'
+                    }
+                }
+                Mock New-OERRoleAssignment {}
+                Mock Set-OERRoleAssignment {}
+                Mock Remove-OERRoleAssignment {}
+                Mock Invoke-OERArmRequest { throw 'unexpected ARM request' }
+            }
+        }
+
+        It 'reports the entry Skipped with one warning, and reads and writes nothing (<Case>)' -ForEach @(
+            @{ Case = 'a real run'; Splat = @{ Confirm = $false } }
+            @{ Case = 'with -Prune and -ReconcileScope'; Splat = @{ Prune = $true; ReconcileScope = $true; Confirm = $false } }
+            @{ Case = 'under -WhatIf, with -Prune and -ReconcileScope'; Splat = @{ Prune = $true; ReconcileScope = $true; WhatIf = $true } }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Splat = $Splat; Label = $script:RootItemLabel; Warning = $script:RootGuardWarning; Detail = $script:RootGuardDetail } {
+                param($Splat, $Label, $Warning, $Detail)
+                $Item = [PSCustomObject]@{ scope = '/'; role = 'User Access Administrator'; principal = 'person1@example.com' }
+                $Out = Invoke-SyncRaRootCapture -Splat (@{ Item = $Item; ResolvedScope = '/'; DeclaredAtScope = @($Item) } + $Splat)
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Skipped'
+                $Out.Rows[0].Section | Should -BeExactly 'roleAssignments'
+                $Out.Rows[0].Item | Should -BeExactly $Label
+                $Out.Rows[0].Detail | Should -BeExactly $Detail
+                $Out.Warnings | Should -Be @($Warning)
+                Should -Invoke Resolve-OERStructurePrincipal -Times 0
+                Should -Invoke Resolve-OERRoleDefinitionId -Times 0
+                Should -Invoke Get-OERRoleAssignment -Times 0
+                Should -Invoke New-OERRoleAssignment -Times 0
+                Should -Invoke Set-OERRoleAssignment -Times 0
+                Should -Invoke Remove-OERRoleAssignment -Times 0
+                Should -Invoke Invoke-OERArmRequest -Times 0
+            }
+        }
+
+        It 'asks no confirmation under -Confirm, in a script with no try above it' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value { [System.IO.File]::AppendAllText('#LOG#', "principal`n"); 'dddd6666-0000-0000-0000-000000000001' }
+    Set-Item -Path function:script:Resolve-OERRoleDefinitionId -Value { [System.IO.File]::AppendAllText('#LOG#', "role`n"); '/providers/Microsoft.Authorization/roleDefinitions/bbbb6666-0000-0000-0000-000000000001' }
+    Set-Item -Path function:script:Get-OERRoleAssignment -Value { [System.IO.File]::AppendAllText('#LOG#', "read`n") }
+    Set-Item -Path function:script:New-OERRoleAssignment -Value { [System.IO.File]::AppendAllText('#LOG#', "create`n") }
+    Set-Item -Path function:script:Remove-OERRoleAssignment -Value { [System.IO.File]::AppendAllText('#LOG#', "remove`n") }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "arm`n") }
+    function script:Invoke-SyncRaRootConfirm {
+        [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Low')]
+        param([PSCustomObject]$Item)
+        Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope '/' -Prune -ReconcileScope -DeclaredAtScope @($Item)
+    }
+    $Item = [PSCustomObject]@{ scope = '/'; role = 'User Access Administrator'; principal = 'person1@example.com' }
+    Invoke-SyncRaRootConfirm -Item $Item -Confirm | ForEach-Object { "ROW:$($_.Action):$($_.Item)" }
+}
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Skipped:$($script:RootItemLabel)")
+            @($Run.Prompts).Count | Should -Be 0
+            $Run.Warnings | Should -Be @($script:RootGuardWarning)
+            Test-Path -LiteralPath $Log | Should -BeFalse -Because 'no lookup, read or write was made'
+        }
+
+        It 'tells the operator, for an assignment inherited from the root scope, that the document never manages it' {
+            InModuleScope $script:moduleName {
+                Mock Get-OERRoleAssignment {
+                    [PSCustomObject]@{
+                        Scope = '/'; PrincipalId = 'dddd6666-0000-0000-0000-000000000001'
+                        RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/bbbb6666-0000-0000-0000-000000000001'
+                        RoleAssignmentId = '/providers/Microsoft.Authorization/roleAssignments/cccc6666-0000-0000-0000-000000000001'
+                    }
+                }
+                $Item = [PSCustomObject]@{ scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; role = 'Owner'; principal = 'role_sec_ops' }
+                $Out = Invoke-SyncRaRootCapture -Splat @{ Item = $Item; ResolvedScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; Confirm = $false }
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Skipped'
+                $Out.Rows[0].Detail | Should -BeExactly ("no role assignment is defined at '/subscriptions/aaaa1111-0000-0000-0000-000000000001': the principal holds this role " +
+                    "here through the assignment defined at the root scope '/' (/providers/Microsoft.Authorization/roleAssignments/cccc6666-0000-0000-0000-000000000001), " +
+                    'elevated access the document never manages. Nothing was written -- editing that assignment would change the root grant, and creating ' +
+                    'one here would add a grant that survives removal of the root one')
+                $Out.Warnings | Should -Be @(("Sync-OERStructureRoleAssignment: 'Owner' for 'role_sec_ops' is not defined at '/subscriptions/aaaa1111-0000-0000-0000-000000000001' " +
+                        "-- it is inherited from the root scope '/' (elevated access), which the document never manages. Nothing was written."))
+                Should -Invoke New-OERRoleAssignment -Times 0
+                Should -Invoke Set-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'keeps the ancestor advice for an assignment inherited from a management group' {
+            InModuleScope $script:moduleName {
+                Mock Get-OERRoleAssignment {
+                    [PSCustomObject]@{
+                        Scope = '/providers/Microsoft.Management/managementGroups/plat'; PrincipalId = 'dddd6666-0000-0000-0000-000000000001'
+                        RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/bbbb6666-0000-0000-0000-000000000001'
+                        RoleAssignmentId = '/providers/Microsoft.Management/managementGroups/plat/providers/Microsoft.Authorization/roleAssignments/cccc6666-0000-0000-0000-000000000002'
+                    }
+                }
+                $Item = [PSCustomObject]@{ scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; role = 'Owner'; principal = 'role_sec_ops' }
+                $Out = Invoke-SyncRaRootCapture -Splat @{ Item = $Item; ResolvedScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; Confirm = $false }
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Skipped'
+                $Out.Rows[0].Detail | Should -BeExactly ("no role assignment is defined at '/subscriptions/aaaa1111-0000-0000-0000-000000000001': the principal holds this role " +
+                    "here through the assignment defined at the ancestor scope '/providers/Microsoft.Management/managementGroups/plat' " +
+                    '(/providers/Microsoft.Management/managementGroups/plat/providers/Microsoft.Authorization/roleAssignments/cccc6666-0000-0000-0000-000000000002). ' +
+                    'Nothing was written -- editing that assignment would change the ancestor grant, and creating one here would add a grant that survives ' +
+                    "removal of the ancestor. Declare this entry under scope '/providers/Microsoft.Management/managementGroups/plat' to manage it")
+                $Out.Warnings | Should -Be @(("Sync-OERStructureRoleAssignment: 'Owner' for 'role_sec_ops' is not defined at '/subscriptions/aaaa1111-0000-0000-0000-000000000001' " +
+                        "-- it is inherited from the ancestor scope '/providers/Microsoft.Management/managementGroups/plat'. Nothing was written; declare this " +
+                        "entry under scope '/providers/Microsoft.Management/managementGroups/plat' to manage it there."))
+            }
+        }
+    }
 }
 
 Describe 'Sync-OERStructureRoleAssignment with an ambiguous service principal display name' {

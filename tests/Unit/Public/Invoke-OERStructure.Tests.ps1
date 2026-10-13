@@ -1437,6 +1437,173 @@ Describe 'Invoke-OERStructure roleAssignments grouped on the resolved scope' {
     }
 }
 
+Describe 'Invoke-OERStructure never reaches the root scope (BL-126)' {
+    # A role assignment at the Azure root scope '/' is elevated access, which the apply engine never
+    # creates, edits or removes. The real engine, the real handler and the real ARM cmdlets run here;
+    # only the sign-in, the principal lookups and the ARM transport are mocked, and the transport
+    # records every request. The document declares one entry at the root scope and two at a
+    # subscription, where the live state holds one of them, one undeclared assignment and the root
+    # assignment as inherited. No recorded request may be an ARM call at the root scope: its path would
+    # start with '//' (the root scope followed by '/providers/...') or with
+    # '/providers/Microsoft.Authorization/'. The subscription is reconciled as before. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        $script:RtSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:RtReaderId = "$($script:RtSub)/providers/Microsoft.Authorization/roleDefinitions/bbbb7777-0000-0000-0000-000000000001"
+        $script:RtContributorId = "$($script:RtSub)/providers/Microsoft.Authorization/roleDefinitions/bbbb7777-0000-0000-0000-000000000002"
+        $script:RtUndeclaredId = "$($script:RtSub)/providers/Microsoft.Authorization/roleAssignments/cccc7777-0000-0000-0000-000000000009"
+        $script:RtJson = '{ "version": "1.0", "roleAssignments": [ ' +
+            '{ "scope": "/", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Contributor", "principal": "person3@example.com" } ] }'
+        $script:RtRootLabel = 'User Access Administrator -> person1@example.com @ /'
+        $script:RtRootDetail = "the root scope '/' grants access over every management group and subscription in the tenant (elevated " +
+            'access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or ' +
+            'written for this entry'
+        $script:RtUndeclaredItem = "bbbb7777-0000-0000-0000-000000000001 -> dddd7777-0000-0000-0000-000000000009 @ $($script:RtSub)"
+        # The recorded requests whose path is an ARM call at the root scope.
+        function Get-RootRequest {
+            param([string[]]$Log)
+            @($Log | Where-Object { $_ } | Where-Object {
+                    $RequestPath = ($_ -split ' ', 2)[1]
+                    $RequestPath.StartsWith('//') -or $RequestPath.StartsWith('/providers/Microsoft.Authorization/', [System.StringComparison]::OrdinalIgnoreCase)
+                })
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:RtArmLog = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal {
+            param($Reference, $Type)
+            switch ($Reference) {
+                'person1@example.com' { 'dddd7777-0000-0000-0000-000000000001' }
+                'person2@example.com' { 'dddd7777-0000-0000-0000-000000000002' }
+                'person3@example.com' { 'dddd7777-0000-0000-0000-000000000003' }
+            }
+        }
+        # New-OERRoleAssignment looks up the principal it creates for on its own.
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipal {
+            [PSCustomObject]@{ PrincipalId = 'dddd7777-0000-0000-0000-000000000003'; PrincipalType = 'User' }
+        }
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest {
+            $RequestMethod = if ($Method) { $Method } else { 'GET' }
+            $script:RtArmLog.Add("$RequestMethod $Path")
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:RtSub)/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=roleName%20eq%20%27Reader%27") {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:RtReaderId }) }
+            }
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:RtSub)/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=roleName%20eq%20%27Contributor%27") {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:RtContributorId }) }
+            }
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:RtSub)/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()") {
+                return [PSCustomObject]@{ value = @(
+                        [PSCustomObject]@{ id = '/providers/Microsoft.Authorization/roleAssignments/cccc7777-0000-0000-0000-000000000001'; name = 'cccc7777-0000-0000-0000-000000000001'
+                            properties = [PSCustomObject]@{ scope = '/'; principalId = 'dddd7777-0000-0000-0000-000000000001'; principalType = 'User'
+                                roleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/bbbb7777-0000-0000-0000-00000000000a' } }
+                        [PSCustomObject]@{ id = "$($script:RtSub)/providers/Microsoft.Authorization/roleAssignments/cccc7777-0000-0000-0000-000000000002"; name = 'cccc7777-0000-0000-0000-000000000002'
+                            properties = [PSCustomObject]@{ scope = $script:RtSub; principalId = 'dddd7777-0000-0000-0000-000000000002'; principalType = 'User'; roleDefinitionId = $script:RtReaderId } }
+                        [PSCustomObject]@{ id = $script:RtUndeclaredId; name = 'cccc7777-0000-0000-0000-000000000009'
+                            properties = [PSCustomObject]@{ scope = $script:RtSub; principalId = 'dddd7777-0000-0000-0000-000000000009'; principalType = 'User'; roleDefinitionId = $script:RtReaderId } }
+                    ) }
+            }
+            if ($RequestMethod -eq 'PUT' -and $Path -like "$($script:RtSub)/providers/Microsoft.Authorization/roleAssignments/*?api-version=2022-04-01") {
+                return [PSCustomObject]@{ id = $Path.Split('?')[0]; name = 'created'; properties = [PSCustomObject]@{
+                        scope = $script:RtSub; principalId = $Body.properties.principalId; roleDefinitionId = $Body.properties.roleDefinitionId } }
+            }
+            if ($RequestMethod -eq 'DELETE' -and $Path -eq "$($script:RtUndeclaredId)?api-version=2022-04-01") {
+                return [PSCustomObject]@{ id = $script:RtUndeclaredId; name = 'cccc7777-0000-0000-0000-000000000009'; properties = [PSCustomObject]@{ scope = $script:RtSub } }
+            }
+            throw "unexpected ARM call: $RequestMethod $Path"
+        }
+    }
+
+    It 'skips the root entry and reconciles the subscription as before (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run with -Prune'; Splat = @{ Prune = $true; Confirm = $false }; Undeclared = 'Removed'; Contributor = 'Created'; Puts = 1; Deletes = 1 }
+        @{ Mode = 'a real run without -Prune'; Splat = @{ Confirm = $false }; Undeclared = 'Extra'; Contributor = 'Created'; Puts = 1; Deletes = 0 }
+        @{ Mode = 'a plan with -Prune'; Splat = @{ Prune = $true; WhatIf = $true }; Undeclared = 'Skipped'; Contributor = 'Skipped'; Puts = 0; Deletes = 0 }
+    ) {
+        $Rows = @(Invoke-OERStructure -Json $script:RtJson -Include RoleAssignments @Splat -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        # Positive proof first: the subscription was read once for each of its two entries, and
+        # reconciled as its fixtures say.
+        @($script:RtArmLog | Where-Object { $_ -eq "GET $($script:RtSub)/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()" }).Count | Should -Be 2
+        @($Rows | Where-Object { $_.Item -eq "Reader -> person2@example.com @ $($script:RtSub)" }).Action | Should -Be @('Unchanged')
+        @($Rows | Where-Object { $_.Item -eq "Contributor -> person3@example.com @ $($script:RtSub)" }).Action | Should -Be @($Contributor)
+        @($Rows | Where-Object { $_.Item -eq $script:RtUndeclaredItem }).Action | Should -Be @($Undeclared)
+        @($script:RtArmLog | Where-Object { $_ -like 'PUT *' }).Count | Should -Be $Puts
+        @($script:RtArmLog | Where-Object { $_ -eq "DELETE $($script:RtUndeclaredId)?api-version=2022-04-01" }).Count | Should -Be $Deletes
+        @($script:RtArmLog | Where-Object { $_ -like 'DELETE *' }).Count | Should -Be $Deletes
+
+        # The root entry: one Skipped row, and not one request at the root scope.
+        $Root = @($Rows | Where-Object { $_.Item -eq $script:RtRootLabel })
+        $Root.Count | Should -Be 1
+        $Root[0].Action | Should -Be 'Skipped'
+        $Root[0].Detail | Should -BeExactly $script:RtRootDetail
+        (Get-RootRequest -Log $script:RtArmLog) | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERStructurePrincipal -Times 0 -ParameterFilter { $Reference -eq 'person1@example.com' }
+        $Rows.Count | Should -Be 4
+    }
+
+    It 'skips the root entry and still removes the undeclared assignment at the subscription, in a script with no try above it' {
+        # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere
+        # above it, as at a prompt. The script installs its own fakes in ITS copy of the module scope and
+        # logs every ARM request with AppendAllText, whose path is substituted into the text.
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value {
+        param([string]$Reference, [string]$Type)
+        if ($Reference -eq 'person1@example.com') { 'dddd7777-0000-0000-0000-000000000001' } else { 'dddd7777-0000-0000-0000-000000000002' }
+    }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "PRINCIPAL lookup`n")
+        [pscustomobject]@{ PrincipalId = 'dddd7777-0000-0000-0000-000000000001'; PrincipalType = 'User' }
+    }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Method = 'GET', [string]$Path, [hashtable]$Body, [switch]$All)
+        [System.IO.File]::AppendAllText('#LOG#', "$Method $Path`n")
+        $Sub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $Reader = "$Sub/providers/Microsoft.Authorization/roleDefinitions/bbbb7777-0000-0000-0000-000000000001"
+        if ($Method -eq 'GET' -and $Path -like '*/roleDefinitions?*') { return [pscustomobject]@{ value = @([pscustomobject]@{ id = $Reader }) } }
+        if ($Method -eq 'GET' -and $Path -like '*/roleAssignments?*atScope()') {
+            return [pscustomobject]@{ value = @(
+                [pscustomobject]@{ id = "$Sub/providers/Microsoft.Authorization/roleAssignments/cccc7777-0000-0000-0000-000000000002"; name = 'a'
+                    properties = [pscustomobject]@{ scope = $Sub; principalId = 'dddd7777-0000-0000-0000-000000000002'; roleDefinitionId = $Reader } }
+                [pscustomobject]@{ id = "$Sub/providers/Microsoft.Authorization/roleAssignments/cccc7777-0000-0000-0000-000000000009"; name = 'b'
+                    properties = [pscustomobject]@{ scope = $Sub; principalId = 'dddd7777-0000-0000-0000-000000000009'; roleDefinitionId = $Reader } }
+            ) }
+        }
+        if ($Method -eq 'DELETE') { return [pscustomobject]@{ id = $Path.Split('?')[0]; properties = [pscustomobject]@{} } }
+        throw "unexpected $Method $Path"
+    }
+}
+$Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/", "role": "User Access Administrator", "principal": "person1@example.com" }, { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" } ] }'
+Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$($_.Action):$($_.Item)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: the subscription's DELETE of the undeclared assignment is in the log.
+        $Logged | Should -Contain "DELETE $($script:RtUndeclaredId)?api-version=2022-04-01"
+        # Not one request at the root scope; a failure here prints the requests that were.
+        (Get-RootRequest -Log $Logged) | Should -BeNullOrEmpty
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+            "ROW:Skipped:$($script:RtRootLabel)"
+            "ROW:Unchanged:Reader -> person2@example.com @ $($script:RtSub)"
+            "ROW:Removed:$($script:RtUndeclaredItem)"
+        )
+        $Logged | Should -Not -Contain 'PRINCIPAL lookup'
+        @($Run.Errors).Count | Should -Be 0
+        @($Run.Prompts).Count | Should -Be 0
+    }
+}
+
 Describe 'Invoke-OERStructure acts only under the session it began with (BL-76)' {
     # Invoke-OERStructure signs in in its process block. Every begin block of a pipeline runs before
     # any process block, so a DOWNSTREAM command's begin block -- here a ForEach-Object -Begin, the

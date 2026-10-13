@@ -2493,6 +2493,198 @@ Describe 'Get-OERInventory' {
         }
     }
 
+    Context 'a role assignment at the root scope is left out (BL-126)' {
+        # The root scope '/' stands above every management group and subscription, so a role
+        # assignment there is elevated access. The read at a management group or a subscription
+        # returns it as inherited. The document never carries it: it is named in one warning and in one
+        # information record per call instead. No id below is version-4 shaped.
+        BeforeAll {
+            $script:RootMg = '/providers/Microsoft.Management/managementGroups/plat'
+            $script:RootSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $script:RootTag = 'Omnicit.EntraRBAC.RootScopeAssignment'
+            function script:New-RootRa {
+                param(
+                    [string]$Scope, [string]$RoleName, [string]$PrincipalId, [string]$PrincipalType,
+                    [string]$PrincipalName, [string]$RoleAssignmentId
+                )
+                [PSCustomObject]@{
+                    Scope = $Scope; RoleName = $RoleName
+                    RoleDefinitionId = "/providers/Microsoft.Authorization/roleDefinitions/rd-$($RoleName -replace '\s', '')"
+                    PrincipalId = $PrincipalId; PrincipalType = $PrincipalType; PrincipalDisplayName = $PrincipalName
+                    RoleAssignmentId = $RoleAssignmentId
+                }
+            }
+            # The warning Get-OERInventory writes for <Count> rows listed as <Rows>.
+            function script:Get-RootWarningText {
+                param([int]$Count, [string]$Rows)
+                "Get-OERInventory: left out $Count role assignment(s) at the root scope '/', which grants access over every " +
+                "management group and subscription in the tenant (elevated access): $Rows. A document never carries a role " +
+                'assignment at the root scope, and Invoke-OERStructure never creates or removes one; review them as a finding.'
+            }
+            # The information records the call wrote with the root scope tag.
+            function script:Get-RootNotice {
+                param([object[]]$Information)
+                @($Information | Where-Object { $_.Tags -contains $script:RootTag })
+            }
+            $script:RootUaa = New-RootRa -Scope '/' -RoleName 'User Access Administrator' -PrincipalId 'dddd2222-0000-0000-0000-000000000001' `
+                -PrincipalType 'User' -PrincipalName 'Root Admin' -RoleAssignmentId '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000001'
+            $script:RootMgRow = New-RootRa -Scope $script:RootMg -RoleName 'Reader' -PrincipalId 'dddd2222-0000-0000-0000-000000000002' `
+                -PrincipalType 'User' -PrincipalName 'User Two' -RoleAssignmentId "$($script:RootMg)/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000002"
+            $script:RootSubRow = New-RootRa -Scope $script:RootSub -RoleName 'Owner' -PrincipalId 'dddd2222-0000-0000-0000-000000000003' `
+                -PrincipalType 'User' -PrincipalName 'User Three' -RoleAssignmentId "$($script:RootSub)/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000003"
+        }
+
+        BeforeEach {
+            $script:RootNames = @{
+                'dddd2222-0000-0000-0000-000000000001' = 'person1@example.com'
+                'dddd2222-0000-0000-0000-000000000002' = 'person2@example.com'
+                'dddd2222-0000-0000-0000-000000000003' = 'person3@example.com'
+            }
+            $script:RootRas = @($script:RootUaa, $script:RootMgRow, $script:RootSubRow)
+            Mock -ModuleName $script:moduleName Get-OERRoleAssignment { $script:RootRas }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                param([string[]]$Id)
+                $Map = @{}
+                foreach ($One in @($Id)) {
+                    if ($script:RootNames.ContainsKey($One)) { $Map[$One] = $script:RootNames[$One] }
+                }
+                $Map
+            }
+        }
+
+        It 'leaves the inherited root row out of a read at <Target>, names it in one warning and in one information record' -ForEach @(
+            @{ Target = 'a management group'; Splat = @{ ManagementGroup = 'plat' } }
+            @{ Target = 'a subscription'; Splat = @{ Subscription = 'aaaa1111-0000-0000-0000-000000000001' } }
+        ) {
+            $W = $null
+            $Info = $null
+            $Inv = Get-OERInventory -Include RoleAssignments @Splat -IncludeARM -WarningVariable W -WarningAction SilentlyContinue -InformationVariable Info
+            # Reach proof: the section was read once, at the target.
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly
+            @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)" }) | Should -Be @(
+                "$($script:RootMg)|Reader|person2@example.com"
+                "$($script:RootSub)|Owner|person3@example.com"
+            )
+            @($Inv.roleAssignments | Where-Object { $_.scope -eq '/' }).Count | Should -Be 0
+            $Expected = Get-RootWarningText -Count 1 -Rows "'User Access Administrator' for 'person1@example.com' (User)"
+            @($W).Count | Should -Be 1
+            [string]$W[0].Message | Should -BeExactly $Expected
+            $Records = Get-RootNotice -Information @($Info)
+            $Records.Count | Should -Be 1
+            $Notice = $Records[0].MessageData
+            $Notice.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.RootScopeAssignmentNotice'
+            $Notice.Warning | Should -BeExactly $Expected
+            $Rows = @($Notice.Assignments)
+            $Rows.Count | Should -Be 1
+            @($Rows[0].PSObject.Properties.Name) | Should -Be @('RoleAssignmentId', 'Role', 'Principal', 'PrincipalType')
+            $Rows[0].RoleAssignmentId | Should -BeExactly '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000001'
+            $Rows[0].Role | Should -BeExactly 'User Access Administrator'
+            $Rows[0].Principal | Should -BeExactly 'person1@example.com'
+            $Rows[0].PrincipalType | Should -BeExactly 'User'
+        }
+
+        It 'sorts several root rows by role then principal, reads a ForeignGroup as Group and writes no parenthesis for an unknown type' {
+            $script:RootNames['dddd2222-0000-0000-0000-000000000004'] = 'Zeta Partners'
+            $script:RootNames['dddd2222-0000-0000-0000-000000000005'] = 'Alpha Ops'
+            $script:RootRas = @(
+                $script:RootUaa
+                New-RootRa -Scope '/' -RoleName 'Owner' -PrincipalId 'dddd2222-0000-0000-0000-000000000004' -PrincipalType 'ForeignGroup' `
+                    -PrincipalName 'Zeta Partners' -RoleAssignmentId '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000004'
+                New-RootRa -Scope '/' -RoleName 'Owner' -PrincipalId 'dddd2222-0000-0000-0000-000000000005' -PrincipalType '' `
+                    -PrincipalName 'Alpha Ops' -RoleAssignmentId '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000005'
+                $script:RootSubRow
+            )
+            $W = $null
+            $Info = $null
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM -WarningVariable W -WarningAction SilentlyContinue -InformationVariable Info
+            @($Inv.roleAssignments | ForEach-Object { $_.principal }) | Should -Be @('person3@example.com')
+            $Expected = Get-RootWarningText -Count 3 -Rows ("'Owner' for 'Alpha Ops'; 'Owner' for 'Zeta Partners' (Group); " +
+                "'User Access Administrator' for 'person1@example.com' (User)")
+            @($W).Count | Should -Be 1
+            [string]$W[0].Message | Should -BeExactly $Expected
+            $Records = Get-RootNotice -Information @($Info)
+            $Records.Count | Should -Be 1
+            $Records[0].MessageData.Warning | Should -BeExactly $Expected
+            # The record lists the rows in the warning's order.
+            @($Records[0].MessageData.Assignments | ForEach-Object { "$($_.Role)|$($_.Principal)|$($_.PrincipalType)" }) | Should -Be @(
+                'Owner|Alpha Ops|'
+                'Owner|Zeta Partners|Group'
+                'User Access Administrator|person1@example.com|User'
+            )
+        }
+
+        It 'separates the root rows before the collision pass, so a non-root row keeps its name' {
+            # The collision key is the validator's: the canonical scope, the role and the principal,
+            # joined with '|'. A root row and a non-root row can share that key only through a '|' inside
+            # a name: here the root row's group is called 'Ops|Team', and the non-root row's scope ends
+            # in '|Reader' (Azure Resource Manager never returns such a scope; it is the one shape that
+            # makes the two keys equal). Kept in the pass, the root row would move BOTH principals to
+            # their object ids; separated first, it never changes how another row is named.
+            $script:RootNames = @{
+                'dddd2222-0000-0000-0000-000000000006' = 'Ops|Team'
+                'dddd2222-0000-0000-0000-000000000007' = 'Team'
+            }
+            $script:RootRas = @(
+                New-RootRa -Scope '/' -RoleName 'Reader' -PrincipalId 'dddd2222-0000-0000-0000-000000000006' -PrincipalType 'Group' `
+                    -PrincipalName 'Ops|Team' -RoleAssignmentId '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000006'
+                New-RootRa -Scope '/|Reader' -RoleName 'Ops' -PrincipalId 'dddd2222-0000-0000-0000-000000000007' -PrincipalType 'Group' `
+                    -PrincipalName 'Team' -RoleAssignmentId '/|Reader/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000007'
+            )
+            $Info = $null
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM -WarningAction SilentlyContinue -InformationVariable Info
+            @($Inv.roleAssignments).Count | Should -Be 1
+            $Inv.roleAssignments[0].principal | Should -BeExactly 'Team'
+            $Inv.roleAssignments[0].PSObject.Properties.Name | Should -Not -Contain 'principalType'
+            @((Get-RootNotice -Information @($Info))[0].MessageData.Assignments | ForEach-Object { $_.Principal }) | Should -Be @('Ops|Team')
+        }
+
+        It 'names two root rows that share a principal name by that name: the collision pass never sees them' {
+            $script:RootNames = @{
+                'dddd2222-0000-0000-0000-000000000008' = 'Ops'
+                'dddd2222-0000-0000-0000-000000000009' = 'Ops'
+            }
+            $script:RootRas = @(
+                New-RootRa -Scope '/' -RoleName 'Owner' -PrincipalId 'dddd2222-0000-0000-0000-000000000008' -PrincipalType 'Group' `
+                    -PrincipalName 'Ops' -RoleAssignmentId '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000008'
+                New-RootRa -Scope '/' -RoleName 'Owner' -PrincipalId 'dddd2222-0000-0000-0000-000000000009' -PrincipalType 'Group' `
+                    -PrincipalName 'Ops' -RoleAssignmentId '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000009'
+            )
+            $W = $null
+            $Info = $null
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM -WarningVariable W -WarningAction SilentlyContinue -InformationVariable Info
+            @($Inv.roleAssignments).Count | Should -Be 0
+            [string]$W[0].Message | Should -BeExactly (Get-RootWarningText -Count 2 -Rows "'Owner' for 'Ops' (Group); 'Owner' for 'Ops' (Group)")
+            # The record tells the two apart by their role assignment ids.
+            @((Get-RootNotice -Information @($Info))[0].MessageData.Assignments | ForEach-Object { $_.RoleAssignmentId }) | Should -Be @(
+                '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000008'
+                '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000009'
+            )
+        }
+
+        It 'writes no warning and no information record when no row is at the root scope, and the document is as before' {
+            $script:RootRas = @($script:RootMgRow, $script:RootSubRow)
+            $W = $null
+            $Info = $null
+            $Inv = Get-OERInventory -Include RoleAssignments -ManagementGroup 'plat' -IncludeARM -WarningVariable W -WarningAction SilentlyContinue -InformationVariable Info
+            @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)" }) | Should -Be @(
+                "$($script:RootMg)|Reader|person2@example.com"
+                "$($script:RootSub)|Owner|person3@example.com"
+            )
+            @($W).Count | Should -Be 0
+            @($Info | Where-Object Tags -contains 'Omnicit.EntraRBAC.RootScopeAssignment').Count | Should -Be 0
+        }
+
+        It 'exports a document the validator accepts with no root scope finding' {
+            $Inv = Get-OERInventory -Include RoleAssignments -ManagementGroup 'plat' -IncludeARM -WarningAction SilentlyContinue
+            # Reach proof: the read held a root row, and the document holds the other two.
+            @($Inv.roleAssignments).Count | Should -Be 2
+            $V = InModuleScope $script:moduleName -Parameters @{ D = $Inv } { param($D) Test-OERStructureSchema -Document $D }
+            $V.Valid | Should -BeTrue
+            @($V.Errors | Where-Object { $_.Section -eq 'roleAssignments' }).Count | Should -Be 0
+            @($V.Errors | Where-Object { $_.Message -match 'root scope' }).Count | Should -Be 0
+        }
+    }
+
     Context 'the export never writes a duplicate entry' {
         # Entra does not keep display names unique, and Azure returns scopes in whatever spelling it
         # stored. An export that wrote two entries the validator refuses as duplicates would make the

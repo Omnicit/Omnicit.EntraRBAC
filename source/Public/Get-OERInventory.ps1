@@ -1057,6 +1057,21 @@ function Get-OERInventory {
                     $RaProjected.Add([PSCustomObject]@{ Ra = $Ra; Proj = $Proj; Type = $PrincipalType })
                 }
 
+                # BL-126 (A4): a role assignment at the Azure root scope '/' (Test-OERAzureRootScope owns
+                # the rule) is elevated access over every management group and subscription in the
+                # tenant, a finding to review and not part of the RBAC model a document describes. A
+                # read at a management group or a subscription returns it as inherited. It is taken out
+                # of the projected rows here, BEFORE the collision pass below, so it never changes how
+                # another row is named, and the document never carries it: the rows are named in one
+                # warning and one information record after the section is built
+                # (docs/development/rationale.md#root-scope-is-not-in-the-document).
+                $RaRootRows = [System.Collections.Generic.List[object]]::new()
+                $RaKeptRows = [System.Collections.Generic.List[object]]::new()
+                foreach ($Row in $RaProjected) {
+                    if (Test-OERAzureRootScope -Scope ([string]$Row.Proj.scope)) { $RaRootRows.Add($Row) } else { $RaKeptRows.Add($Row) }
+                }
+                $RaProjected = $RaKeptRows
+
                 # Entra does not keep display names unique, a group can carry a user's user principal
                 # name as its display name, and Azure may return one scope in two spellings -- so two
                 # rows can export the same (scope, role, principal), which the validator refuses as a
@@ -1098,6 +1113,31 @@ function Get-OERInventory {
                     }
                 } while ($RaMoved)
                 foreach ($Row in $RaProjected) { $RoleAssignments.Add([PSCustomObject]$Row.Proj) }
+
+                # BL-126: the root rows taken out above, one per assignment: Role and Principal are the
+                # projected names, PrincipalType the normalised ARM type ('' when unknown).
+                # Format-OERRootScopeAssignment owns their order and list text, which Export-OERInventory
+                # shares. One warning names them all, and one information record (tag
+                # Omnicit.EntraRBAC.RootScopeAssignment) carries the rows and the exact warning text, so
+                # a caller -- Export-OERInventory among them -- reads the rows without parsing the text.
+                if ($RaRootRows.Count -gt 0) {
+                    $RootList = Format-OERRootScopeAssignment -Assignment @(foreach ($Row in $RaRootRows) {
+                            [PSCustomObject]@{
+                                RoleAssignmentId = [string]$Row.Ra.RoleAssignmentId
+                                Role             = [string]$Row.Proj.role
+                                Principal        = [string]$Row.Proj.principal
+                                PrincipalType    = [string]$Row.Type
+                            }
+                        })
+                    $RootWarning = "Get-OERInventory: left out $(@($RootList.Assignments).Count) role assignment(s) at the root scope '/', which grants access over every management group and subscription in the tenant (elevated access): $($RootList.Text). A document never carries a role assignment at the root scope, and Invoke-OERStructure never creates or removes one; review them as a finding."
+                    Write-Warning $RootWarning
+                    $RootNotice = [PSCustomObject]@{
+                        Warning     = $RootWarning
+                        Assignments = @($RootList.Assignments)
+                    }
+                    $RootNotice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.RootScopeAssignmentNotice')
+                    Write-Information -MessageData $RootNotice -Tags 'Omnicit.EntraRBAC.RootScopeAssignment'
+                }
             }
         }
 

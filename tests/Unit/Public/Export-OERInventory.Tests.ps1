@@ -733,6 +733,266 @@ Describe 'Export-OERInventory (Azure walk)' {
     }
 }
 
+Describe 'Export-OERInventory (role assignments at the root scope, BL-126)' {
+    # BL-126 (R3, R4). Every read of the walk returns a role assignment at the root scope '/' as
+    # inherited, and Get-OERInventory leaves it out and names it in a warning and an information
+    # record. The export keeps its per-scope call, captures those warnings instead of showing them,
+    # names the rows ONCE in its own warning after the walk, and lists them in the README. Every other
+    # per-scope warning is shown as before. The warnings are counted on the warning STREAM (3>&1), what
+    # the caller is shown: a caller's -WarningVariable also collects the captured ones, since PowerShell
+    # appends a nested command's warnings to every enclosing -WarningVariable whatever that command's
+    # -WarningAction (measured). The mocks below write their warnings and records through the module's
+    # session state (Write-AsGetOERInventory), as the real Get-OERInventory does: a mock body runs in
+    # this file's session state, where the -WarningAction the export passes to the call, and the
+    # export's own Stop preference, are not seen (measured). No id below is version-4 shaped.
+    BeforeAll {
+        # Writes what a per-scope Get-OERInventory call writes, from inside the module, so the
+        # preferences of the call it stands in for govern it exactly as they govern the real command.
+        function script:Write-AsGetOERInventory {
+            param([string]$Warning, [object]$Notice)
+            & (Get-Module $script:moduleName) {
+                param($Warning, $Notice)
+                if ($Warning) { Microsoft.PowerShell.Utility\Write-Warning $Warning }
+                if ($Notice) { Microsoft.PowerShell.Utility\Write-Information -MessageData $Notice -Tags 'Omnicit.EntraRBAC.RootScopeAssignment' }
+            } $Warning $Notice
+        }
+        $script:RootHeading = '## Role assignments at the root scope (elevated access)'
+        $script:RootS1 = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:RootS2 = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'
+        $script:RootId = '/providers/Microsoft.Authorization/roleAssignments/cccc4444-0000-0000-0000-000000000001'
+        # What a real per-scope Get-OERInventory call writes for one root row.
+        $script:RootRow = [PSCustomObject]@{ RoleAssignmentId = $script:RootId; Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' }
+        $script:RootGetWarning = "Get-OERInventory: left out 1 role assignment(s) at the root scope '/', which grants access over every " +
+            "management group and subscription in the tenant (elevated access): 'User Access Administrator' for 'person1@example.com' (User). " +
+            'A document never carries a role assignment at the root scope, and Invoke-OERStructure never creates or removes one; review them as a finding.'
+        $script:RootExportWarning = "Export-OERInventory: left out 1 role assignment(s) at the root scope '/', which grants access over every " +
+            'management group and subscription in the tenant (elevated access), from inventory.json and roleAssignments.json: ' +
+            "'User Access Administrator' for 'person1@example.com' (User). README.md names them under 'Role assignments at the root scope " +
+            "(elevated access)'; review them as a finding. Invoke-OERStructure never creates or removes a role assignment at the root scope."
+        # The README section, heading included, up to the next level 2 heading; $null when it is missing.
+        function Get-ReadmeRootSection {
+            param([string]$BundlePath)
+            $Readme = Get-Content (Join-Path $BundlePath 'README.md') -Raw
+            $Start = $Readme.IndexOf($script:RootHeading)
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
+        }
+        # One export, its result and the text of every warning that reached the caller's stream.
+        function Invoke-RootExport {
+            param([hashtable]$Splat)
+            $All = @(Export-OERInventory @Splat -WarningAction Continue -ErrorAction SilentlyContinue 3>&1)
+            [PSCustomObject]@{
+                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @($script:RootS1, $script:RootS2)
+                Hierarchy = [PSCustomObject]@{
+                    managementGroups = @()
+                    subscriptions    = @(
+                        [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Prod'; id = $script:RootS1; state = 'Enabled' }
+                        [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; displayName = 'Test'; id = $script:RootS2; state = 'Enabled' }
+                    )
+                }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+        # Each scope: one row of its own, and the root row with the warning and the record a real call
+        # writes for it -- the same role assignment id at both scopes.
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            param($Include, $Scope, $Subscription, $ManagementGroup, $AllRolesAtScope)
+            $Ra = @()
+            if ($Include -contains 'RoleAssignments' -and $Scope) {
+                $Ra = @([PSCustomObject]@{ scope = $Scope; role = 'Reader'; principal = 'person2@example.com' })
+                $Notice = [PSCustomObject]@{ Warning = $script:RootGetWarning; Assignments = @($script:RootRow) }
+                $Notice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.RootScopeAssignmentNotice')
+                Write-AsGetOERInventory -Warning $script:RootGetWarning -Notice $Notice
+            }
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = $Ra; RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+    }
+
+    It 'names the root row once, in its own warning and in the README, and writes it to no JSON file' {
+        $Run = Invoke-RootExport -Splat @{ OutputPath = (Join-Path $TestDrive 'root-once'); Include = 'RoleAssignments' }
+        # Reach proof: both scopes were read, and each reported the root row.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly
+        $Bundle = $Run.Result.BundlePath
+        $Inv = Get-Content (Join-Path $Bundle 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)" }) | Should -Be @(
+            "$($script:RootS1)|Reader|person2@example.com"
+            "$($script:RootS2)|Reader|person2@example.com"
+        )
+        @($Inv.roleAssignments | Where-Object { $_.scope -eq '/' }).Count | Should -Be 0
+        $RaFile = @(Get-Content (Join-Path $Bundle 'roleAssignments.json') -Raw | ConvertFrom-Json)
+        @($RaFile | Where-Object { $_.scope -eq '/' }).Count | Should -Be 0
+        foreach ($File in @(Get-ChildItem -Path $Bundle -Filter '*.json')) {
+            Get-Content $File.FullName -Raw | Should -Not -Match ([regex]::Escape('person1@example.com')) -Because "$($File.Name) must not carry the root row"
+        }
+        # Shown once, by the export; Get-OERInventory's warning for it, written once per scope, is not shown.
+        $Run.Warnings | Should -Be @($script:RootExportWarning)
+        @($Run.Warnings | Where-Object { $_ -like 'Get-OERInventory: left out*' }).Count | Should -Be 0
+        $Section = Get-ReadmeRootSection -BundlePath $Bundle
+        $Section | Should -Match '(?m)^This export read 1 role assignment\(s\) at the root scope:\r?$'
+        @($Section -split '\r?\n' | Where-Object { $_ -like '- *' }) | Should -Be @('- `User Access Administrator` for `person1@example.com` (User)')
+    }
+
+    It 'writes the warning under -WhatIf too, and no bundle' {
+        $Run = Invoke-RootExport -Splat @{ OutputPath = (Join-Path $TestDrive 'root-whatif'); Include = 'RoleAssignments'; WhatIf = $true }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly
+        $Run.Warnings | Should -Be @($script:RootExportWarning)
+        Test-Path -LiteralPath $Run.Result.BundlePath | Should -BeFalse
+    }
+
+    It 'shows a different per-scope warning once per scope, as before, and the README says none was read' {
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            param($Include, $Scope, $Subscription, $ManagementGroup, $AllRolesAtScope)
+            Write-AsGetOERInventory -Warning 'per-scope other'
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @([PSCustomObject]@{ scope = $Scope; role = 'Reader'; principal = 'person2@example.com' }); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+        $Run = Invoke-RootExport -Splat @{ OutputPath = (Join-Path $TestDrive 'root-other'); Include = 'RoleAssignments' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly
+        $Run.Warnings | Should -Be @('per-scope other', 'per-scope other')
+        $Section = Get-ReadmeRootSection -BundlePath $Run.Result.BundlePath
+        ($Section -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. No role assignment this export read is at the root scope `/`.'))
+    }
+
+    It 'shows a warning a per-scope call wrote before it failed, then skips the scope as before' {
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            param($Include, $Scope, $Subscription, $ManagementGroup, $AllRolesAtScope)
+            if ($Scope -eq $script:RootS1) {
+                Write-AsGetOERInventory -Warning 'written before the failure'
+                throw 'per-scope failure'
+            }
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+        $Run = Invoke-RootExport -Splat @{ OutputPath = (Join-Path $TestDrive 'root-fail'); Include = 'RoleAssignments' }
+        $Run.Warnings | Should -Be @('written before the failure', "Skipping scope '$($script:RootS1)': per-scope failure")
+        @($Run.Result.SkippedScopes) | Should -Be @($script:RootS1)
+    }
+
+    It 'stops under -WarningAction Stop at a per-scope warning, through the scope''s skip, as before' {
+        # Before BL-126 the per-scope call's own warning stopped inside the call under the export's Stop
+        # preference and reached the scope's catch. Now the call's warnings are captured, and the
+        # export's re-write of the warning stops instead, reaching the same catch.
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            param($Include, $Scope, $Subscription, $ManagementGroup, $AllRolesAtScope)
+            Write-AsGetOERInventory -Warning 'per-scope other'
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+        $Out = Join-Path $TestDrive 'root-stop'
+        $Thrown = { Export-OERInventory -OutputPath $Out -Include RoleAssignments -WarningAction Stop } | Should -Throw -PassThru
+        $Thrown.Exception.Message | Should -BeLike "*Skipping scope '$($script:RootS1)':*per-scope other*"
+        # The first scope stopped the export: the second was never read, and nothing was written.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        Test-Path -LiteralPath $Out | Should -BeFalse
+    }
+
+    It 'passes -WarningAction SilentlyContinue to every per-scope call, beside the -ErrorAction Stop it always passed' {
+        Invoke-RootExport -Splat @{ OutputPath = (Join-Path $TestDrive 'root-params'); Include = 'RoleAssignments' } | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly -ParameterFilter {
+            $WarningAction -eq 'SilentlyContinue' -and $ErrorAction -eq 'Stop'
+        }
+    }
+
+}
+
+Describe 'Export-OERInventory (role assignments at the root scope, through the real Get-OERInventory, BL-126)' {
+    # Get-OERInventory runs for REAL here, so the rows reach the README through its own warning and
+    # information record, not through a mock that writes them. Only its role assignment read, the
+    # principal names, the scope walk, the eligibility read, the group reads, the profile read and the
+    # sign-in are mocked. One subscription; its read holds the root assignment (inherited) and one of
+    # its own. No id below is version-4 shaped.
+    BeforeAll {
+        $script:E2eSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:E2eExportWarning = "Export-OERInventory: left out 1 role assignment(s) at the root scope '/', which grants access over every " +
+            'management group and subscription in the tenant (elevated access), from inventory.json and roleAssignments.json: ' +
+            "'User Access Administrator' for 'person1@example.com' (User). README.md names them under 'Role assignments at the root scope " +
+            "(elevated access)'; review them as a finding. Invoke-OERStructure never creates or removes a role assignment at the root scope."
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @($script:E2eSub)
+                Hierarchy = [PSCustomObject]@{
+                    managementGroups = @()
+                    subscriptions    = @([PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Prod'; id = $script:E2eSub; state = 'Enabled' })
+                }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
+            [PSCustomObject]@{
+                Scope = '/'; RoleName = 'User Access Administrator'; RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/rd-uaa'
+                PrincipalId = 'dddd4444-0000-0000-0000-000000000001'; PrincipalType = 'User'; PrincipalDisplayName = 'Root Admin'
+                RoleAssignmentId = '/providers/Microsoft.Authorization/roleAssignments/cccc4444-0000-0000-0000-000000000001'
+            }
+            [PSCustomObject]@{
+                Scope = $script:E2eSub; RoleName = 'Reader'; RoleDefinitionId = "$($script:E2eSub)/providers/Microsoft.Authorization/roleDefinitions/rd-reader"
+                PrincipalId = 'dddd4444-0000-0000-0000-000000000002'; PrincipalType = 'User'; PrincipalDisplayName = 'User Two'
+                RoleAssignmentId = "$($script:E2eSub)/providers/Microsoft.Authorization/roleAssignments/cccc4444-0000-0000-0000-000000000002"
+            }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            @{ 'dddd4444-0000-0000-0000-000000000001' = 'person1@example.com'; 'dddd4444-0000-0000-0000-000000000002' = 'person2@example.com' }
+        }
+    }
+
+    It 'writes only the subscription row to inventory.json and roleAssignments.json, names the root row in the README, and warns once' {
+        $All = @(Export-OERInventory -OutputPath (Join-Path $TestDrive 'root-e2e') -Include RoleAssignments -WarningAction Continue -ErrorAction SilentlyContinue 3>&1)
+        $Result = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+        $Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+        # Reach proof: the real Get-OERInventory read the scope once.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -eq $script:E2eSub -and $ResolveNames }
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)" }) | Should -Be @("$($script:E2eSub)|Reader|person2@example.com")
+        $RaFile = @(Get-Content (Join-Path $Result.BundlePath 'roleAssignments.json') -Raw | ConvertFrom-Json)
+        @($RaFile | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)" }) | Should -Be @("$($script:E2eSub)|Reader|person2@example.com")
+        $Readme = Get-Content (Join-Path $Result.BundlePath 'README.md') -Raw
+        $Readme | Should -Match '(?m)^This export read 1 role assignment\(s\) at the root scope:\r?$'
+        $Readme | Should -Match ([regex]::Escape('- `User Access Administrator` for `person1@example.com` (User)'))
+        $Warnings | Should -Be @($script:E2eExportWarning)
+    }
+}
+
 Describe 'Export-OERInventory (Azure role policy selection, BL-107)' {
     # Without -AllRolePolicies the export keeps a role's policy at a scope only when the role has an
     # active assignment or an eligibility exactly at that scope, or when the policy has been changed.
