@@ -249,7 +249,7 @@ function Get-S112ReviewShape {
     }
     [PSCustomObject]@{
         Text            = ConvertTo-Json -InputObject $Shape -Depth 5 -Compress
-        ReviewsTheGroup = ($Shape.scopeQuery -cmatch ('^(/(v1\.0|beta))?/groups/' + [regex]::Escape($Ids.GroupId) + '/transitiveMembers$'))
+        ReviewsTheGroup = ($Shape.scopeQuery -cmatch ('^(/(v1\.0|beta))?/groups/' + [regex]::Escape($Ids.GroupId) + '/transitiveMembers(/.*)?$'))
         ReviewsPackage  = ($Shape.scopeQuery -match [regex]::Escape($Ids.PackageId)) -and ($Shape.scopeQuery -match [regex]::Escape($Ids.PolicyId))
         Description     = $Shape.descriptionForAdmins
         LastModified    = $Shape.lastModifiedDateTime
