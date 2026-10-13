@@ -3687,9 +3687,11 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
     # one. A known key; a non-string or empty value is an Error; one equal to displayName, ignoring
     # case, is a Warning, since both names find the same group and a case-only rename cannot be
     # expressed through the document.
-    It 'accepts a non-empty previousDisplayName with no finding at all' {
+    It 'accepts a non-empty previousDisplayName with no finding at all (the alias it declares is not the old name''s)' {
         InModuleScope $script:moduleName {
-            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
+            # BL-132: a rename that declares no mailNickname, or the one derived from the old name,
+            # is a Warning of its own (Describe 'group mailNickname' below); this entry declares a new one.
+            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "mailNickname": "hr_emea", "members": null } ] }' | ConvertFrom-Json
             $V = Test-OERStructureSchema -Document $Doc
             @($V.Errors) | Should -BeNullOrEmpty
             $V.Valid | Should -BeTrue
@@ -3745,7 +3747,7 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
 
     It 'accepts previousDisplayName on a template-based group without comparing it to the computed name (no Warning)' {
         InModuleScope $script:moduleName {
-            $Doc = '{ "version": "1.0", "groups": [ { "template": "role_sec_{Area}", "tokens": { "Area": "hr" }, "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
+            $Doc = '{ "version": "1.0", "groups": [ { "template": "role_sec_{Area}", "tokens": { "Area": "hr" }, "previousDisplayName": "role_sec_hr", "mailNickname": "hr", "members": null } ] }' | ConvertFrom-Json
             $V = Test-OERStructureSchema -Document $Doc
             @($V.Errors) | Should -BeNullOrEmpty
             $V.Valid | Should -BeTrue
@@ -3856,6 +3858,208 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
             $V = Test-OERStructureSchema -Document $Doc
             @($V.Errors | Where-Object Severity -eq 'Error') | Should -BeNullOrEmpty
             $V.Valid | Should -BeTrue
+        }
+    }
+}
+
+Describe 'Test-OERStructureSchema group mailNickname (BL-132)' {
+    # Measured 2026-10-13 (PATCH on a security group, app-only): Microsoft Graph refuses a mailNickname
+    # of 65 characters, the empty string, a space, a tab and each of @ ( ) \ [ ] " ; : < > , with
+    # Request_BadRequest, and accepts 64 characters, . - _ / ' ~ ! # $ % & * + = ? ^ ` { | } and the
+    # non-ASCII letter U+00E5. The validator refuses what was refused and accepts what was accepted.
+    # A mail alias does not follow a rename: a renamed group that keeps the alias derived from its old
+    # name, or declares none, is a Warning.
+    BeforeAll {
+        function New-NickDoc {
+            param([hashtable]$Group)
+            [PSCustomObject]@{
+                version = '1.0'
+                groups  = @([PSCustomObject]$Group)
+            }
+        }
+        function Get-NickFinding {
+            param([object]$Doc)
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+    }
+
+    Context 'a mailNickname Microsoft Graph refuses is an Error at groups[0].mailNickname' {
+        It 'refuses <Case> with one Error naming <Named>' -ForEach @(
+            @{ Case = '65 characters'; Value = ('a' * 65); Named = 'the length'; Expect = 'is 65 characters long; Microsoft Graph accepts at most 64' }
+            @{ Case = 'the empty string'; Value = ''; Named = 'the empty value'; Expect = 'must not be empty' }
+            @{ Case = 'an at sign'; Value = 'a@b'; Named = "'@'"; Expect = "contains '@'" }
+            @{ Case = 'an opening parenthesis'; Value = 'a(b'; Named = "'('"; Expect = "contains '('" }
+            @{ Case = 'a closing parenthesis'; Value = 'a)b'; Named = "')'"; Expect = "contains ')'" }
+            @{ Case = 'a backslash'; Value = 'a\b'; Named = "'\'"; Expect = "contains '\'" }
+            @{ Case = 'an opening bracket'; Value = 'a[b'; Named = "'['"; Expect = "contains '['" }
+            @{ Case = 'a closing bracket'; Value = 'a]b'; Named = "']'"; Expect = "contains ']'" }
+            @{ Case = 'a double quote'; Value = 'a"b'; Named = "'""'"; Expect = "contains '""'" }
+            @{ Case = 'a semicolon'; Value = 'a;b'; Named = "';'"; Expect = "contains ';'" }
+            @{ Case = 'a colon'; Value = 'a:b'; Named = "':'"; Expect = "contains ':'" }
+            @{ Case = 'a less-than sign'; Value = 'a<b'; Named = "'<'"; Expect = "contains '<'" }
+            @{ Case = 'a greater-than sign'; Value = 'a>b'; Named = "'>'"; Expect = "contains '>'" }
+            @{ Case = 'a comma'; Value = 'a,b'; Named = "','"; Expect = "contains ','" }
+            @{ Case = 'a space'; Value = 'a b'; Named = 'U+0020'; Expect = 'contains U+0020' }
+            @{ Case = 'a tab'; Value = "a$([char]9)b"; Named = 'U+0009'; Expect = 'contains U+0009' }
+            @{ Case = 'a control character'; Value = "a$([char]7)b"; Named = 'U+0007'; Expect = 'contains U+0007' }
+        ) {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = $Value; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Section | Should -BeExactly 'groups'
+            $Hit[0].Item | Should -BeExactly 'role_sec_core'
+            $Hit[0].Message | Should -Match ('^' + [regex]::Escape("'mailNickname' at groups[0] "))
+            $Hit[0].Message | Should -Match ([regex]::Escape($Expect))
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'names every refused character once, white space and control characters by code point' {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = "a@b c@$([char]9)"; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeLike "*contains '@', U+0020, U+0009, which Microsoft Graph refuses in a mail alias*"
+        }
+
+        It 'reports the length and a refused character as two Errors when both apply' {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = (('a' * 64) + '@'); members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 2
+            @($Hit | Where-Object { $_.Message -like '*is 65 characters long*' }).Count | Should -Be 1
+            @($Hit | Where-Object { $_.Message -like "*contains '@'*" }).Count | Should -Be 1
+        }
+    }
+
+    Context 'a mailNickname Microsoft Graph accepts raises no finding' {
+        It 'accepts <Case>' -ForEach @(
+            @{ Case = '64 characters'; Value = ('a' * 64) }
+            @{ Case = 'a dot'; Value = 'a.b' }
+            @{ Case = 'a slash'; Value = 'a/b' }
+            @{ Case = 'an apostrophe'; Value = "a'b" }
+            @{ Case = 'a tilde'; Value = 'a~b' }
+            @{ Case = 'a percent sign'; Value = 'a%b' }
+            @{ Case = 'a non-ASCII letter (measured accepted)'; Value = "a$([char]0x00E5)b" }
+            @{ Case = 'a hyphen and an underscore'; Value = 'role_sec-core' }
+        ) {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = $Value; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' }) | Should -BeNullOrEmpty
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'treats an explicit null mailNickname as undeclared' {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = $null; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'keeps the must-be-string Error for a non-string mailNickname, and adds no length or character Error' {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = 42; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Message | Should -BeExactly "'mailNickname' at groups[0] must be a string."
+            $V.Valid | Should -BeFalse
+        }
+    }
+
+    Context 'a mail alias does not follow a rename (A5)' {
+        It 'warns, and stays Valid, when a renamed group keeps the alias derived from its old name: <Alias>' -ForEach @(
+            @{ Alias = 'OldNamex' }
+            @{ Alias = 'oldnamex' }
+            @{ Alias = 'OLDNAMEX' }
+        ) {
+            $Doc = New-NickDoc -Group @{ displayName = 'New Name'; previousDisplayName = 'Old Name (x)'; mailNickname = $Alias; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Section | Should -BeExactly 'groups'
+            $Hit[0].Item | Should -BeExactly 'New Name'
+            $Hit[0].Message | Should -BeLike '*does not follow a rename*'
+            $Hit[0].Message | Should -BeLike "*renamed from 'Old Name (x)'*"
+            $Hit[0].Message | Should -BeLike "*its mailNickname '$Alias' is the alias derived from the old name*"
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'warns, and stays Valid, when a renamed group declares no mailNickname' {
+            $Doc = New-NickDoc -Group @{ displayName = 'New Name'; previousDisplayName = 'Old Name (x)'; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeLike '*declares no mailNickname*'
+            $Hit[0].Message | Should -BeLike '*does not follow a rename*'
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'warns for a renamed group that declares an explicit null mailNickname (not declared)' {
+            $Doc = New-NickDoc -Group @{ displayName = 'New Name'; previousDisplayName = 'Old Name (x)'; mailNickname = $null; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeLike '*declares no mailNickname*'
+        }
+
+        It 'warns for a template-based group that declares a previousDisplayName and no mailNickname' {
+            $Doc = [PSCustomObject]@{
+                version = '1.0'
+                groups  = @([PSCustomObject]@{
+                    template = 'role_sec_{Area}'; tokens = [PSCustomObject]@{ Area = 'hr' }
+                    previousDisplayName = 'role_sec_old'; members = $null
+                })
+            }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            @($V.Errors).Count | Should -Be 1
+        }
+
+        It 'raises no such Warning in the case <Case>' -ForEach @(
+            @{ Case = 'a new mailNickname'; Group = @{ displayName = 'New Name'; previousDisplayName = 'Old Name (x)'; mailNickname = 'NewName'; members = $null } }
+            @{ Case = 'no previousDisplayName, with the alias of any name'; Group = @{ displayName = 'New Name'; mailNickname = 'OldNamex'; members = $null } }
+            @{ Case = 'no previousDisplayName and no mailNickname'; Group = @{ displayName = 'New Name'; members = $null } }
+            @{ Case = 'a null previousDisplayName (not declared) and no mailNickname'; Group = @{ displayName = 'New Name'; previousDisplayName = $null; members = $null } }
+            @{ Case = 'a previousDisplayName that equals displayName ignoring case, and no mailNickname'; Group = @{ displayName = 'Old Name (x)'; previousDisplayName = 'OLD NAME (X)'; members = $null } }
+            @{ Case = 'a previousDisplayName that equals displayName ignoring case, and its derived alias'; Group = @{ displayName = 'Old Name (x)'; previousDisplayName = 'OLD NAME (X)'; mailNickname = 'OldNamex'; members = $null } }
+            @{ Case = 'an empty previousDisplayName'; Group = @{ displayName = 'New Name'; previousDisplayName = ''; members = $null } }
+            @{ Case = 'a previousDisplayName that is not a string'; Group = @{ displayName = 'New Name'; previousDisplayName = 42; members = $null } }
+        ) {
+            $Doc = New-NickDoc -Group $Group
+            $V = Get-NickFinding -Doc $Doc
+            @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' }) | Should -BeNullOrEmpty
+            @($V.Errors | Where-Object { $_.Message -like '*does not follow a rename*' }) | Should -BeNullOrEmpty
+        }
+
+        It 'does not also warn when the declared mailNickname is not a string (the type Error stands alone)' {
+            $Doc = New-NickDoc -Group @{ displayName = 'New Name'; previousDisplayName = 'Old Name (x)'; mailNickname = @(1, 2); members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Message | Should -BeExactly "'mailNickname' at groups[0] must be a string."
+        }
+
+        It 'compares with the alias Get-OERDerivedMailNickname derives, so a name with characters the alias drops matches' {
+            $Doc = New-NickDoc -Group @{ displayName = 'Nytt namn'; previousDisplayName = "Gamla $([char]0x00E5)ret (1)"; mailNickname = 'Gamlaret1'; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
         }
     }
 }

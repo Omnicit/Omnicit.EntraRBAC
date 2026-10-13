@@ -123,6 +123,15 @@ function Test-OERStructureSchema {
     through the document (Set-OERGroup -NewDisplayName does it). An explicit null is not declared,
     as for every other key, and that Warning does not compare a template-based group's computed name.
     A group's onPremisesSynced, when present, must be a boolean (Error); it is information only.
+    A groups[] entry's mailNickname, when present, must be a string (Error) of 1 to 64 characters
+    (BL-132): an empty one is an Error, one longer than 64 characters is an Error naming its length, and
+    one containing any of @ ( ) \ [ ] " ; : < > , white space or a control character is an Error naming
+    each such character (white space and control characters by code point), since Microsoft Graph
+    refuses all of them (measured 2026-10-13); a non-ASCII letter is accepted, as Microsoft Graph accepts
+    it. A mail alias does not follow a rename and none is derived again, so a groups[] entry that
+    declares a previousDisplayName different from its displayName (ignoring case) is a Warning at its
+    mailNickname path when it declares no mailNickname (it keeps its current alias) or declares one that
+    equals, ignoring case, the alias Get-OERDerivedMailNickname derives from the previousDisplayName.
     A groups[] entry declaring a non-empty administrativeUnit whose matching administrativeUnits[]
     entry exists in the same document but does not name the group in its members is a Warning
     (issue #59, BL-07): administrativeUnit is applied only when the group is created and never
@@ -465,6 +474,53 @@ function Test-OERStructureSchema {
                             Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.$GStringProp" `
                                 -Message "'$GStringProp' at $GPath must be a string."
                         }
+                    }
+                }
+
+                # BL-132: Microsoft Graph accepts a mailNickname of 1 to 64 characters without
+                # @ ( ) \ [ ] " ; : < > , white space or a control character (measured 2026-10-13 against a
+                # security group; Microsoft Learn's group resource lists the same printable set). A non-ASCII
+                # letter was accepted, so it is not refused here. A non-string value was reported above.
+                if ((Test-HasProp -Node $G -Name 'mailNickname') -and $G.mailNickname -is [string]) {
+                    $Nick = [string]$G.mailNickname
+                    if ($Nick.Length -eq 0) {
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.mailNickname" `
+                            -Message "'mailNickname' at $GPath must not be empty."
+                    } elseif ($Nick.Length -gt 64) {
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.mailNickname" `
+                            -Message "'mailNickname' at $GPath is $($Nick.Length) characters long; Microsoft Graph accepts at most 64."
+                    }
+                    $Bad = @($Nick.ToCharArray() | Where-Object {
+                            '@()\[]";:<>,'.Contains($_) -or [char]::IsWhiteSpace($_) -or [char]::IsControl($_)
+                        } | Select-Object -Unique)
+                    if ($Bad.Count -gt 0) {
+                        $Shown = ($Bad | ForEach-Object {
+                                if ([char]::IsWhiteSpace($_) -or [char]::IsControl($_)) { 'U+{0:X4}' -f [int]$_ } else { "'$_'" }
+                            }) -join ', '
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.mailNickname" `
+                            -Message ("'mailNickname' at $GPath contains $Shown, which Microsoft Graph refuses in a mail alias " +
+                                '(it refuses @ ( ) \ [ ] " ; : < > , white space and control characters).')
+                    }
+                }
+
+                # BL-132 (A5): a mail alias does not follow a rename, and none is derived again. Warn when a
+                # renamed group keeps the alias derived from its previous name, or declares none and so keeps
+                # whatever alias it has. Not reported when previousDisplayName is not declared, is not a
+                # non-empty string (reported above), or equals displayName ignoring case (nothing is renamed).
+                if ((Test-HasProp -Node $G -Name 'previousDisplayName') -and $G.previousDisplayName -is [string] -and
+                    $G.previousDisplayName.Length -gt 0 -and
+                    -not ($HasDN -and [string]$G.displayName -ieq $G.previousDisplayName)) {
+                    $OldAlias = Get-OERDerivedMailNickname -DisplayName $G.previousDisplayName
+                    if (-not (Test-HasProp -Node $G -Name 'mailNickname')) {
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.mailNickname" -Severity 'Warning' `
+                            -Message ("Group at $GPath is renamed from '$($G.previousDisplayName)' and declares no mailNickname, so it keeps " +
+                                'its current mail alias: the alias does not follow a rename. If that alias was derived from the old ' +
+                                'name, declare mailNickname with the alias the new name should carry.')
+                    } elseif ($G.mailNickname -is [string] -and $G.mailNickname -ieq $OldAlias) {
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.mailNickname" -Severity 'Warning' `
+                            -Message ("Group at $GPath is renamed from '$($G.previousDisplayName)' but its mailNickname '$($G.mailNickname)' " +
+                                'is the alias derived from the old name: the alias does not follow a rename. Declare the alias the new ' +
+                                'name should carry, or keep this one on purpose.')
                     }
                 }
 
