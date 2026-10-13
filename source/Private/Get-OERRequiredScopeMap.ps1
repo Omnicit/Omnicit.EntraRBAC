@@ -96,10 +96,11 @@ function Get-OERRequiredScopeMap {
         @{
             Cmdlet = 'Export-OERInventory'; Transport = 'GraphAndArm'
             GraphScope = 'AccessReview.Read.All', 'AdministrativeUnit.Read.All', 'Directory.Read.All',
-                         'EntitlementManagement.Read.All', 'PrivilegedEligibilitySchedule.Read.AzureADGroup',
+                         'EntitlementManagement.Read.All', 'PrivilegedAssignmentSchedule.Read.AzureADGroup',
+                         'PrivilegedEligibilitySchedule.Read.AzureADGroup',
                          'RoleManagement.Read.Directory', 'RoleManagementPolicy.Read.AzureADGroup'
             AzureRole = 'Reader'
-            Note = 'The scopes listed are the union over every -Include area; a narrower -Include needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user, group and service-principal reads behind the friendly-name lookups. The DirectoryRoleManagementPolicies and DirectoryRoleAssignments sections read the directory role policies and the eligibility and assignment schedules, which RoleManagement.Read.Directory already covers.'
+            Note = 'The scopes listed are the union over every -Include area; a narrower -Include needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user, group and service-principal reads behind the friendly-name lookups. The DirectoryRoleManagementPolicies and DirectoryRoleAssignments sections read the directory role policies and the eligibility and assignment schedules, which RoleManagement.Read.Directory already covers. PrivilegedAssignmentSchedule.Read.AzureADGroup reads a group''s PIM for Groups assignment schedule instances, to leave out the members and owners PIM holds; it is a different permission family from the eligibility one.'
         }
         @{
             Cmdlet = 'Get-OERAccessPackage'; Transport = 'Graph'
@@ -200,10 +201,11 @@ function Get-OERRequiredScopeMap {
         @{
             Cmdlet = 'Get-OERInventory'; Transport = 'GraphAndArm'
             GraphScope = 'AccessReview.Read.All', 'AdministrativeUnit.Read.All', 'Directory.Read.All',
-                         'EntitlementManagement.Read.All', 'PrivilegedEligibilitySchedule.Read.AzureADGroup',
+                         'EntitlementManagement.Read.All', 'PrivilegedAssignmentSchedule.Read.AzureADGroup',
+                         'PrivilegedEligibilitySchedule.Read.AzureADGroup',
                          'RoleManagement.Read.Directory', 'RoleManagementPolicy.Read.AzureADGroup'
             AzureRole = 'Reader'
-            Note = 'The scopes listed are the union over every -Include area; a narrower -Include needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user, group and service-principal reads behind the friendly-name lookups. The DirectoryRoleManagementPolicies and DirectoryRoleAssignments sections read the directory role policies and the eligibility and assignment schedules, which RoleManagement.Read.Directory already covers.'
+            Note = 'The scopes listed are the union over every -Include area; a narrower -Include needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user, group and service-principal reads behind the friendly-name lookups. The DirectoryRoleManagementPolicies and DirectoryRoleAssignments sections read the directory role policies and the eligibility and assignment schedules, which RoleManagement.Read.Directory already covers. PrivilegedAssignmentSchedule.Read.AzureADGroup reads a group''s PIM for Groups assignment schedule instances, to leave out the members and owners PIM holds; it is a different permission family from the eligibility one.'
         }
         @{
             Cmdlet = 'Get-OERManagementGroup'; Transport = 'Arm'
@@ -254,11 +256,12 @@ function Get-OERRequiredScopeMap {
                          'AuthenticationContext.Read.All',
                          'Directory.Read.All', 'EntitlementManagement.ReadWrite.All',
                          'Group.ReadWrite.All',
+                         'PrivilegedAssignmentSchedule.Read.AzureADGroup',
                          'PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup',
                          'RoleManagement.ReadWrite.Directory',
                          'RoleManagementPolicy.ReadWrite.AzureADGroup'
             AzureRole = 'User Access Administrator', 'Owner', 'Role Based Access Control Administrator'
-            Note = 'The scopes listed are the union over every document section; a document touching fewer sections needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user and service-principal reads behind the friendly-name lookups and the directoryRoleAssignments prune pass''s read of the signed-in identity''s group memberships (directoryObjects/{id}/getMemberGroups). RoleManagement.ReadWrite.Directory also covers the directoryRoleManagementPolicies and directoryRoleAssignments sections.'
+            Note = 'The scopes listed are the union over every document section; a document touching fewer sections needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user and service-principal reads behind the friendly-name lookups and the directoryRoleAssignments prune pass''s read of the signed-in identity''s group memberships (directoryObjects/{id}/getMemberGroups). RoleManagement.ReadWrite.Directory also covers the directoryRoleManagementPolicies and directoryRoleAssignments sections. PrivilegedAssignmentSchedule.Read.AzureADGroup reads a group''s PIM for Groups assignment schedule instances, so a member or owner PIM holds is neither written as standing nor pruned; it is a different permission family from the eligibility one.'
         }
         @{
             Cmdlet = 'New-OERAccessPackage'; Transport = 'Graph'

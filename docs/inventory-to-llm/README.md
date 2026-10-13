@@ -179,6 +179,37 @@ group created moments ago -- is not silently skipped: the apply reports that acc
 (`PimPolicyNotFound`), and a re-run usually applies it. For a group created by the same apply run,
 the engine first waits up to about 30 seconds for its policies to be listed and readable.
 
+## Members and owners that PIM for Groups holds
+
+`members` and `owners` in `inventory.json` hold a group's STANDING members and owners only. A member
+or owner whose access PIM for Groups holds -- an activation, or another active assignment that is not
+standing, such as a time-bound one -- is left out, and the bundle's `README.md` counts what was left
+out for each group, by group name and never by principal, under "Members and owners left out as PIM
+for Groups access". The prompt tells the model not to propose a principal that is eligible, or known
+to hold the access through PIM for Groups, as a standing member or owner, and not to read a missing
+activation as a removal.
+
+- When the group's PIM assignments could not be read, the members and owners that are eligible for
+  the same access are left out instead, and `groups/<name>/pimAssignments` is listed under "What this
+  export could not read".
+- When its eligibility could not be read either, a `members` collection that holds entries is `null`
+  and an `owners` collection that holds entries is left out, both listed there. Keep the `null`, as
+  for any unread collection. A `members` collection read empty is written as `[]`, and one written
+  after only the assignment read failed lists the members that were not eligible.
+
+`Invoke-OERStructure` does not add a declared member or owner that is not in the group and that PIM
+for Groups holds or makes eligible for the same access: the entry is reported `Skipped`, with a
+warning, also under `-WhatIf`. So an activation that a document from an earlier version lists under
+`members` is not added while PIM for Groups still holds that principal or makes it eligible.
+`-Prune` removes none: it reports `Skipped` with "prune withheld:" under `-Prune` and `Extra`
+without. The apply engine is stricter than the export about what it could not read: when EITHER of a
+group's PIM for Groups reads (its assignments or its eligibility) fails for a group that already
+existed, nothing is added to or removed from that group's members and owners, whereas the export
+writes `members` as `null` only when BOTH failed. A group the same run creates is not read, so no
+member or owner declared for it is held back for PIM for Groups. When a standing membership is
+meant, add it with `Add-OERGroupMember`. The read needs the permission
+`PrivilegedAssignmentSchedule.Read.AzureADGroup`.
+
 ## Renaming a group
 
 `displayName` is the match key for a group. To rename a group through the apply document, declare
@@ -455,7 +486,9 @@ A read that fails is never written as a fact. A `members`, `scopedRoles`, `resou
 `resourceRoles` collection that could not be read, or one with an entry the export could name by
 nothing the apply engine accepts, is written as `null`, which `Invoke-OERStructure` leaves
 untouched: keep it `null` in a proposal and never change it to `[]`, since under `-Prune` an empty
-collection removes every live entry. A section that could not be read at all (the group list, the
+collection removes every live entry. The `members` of a group that has members and whose PIM for
+Groups assignments AND eligibility both could not be read is `null` for the same reason (see "Members
+and owners that PIM for Groups holds"). A section that could not be read at all (the group list, the
 administrative unit list or the access review list) is reported by a warning and through
 `InventoryPartial` under the section's own name (`groups`, `administrativeUnits` or
 `accessReviews`), and is written as an empty array, never `null`. The group roster that could not be

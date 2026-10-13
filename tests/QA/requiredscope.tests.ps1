@@ -287,6 +287,19 @@ BeforeAll {
         permission is RoleEligibilitySchedule.* / RoleAssignmentSchedule.* respectively, with the
         higher RoleManagement.*.Directory as the broader alternative.
 
+        The two privilegedAccess/group entries are split by the SCHEDULE a call touches, not by the
+        shared resource root. PIM for Groups has a permission family per schedule kind:
+        PrivilegedEligibilitySchedule.* for eligibilityScheduleInstances and the eligibility
+        requests, PrivilegedAssignmentSchedule.* for assignmentScheduleInstances (Microsoft Learn,
+        "List assignmentScheduleInstances": least privileged PrivilegedAssignmentSchedule.Read.AzureADGroup,
+        higher PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup). The assignment entry came with
+        BL-138, when the inventory export and the apply engine began to read a group's assignment
+        schedule instances to tell a standing membership from PIM-held access
+        (Read-OERGroupPimAssignment). Without the NotMatch on the eligibility entry that new read would
+        ALSO be held to the eligibility permission, which is a different consent. Get-RequiredScopePattern
+        below is the only place a URI is matched against this map, and the known-answer cases in the
+        'Endpoint map known answers' Context call it directly, so the split is held without a cmdlet.
+
         Every pattern below was confirmed against a published Microsoft Learn permissions table.
         =====================================================================================
     #>
@@ -329,10 +342,19 @@ BeforeAll {
             Write    = '^AccessReview\.ReadWrite\.All$'
         }
         @{
-            Endpoint = 'identityGovernance/privilegedAccess/group/*'
+            Endpoint = 'identityGovernance/privilegedAccess/group/* (eligibility)'
             Match    = 'privilegedAccess/group'
+            NotMatch = 'privilegedAccess/group/assignmentSchedule'
             Read     = '^PrivilegedEligibilitySchedule\.(Read|ReadWrite)\.AzureADGroup$'
             Write    = '^PrivilegedEligibilitySchedule\.ReadWrite\.AzureADGroup$'
+        }
+        @{
+            # Microsoft Learn, "List assignmentScheduleInstances" (v1.0): least privileged
+            # PrivilegedAssignmentSchedule.Read.AzureADGroup, higher ...ReadWrite.AzureADGroup. BL-138.
+            Endpoint = 'identityGovernance/privilegedAccess/group/assignmentSchedule*'
+            Match    = 'privilegedAccess/group/assignmentSchedule'
+            Read     = '^PrivilegedAssignmentSchedule\.(Read|ReadWrite)\.AzureADGroup$'
+            Write    = '^PrivilegedAssignmentSchedule\.ReadWrite\.AzureADGroup$'
         }
         @{
             Endpoint = 'policies/roleManagementPolicies* (PIM for Groups, unversioned)'
@@ -400,6 +422,39 @@ BeforeAll {
             Write    = '^Directory\.Read(Write)?\.All$'
         }
     )
+
+    <#
+        The one place a URI literal is matched against the endpoint map: the required pattern of
+        EVERY rule whose Match the URI contains and whose NotMatch it does not. A Graph write needs
+        the rule's Write pattern, a read its Read pattern; a URI no rule matches returns nothing.
+
+        Both the per-cmdlet It under 'Declared permissions cover the endpoints actually called' and
+        the known-answer cases under 'Endpoint map known answers' call it, so the map is tested
+        through the function the gate itself uses. $script:PatternCallCount counts the calls so the
+        per-cmdlet It can prove its scan really goes through here (one call per derived URI literal)
+        rather than through a copy of the matching that the known-answer cases would never reach.
+    #>
+    $script:PatternCallCount = 0
+    function Get-RequiredScopePattern
+    {
+        param(
+            [Parameter(Mandatory)]
+            [string]$Uri,
+
+            [Parameter(Mandatory)]
+            [bool]$Write
+        )
+
+        $script:PatternCallCount++
+
+        foreach ($Rule in $script:endpointMap)
+        {
+            if ($Uri -notlike ('*{0}*' -f $Rule.Match)) { continue }
+            if ($Rule.NotMatch -and $Uri -like ('*{0}*' -f $Rule.NotMatch)) { continue }
+
+            if ($Write) { $Rule.Write } else { $Rule.Read }
+        }
+    }
 }
 
 Describe 'Required scope table' -Tags 'helpQuality' {
@@ -448,29 +503,88 @@ Describe 'Required scope table' -Tags 'helpQuality' {
 
             $declared = @($entry.GraphScope)
             $failures = [System.Collections.Generic.List[string]]::new()
+            $calls = @($script:derived[$Name].GraphUri)
 
-            foreach ($Call in $script:derived[$Name].GraphUri)
+            $script:PatternCallCount = 0
+            foreach ($Call in $calls)
             {
-                foreach ($Rule in $script:endpointMap)
+                foreach ($required in @(Get-RequiredScopePattern -Uri $Call.Uri -Write $Call.Write))
                 {
-                    if ($Call.Uri -notlike ('*{0}*' -f $Rule.Match)) { continue }
-                    if ($Rule.NotMatch -and $Call.Uri -like ('*{0}*' -f $Rule.NotMatch)) { continue }
-
-                    $required = if ($Call.Write) { $Rule.Write } else { $Rule.Read }
-
                     if (-not @($declared | Where-Object { $_ -match $required }).Count)
                     {
                         $failures.Add(('{0} (via {1}, {2}) needs a permission matching {3}' -f
-                                $Rule.Endpoint, $Call.Owner, $(if ($Call.Write) { 'writes' } else { 'reads' }), $required))
+                                $Call.Uri, $Call.Owner, $(if ($Call.Write) { 'writes' } else { 'reads' }), $required))
                     }
                 }
             }
+
+            $script:PatternCallCount | Should -Be $calls.Count -Because (
+                'the scan for {0} must match every derived URI literal through Get-RequiredScopePattern, the function the known-answer cases test; {1} literals, {2} calls' -f
+                    $Name, $calls.Count, $script:PatternCallCount)
 
             $unique = @($failures | Sort-Object -Unique)
 
             $unique | Should -BeNullOrEmpty -Because (
                 'Graph grants permissions by the resource a call touches, so {0} must declare one for each endpoint it reaches -- including through its private helpers. Declared: {1}. Unsatisfied: {2}' -f
                     $Name, ($declared -join ', '), ($unique -join ' | '))
+        }
+    }
+
+    Context 'Endpoint map known answers' {
+        <#
+            The per-cmdlet cases above can only fail for a cmdlet whose call graph reaches the
+            endpoint, so a rule that was deleted, or one that claims a neighbour's URI, would go
+            unnoticed until a cmdlet happened to reach it. These cases call Get-RequiredScopePattern
+            directly with a URI literal shaped like the module's own, so the PIM for Groups split
+            between the assignment and the eligibility schedule is held with no cmdlet involved.
+        #>
+        It 'Should hold an assignmentScheduleInstances read to the assignment schedule permission alone' {
+            $patterns = @(Get-RequiredScopePattern -Uri 'identityGovernance/privilegedAccess/group/assignmentScheduleInstances?$filter=groupId eq ''x''' -Write $false)
+
+            $patterns.Count | Should -BeGreaterThan 0 -Because (
+                'a read of assignmentScheduleInstances must map to a permission rule; none matched')
+
+            foreach ($pattern in $patterns)
+            {
+                'PrivilegedAssignmentSchedule.Read.AzureADGroup' | Should -Match $pattern -Because (
+                    'every rule matching an assignmentScheduleInstances read must accept PrivilegedAssignmentSchedule.Read.AzureADGroup, the least privileged permission; pattern {0}' -f $pattern)
+                'PrivilegedEligibilitySchedule.Read.AzureADGroup' | Should -Not -Match $pattern -Because (
+                    'an assignment schedule read is not an eligibility schedule read, so the eligibility permission must not satisfy it; pattern {0}' -f $pattern)
+                'PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup' | Should -Not -Match $pattern -Because (
+                    'an assignment schedule read is not an eligibility schedule read, so the eligibility permission must not satisfy it; pattern {0}' -f $pattern)
+            }
+        }
+
+        It 'Should hold an assignmentScheduleInstances write to the assignment schedule read-write permission' {
+            $patterns = @(Get-RequiredScopePattern -Uri 'identityGovernance/privilegedAccess/group/assignmentScheduleInstances' -Write $true)
+
+            $patterns.Count | Should -BeGreaterThan 0 -Because (
+                'a write to the assignment schedules must map to a permission rule; none matched')
+
+            foreach ($pattern in $patterns)
+            {
+                'PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup' | Should -Match $pattern
+                'PrivilegedAssignmentSchedule.Read.AzureADGroup' | Should -Not -Match $pattern -Because (
+                    'a write needs the read-write permission, which the read permission does not satisfy; pattern {0}' -f $pattern)
+                'PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup' | Should -Not -Match $pattern
+            }
+        }
+
+        It 'Should hold an eligibilityScheduleInstances read to the eligibility schedule permission alone' {
+            $patterns = @(Get-RequiredScopePattern -Uri 'identityGovernance/privilegedAccess/group/eligibilityScheduleInstances' -Write $false)
+
+            $patterns.Count | Should -BeGreaterThan 0 -Because (
+                'a read of eligibilityScheduleInstances must map to a permission rule; none matched')
+
+            foreach ($pattern in $patterns)
+            {
+                'PrivilegedEligibilitySchedule.Read.AzureADGroup' | Should -Match $pattern -Because (
+                    'every rule matching an eligibilityScheduleInstances read must accept PrivilegedEligibilitySchedule.Read.AzureADGroup, the least privileged permission; pattern {0}' -f $pattern)
+                'PrivilegedAssignmentSchedule.Read.AzureADGroup' | Should -Not -Match $pattern -Because (
+                    'an eligibility schedule read is not an assignment schedule read, so the assignment permission must not satisfy it; pattern {0}' -f $pattern)
+                'PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup' | Should -Not -Match $pattern -Because (
+                    'an eligibility schedule read is not an assignment schedule read, so the assignment permission must not satisfy it; pattern {0}' -f $pattern)
+            }
         }
     }
 }

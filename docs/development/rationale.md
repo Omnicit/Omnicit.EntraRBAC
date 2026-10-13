@@ -855,7 +855,7 @@ empty collection.
 
 ## pim-beta-pin
 
-PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint. All sixteen call sites, in eleven
+PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint. All seventeen call sites, in twelve
 source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version
 constant. (The count read "eight" until Sprint 6 step 5; it had been counting FILES, and had
 already fallen behind by one -- `Get-OERListedGroupPimPolicy` -- before `Test-OERGroupPimInUse`
@@ -864,7 +864,11 @@ apply engine's own time-bound eligibility POST for a group created in the same r
 a 404 ResourceNotFound to the transport where `Add-OERGroupEligibility` cannot. The test below now
 lists every calling file and fails on one it does not name.) Sprint 10 step 8 moved the eligibility
 call site from `Get-OERGroup` into `Read-OERGroupCollection`, which `Get-OERGroup` and the
-inventory's group reader both call; the counts above, sixteen sites in eleven files, are unchanged.
+inventory's group reader both call; the counts then, sixteen sites in eleven files, were unchanged.
+Sprint 11 step 1 added the seventeenth site, in the twelfth file: `Read-OERGroupPimAssignment`, the
+single reader of a group's `assignmentScheduleInstances`, which declares `ResourceTypeNotSupported`
+to the transport as an answer
+([#pim-activation-is-not-membership](#pim-activation-is-not-membership)).
 
 The v1.0 API reference documents these operations as GA, but
 `learn.microsoft.com/graph/how-to-pim-update-rules` still states that PIM for groups APIs are
@@ -5878,10 +5882,14 @@ group memberships could not be read"): a failed read is not an empty membership,
 one would remove exactly the assignment this guard exists to keep. User and service principal
 candidates carry on to the prune, since neither can be such a group. Cost if the permission assumed
 here is wrong for some tenant: withheld `Skipped` rows on every group candidate, never a wrong
-removal. The group guard reads ACTIVE group memberships only (`getMemberGroups`). An identity that
+removal. The group guard reads ACTIVE group memberships only (`getMemberGroups`), and an activation
+is an active membership, so a group the identity has activated into is found by it. An identity that
 is only eligible for membership through PIM for Groups is not a member until it activates, so a
 group it could activate into is an ordinary prune candidate -- decide knowingly before running
-`-Prune` in a tenant that uses PIM for Groups on role-assignable groups.
+`-Prune` in a tenant that uses PIM for Groups on role-assignable groups. That is this pass's own
+guard and it is unchanged. The groups section of the apply engine is a different pass with a rule of
+its own (Sprint 11 step 1): it never adds or removes a member or owner that PIM for Groups holds or
+makes eligible ([#pim-activation-is-not-membership](#pim-activation-is-not-membership)).
 
 **Testing note: a mocked throw is not gone once the code under test catches it.** Several of the new
 suites assert against `-ErrorVariable` around a call whose OWN internal try/catch is expected to
@@ -6691,11 +6699,13 @@ could cut its own privileges part-way through the run. Under A9 that service pri
 removed, so the case does not arise. A delegated user removing themselves through a group prune was
 possible before this fix and still is; this change does not touch it.
 
-**The six kinds of withheld prune `ConvertTo-OERPruneWithheldResult` builds.** One parameter set per
+**The eight kinds of withheld prune `ConvertTo-OERPruneWithheldResult` builds.** One parameter set per
 kind, each a `Skipped` row whose Detail starts `prune withheld:` and carries no warning of the
-helper's own and no ShouldProcess prompt (the sixth kind is an `Extra` row without `-Prune`, as the
-`-ObjectType` kind is, and under `-Prune` its group handler writes the one item warning, R6 under
-[#synced-groups](#synced-groups), where the helper writes none): a declared entry that could not be
+helper's own and no ShouldProcess prompt (the sixth and the seventh kind are an `Extra` row without
+`-Prune`, as the `-ObjectType` kind is; under `-Prune` the group handler writes the one item warning
+for the sixth, R6 under [#synced-groups](#synced-groups), where the helper writes none, and no warning
+for the seventh; the eighth is a `Skipped` row with or without `-Prune`, and the handler writes one
+warning for the item that names the cause): a declared entry that could not be
 resolved, which withholds every candidate of its collection (`-Unresolved`); an entry whose scope could not be resolved, which withholds every
 candidate of the section (`-UnresolvedScope`, A12 under [#role-assignment-key](#role-assignment-key));
 a live administrative unit scoped role whose name the directory role list did not give, beside a
@@ -6704,7 +6714,11 @@ nor removed (`-Declared` with `-UnnamedRoleId`); a group member or owner that is
 (`-ObjectType`, A9 above); since Sprint 9 step 6, a live administrative unit member that is a
 group this run created into the unit (`-CreatedGroup`, BL-07, below); and, since Sprint 10 step 7b,
 every live member, owner or eligibility of a group synchronized from on-premises (`-SyncedGroup`,
-A15, under [#synced-groups](#synced-groups)). The directory role prune's two
+A15, under [#synced-groups](#synced-groups)); and, since Sprint 11 step 1 (BL-125), a live group
+member or owner that PIM for Groups holds or makes eligible for the same access (`-PimHeldReason`),
+and every undeclared member or owner of a group that already existed when either of its PIM for
+Groups reads failed (`-PimUnread`), both under
+[#pim-activation-is-not-membership](#pim-activation-is-not-membership). The directory role prune's two
 guards for the signed-in identity, under [#directory-role-assignments](#directory-role-assignments),
 write their own `prune withheld:` rows.
 
@@ -7521,3 +7535,197 @@ reason's row; only the others get this one.
 **What does not change.** A write that only points at the group, such as a role assignment, an
 administrative unit membership or an access package resource role, belongs to another section and is
 applied as before; the group itself is not written.
+
+## pim-activation-is-not-membership
+
+Sprint 11 step 1 (BL-125, decision A3) made the export and the apply engine treat a PIM for Groups
+activation as what it is: access that PIM for Groups grants on its own terms, and not a standing
+membership. This anchor records the problem, what was measured, the rulings each with its cost if
+wrong, the permission, the cost in reads, and what is NOT verified live. `Get-OERGroupPimHeldAccess`
+is the single owner of the rule, `Read-OERGroupPimAssignment` the single reader of the group's
+assignment schedule instances and `Read-OERGroupPimHold` the apply engine's one read of the hold
+(CLAUDE.md, Code Style).
+
+**The problem (BL-125).** A principal that has activated its eligibility for a group is a member, or
+an owner, of that group for as long as the activation lasts, and so is a principal holding a
+time-bound active assignment (Microsoft Learn; a real activation is not measured here, see below).
+Both therefore stand in the group's member and owner lists beside the standing members. Before this
+step the export wrote every member and owner those lists held, and the apply engine added every
+declared principal it did not find in them. An export taken while a principal was activated, applied
+after the activation had ended, therefore added that principal as a STANDING member: access that PIM
+for Groups grants for a limited time, behind approval and multi-factor authentication where the
+group's policy asks for them, became permanent. That is the escalation PIM for Groups exists to
+prevent, and it took nothing but an export at the wrong moment and a later apply.
+
+**What was measured (2026-10-13).** Live, as the dedicated live-verification identity (`oer-live-cc`),
+on groups and memberships the run created for it under its own prefix; the endpoint itself was only
+read. The record is the step's checklist,
+`docs/live-verification/fix-never-make-an-activation-standing-checklist.md`.
+
+- A standing membership and a standing ownership, added with `members/$ref` and `owners/$ref` outside
+  PIM, ARE listed by `identityGovernance/privilegedAccess/group/assignmentScheduleInstances` filtered
+  on the group id: `accessId` `member` or `owner`, `memberType` `direct`, `assignmentType` `assigned`,
+  `startDateTime` and `endDateTime` null (Graph returns its enum values in lower case).
+- That holds for a group never onboarded to PIM for Groups too: the answer is 200 with the same rows,
+  not `ResourceTypeNotSupported`.
+- An eligibility is NOT in `assignmentScheduleInstances`; it is only in `eligibilityScheduleInstances`.
+- A group with no member and no owner answers 200 with zero rows.
+- The beta and v1.0 endpoints answer the same rows with the same keys (`accessId`,
+  `assignmentScheduleId`, `assignmentType`, `endDateTime`, `groupId`, `id`, `memberType`,
+  `principalId`, `startDateTime`), so nothing here changes [#pim-beta-pin](#pim-beta-pin).
+
+A later round the same day (checks 1.3 and 1.4 of that checklist), as the same identity, which
+still did not hold `PrivilegedAssignmentSchedule.Read.AzureADGroup`, added two shapes the first one
+had not met:
+
+- On a ROLE-ASSIGNABLE group the assignment read is refused, 403, on beta and on v1.0 alike, while
+  the eligibility read of the same group answers 200; the assignment read of the four plain groups,
+  which are not role-assignable, had answered 200 in the first measurement (DEL 1) and in checks 0.2
+  and 1.1 (see **The permission** below).
+- On a DYNAMIC group the assignment read and the eligibility read both answer 400
+  `ResourceTypeNotSupported`, on beta and on v1.0 alike (see Rule 10).
+
+Microsoft Learn ("List assignmentScheduleInstances", v1.0) documents `assignmentType` as `assigned`,
+`activated` or `unknownFutureValue`, and `memberType` as `direct`, `group` or `unknownFutureValue`. Its
+own example shows a time-bound active assignment as `assigned` and `direct` with an `endDateTime`.
+So an `assigned` instance is not by itself a standing one, which is why the rule below looks at the
+end as well, and why `memberType` decides nothing.
+
+**Rule 1 (what holds access; `Get-OERGroupPimHeldAccess`).** An assignment schedule instance holds
+its principal's access through PIM for Groups unless it is a standing one: its `assignmentType` is
+`assigned` (compared without regard to letter case) AND it has no `endDateTime`. An end counts as
+set when it is not null and does not read as blank text, so a DateTime object (the shape the Graph
+SDK hands back) counts as set. The access is the instance's `accessId`, `member` when it has none.
+The Kind is `Activated` when the type is `activated`, `TimeBound` when it has an end, and
+`Unrecognized` for any other or missing type. `memberType` is never consulted. Every eligibility
+instance holds its principal as `Eligible` for its `accessId`. Access is matched per access type, so a
+principal that is a standing member and activated as an owner is held for owner access only. If
+wrong: an activation Graph reports as `assigned` with no end is written as standing exactly as it was
+before this step (the live C-check looks for it), and a standing member Graph reports otherwise is
+left out of the export and protected from prune. Both directions leave PIM-held access in place.
+
+**Rule 2 (the export: what is left out).** With the assignment read, every member and owner whose id
+is held for that access with the Kind `Activated`, `TimeBound` or `Unrecognized` is left out of
+`members` or `owners`. Eligibility alone does NOT leave a standing member out: a principal that is a
+standing member and eligible too is written as before. If wrong: an eligible standing member is
+written, and the apply engine leaves it `Unchanged`.
+
+**Rule 3 (the export: the reserve).** When the assignment read fails for a group, the cause is kept,
+`groups/<name>/pimAssignments` is named unread (`IncompleteReads` and `InventoryPartial`), and every
+member and owner that is eligible for the same access is left out instead: a principal that is a
+member now and eligible may be one through an activation. When the eligibility was not read either,
+nothing can be decided for a collection that holds entries, so `members` is written as an explicit
+null and `owners` is left out, each named unread, as an unread collection is everywhere else. A
+collection read empty cannot hold an activation, so it is written as read and not named. The reserve
+has a blind spot, and the partial report is how it is owned: a time-bound active assignment made
+straight to a principal with no eligibility cannot be told from a standing membership without the
+assignment read, so under the reserve it is written as standing. An activation is made from an
+eligibility, so it is left out for as long as that eligibility stands. If wrong: an export loses
+members it could have written.
+
+**Rule 4 (the export: the cost).** At most ONE assignment read per group read in full, and none for a
+group whose read members and owners hold no entry. If wrong: one read more or less for such a
+group; the tests hold the count, at the reader and at the transport.
+
+**Rule 5 (the apply engine: when the hold is read).** `Sync-OERStructureGroup` reads the hold
+lazily, at most once per item, and only when a member or owner to add, or an undeclared one, reaches
+the PIM check. It never reads it for a group the same run created (no PIM state can exist yet) and
+never for a group synchronized from on-premises (its own guard decides first). The read is the
+assignment read plus the eligibility, which is reused from the item's own read when the entry declares
+`eligibility` and is one more `Read-OERGroupCollection` otherwise. So the cost is at most two paged
+reads per item, and none for a converged item. A group `New-OERGroup` hands back as already existing
+(a race between the existence check and the create) is treated as created in this run, so its PIM
+state is not read either: a residual by design, since the handler already takes that path's live
+state as empty. If wrong: one read more per item; never a wrong write.
+
+**Rule 6 (the apply engine: add).** A declared member or owner that is not present and that the live
+group holds for the same access, of any Kind and `Eligible` included, is NOT added: one warning for
+the entry, written with no `ShouldProcess` call, and a `Skipped` row that says why, the same under
+`-WhatIf`. A declared principal that is already present stays `Unchanged`, an activation in force
+included. When the hold could not be read (either read, the assignments or the eligibility, failed;
+the export is more lenient and writes `members` as null only when both failed), no member or owner
+is added to the group (it already existed: a group the run creates is never read; its eligibility
+and `pimPolicy` steps still run): one warning for the item names the cause, and each declared entry
+that is not present is `Skipped`. If wrong: a principal the
+operator really wants as a standing member or owner has to be added with `Add-OERGroupMember`.
+
+**Rule 7 (the apply engine: prune).** An undeclared live member or owner that is held for the same
+access, of any Kind, is never removed: `ConvertTo-OERPruneWithheldResult -PimHeldReason` reports it
+`Skipped` with "prune withheld:" under `-Prune` and `Extra`, with a hint that `-Prune` leaves it in
+place, without it; no warning and no `ShouldProcess` call. When the hold could not be read, every
+undeclared candidate in that collection is `Skipped` with "prune withheld:" with or without `-Prune`
+(`-PimUnread`), like an unresolved declared entry, and the item's one warning names the cause. The
+order of the withholds is the unresolved entry, the service principal, the synchronized group, the
+PIM hold and, for owners, the last-owner guard, and a withheld owner counts as an owner still
+standing. So `-Prune` can remove the last STANDING owner while an activated or time-bound owner
+remains, and when that activation ends the group has no owner: the guard follows Graph's current
+state (recorded, not changed). If the hold rule is wrong: a removal the operator wanted is withheld.
+
+**Rule 8 (the bundle).** The bundle `README.md` has a section, "Members and owners left out as PIM for
+Groups access", that lists by group name, never by principal, how many members and owners were left
+out and on which basis, or says that none was. It lists only the groups `inventory.json` writes: a
+group read in full only because its relevance could not be read, and then not kept, is not in the
+document, so nothing was left out of it there. The roster's `memberCount` keeps meaning the group's
+live member count: the members read, the ones left out included, for every group read in full,
+kept or not, and null when `members` is null. No new output property, parameter or ErrorId (this
+step's decision). If wrong: the roster counts too few members, or too many.
+
+**Rule 9 (the name of the unread entry).** The entry for a failed assignment read is
+`groups/<name>/pimAssignments`: a collection name, like `groups/<name>/eligibility`, not a document
+key. If wrong: rename the label; nothing depends on it but the README and the message.
+
+**Rule 10 (`ResourceTypeNotSupported`).** `Read-OERGroupPimAssignment` declares
+`ResourceTypeNotSupported` to the transport as an answer, as the eligibility read does, and returns
+it as a successful read that found no assignment. That answer is now measured, not only reasoned: a
+dynamic group, which PIM for Groups cannot manage, answered the assignment read and the eligibility
+read alike with 400 `ResourceTypeNotSupported`, on beta and on v1.0 (check 1.3), and the reader took
+it as an answer -- read, no rows -- so `Export-OERInventory` wrote the group's rule-made member and
+its owner with no partial signal. Every other group's assignment read answered 200, a never
+onboarded one included, or 403 for a role-assignable group read without the permission (above). A
+failure that arrives thrown, of any kind, is unread. If wrong: a group answering
+`ResourceTypeNotSupported` that PIM for Groups could still hold access in would have that access
+written as standing; Graph's answer is that PIM for Groups does not manage the group at all.
+
+**The permission.** Microsoft Learn names `PrivilegedAssignmentSchedule.Read.AzureADGroup` as the
+least privileged application permission for the read and
+`PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup` as the next one. It is a different permission
+family from the eligibility one the module's gate held every `privilegedAccess/group` path to
+before, so `tests/QA/requiredscope.tests.ps1` now splits the endpoint map by schedule kind, and
+`Get-OERRequiredScope` lists the new permission for
+`Get-OERInventory`, `Export-OERInventory` and `Invoke-OERStructure`. A delegated sign-in already
+requests `PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup` by default (`Initialize-OERAuth`); an
+app-only identity is documented to need the read permission granted on its app registration. What was
+measured, as `oer-live-cc` while it did NOT hold `PrivilegedAssignmentSchedule.Read.AzureADGroup`
+(2026-10-13): the read of a group that is neither role-assignable nor dynamic answered 200 (in the
+measurement above and in the checklist's check 0.2, where the grant was still not visible), but the
+read of a ROLE-ASSIGNABLE group was refused, on beta and on v1.0 alike, with 403, the
+code `UnauthorizedAccessException` and the error code `PermissionScopeNotGranted`, whose message names
+four permission scopes as missing: `PrivilegedAssignmentSchedule.Read.AzureADGroup`,
+`PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup`, `PrivilegedAccess.Read.AzureADGroup` and
+`PrivilegedAccess.ReadWrite.AzureADGroup`. The eligibility read of that same group answered 200. So
+the permission is needed at least for a role-assignable group, and which of the identity's
+permissions let the read of the other groups through is still not established; adding the
+permission to the gate changes no grant. On that refusal the module did what it was built to do
+(check 1.3): `Read-OERGroupPimAssignment` returned the read as unread with the cause; the apply
+engine's hold read came back unread, which by rules 6 and 7 means it adds and removes no member or
+owner of such a group that already existed (a group the same run creates is not read); and
+`Export-OERInventory -AllGroupsDetailed` (check 1.4) fell back to the reserve of rule 3, wrote the
+group's members (none of them was eligible) and its owners, named `groups/<name>/pimAssignments` in
+`IncompleteReads` and ended with `InventoryPartial` carrying the cause. Never a wrong write.
+
+**Why the apply engine refuses, and why it says so.** The document is a declaration of the standing
+state, so a principal PIM holds is not part of it, and an older export may still list one. Adding it
+would turn access that expires into access that does not, and pruning it would remove access PIM
+for Groups manages and a person may be using. Neither is the likely intent of a document that only
+lists or omits the principal, and the operator can still do either on purpose: a standing membership
+is added with `Add-OERGroupMember`, and access PIM for Groups holds is managed in PIM for Groups. So
+the engine reports and refuses. It does so with a `Skipped` row and no `ShouldProcess` call, like a
+synchronized group, so `-WhatIf` and a real run report the same rows and no `-Confirm` prompt is
+shown for a write that will not happen.
+
+**What is NOT verified live.** A real activation needs a user, and a time-bound active assignment
+needs a write permission the verification identity does not hold, so neither was measured. They are
+the live C-check (Philip, after the merge): that an activated member and owner read `activated` or an
+`assigned` instance with an end, and are left out of the export; and that a time-bound active
+assignment reads as `TimeBound`. The unit tests prove the rule on mocked reads of the shapes Learn
+documents and the standing shape that was measured.

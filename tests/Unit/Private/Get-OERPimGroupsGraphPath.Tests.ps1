@@ -52,6 +52,7 @@ Describe 'Get-OERPimGroupsGraphPath' {
                 'Private/Get-OERListedGroupPimPolicy.ps1'
                 'Private/Get-OERPimGroupPolicyId.ps1'
                 'Private/Read-OERGroupCollection.ps1'
+                'Private/Read-OERGroupPimAssignment.ps1'
                 'Private/Send-OERNewGroupEligibilityRequest.ps1'
                 'Private/Test-OERGroupPimInUse.ps1'
             ) | ForEach-Object { Join-Path $script:SourceRoot $_ }
@@ -60,7 +61,7 @@ Describe 'Get-OERPimGroupsGraphPath' {
         It 'resolves every file it claims to guard' {
             # Without this the sweep below would pass vacuously if the relative path ever broke,
             # which is the failure mode that makes a drift guard worse than no guard at all.
-            $script:PinnedFiles.Count | Should -Be 11
+            $script:PinnedFiles.Count | Should -Be 12
             $Missing = @($script:PinnedFiles | Where-Object { -not (Test-Path -LiteralPath $_) })
             $Missing | Should -BeNullOrEmpty -Because 'the drift guard below only means something if it reads real files'
         }

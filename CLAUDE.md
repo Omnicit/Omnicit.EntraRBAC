@@ -1106,6 +1106,15 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   call it, and neither reads one of the three inline. `Get-OERGroupRelation` stays the single reader
   of the members and owners requests: `Read-OERGroupCollection` calls it, and `Get-OERGroupMember`
   calls it directly. `Why: docs/development/rationale.md#export-group-selection`
+- **`Get-OERGroupPimHeldAccess` is the single owner of which PIM-for-Groups instance holds a member's
+  or owner's access**: held unless `assignmentType` is `assigned` (any letter case) AND `endDateTime`
+  is empty; every eligibility instance is held as Eligible; `memberType` is never consulted; access is
+  matched per access type. `Read-OERGroupPimAssignment` is the single reader of
+  `assignmentScheduleInstances` (`ResourceTypeNotSupported` is an empty answer, a thrown failure is
+  unread) and `Read-OERGroupPimHold` the apply engine's one read of the hold state. The export leaves
+  out of `members`/`owners` a member or owner held by an assignment kind (eligibility alone decides
+  only when the assignment read failed); the engine adds and prunes none, Eligible included. Never
+  re-implement the rule inline. `Why: docs/development/rationale.md#pim-activation-is-not-membership`
 - **`Format-OERUnreadCauseClause` is the single owner of the causes clause of an inventory's
   `InventoryPartial` message** -- the deduplication with the failing object's id normalised away, the
   cap and the wording -- and `Get-OERSharedNameCause` of the text for objects left out because two of
@@ -1232,7 +1241,7 @@ structured error conversion. `Why: docs/development/rationale.md#graph-wrapper`
 public-cloud path stays byte-identical to what it has always been; the environment name comes from
 `Get-OERCloudEndpoint`, never a literal. `Why: docs/development/rationale.md#sovereign-clouds`
 
-**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All sixteen call sites, in eleven
+**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All seventeen call sites, in twelve
 source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version constant.
 `tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` names every one of those files and fails
 when a new caller is not added to its list. Never hardcode `beta/` at a call site -- change the

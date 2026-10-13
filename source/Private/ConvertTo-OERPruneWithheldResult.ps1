@@ -1,7 +1,7 @@
 function ConvertTo-OERPruneWithheldResult {
     <#
     .SYNOPSIS
-    Builds the Skipped record that withholds a prune when a declared entry, or the scope of one, could not be resolved, when a live scoped role's name could not be read, when a live group member or owner is a service principal, when a live administrative unit member is a group this run created into the unit, or found already existing when it went to create it, or when the live group is synchronized from on-premises.
+    Builds the Skipped record that withholds a prune when a declared entry, or the scope of one, could not be resolved, when a live scoped role's name could not be read, when a live group member or owner is a service principal, when a live administrative unit member is a group this run created into the unit, or found already existing when it went to create it, when the live group is synchronized from on-premises, or when PIM for Groups holds a live group member or owner or makes it eligible, or whether it does could not be read.
 
     .DESCRIPTION
     The single owner of the apply engine's withhold-prune rule and of its reason text. Every
@@ -95,6 +95,35 @@ function ConvertTo-OERPruneWithheldResult {
     Under -Prune the caller writes its one warning for the item itself, before the first such record;
     this helper writes none.
 
+    A seventh kind is a LIVE group member or owner whose access to the group PIM for Groups holds or
+    makes eligible (BL-125, decision A3): an activation, a time-bound active assignment, an active
+    assignment that is not a standing one, or an eligibility, for the same access type (member or
+    owner) as the candidate. Removing such a principal as an undeclared standing member or owner would
+    end access PIM for Groups manages, or a membership an activation granted for a limited time. The
+    caller decides the hold (Read-OERGroupPimHold, whose rule Get-OERGroupPimHeldAccess owns) and
+    passes the rule's reason as -PimHeldReason, for example 'holds member access through an activation
+    in PIM for Groups'; this helper owns both record texts. With -Prune it returns exactly one Skipped
+    record whose Detail starts 'prune withheld: ', names the candidate and the reason, and says that
+    -Prune never removes a member or owner whose access PIM for Groups holds or makes eligible (the
+    module's own guard, not a Graph rejection), and that the access is managed in PIM for Groups if it
+    is meant to go. Without -Prune it returns the Extra record the pass would have written, whose hint
+    names the reason and says that -Prune leaves the candidate in place rather than "use -Prune to
+    remove". The caller calls it after the unresolved-entry, service-principal and synchronized-group
+    rules above and, for owners, before the last-owner guard, and continues with the next candidate:
+    no Write-Warning and no ShouldProcess prompt is issued for it.
+
+    An eighth kind is a LIVE group member or owner for which whether PIM for Groups holds it or makes
+    it eligible could not be read (BL-125): the group's PIM for Groups assignment read or its
+    eligibility read failed. Such a candidate may be one PIM for Groups holds, so it is never removed,
+    and the rule is collection-wide like an unresolved entry: every undeclared candidate of the
+    collection is withheld. The caller passes the failed read's message as -PimUnread; this helper
+    owns the text. It ALWAYS returns exactly one Skipped record, with or without -Prune, whose Detail
+    starts 'prune withheld: ', names the candidate and the cause, says the candidate is left in place
+    (the module's own guard, not a Graph rejection), and asks for the document to be applied again
+    once the group's PIM for Groups assignments and eligibility can be read. The caller writes its one
+    warning for the item itself, naming the cause, before the first such record; this helper writes
+    none, and no ShouldProcess prompt is issued for it.
+
     .PARAMETER Section
     The document section the prune pass belongs to (for example groups or administrativeUnits).
 
@@ -109,8 +138,8 @@ function ConvertTo-OERPruneWithheldResult {
 
     .PARAMETER Candidate
     A readable description of the live entry the pass would otherwise report Extra or remove, for
-    example "undeclared member '<id>'". Used by the -Unresolved, the -ObjectType, the -CreatedGroup
-    and the -SyncedGroup forms.
+    example "undeclared member '<id>'". Used by the -Unresolved, the -ObjectType, the -CreatedGroup,
+    the -SyncedGroup, the -PimHeldReason and the -PimUnread forms.
 
     .PARAMETER UnresolvedScope
     The labels of the declared entries of the section whose scope could not be resolved, in document
@@ -146,12 +175,25 @@ function ConvertTo-OERPruneWithheldResult {
     stays the document's label). Mandatory in this form, and not combinable with -Unresolved,
     -UnresolvedScope, -Declared, -UnnamedRoleId, -ObjectType or -CreatedGroup.
 
+    .PARAMETER PimHeldReason
+    The reason PIM for Groups holds the live candidate's access or makes it eligible, as
+    Get-OERGroupPimHeldAccess words it (for example 'is eligible for member access in PIM for
+    Groups'), for the access type the candidate has. Mandatory in this form, and not combinable with
+    -Unresolved, -UnresolvedScope, -Declared, -UnnamedRoleId, -ObjectType, -CreatedGroup, -SyncedGroup
+    or -PimUnread.
+
+    .PARAMETER PimUnread
+    The message of the read that failed when the caller asked whether PIM for Groups holds the
+    group's members and owners or makes them eligible (Read-OERGroupPimHold's Cause). Mandatory in
+    this form; an empty or null message is accepted. Not combinable with -Prune or with any other
+    form's parameter: the record is the same with or without -Prune.
+
     .PARAMETER Prune
     With -ObjectType: whether the caller runs with -Prune. With it the service principal's record is
     the Skipped "prune withheld:" record; without it, the Extra record. With -CreatedGroup: with it
     the Skipped "prune withheld:" record; without it nothing, so the caller reports Extra. With
-    -SyncedGroup: with it the Skipped "prune withheld:" record; without it, the Extra record whose
-    hint says -Prune leaves the candidate in place.
+    -SyncedGroup or -PimHeldReason: with it the Skipped "prune withheld:" record; without it, the
+    Extra record whose hint says -Prune leaves the candidate in place.
 
     .EXAMPLE
     $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'role_sec_x' -Unresolved $MemberUnresolved -Candidate "undeclared member '$CurId'"
@@ -203,6 +245,22 @@ function ConvertTo-OERPruneWithheldResult {
     For a group whose live read shows it synchronized from on-premises: emits the Skipped "prune
     withheld:" record (with -Prune) or the Extra record whose hint says -Prune leaves the member in
     place (without), and moves on to the next live member. Nothing is removed from such a group.
+
+    .EXAMPLE
+    ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'grp-pim' -Candidate "undeclared member '$CurId'" -PimHeldReason 'holds member access through an activation in PIM for Groups' -Prune:$Prune
+    continue
+
+    For a live member whose membership PIM for Groups holds: emits the Skipped "prune withheld:"
+    record (with -Prune) or the Extra record whose hint names the reason and says -Prune leaves the
+    member in place (without), and moves on to the next live member.
+
+    .EXAMPLE
+    ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'grp-pim' -Candidate "undeclared owner '$CurId'" -PimUnread $Hold.Cause
+    continue
+
+    When whether PIM for Groups holds the group's members and owners could not be read: emits the
+    Skipped "prune withheld:" record naming the cause, with or without -Prune, and moves on to the
+    next live owner.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding(DefaultParameterSetName = 'Unresolved')]
@@ -213,17 +271,38 @@ function ConvertTo-OERPruneWithheldResult {
         [Parameter(Mandatory, ParameterSetName = 'Unresolved')]
         [Parameter(Mandatory, ParameterSetName = 'ObjectType')]
         [Parameter(Mandatory, ParameterSetName = 'CreatedGroup')]
-        [Parameter(Mandatory, ParameterSetName = 'SyncedGroup')][string]$Candidate,
+        [Parameter(Mandatory, ParameterSetName = 'SyncedGroup')]
+        [Parameter(Mandatory, ParameterSetName = 'PimHeld')]
+        [Parameter(Mandatory, ParameterSetName = 'PimUnread')][string]$Candidate,
         [Parameter(ParameterSetName = 'Unresolved')][AllowEmptyCollection()][string[]]$UnresolvedScope = @(),
         [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string]$Declared,
         [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string[]]$UnnamedRoleId,
         [Parameter(Mandatory, ParameterSetName = 'ObjectType')][AllowNull()][AllowEmptyString()][string]$ObjectType,
         [Parameter(Mandatory, ParameterSetName = 'CreatedGroup')][string]$CreatedGroup,
         [Parameter(Mandatory, ParameterSetName = 'SyncedGroup')][string]$SyncedGroup,
+        [Parameter(Mandatory, ParameterSetName = 'PimHeld')][string]$PimHeldReason,
+        # Empty or null is accepted rather than refused at binding: a binding error here would end the
+        # calling handler's item outside its own try, and the record withholds the prune either way.
+        [Parameter(Mandatory, ParameterSetName = 'PimUnread')][AllowNull()][AllowEmptyString()][string]$PimUnread,
         [Parameter(ParameterSetName = 'ObjectType')]
         [Parameter(ParameterSetName = 'CreatedGroup')]
-        [Parameter(ParameterSetName = 'SyncedGroup')][switch]$Prune
+        [Parameter(ParameterSetName = 'SyncedGroup')]
+        [Parameter(ParameterSetName = 'PimHeld')][switch]$Prune
     )
+
+    if ($PSCmdlet.ParameterSetName -eq 'PimHeld') {
+        if ($Prune) {
+            return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Skipped' `
+                -Detail "prune withheld: $Candidate $PimHeldReason, and -Prune never removes a member or owner whose access PIM for Groups holds or makes eligible; it is left in place (our own guard, not a Graph rejection). Manage that access in PIM for Groups if it is meant to go."
+        }
+        return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Extra' `
+            -Detail "$Candidate ($PimHeldReason, so -Prune leaves it in place)"
+    }
+
+    if ($PSCmdlet.ParameterSetName -eq 'PimUnread') {
+        return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Skipped' `
+            -Detail "prune withheld: whether PIM for Groups holds $Candidate or makes it eligible could not be read ($PimUnread), so it is left in place (our own guard, not a Graph rejection). Apply again once the group's PIM for Groups assignments and eligibility can be read."
+    }
 
     if ($PSCmdlet.ParameterSetName -eq 'SyncedGroup') {
         if ($Prune) {

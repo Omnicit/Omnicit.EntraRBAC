@@ -17,6 +17,30 @@ function Get-OERInventoryGroup {
     on-premises. A failed read is never an empty fact: it is named in the Unread list and its cause
     is kept in the Causes list.
 
+    A PIM activation is never written as a standing membership (BL-125, A3). Members and owners are
+    written only when they are standing. For each group whose members or owners were read and hold
+    at least one entry, the group's PIM for Groups assignment schedule instances are read ONCE
+    (Read-OERGroupPimAssignment); no such read is made for a group whose members and owners were both
+    read empty, or both unread. Get-OERGroupPimHeldAccess owns the rule that decides which instances
+    hold access through PIM for Groups (docs/development/rationale.md#pim-activation-is-not-membership):
+    every instance but a standing one -- an activation, a time-bound active assignment, or any active
+    assignment that is not standing. Ids are compared without regard to letter case, and per access
+    type, so a principal that is a standing member and an activated owner is written as a member and
+    left out of the owners; an instance whose access type is neither member nor owner leaves nobody
+    out.
+    - With the assignments read, every member and owner whose id PIM for Groups holds for that access
+      is left out of members or owners. Eligibility alone leaves nobody out: a standing member that is
+      also eligible is written, as before.
+    - When the assignment read fails, its cause is kept in the Causes list (Target the group's id),
+      'groups/<name>/pimAssignments' is named in the Unread list (a collection name, not a document
+      key), and every member and owner that is eligible for the same access is left out instead.
+    - When the eligibility was not read either, nothing can be decided for a collection that holds
+      entries: members is then written as an explicit null and owners is omitted, and each is named in
+      the Unread list. A collection read empty is written as read and not named, since it cannot hold
+      an activation.
+    Each group that left at least one member or owner out is counted, by name and never by principal,
+    in the PimLeftOut list below, with one verbose line.
+
     With -RelevantOnly the Get-OERGroup call carries the filter alone, and each listed group is first
     asked, in at most two requests, whether it is RBAC-relevant: its PIM eligibility, and, for a
     group that is not role-assignable and has none, the Test-OERGroupPimInUse criterion. A group
@@ -62,6 +86,11 @@ function Get-OERInventoryGroup {
     - Causes: the raw causes behind them, in the order they were found, each an object with a Cause
       (the message) and a Target (the failing object's id, or an empty string). A blank cause is
       never added. Format-OERUnreadCauseClause turns them into the clause of the partial message.
+    - PimLeftOut: one object per projected group that left at least one member or owner out as PIM
+      for Groups access, in list order: GroupId, Group (the display name), Members and Owners (how
+      many were left out) and Basis -- 'Assignments' when the assignments decided it, 'Eligibility'
+      when the assignment read failed and the eligibility decided it. A group left out under
+      -ExcludeSharedName has no entry. An empty array when nothing was left out.
 
     With -ProgressActivity it shows progress while it reads (Write-Progress): a status for the list
     read, then one record per listed group -- every listed group in scope, the ones -RelevantOnly
@@ -166,6 +195,8 @@ function Get-OERInventoryGroup {
     $Groups            = [System.Collections.Generic.List[object]]::new()
     $UnreadCollections = [System.Collections.Generic.List[string]]::new()
     $Causes            = [System.Collections.Generic.List[object]]::new()
+    # BL-125: one entry per projected group that left a member or owner out as PIM for Groups access.
+    $PimLeftOut        = [System.Collections.Generic.List[object]]::new()
     function Add-UnreadCause {
         param(
             [string]$Cause,
@@ -476,19 +507,74 @@ function Get-OERInventoryGroup {
             # one stays clean and the apply leaves it untouched.
             if ($G.MailNickname) { $Proj.mailNickname = [string]$G.MailNickname }
             if ($IncludeId) { $Proj.id = $G.Id }
+
+            # BL-125 (A3): a member or owner that holds its access through PIM for Groups -- an
+            # activation, or another active assignment that is not standing, such as a time-bound one --
+            # is never written as standing. Get-OERGroupPimHeldAccess owns the rule
+            # (docs/development/rationale.md#pim-activation-is-not-membership). The assignment read
+            # lists every direct member and owner, standing ones too (measured live 2026-10-13), so it
+            # is what tells the two apart. It is asked at most ONCE per group, and not at all for a
+            # group whose members and owners were both read empty, or both unread: there is nothing to
+            # leave out. When it fails, the group's eligibility decides instead: a member or owner
+            # eligible for the same access is left out, since an eligible principal that is a member
+            # now may be one through an activation. When the eligibility was not read either, nothing
+            # can be decided for a collection that holds entries, and it is not written: members as an
+            # explicit null, owners omitted, each named unread. A collection read EMPTY cannot hold an
+            # activation, so it is written as read (members [], owners omitted as ever) and not named.
+            $MembersRead = $G.PSObject.Properties.Name -contains 'Members'
+            $OwnersRead  = $G.PSObject.Properties.Name -contains 'Owners'
+            $MembersHaveEntries = $MembersRead -and @($G.Members | Where-Object { $null -ne $_ }).Count -gt 0
+            $OwnersHaveEntries  = $OwnersRead -and @($G.Owners | Where-Object { $null -ne $_ }).Count -gt 0
+            $HeldIds = @{ member = @{}; owner = @{} }
+            $PimBasis = $null
+            $PimUndecided = $false
+            $NeedPimRead = $MembersHaveEntries -or $OwnersHaveEntries
+            if ($NeedPimRead) {
+                $AssignRead = Read-OERGroupPimAssignment -GroupId ([string]$G.Id)
+                $Held = @()
+                if ($AssignRead.Read) {
+                    $PimBasis = 'Assignments'
+                    $Held = @(Get-OERGroupPimHeldAccess -Assignment @($AssignRead.Value))
+                } else {
+                    Write-Verbose "Get-OERInventory: $($AssignRead.Message)"
+                    Add-UnreadCause -Cause $AssignRead.Message -Target ([string]$G.Id)
+                    $UnreadCollections.Add("groups/$($G.DisplayName)/pimAssignments")
+                    if ($G.PSObject.Properties.Name -contains 'PimEligibility') {
+                        $PimBasis = 'Eligibility'
+                        $Held = @(Get-OERGroupPimHeldAccess -Eligibility @($G.PimEligibility))
+                    } else {
+                        $PimUndecided = $true
+                    }
+                }
+                # Keyed by access type, so a principal held for one access is never left out of the
+                # other. Get-OERGroupPimHeldAccess passes an accessId other than member or owner through
+                # lower-cased (a later enum value, such as unknownFutureValue); it names no collection
+                # here and leaves nobody out, and indexing by it would end the whole read.
+                foreach ($H in $Held) {
+                    if ($HeldIds.ContainsKey($H.AccessType)) { $HeldIds[$H.AccessType][$H.PrincipalId] = $H.Kind }
+                }
+            }
+            $MembersLeftOut = 0
+            $OwnersLeftOut  = 0
+
             # An OMITTED members key still reconciles in the apply engine and still prunes under
             # -Prune (Get-OERStructureSchemaJson: "An omitted key still reconciles"), so omitting
             # it here would leave issue #76's chain wide open. An EXPLICIT null is the schema's
             # documented "leave membership untouched" signal, and that is what an unread
-            # membership has to be.
-            if ($G.PSObject.Properties.Name -contains 'Members') {
+            # membership has to be -- and what a membership is whose PIM hold could not be decided.
+            if ($MembersHaveEntries -and $PimUndecided) {
+                $Proj.members = $null
+                $UnreadCollections.Add("groups/$($G.DisplayName)/members")
+            } elseif ($MembersRead) {
                 # Project each member as a reference the apply engine can resolve back to its object id:
                 # a user as its userPrincipalName (friendly and resolvable), and every other member type
                 # (group, device, service principal, ...) as its object id, which Resolve-OERStructurePrincipal
                 # returns verbatim. A member display name is NOT resolvable (it is not a UPN), so it is only a
-                # last-resort fallback when neither a UPN nor an id is present.
+                # last-resort fallback when neither a UPN nor an id is present. A member whose membership
+                # PIM for Groups holds is left out and counted (BL-125, above).
                 $Proj.members = @(foreach ($M in @($G.Members)) {
                     if (-not $M) { continue }
+                    if ($HeldIds.member.ContainsKey(([string]$M.id).ToLowerInvariant())) { $MembersLeftOut++; continue }
                     if ($M.userPrincipalName) { [string]$M.userPrincipalName }
                     elseif ($M.id)            { [string]$M.id }
                     else                      { [string]$M.displayName }
@@ -497,13 +583,18 @@ function Get-OERInventoryGroup {
                 $Proj.members = $null
                 $UnreadCollections.Add("groups/$($G.DisplayName)/members")
             }
-            if ($G.PSObject.Properties.Name -contains 'Owners') {
+            if ($OwnersHaveEntries -and $PimUndecided) {
+                # The same hands-off form as an unread owners collection below: omitted, and named.
+                $UnreadCollections.Add("groups/$($G.DisplayName)/owners")
+            } elseif ($OwnersRead) {
                 # Owners are writable through Add-/Remove-OERGroupMember -AccessType owner and a group
                 # owner can add members, so an unprojected owner is a privilege path that disappears from
                 # the captured posture. Emitted only when the group has any, so a document for an
-                # owner-less group stays clean and the apply leaves owners untouched.
+                # owner-less group stays clean and the apply leaves owners untouched. An owner whose
+                # ownership PIM for Groups holds is left out and counted (BL-125, above).
                 $OwnerRefs = @(foreach ($O in @($G.Owners)) {
                     if (-not $O) { continue }
+                    if ($HeldIds.owner.ContainsKey(([string]$O.id).ToLowerInvariant())) { $OwnersLeftOut++; continue }
                     if ($O.userPrincipalName) { [string]$O.userPrincipalName }
                     elseif ($O.id)            { [string]$O.id }
                     else                      { [string]$O.displayName }
@@ -514,6 +605,24 @@ function Get-OERInventoryGroup {
                 # correct hands-off form here -- no explicit null needed. The read failure is
                 # still accounted for, so the document is not silently short an owner set.
                 $UnreadCollections.Add("groups/$($G.DisplayName)/owners")
+            }
+            # What was left out is counted per group, by name and never by principal, for the bundle
+            # README (Get-OERInventoryReadme) and the roster's member count (Export-OERInventory).
+            if ($MembersLeftOut -gt 0 -or $OwnersLeftOut -gt 0) {
+                $PimLeftOut.Add([PSCustomObject]@{
+                        GroupId = [string]$G.Id
+                        Group   = [string]$G.DisplayName
+                        Members = $MembersLeftOut
+                        Owners  = $OwnersLeftOut
+                        Basis   = $PimBasis
+                    })
+                # Worded per basis: on the eligibility basis they are eligible, not known to be held.
+                $LeftOutWhy = if ($PimBasis -eq 'Eligibility') {
+                    "since they are eligible for the same access in PIM for Groups and the group's PIM assignments could not be read"
+                } else {
+                    'since PIM for Groups holds their access'
+                }
+                Write-Verbose "Get-OERInventory: group '$($G.DisplayName)': $MembersLeftOut member(s) and $OwnersLeftOut owner(s) left out, $LeftOutWhy."
             }
             if ($G.PSObject.Properties.Name -contains 'PimEligibility') {
                 $EligIds = @(@($G.PimEligibility) | ForEach-Object { [string]$_.principalId } | Where-Object { $_ })
@@ -687,6 +796,14 @@ function Get-OERInventoryGroup {
                 $UniqueGroups.Add($P)
             }
             $Groups = $UniqueGroups
+            # A group that is not written has nothing left out of it either: its PimLeftOut entry goes
+            # with it, by the same name rule.
+            $UniquePimLeftOut = [System.Collections.Generic.List[object]]::new()
+            foreach ($E in $PimLeftOut) {
+                if ($SharedNameCount[[string]$E.Group] -gt 1) { continue }
+                $UniquePimLeftOut.Add($E)
+            }
+            $PimLeftOut = $UniquePimLeftOut
             $ReportedNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($G in $GroupItems) {
                 $SharedName = [string]$G.DisplayName
@@ -700,9 +817,10 @@ function Get-OERInventoryGroup {
         }
 
         $Result = [PSCustomObject]@{
-            Groups = $Groups.ToArray()
-            Unread = $UnreadCollections.ToArray()
-            Causes = $Causes.ToArray()
+            Groups     = $Groups.ToArray()
+            Unread     = $UnreadCollections.ToArray()
+            Causes     = $Causes.ToArray()
+            PimLeftOut = $PimLeftOut.ToArray()
         }
         $Result.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.InventoryGroupRead')
         $Result

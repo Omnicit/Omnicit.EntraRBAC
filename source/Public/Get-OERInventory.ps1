@@ -23,14 +23,36 @@ function Get-OERInventory {
     The Groups eligibility projection carries accessType (member or owner) and, for a time-bound
     eligibility, durationDays reconstructed from the schedule window, so a re-applied inventory keeps
     a time-bound eligibility time-bound and an owner eligibility on the owner access type. The Groups
-    owners projection carries the group's owners (a privilege path distinct from members, since an
-    owner can add members) so a re-applied inventory keeps them, and is emitted only when the group
-    has at least one owner. A group's members and owners include its service principals, written by
-    object id. A document exported by an earlier version lacks them: Invoke-OERStructure reports them
-    Extra, and -Prune leaves them in place, since the group prune never removes a service principal.
+    owners projection carries the group's standing owners (a privilege path distinct from members,
+    since an owner can add members; see below for the owners PIM for Groups holds) so a re-applied
+    inventory keeps them, and is emitted only when the group has at least one such owner. A group's
+    members and owners include its service principals, written by object id. A document exported by
+    an earlier version lacks them: Invoke-OERStructure reports them Extra, and -Prune leaves them in
+    place, since the group prune never removes a service principal.
     A group synchronized from on-premises Active Directory carries onPremisesSynced: true (information
     only; Invoke-OERStructure never sends it and writes nothing to such a group, deciding on its own
     live read); a cloud group carries no such key.
+    The Groups members and owners projections carry STANDING members and owners only. A member or
+    owner whose access PIM for Groups holds -- an activation, or another active assignment that is
+    not standing, such as a time-bound one -- is left out of members or owners. An activation makes
+    its principal a member or owner of the group for as long as it lasts, so it stands in the group's
+    lists, and writing it would record access that PIM for Groups grants on its own terms as if it
+    were a standing membership. To tell the two apart the inventory reads the group's PIM for Groups
+    assignment schedule instances: ONE paged read per group whose read members or owners hold at
+    least one entry, and none otherwise. Access is matched per access type, so a principal that is a
+    standing member and an activated owner is written under members and left out of owners; with
+    the assignments read, eligibility alone leaves nobody out. When the assignment read fails,
+    'groups/<name>/pimAssignments' is reported through the InventoryPartial error below and every
+    member and owner that is eligible for the same access is left out instead, since an eligible
+    principal that is a member now may be one through an activation. (A time-bound active assignment
+    made straight to a principal with no eligibility cannot be recognised without the assignment
+    read, and is written as standing; the InventoryPartial error is the sign.) When neither the
+    assignments nor the eligibility could be read, a members collection that holds entries is
+    written as an explicit null and an owners collection that holds entries is left out, both
+    reported the same way; a collection read empty is written as read. The verbose stream says, for
+    each group that left any out, how many members and owners it left out and on which basis. The
+    read needs the Microsoft Graph permission PrivilegedAssignmentSchedule.Read.AzureADGroup
+    (Get-OERRequiredScope lists it).
     The Groups pimPolicy projection is emitted only for a group found to use
     PIM for Groups: one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it
     carries a lastModifiedDateTime or a lastModifiedBy). Microsoft Graph lists those policies for
@@ -55,8 +77,9 @@ function Get-OERInventory {
     affected section/displayName/key, so a caller using -ErrorAction Stop or a try/catch finds out
     instead of treating a document with holes in it as a full tenant snapshot. Do not hand-edit
     such a null to an empty array -- that turns "unknown" into "declared empty", which
-    Invoke-OERStructure -Prune acts on by deleting every live member (a group's service principals
-    excepted), binding or resource. The
+    Invoke-OERStructure -Prune acts on by deleting every live member (a group's service principals,
+    the members of a group synchronized from on-premises and the members PIM for Groups holds or
+    makes eligible excepted), binding or resource. The
     catalog list itself, the resource names an access package's bindings are written under, a
     catalog's access packages and their assignment policies are reported through the same
     InventoryPartial error when their read fails, and are written as far as they were read: a

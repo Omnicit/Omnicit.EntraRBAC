@@ -19,6 +19,13 @@ Describe 'Sync-OERStructureGroup' {
         # transport) or gains a warning it does not expect. The Context 'pimPolicy onboarding
         # warning ...' overrides it.
         Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+        # BL-125: the members and owners steps ask Read-OERGroupPimHold whether PIM for Groups holds a
+        # principal before they add or prune it. Answered "read, nothing held" for every test in this
+        # Describe, so no fixture written before that question existed reaches the real reader (and
+        # through it the transport) or changes meaning. The Context 'a PIM activation is never a
+        # standing membership ...' overrides it; the Describe that reads the hold for real has no
+        # such default.
+        Mock -ModuleName $script:moduleName Read-OERGroupPimHold { [PSCustomObject]@{ Read = $true; Held = @{}; Cause = $null } }
     }
 
     It 'creates a missing group and reports Created' {
@@ -8232,12 +8239,642 @@ $Item = '{ "displayName": "role_sec_perm", "members": null, "eligibility": [ { "
             }
         }
     }
+
+    Context 'a PIM activation is never a standing membership (BL-125, A3)' {
+        # Decision A3: a member or owner whose access PIM for Groups holds or makes eligible -- an
+        # activation, a time-bound active assignment, an active assignment that is not a standing one,
+        # or an eligibility -- is never ADDED as a standing member or owner and never PRUNED, for the
+        # same access type (member or owner). The handler asks Read-OERGroupPimHold (mocked here; its
+        # own file tests it, and the Describe below runs it for real) at most once per item, and only
+        # when a member or owner add or prune candidate reaches the check. A held add is one warning
+        # and one Skipped row with no ShouldProcess call; a held prune is
+        # ConvertTo-OERPruneWithheldResult -PimHeldReason. When the hold could not be read, nothing is
+        # added or removed in that item, with one warning naming the cause.
+        BeforeAll {
+            # Runs the items through the handler in module scope, as a plan (-WhatIf) or as a real run
+            # (-Confirm:$false), and hands back the rows, the warnings and the errors, so the
+            # assertions run OUTSIDE InModuleScope against the -ModuleName mocks.
+            function Invoke-PimHoldRun {
+                param([object[]]$Items, [switch]$Prune, [switch]$Plan)
+                InModuleScope $script:moduleName -Parameters @{ Items = $Items; PruneRun = [bool]$Prune; PlanRun = [bool]$Plan } {
+                    param($Items, $PruneRun, $PlanRun)
+                    function Invoke-SyncGroupViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item, [switch]$Prune)
+                        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                    }
+                    $Mode = if ($PlanRun) { @{ WhatIf = $true } } else { @{ Confirm = $false } }
+                    $Rows = [System.Collections.Generic.List[object]]::new()
+                    $Warnings = [System.Collections.Generic.List[string]]::new()
+                    $Errors = [System.Collections.Generic.List[object]]::new()
+                    foreach ($Item in $Items) {
+                        $W = $null
+                        $E = $null
+                        foreach ($Row in @(Invoke-SyncGroupViaCaller -Item $Item -Prune:$PruneRun @Mode `
+                                    -WarningVariable W -WarningAction SilentlyContinue -ErrorVariable E -ErrorAction SilentlyContinue)) {
+                            $Rows.Add($Row)
+                        }
+                        foreach ($X in $W) { $Warnings.Add([string]$X) }
+                        foreach ($X in $E) { $Errors.Add($X) }
+                    }
+                    [PSCustomObject]@{ Rows = $Rows.ToArray(); Warnings = $Warnings.ToArray(); Errors = $Errors.ToArray() }
+                }
+            }
+            function Get-PimRowCount {
+                param([object[]]$Rows, [string]$Action, [string]$Detail)
+                @($Rows | Where-Object { $_.Action -ceq $Action -and $_.Detail -ceq $Detail }).Count
+            }
+            function Get-PimRowText {
+                param([object[]]$Rows)
+                @($Rows | ForEach-Object { "$($_.Item)|$($_.Action)|$($_.Detail)" })
+            }
+            function New-PimLive {
+                param([string[]]$Id)
+                foreach ($I in $Id) { [PSCustomObject]@{ id = $I; ObjectType = 'user' } }
+            }
+            function New-PimHold {
+                param([hashtable]$Held = @{}, [string]$Cause)
+                if ($Cause) { [PSCustomObject]@{ Read = $false; Held = @{}; Cause = $Cause } }
+                else { [PSCustomObject]@{ Read = $true; Held = $Held; Cause = $null } }
+            }
+            # The reasons Get-OERGroupPimHeldAccess words, and the texts the handler and
+            # ConvertTo-OERPruneWithheldResult give, held once here. The group is 'grp-pim'.
+            $script:PimEligMember = 'is eligible for member access in PIM for Groups'
+            $script:PimActMember = 'holds member access through an activation in PIM for Groups'
+            $script:PimEligOwner = 'is eligible for owner access in PIM for Groups'
+            $script:PimActOwner = 'holds owner access through an activation in PIM for Groups'
+            function Get-PimAddWarning {
+                param([string]$Access, [string]$Ref, [string]$Reason)
+                if ($Access -eq 'owner') {
+                    "Sync-OERStructureGroup: owner '$Ref' is not added to group 'grp-pim' as a standing owner: it $Reason, and the apply engine never turns that into a standing ownership. Add it with Add-OERGroupMember -AccessType owner if a standing ownership is meant."
+                } else {
+                    "Sync-OERStructureGroup: member '$Ref' is not added to group 'grp-pim' as a standing member: it $Reason, and the apply engine never turns that into a standing membership. Add it with Add-OERGroupMember if a standing membership is meant."
+                }
+            }
+            function Get-PimAddSkipped {
+                param([string]$Access, [string]$Ref, [string]$Reason)
+                $Ship = if ($Access -eq 'owner') { 'ownership' } else { 'membership' }
+                "$Access '$Ref' not added: it $Reason, and the apply engine never adds a standing $Ship for a principal PIM for Groups holds or makes eligible for the same access (our own guard, not a Graph rejection)"
+            }
+            function Get-PimUnreadAddSkipped {
+                param([string]$Access, [string]$Ref, [string]$Cause = 'C')
+                $Ship = if ($Access -eq 'owner') { 'ownership' } else { 'membership' }
+                "$Access '$Ref' not added: whether PIM for Groups holds it or makes it eligible for $Access access in group 'grp-pim' could not be read ($Cause), and the apply engine never adds a standing $Ship while that is unknown (our own guard, not a Graph rejection)"
+            }
+            function Get-PimUnreadWarning {
+                param([string]$Cause = 'C')
+                "Sync-OERStructureGroup: could not read whether PIM for Groups holds any member or owner of group 'grp-pim' ($Cause); the apply engine adds no standing member or owner to it and removes none from it in this run."
+            }
+            function Get-PimPruneHeld {
+                param([string]$Candidate, [string]$Reason)
+                "prune withheld: $Candidate $Reason, and -Prune never removes a member or owner whose access PIM for Groups holds or makes eligible; it is left in place (our own guard, not a Graph rejection). Manage that access in PIM for Groups if it is meant to go."
+            }
+            function Get-PimExtraHeld {
+                param([string]$Candidate, [string]$Reason)
+                "$Candidate ($Reason, so -Prune leaves it in place)"
+            }
+            function Get-PimPruneUnread {
+                param([string]$Candidate, [string]$Cause = 'C')
+                "prune withheld: whether PIM for Groups holds $Candidate or makes it eligible could not be read ($Cause), so it is left in place (our own guard, not a Graph rejection). Apply again once the group's PIM for Groups assignments and eligibility can be read."
+            }
+            # The no-try scenario (G5): the PUBLIC Invoke-OERStructure, in a runspace with no try above
+            # it, as at a prompt. Its fakes: auth, the group lookup and read, the principal, the PIM for
+            # Groups hold (given as text), and Add-OERGroupMember / Remove-OERGroupMember, which only
+            # append a line to the log. The live group has one member, 'u-act'; the document declares
+            # one member, 'elig@example.com', which is not present. The document carries no tenantId, so
+            # the engine's tenant comparison has nothing to refuse.
+            $script:PimNoTry = {
+                param([string]$Log, [string]$Hold)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-pim' }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value { param($Reference) "id-$Reference" }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-pim'; DisplayName = 'grp-pim'; Description = $null; MailNickname = $null
+            GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @([pscustomobject]@{ id = 'u-act'; ObjectType = 'user' }) }
+    }
+    Set-Item -Path function:script:Read-OERGroupPimHold -Value { #HOLD# }
+    Set-Item -Path function:script:Add-OERGroupMember -Value { [System.IO.File]::AppendAllText('#LOG#', "add $args`n") }
+    Set-Item -Path function:script:Remove-OERGroupMember -Value { [System.IO.File]::AppendAllText('#LOG#', "remove $args`n") }
+}
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "grp-pim", "members": [ "elig@example.com" ] } ] }'
+Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#HOLD#', $Hold))
+            }
+            function Get-PimLoggedLine ([string]$Log) {
+                if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+            }
+        }
+
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'g-pim' }
+            Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+            Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+            $script:PimGroupType = 'Assigned'
+            $script:PimSynced = $null
+            $script:PimLiveMembers = @(New-PimLive 'id-kept@example.com')
+            $script:PimLiveOwners = @(New-PimLive 'id-owner@example.com')
+            $script:PimLiveEligibility = @()
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-pim'; DisplayName = 'grp-pim'; Description = $null; MailNickname = $null
+                    GroupType = $script:PimGroupType; IsAssignableToRole = $false; OnPremisesSyncEnabled = $script:PimSynced
+                    Members = $script:PimLiveMembers; Owners = $script:PimLiveOwners; PimEligibility = $script:PimLiveEligibility
+                }
+            }
+            Mock -ModuleName $script:moduleName New-OERGroup { }
+            Mock -ModuleName $script:moduleName Set-OERGroup { }
+            Mock -ModuleName $script:moduleName Add-OERGroupMember { }
+            Mock -ModuleName $script:moduleName Remove-OERGroupMember { }
+            $script:PimHold = New-PimHold
+            Mock -ModuleName $script:moduleName Read-OERGroupPimHold { $script:PimHold }
+        }
+
+        It 'does not add a declared member PIM for Groups makes eligible: one warning, one Skipped row, plan and run alike' {
+            $script:PimHold = New-PimHold -Held @{ 'id-elig@example.com|member' = $script:PimEligMember }
+            $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = @('kept@example.com', 'elig@example.com') }
+            $Plan = Invoke-PimHoldRun -Items @($Item) -Plan
+            $Run = Invoke-PimHoldRun -Items @($Item)
+            foreach ($Out in $Plan, $Run) {
+                @($Out.Errors).Count | Should -Be 0
+                @($Out.Warnings).Count | Should -Be 1
+                $Out.Warnings[0] | Should -BeExactly (Get-PimAddWarning -Access member -Ref 'elig@example.com' -Reason $script:PimEligMember)
+                $Out.Warnings[0] | Should -Match "member 'elig@example.com' is not added to group 'grp-pim'"
+                $Skipped = @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' })
+                $Skipped.Count | Should -Be 1
+                $Skipped[0].Detail | Should -BeLike "member 'elig@example.com' not added: it is eligible for member access in PIM for Groups*"
+                $Skipped[0].Detail | Should -BeExactly (Get-PimAddSkipped -Access member -Ref 'elig@example.com' -Reason $script:PimEligMember)
+                Get-PimRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail 'group properties match' | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail "member 'kept@example.com' already present" | Should -Be 1
+                @($Out.Rows).Count | Should -Be 3
+            }
+            (Get-PimRowText -Rows $Plan.Rows) | Should -Be (Get-PimRowText -Rows $Run.Rows)
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Scope It
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 2 -Exactly -Scope It -ParameterFilter { $GroupId -eq 'g-pim' }
+        }
+
+        It 'adds a declared member PIM for Groups does not hold exactly as before' {
+            # Another principal is held, so the lookup was read and decided "not held" for this one.
+            $script:PimHold = New-PimHold -Held @{ 'id-other@example.com|member' = $script:PimEligMember; 'id-new@example.com|owner' = $script:PimEligOwner }
+            $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = @('kept@example.com', 'new@example.com') }
+            $Plan = Invoke-PimHoldRun -Items @($Item) -Plan
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Scope It
+            $Run = Invoke-PimHoldRun -Items @($Item)
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $Id -eq 'g-pim' -and $PrincipalId -eq 'id-new@example.com' -and -not $AccessType }
+            Get-PimRowCount -Rows $Plan.Rows -Action 'Skipped' -Detail "would add member 'new@example.com'" | Should -Be 1
+            Get-PimRowCount -Rows $Run.Rows -Action 'Updated' -Detail "added member 'new@example.com'" | Should -Be 1
+            foreach ($Out in $Plan, $Run) {
+                @($Out.Errors).Count | Should -Be 0
+                @($Out.Warnings).Count | Should -Be 0
+                @($Out.Rows).Count | Should -Be 3
+            }
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 2 -Exactly -Scope It
+        }
+
+        It 'leaves a declared member that is activated now Unchanged, and reads nothing for a converged item' {
+            # An old document that lists a principal whose activation is live: it is present, so it is
+            # Unchanged, and with nothing to add and nothing undeclared the hold is never read.
+            $script:PimLiveMembers = @(New-PimLive 'id-kept@example.com', 'id-act@example.com')
+            $script:PimHold = New-PimHold -Held @{ 'id-act@example.com|member' = $script:PimActMember }
+            $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = @('kept@example.com', 'act@example.com'); owners = @('owner@example.com') }
+            foreach ($AsPlan in $true, $false) {
+                $Out = Invoke-PimHoldRun -Items @($Item) -Prune -Plan:$AsPlan
+                @($Out.Errors).Count | Should -Be 0
+                @($Out.Warnings).Count | Should -Be 0
+                Get-PimRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail "member 'act@example.com' already present" | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail "member 'kept@example.com' already present" | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail "owner 'owner@example.com' already present" | Should -Be 1
+                @($Out.Rows).Count | Should -Be 4
+            }
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 2 -Exactly -Scope It
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 0 -Scope It
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Scope It
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+        }
+
+        It 'does not add a member an old document lists whose activation has ended while it stays eligible' {
+            $script:PimLiveMembers = @()
+            $script:PimHold = New-PimHold -Held @{ 'id-act@example.com|member' = $script:PimEligMember }
+            $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = @('act@example.com') }
+            foreach ($AsPlan in $true, $false) {
+                $Out = Invoke-PimHoldRun -Items @($Item) -Prune -Plan:$AsPlan
+                @($Out.Errors).Count | Should -Be 0
+                @($Out.Warnings) | Should -Be @(Get-PimAddWarning -Access member -Ref 'act@example.com' -Reason $script:PimEligMember)
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimAddSkipped -Access member -Ref 'act@example.com' -Reason $script:PimEligMember) | Should -Be 1
+                @($Out.Rows).Count | Should -Be 2
+            }
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Scope It
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 2 -Exactly -Scope It
+        }
+
+        It 'never prunes an undeclared member PIM for Groups holds or makes eligible, and prunes an unheld one as before' {
+            # Live: a declared member, an activated one, an eligible one and a plain one, in that order.
+            $script:PimLiveMembers = @(New-PimLive 'id-kept@example.com', 'u-act', 'u-elig', 'u-plain')
+            $script:PimHold = New-PimHold -Held @{ 'u-act|member' = $script:PimActMember; 'u-elig|member' = $script:PimEligMember }
+            $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = @('kept@example.com') }
+
+            # -Prune, plan and run.
+            $Plan = Invoke-PimHoldRun -Items @($Item) -Prune -Plan
+            $Run = Invoke-PimHoldRun -Items @($Item) -Prune
+            foreach ($Out in $Plan, $Run) {
+                @($Out.Errors).Count | Should -Be 0
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared member 'u-act'" -Reason $script:PimActMember) | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared member 'u-elig'" -Reason $script:PimEligMember) | Should -Be 1
+                # No warning for a held one: the only warning is the plain member's prune warning.
+                @($Out.Warnings).Count | Should -Be 1
+                $Out.Warnings[0] | Should -Match "undeclared member 'u-plain' from group 'grp-pim'"
+                @($Out.Rows).Count | Should -Be 5
+            }
+            Get-PimRowCount -Rows $Plan.Rows -Action 'Skipped' -Detail "would remove undeclared member 'u-plain'" | Should -Be 1
+            Get-PimRowCount -Rows $Run.Rows -Action 'Removed' -Detail "removed undeclared member 'u-plain'" | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $Id -eq 'g-pim' -and $PrincipalId -eq 'u-plain' }
+
+            # Without -Prune: the held ones are Extra with the hint that -Prune leaves them in place.
+            foreach ($AsPlan in $true, $false) {
+                $Out = Invoke-PimHoldRun -Items @($Item) -Plan:$AsPlan
+                @($Out.Errors).Count | Should -Be 0
+                @($Out.Warnings).Count | Should -Be 0
+                Get-PimRowCount -Rows $Out.Rows -Action 'Extra' -Detail (Get-PimExtraHeld -Candidate "undeclared member 'u-act'" -Reason $script:PimActMember) | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Extra' -Detail (Get-PimExtraHeld -Candidate "undeclared member 'u-elig'" -Reason $script:PimEligMember) | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Extra' -Detail "undeclared member 'u-plain' (use -Prune to remove)" | Should -Be 1
+                @($Out.Rows).Count | Should -Be 5
+            }
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 4 -Exactly -Scope It
+        }
+
+        It 'adds and removes nothing when the hold could not be read: one warning naming the cause, every candidate Skipped' {
+            $script:PimLiveMembers = @(New-PimLive 'id-kept@example.com', 'u-x1', 'u-x2')
+            $script:PimLiveOwners = @(New-PimLive 'id-owner@example.com', 'o-x')
+            $script:PimHold = New-PimHold -Cause 'C'
+            $Item = [PSCustomObject]@{
+                displayName = 'grp-pim'
+                members     = @('kept@example.com', 'new@example.com', 'new2@example.com')
+                owners      = @('owner@example.com', 'o-new@example.com')
+            }
+            foreach ($PruneRun in $true, $false) {
+                foreach ($AsPlan in $true, $false) {
+                    $Out = Invoke-PimHoldRun -Items @($Item) -Prune:$PruneRun -Plan:$AsPlan
+                    @($Out.Errors).Count | Should -Be 0
+                    @($Out.Warnings) | Should -Be @(Get-PimUnreadWarning)
+                    foreach ($Ref in 'new@example.com', 'new2@example.com') {
+                        $Detail = Get-PimUnreadAddSkipped -Access member -Ref $Ref
+                        $Detail | Should -BeLike "member '$Ref' not added: whether PIM for Groups holds it or makes it eligible for member access in group 'grp-pim' could not be read (C)*"
+                        Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail $Detail | Should -Be 1
+                    }
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimUnreadAddSkipped -Access owner -Ref 'o-new@example.com') | Should -Be 1
+                    foreach ($Candidate in "undeclared member 'u-x1'", "undeclared member 'u-x2'", "undeclared owner 'o-x'") {
+                        Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimPruneUnread -Candidate $Candidate) | Should -Be 1
+                    }
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail "member 'kept@example.com' already present" | Should -Be 1
+                    Get-PimRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail "owner 'owner@example.com' already present" | Should -Be 1
+                    @($Out.Rows).Count | Should -Be 9
+                    @($Out.Rows | Where-Object { $_.Action -in 'Updated', 'Removed', 'Extra', 'Failed' }).Count | Should -Be 0
+                }
+            }
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Scope It
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 4 -Exactly -Scope It
+        }
+
+        It 'fails closed on a held key whose reason is empty or null: the add is Skipped and the prune withheld, for members and owners' {
+            # A key in Held decides "held" whatever its value. An empty reason must not read as the
+            # handler's own "not held" (''), so the rows carry a reason of the handler's own.
+            $script:PimLiveMembers = @(New-PimLive 'id-kept@example.com', 'u-x')
+            $script:PimLiveOwners = @(New-PimLive 'id-owner@example.com', 'o-x')
+            $script:PimHold = New-PimHold -Held @{
+                'id-new@example.com|member'  = ''
+                'u-x|member'                 = ''
+                'id-o-new@example.com|owner' = $null
+                'o-x|owner'                  = $null
+            }
+            $Item = [PSCustomObject]@{
+                displayName = 'grp-pim'
+                members     = @('kept@example.com', 'new@example.com')
+                owners      = @('owner@example.com', 'o-new@example.com')
+            }
+            $MemberReason = 'holds or is eligible for member access in PIM for Groups'
+            $OwnerReason = 'holds or is eligible for owner access in PIM for Groups'
+            foreach ($AsPlan in $true, $false) {
+                $Out = Invoke-PimHoldRun -Items @($Item) -Prune -Plan:$AsPlan
+                @($Out.Errors).Count | Should -Be 0
+                @($Out.Warnings) | Should -Be @(
+                    (Get-PimAddWarning -Access member -Ref 'new@example.com' -Reason $MemberReason)
+                    (Get-PimAddWarning -Access owner -Ref 'o-new@example.com' -Reason $OwnerReason)
+                )
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimAddSkipped -Access member -Ref 'new@example.com' -Reason $MemberReason) | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimAddSkipped -Access owner -Ref 'o-new@example.com' -Reason $OwnerReason) | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared member 'u-x'" -Reason $MemberReason) | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared owner 'o-x'" -Reason $OwnerReason) | Should -Be 1
+                @($Out.Rows).Count | Should -Be 7
+            }
+            foreach ($AsPlan in $true, $false) {
+                $Out = Invoke-PimHoldRun -Items @($Item) -Plan:$AsPlan
+                @($Out.Errors).Count | Should -Be 0
+                Get-PimRowCount -Rows $Out.Rows -Action 'Extra' -Detail (Get-PimExtraHeld -Candidate "undeclared member 'u-x'" -Reason $MemberReason) | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Extra' -Detail (Get-PimExtraHeld -Candidate "undeclared owner 'o-x'" -Reason $OwnerReason) | Should -Be 1
+            }
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Scope It
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+        }
+
+        It 'does not add a declared owner PIM for Groups makes eligible, and adds an unheld owner as before' {
+            $script:PimHold = New-PimHold -Held @{ 'id-o-elig@example.com|owner' = $script:PimEligOwner }
+            $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = $null; owners = @('owner@example.com', 'o-elig@example.com', 'o-new@example.com') }
+            $Plan = Invoke-PimHoldRun -Items @($Item) -Plan
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Scope It
+            $Run = Invoke-PimHoldRun -Items @($Item)
+            foreach ($Out in $Plan, $Run) {
+                @($Out.Errors).Count | Should -Be 0
+                @($Out.Warnings) | Should -Be @(Get-PimAddWarning -Access owner -Ref 'o-elig@example.com' -Reason $script:PimEligOwner)
+                $Detail = Get-PimAddSkipped -Access owner -Ref 'o-elig@example.com' -Reason $script:PimEligOwner
+                $Detail | Should -BeLike "owner 'o-elig@example.com' not added: it is eligible for owner access in PIM for Groups*"
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail $Detail | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Unchanged' -Detail "owner 'owner@example.com' already present" | Should -Be 1
+                @($Out.Rows).Count | Should -Be 4
+            }
+            Get-PimRowCount -Rows $Plan.Rows -Action 'Skipped' -Detail "would add owner 'o-new@example.com'" | Should -Be 1
+            Get-PimRowCount -Rows $Run.Rows -Action 'Updated' -Detail "added owner 'o-new@example.com'" | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'id-o-new@example.com' -and $AccessType -eq 'owner' }
+        }
+
+        It 'withholds a held owner before the last-owner guard, and counts it as an owner still standing' {
+            # (1) The held owner is the only owner: the PIM row, not the last-owner row.
+            $script:PimLiveOwners = @(New-PimLive 'o-act')
+            $script:PimHold = New-PimHold -Held @{ 'o-act|owner' = $script:PimActOwner }
+            $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = $null; owners = @() }
+            foreach ($AsPlan in $true, $false) {
+                $Out = Invoke-PimHoldRun -Items @($Item) -Prune -Plan:$AsPlan
+                @($Out.Errors).Count | Should -Be 0
+                @($Out.Warnings).Count | Should -Be 0
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared owner 'o-act'" -Reason $script:PimActOwner) | Should -Be 1
+                @($Out.Rows | Where-Object { $_.Detail -like '*last remaining owner*' }).Count | Should -Be 0
+                @($Out.Rows).Count | Should -Be 2
+                $Out = Invoke-PimHoldRun -Items @($Item) -Plan:$AsPlan
+                Get-PimRowCount -Rows $Out.Rows -Action 'Extra' -Detail (Get-PimExtraHeld -Candidate "undeclared owner 'o-act'" -Reason $script:PimActOwner) | Should -Be 1
+            }
+
+            # (2) The held owner first, then a plain one: the held owner stays and is counted, so the
+            # plain one is not the last remaining owner and is removed.
+            $script:PimLiveOwners = @(New-PimLive 'o-act', 'o-plain')
+            $Run = Invoke-PimHoldRun -Items @($Item) -Prune
+            @($Run.Errors).Count | Should -Be 0
+            Get-PimRowCount -Rows $Run.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared owner 'o-act'" -Reason $script:PimActOwner) | Should -Be 1
+            Get-PimRowCount -Rows $Run.Rows -Action 'Removed' -Detail "removed undeclared owner 'o-plain'" | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'o-plain' -and $AccessType -eq 'owner' }
+        }
+
+        It 'matches the hold per access type: a hold for member access never protects an owner, and the other way round' {
+            # 'm-both' is a standing member and an activated owner; the document lists neither side.
+            # 'x-own' is held as an owner only and declared as a member; 'y-mem' is held as a member only
+            # and declared as an owner.
+            $script:PimLiveMembers = @(New-PimLive 'id-kept@example.com', 'm-both')
+            $script:PimLiveOwners = @(New-PimLive 'id-owner@example.com', 'm-both')
+            $script:PimHold = New-PimHold -Held @{
+                'm-both|owner'                = $script:PimActOwner
+                'id-x-own@example.com|owner'  = $script:PimEligOwner
+                'id-y-mem@example.com|member' = $script:PimEligMember
+            }
+            $Item = [PSCustomObject]@{
+                displayName = 'grp-pim'
+                members     = @('kept@example.com', 'x-own@example.com')
+                owners      = @('owner@example.com', 'y-mem@example.com')
+            }
+            $Run = Invoke-PimHoldRun -Items @($Item) -Prune
+            @($Run.Errors).Count | Should -Be 0
+            Get-PimRowCount -Rows $Run.Rows -Action 'Updated' -Detail "added member 'x-own@example.com'" | Should -Be 1
+            Get-PimRowCount -Rows $Run.Rows -Action 'Updated' -Detail "added owner 'y-mem@example.com'" | Should -Be 1
+            Get-PimRowCount -Rows $Run.Rows -Action 'Removed' -Detail "removed undeclared member 'm-both'" | Should -Be 1
+            Get-PimRowCount -Rows $Run.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared owner 'm-both'" -Reason $script:PimActOwner) | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 2 -Exactly -Scope It
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'id-x-own@example.com' -and -not $AccessType }
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'id-y-mem@example.com' -and $AccessType -eq 'owner' }
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'm-both' -and -not $AccessType }
+        }
+
+        It 'consults the hold for the owners of a dynamic group, whose members step is skipped' {
+            $script:PimGroupType = 'Dynamic'
+            $script:PimHold = New-PimHold -Held @{ 'id-o-elig@example.com|owner' = $script:PimEligOwner }
+            $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = @('x@example.com'); owners = @('owner@example.com', 'o-elig@example.com') }
+            foreach ($AsPlan in $true, $false) {
+                $Out = Invoke-PimHoldRun -Items @($Item) -Prune -Plan:$AsPlan
+                @($Out.Errors).Count | Should -Be 0
+                @($Out.Warnings) | Should -Be @(Get-PimAddWarning -Access owner -Ref 'o-elig@example.com' -Reason $script:PimEligOwner)
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimAddSkipped -Access owner -Ref 'o-elig@example.com' -Reason $script:PimEligOwner) | Should -Be 1
+                # Reached: the members step reported the dynamic group.
+                @($Out.Rows | Where-Object { $_.Detail -like "member 'x@example.com' was not reconciled: group 'grp-pim' is dynamic*" }).Count | Should -Be 1
+            }
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 2 -Exactly -Scope It
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Scope It
+        }
+
+        It 'never reads the hold for a group this run creates, and adds its members and owners as before' {
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId { $null }
+            Mock -ModuleName $script:moduleName New-OERGroup { [PSCustomObject]@{ Id = 'g-new'; DisplayName = 'grp-pim' } }
+            # A hold that would refuse every add, had it been read.
+            $script:PimHold = New-PimHold -Held @{ 'id-a@example.com|member' = $script:PimEligMember; 'id-o@example.com|owner' = $script:PimEligOwner }
+            $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = @('a@example.com', 'b@example.com'); owners = @('o@example.com') }
+            $Run = Invoke-PimHoldRun -Items @($Item) -Prune
+            @($Run.Errors).Count | Should -Be 0
+            @($Run.Warnings).Count | Should -Be 0
+            Get-PimRowCount -Rows $Run.Rows -Action 'Created' -Detail 'created group grp-pim (g-new)' | Should -Be 1
+            foreach ($Detail in "added member 'a@example.com'", "added member 'b@example.com'", "added owner 'o@example.com'") {
+                Get-PimRowCount -Rows $Run.Rows -Action 'Updated' -Detail $Detail | Should -Be 1
+            }
+            Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 3 -Exactly -Scope It
+            # The plan for a group that does not exist yet returns before the members step.
+            $Plan = Invoke-PimHoldRun -Items @($Item) -Prune -Plan
+            Get-PimRowCount -Rows $Plan.Rows -Action 'Skipped' -Detail "would configure member 'a@example.com' after group is created" | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 0 -Scope It
+        }
+
+        It 'never reads the hold for a group synchronized from on-premises: its own guard decides' {
+            $script:PimSynced = $true
+            $script:PimLiveMembers = @(New-PimLive 'id-kept@example.com', 'u-extra')
+            $script:PimLiveOwners = @(New-PimLive 'id-owner@example.com', 'o-extra')
+            $script:PimHold = New-PimHold -Held @{ 'u-extra|member' = $script:PimActMember }
+            $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = @('kept@example.com', 'new@example.com'); owners = @('owner@example.com', 'o-new@example.com') }
+            foreach ($AsPlan in $true, $false) {
+                $Out = Invoke-PimHoldRun -Items @($Item) -Prune -Plan:$AsPlan
+                # Reached: the synchronized group's own rows.
+                @($Out.Rows | Where-Object { $_.Detail -like "member 'new@example.com' not added: group 'grp-pim' is synchronized from on-premises*" }).Count | Should -Be 1
+                @($Out.Rows | Where-Object { $_.Detail -like "prune withheld: undeclared member 'u-extra' stays, since group 'grp-pim' is synchronized*" }).Count | Should -Be 1
+                @($Out.Rows | Where-Object { $_.Detail -like '*PIM for Groups*' }).Count | Should -Be 0
+            }
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 0 -Scope It
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Scope It
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+        }
+
+        It 'keeps the unresolved-entry and service-principal withholds ahead of the PIM check' {
+            Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal {
+                param($Reference)
+                if ($Reference -eq 'gone@example.com') { $null } else { "id-$Reference" }
+            }
+            $script:PimHold = New-PimHold -Held @{ 'u-act|member' = $script:PimActMember; 'sp-act|member' = $script:PimActMember }
+            # (1) An unresolved declared member withholds the collection for that reason.
+            $script:PimLiveMembers = @(New-PimLive 'id-kept@example.com', 'u-act')
+            $Out = Invoke-PimHoldRun -Items @([PSCustomObject]@{ displayName = 'grp-pim'; members = @('kept@example.com', 'gone@example.com') }) -Prune
+            Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail "prune withheld: declared entry 'gone@example.com' could not be resolved, so undeclared member 'u-act' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this collection." | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Detail -like '*PIM for Groups*' }).Count | Should -Be 0
+            # (2) A service principal keeps the A9 row.
+            $script:PimLiveMembers = @([PSCustomObject]@{ id = 'sp-act'; ObjectType = 'servicePrincipal' })
+            $Out = Invoke-PimHoldRun -Items @([PSCustomObject]@{ displayName = 'grp-pim'; members = @() }) -Prune
+            Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail "prune withheld: undeclared member 'sp-act' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go." | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Detail -like '*PIM for Groups*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 0 -Scope It
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+        }
+
+        It 'passes the eligibility the item read with -EligibilityRead when eligibility is declared, and does not when it is not' {
+            $script:PimLiveEligibility = @([PSCustomObject]@{ principalId = 'e-1'; accessId = 'member' })
+            # Declared (an empty array is declared): the item's own read is reused.
+            $Out = Invoke-PimHoldRun -Items @([PSCustomObject]@{ displayName = 'grp-pim'; members = @('kept@example.com', 'new@example.com'); eligibility = @() })
+            @($Out.Errors).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -Scope It -ParameterFilter { $IncludePimEligibility }
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 1 -Exactly -Scope It -ParameterFilter {
+                $EligibilityRead -and $GroupId -eq 'g-pim' -and @($Eligibility).Count -eq 1 -and $Eligibility[0].principalId -eq 'e-1'
+            }
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 1 -Exactly -Scope It
+            # Not declared: the hold reads the eligibility itself.
+            $Out = Invoke-PimHoldRun -Items @([PSCustomObject]@{ displayName = 'grp-pim'; members = @('kept@example.com', 'new@example.com') })
+            @($Out.Errors).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 1 -Exactly -Scope It -ParameterFilter { -not $EligibilityRead -and $GroupId -eq 'g-pim' }
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 2 -Exactly -Scope It
+        }
+
+        It 'reads the hold at most once per item, however many candidates reach it' {
+            $script:PimLiveMembers = @(New-PimLive 'u-1', 'u-2')
+            $script:PimLiveOwners = @(New-PimLive 'o-2', 'o-3')
+            $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = @('n1@example.com', 'n2@example.com'); owners = @('o1@example.com') }
+            $Out = Invoke-PimHoldRun -Items @($Item) -Prune
+            @($Out.Errors).Count | Should -Be 0
+            # Reached: three adds and three prunes (the last live owner, 'o-3', refused by its own guard).
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 3 -Exactly -Scope It
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 3 -Exactly -Scope It
+            @($Out.Rows | Where-Object { $_.Detail -like "did not remove owner 'o-3': it is the last remaining owner*" }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 1 -Exactly -Scope It
+            # Each item reads its own hold: two items, two reads more.
+            $null = Invoke-PimHoldRun -Items @($Item, $Item) -Prune
+            Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 3 -Exactly -Scope It
+        }
+
+        It 'asks no ShouldProcess question for a held add, under -Confirm and under -WhatIf, while an unheld add still asks' {
+            # In a runspace whose host answers the prompt, so the question itself is counted: -Confirm
+            # prompts for every ShouldProcess call, and -WhatIf writes one 'What if:' line for each.
+            $Scenario = [scriptblock]::Create(@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g-pim' }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value { param($Reference) "id-$Reference" }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = 'g-pim'; DisplayName = 'grp-pim'; Description = $null; MailNickname = $null
+            GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @() }
+    }
+    Set-Item -Path function:script:Read-OERGroupPimHold -Value {
+        [pscustomobject]@{ Read = $true; Held = @{ 'id-elig@example.com|member' = 'is eligible for member access in PIM for Groups' }; Cause = $null }
+    }
+    Set-Item -Path function:script:Add-OERGroupMember -Value { }
+    function script:Invoke-SyncGroupPimAsk {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([PSCustomObject]$Item)
+        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+    }
+}
+$Item = '{ "displayName": "grp-pim", "members": [ "elig@example.com", "new@example.com" ] }' | ConvertFrom-Json
+'CONFIRM'
+& $Module { param($Item) Invoke-SyncGroupPimAsk -Item $Item -Confirm -WarningAction Continue } $Item | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'WHATIF'
+& $Module { param($Item) Invoke-SyncGroupPimAsk -Item $Item -WhatIf -WarningAction Continue } $Item | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'END'
+'@)
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Errors) | Should -BeNullOrEmpty
+            $HeldRow = 'ROW:Skipped:' + (Get-PimAddSkipped -Access member -Ref 'elig@example.com' -Reason $script:PimEligMember)
+            @($Run.Output) | Should -Be @('CONFIRM', 'ROW:Unchanged:group properties match', $HeldRow, "ROW:Updated:added member 'new@example.com'",
+                'WHATIF', 'ROW:Unchanged:group properties match', $HeldRow, "ROW:Skipped:would add member 'new@example.com'", 'END')
+            # -Confirm: one question, for the unheld member, after the held member's warning.
+            @($Run.Prompts).Count | Should -Be 1
+            $Run.Prompts[0] | Should -Match "Add member 'id-new@example.com'"
+            # -WhatIf: one 'What if:' line, for the unheld member.
+            $WhatIf = @($Run.Events | Where-Object { $_ -like 'Line: What if:*' })
+            $WhatIf.Count | Should -Be 1
+            $WhatIf[0] | Should -Match "Add member 'id-new@example.com'"
+            # The held member's warning, once in each run, and before the question the run asked.
+            $Warning = 'Warning: ' + (Get-PimAddWarning -Access member -Ref 'elig@example.com' -Reason $script:PimEligMember)
+            $Events = [string[]]@($Run.Events)
+            @($Events | Where-Object { $_ -ceq $Warning }).Count | Should -Be 2
+            [array]::IndexOf($Events, $Warning) | Should -BeLessThan ([array]::FindIndex($Events, [Predicate[string]] { param($E) $E -like 'Prompt: *' }))
+            @($Events | Where-Object { $_ -match 'id-elig' }).Count | Should -Be 0
+        }
+
+        It 'reaches the end of a script with no try through the public Invoke-OERStructure, and adds and removes nothing for held members' {
+            # The eligible member is declared and absent, the activated member live and undeclared, and
+            # the run is -Prune -Confirm:$false: without the guards both would be written.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Hold = "[pscustomobject]@{ Read = `$true; Held = @{ 'id-elig@example.com|member' = '$($script:PimEligMember)'; 'u-act|member' = '$($script:PimActMember)' }; Cause = `$null }"
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:PimNoTry -Log $Log -Hold $Hold)
+            @(Get-PimLoggedLine -Log $Log) | Should -BeNullOrEmpty
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Errors) | Should -BeNullOrEmpty
+            @($Run.Output | Where-Object { $_ -ceq ('ROW:Skipped:' + (Get-PimAddSkipped -Access member -Ref 'elig@example.com' -Reason $script:PimEligMember)) }).Count | Should -Be 1
+            @($Run.Output | Where-Object { $_ -ceq ('ROW:Skipped:' + (Get-PimPruneHeld -Candidate "undeclared member 'u-act'" -Reason $script:PimActMember)) }).Count | Should -Be 1
+            @($Run.Output | Where-Object { $_ -like 'ROW:Updated:*' -or $_ -like 'ROW:Removed:*' -or $_ -like 'ROW:Failed:*' }).Count | Should -Be 0
+            @($Run.Warnings) | Should -Be @(Get-PimAddWarning -Access member -Ref 'elig@example.com' -Reason $script:PimEligMember)
+        }
+
+        It 'reaches the end of a script with no try through the public Invoke-OERStructure, and adds and removes nothing when the hold is unread' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Hold = "[pscustomobject]@{ Read = `$false; Held = @{}; Cause = 'C' }"
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:PimNoTry -Log $Log -Hold $Hold)
+            @(Get-PimLoggedLine -Log $Log) | Should -BeNullOrEmpty
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Errors) | Should -BeNullOrEmpty
+            @($Run.Output | Where-Object { $_ -ceq ('ROW:Skipped:' + (Get-PimUnreadAddSkipped -Access member -Ref 'elig@example.com')) }).Count | Should -Be 1
+            @($Run.Output | Where-Object { $_ -ceq ('ROW:Skipped:' + (Get-PimPruneUnread -Candidate "undeclared member 'u-act'")) }).Count | Should -Be 1
+            @($Run.Output | Where-Object { $_ -like 'ROW:Updated:*' -or $_ -like 'ROW:Removed:*' -or $_ -like 'ROW:Failed:*' }).Count | Should -Be 0
+            @($Run.Warnings) | Should -Be @(Get-PimUnreadWarning)
+        }
+
+        It 'the no-try scenario writes when the hold holds nothing (known answer)' {
+            # The positive control for the two scenarios above: the same script with a hold that holds
+            # nothing adds the declared member and removes the undeclared one, so an empty log above is
+            # the guards' doing and not a fake that never runs.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Hold = "[pscustomobject]@{ Read = `$true; Held = @{}; Cause = `$null }"
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:PimNoTry -Log $Log -Hold $Hold)
+            $Run.Output[-1] | Should -BeExactly 'END'
+            $Lines = @(Get-PimLoggedLine -Log $Log)
+            $Lines.Count | Should -Be 2
+            $Lines[0] | Should -BeLike 'add *id-elig@example.com*'
+            $Lines[1] | Should -BeLike 'remove *u-act*'
+        }
+    }
 }
 
 Describe 'Sync-OERStructureGroup: the plan shows the warning a real run gives (BL-17)' {
     # Under -WhatIf the engine never calls a child cmdlet, so a warning only the cmdlet writes would be
     # missing from the plan. The warnings are counted from the stream (3>&1), with -WarningAction
     # Continue pinned on the call, so a duplicate cannot hide.
+    BeforeEach {
+        # BL-125: the same "read, nothing held" default as in the Describe above, so a member or owner
+        # these fixtures add or prune never reaches the real PIM for Groups hold reader.
+        Mock -ModuleName $script:moduleName Read-OERGroupPimHold { [PSCustomObject]@{ Read = $true; Held = @{}; Cause = $null } }
+    }
     BeforeAll {
         InModuleScope $script:moduleName {
             function script:Invoke-SyncGroupWarnViaCaller {
@@ -8953,5 +9590,106 @@ Describe 'Sync-OERStructureGroup: the plan shows the warning a real run gives (B
                 $Out.Warnings[0] | Should -BeExactly "pimPolicy (member) of group 'role_sec_pim': mfa cleared: mutually exclusive with authenticationContextId=c1"
             }
         }
+    }
+}
+
+Describe 'Sync-OERStructureGroup: the PIM for Groups hold, read for real (BL-125)' {
+    # No Read-OERGroupPimHold default here: the real reader and the real rule
+    # (Get-OERGroupPimHeldAccess) run, and only the two Graph readers below them are mocked, so the key
+    # the handler asks for is proven to be the key the rule builds -- principal ids compared without
+    # regard to letter case, the hold matched per access type, a standing row holding nothing.
+    BeforeAll {
+        function Invoke-PimRealRun {
+            param([object[]]$Items, [switch]$Prune)
+            InModuleScope $script:moduleName -Parameters @{ Items = $Items; PruneRun = [bool]$Prune } {
+                param($Items, $PruneRun)
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                }
+                $W = $null
+                $E = $null
+                $Rows = @(foreach ($Item in $Items) {
+                        Invoke-SyncGroupViaCaller -Item $Item -Prune:$PruneRun -Confirm:$false `
+                            -WarningVariable +W -WarningAction SilentlyContinue -ErrorVariable +E -ErrorAction SilentlyContinue
+                    })
+                [PSCustomObject]@{ Rows = $Rows; Warnings = @($W | ForEach-Object { [string]$_ }); Errors = @($E) }
+            }
+        }
+        function Get-PimRealRowCount {
+            param([object[]]$Rows, [string]$Action, [string]$Detail)
+            @($Rows | Where-Object { $_.Action -ceq $Action -and $_.Detail -ceq $Detail }).Count
+        }
+    }
+
+    BeforeEach {
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'g-pim' }
+        # The document's member resolves to an id in upper case; Graph lists ids in lower case.
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal {
+            param($Reference)
+            @{ 'elig@example.com' = 'ID-ELIG'; 'new@example.com' = 'id-new' }[[string]$Reference]
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            [PSCustomObject]@{
+                Id = 'g-pim'; DisplayName = 'grp-pim'; Description = $null; MailNickname = $null
+                GroupType = 'Assigned'; IsAssignableToRole = $false
+                Members = @([PSCustomObject]@{ id = 'u-act'; ObjectType = 'user' }, [PSCustomObject]@{ id = 'u-standing'; ObjectType = 'user' },
+                    [PSCustomObject]@{ id = 'u-plain'; ObjectType = 'user' })
+                PimEligibility = @(@{ principalId = 'id-elig'; accessId = 'member' })
+            }
+        }
+        # Graph lists every direct member here: 'u-act' through an activation (its id in upper case,
+        # its end a DateTime as the SDK hands it back), 'u-standing' as a standing membership.
+        Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment {
+            [PSCustomObject]@{
+                Read      = $true
+                Value     = @(
+                    @{ principalId = 'U-ACT'; accessId = 'member'; assignmentType = 'activated'; memberType = 'direct'; endDateTime = [datetime]'2026-10-13T12:00:00Z' }
+                    @{ principalId = 'u-standing'; accessId = 'member'; assignmentType = 'assigned'; memberType = 'direct'; endDateTime = $null }
+                )
+                Message   = $null
+                Exception = $null
+            }
+        }
+        Mock -ModuleName $script:moduleName Read-OERGroupCollection {
+            [PSCustomObject]@{ Collection = 'PimEligibility'; Read = $true; Value = @(@{ principalId = 'id-elig'; accessId = 'member' }); ErrorId = $null; Message = $null; Exception = $null }
+        }
+        Mock -ModuleName $script:moduleName Add-OERGroupMember { }
+        Mock -ModuleName $script:moduleName Remove-OERGroupMember { }
+    }
+
+    It 'refuses the held add and withholds the held prune from what Graph lists, and writes the standing and unheld ones as before' {
+        $Out = Invoke-PimRealRun -Items @([PSCustomObject]@{ displayName = 'grp-pim'; members = @('elig@example.com', 'new@example.com') }) -Prune
+        @($Out.Errors).Count | Should -Be 0
+        Get-PimRealRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ("member 'elig@example.com' not added: it is eligible for member access in PIM for Groups, and the apply engine never adds a standing membership " +
+            'for a principal PIM for Groups holds or makes eligible for the same access (our own guard, not a Graph rejection)') | Should -Be 1
+        Get-PimRealRowCount -Rows $Out.Rows -Action 'Updated' -Detail "added member 'new@example.com'" | Should -Be 1
+        Get-PimRealRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ("prune withheld: undeclared member 'u-act' holds member access through an activation in PIM for Groups, and -Prune never removes " +
+            'a member or owner whose access PIM for Groups holds or makes eligible; it is left in place (our own guard, not a Graph rejection). Manage that access in PIM for Groups if it is meant to go.') | Should -Be 1
+        Get-PimRealRowCount -Rows $Out.Rows -Action 'Removed' -Detail "removed undeclared member 'u-standing'" | Should -Be 1
+        Get-PimRealRowCount -Rows $Out.Rows -Action 'Removed' -Detail "removed undeclared member 'u-plain'" | Should -Be 1
+        @($Out.Rows).Count | Should -Be 6
+        @($Out.Warnings | Where-Object { $_ -like "*member 'elig@example.com' is not added to group 'grp-pim' as a standing member*" }).Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimAssignment -Times 1 -Exactly -Scope It -ParameterFilter { $GroupId -eq 'g-pim' }
+        Should -Invoke -ModuleName $script:moduleName Read-OERGroupCollection -Times 1 -Exactly -Scope It -ParameterFilter { $GroupId -eq 'g-pim' -and $Collection -eq 'PimEligibility' }
+        Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It
+        Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'id-new' }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 2 -Exactly -Scope It
+        Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It -ParameterFilter { $PrincipalId -eq 'u-act' }
+    }
+
+    It 'reuses the eligibility its own group read returned when eligibility is declared, and makes no eligibility request' {
+        $Out = Invoke-PimRealRun -Items @([PSCustomObject]@{ displayName = 'grp-pim'; members = @('elig@example.com', 'new@example.com'); eligibility = @() })
+        @($Out.Errors).Count | Should -Be 0
+        Get-PimRealRowCount -Rows $Out.Rows -Action 'Skipped' -Detail ("member 'elig@example.com' not added: it is eligible for member access in PIM for Groups, and the apply engine never adds a standing membership " +
+            'for a principal PIM for Groups holds or makes eligible for the same access (our own guard, not a Graph rejection)') | Should -Be 1
+        Get-PimRealRowCount -Rows $Out.Rows -Action 'Extra' -Detail "undeclared member 'u-act' (holds member access through an activation in PIM for Groups, so -Prune leaves it in place)" | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -Scope It -ParameterFilter { $IncludePimEligibility }
+        Should -Invoke -ModuleName $script:moduleName Read-OERGroupCollection -Times 0 -Scope It
+        Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimAssignment -Times 1 -Exactly -Scope It
+        Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -Scope It -ParameterFilter { $PrincipalId -eq 'id-new' }
     }
 }

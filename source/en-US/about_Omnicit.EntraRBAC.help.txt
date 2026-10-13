@@ -150,6 +150,32 @@ GROUPS IN AN EXPORT
     only, and groupsRoster.json still lists every group. To widen the document
     beyond security-enabled groups, use Get-OERInventory -GroupFilter instead.
 
+PIM ACTIVATIONS ARE NOT STANDING MEMBERS
+
+    Get-OERInventory and Export-OERInventory write a group's standing members and
+    owners only. A member or owner whose access PIM for Groups holds -- an
+    activation, or another active assignment that is not standing, such as a
+    time-bound one -- is left out, and the bundle README counts them per group,
+    by group name, under "Members and owners left out as PIM for Groups access".
+    Where the group's PIM assignments cannot be read, the members and owners
+    eligible for the same access are left out instead and
+    'groups/<name>/pimAssignments' is named in InventoryPartial; where its
+    eligibility cannot be read either, a members collection that holds entries
+    is written as null and an owners collection that holds entries is left out.
+
+    Invoke-OERStructure adds no standing member or owner for a principal PIM for
+    Groups holds or makes eligible for the same access: the entry is Skipped,
+    with a warning, also under -WhatIf. So an activation listed under members in
+    a document an earlier version exported is not added while PIM for Groups
+    still holds that principal or makes it eligible. -Prune removes none
+    (Skipped with -Prune, Extra without). While either of a group's PIM for
+    Groups reads (its assignments or its eligibility) fails for a group that
+    already existed, nothing is added to or removed from its members and owners;
+    a group the same run creates is not read, so no member or owner declared
+    for it is held back for PIM for Groups. The read needs the permission
+    PrivilegedAssignmentSchedule.Read.AzureADGroup, which Get-OERRequiredScope
+    lists.
+
 AZURE ROLE POLICIES IN AN EXPORT
 
     With RoleManagementPolicies in -Include, Export-OERInventory keeps a role's
