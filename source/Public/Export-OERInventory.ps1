@@ -150,7 +150,11 @@ function Export-OERInventory {
     scope (elevated access)", directly after "Members and owners left out as PIM for Groups access",
     or says that none was read. Leaving them out of the export changes nothing in the tenant. Under a
     Stop warning preference (-WarningAction Stop, or $WarningPreference set to 'Stop') the export
-    stops at that warning, before it writes the bundle.
+    stops at that warning, before it writes the bundle. Any other warning of a scope's read is
+    written after that read. An operator's -WarningVariable also collects the warnings of the
+    per-scope reads -- Get-OERInventory's root-scope warning once per scope, and any other per-scope
+    warning twice -- while the display shows each other per-scope warning once, and the root-scope
+    assignments only in the export's one warning.
 
     Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
     Groups read when it left anything unread, then one entry per partial report from
@@ -624,7 +628,12 @@ function Export-OERInventory {
                                 # inherited, so each call would warn about the same rows. Its warnings are
                                 # therefore captured, not shown, and its root notices read from the
                                 # information stream: the rows join $RootScopeRows, and ONE warning after
-                                # the walk names them. Every other captured warning is written again here,
+                                # the walk names them. -InformationAction SilentlyContinue keeps a caller's
+                                # own information preference off the call, so a notice is never displayed
+                                # per scope and never stops the call (under Stop, every scope below a root
+                                # assignment would otherwise be skipped); -InformationVariable still
+                                # captures it.
+                                # Every other captured warning is written again here,
                                 # with its own text, so it is shown once per scope as before; under a Stop
                                 # preference that write stops, and the catch below skips the scope as
                                 # before. The capture runs in a finally, so what a call wrote before it
@@ -636,7 +645,8 @@ function Export-OERInventory {
                                 $ScopeWarnings = $null
                                 $ScopeInformation = $null
                                 try {
-                                    $ScopeInv = Get-OERInventory @ScopeParams -ErrorAction Stop -WarningAction SilentlyContinue -WarningVariable ScopeWarnings -InformationVariable ScopeInformation
+                                    $ScopeInv = Get-OERInventory @ScopeParams -ErrorAction Stop -WarningAction SilentlyContinue -WarningVariable ScopeWarnings `
+                                        -InformationAction SilentlyContinue -InformationVariable ScopeInformation
                                 } finally {
                                     $ScopeNotices = @($ScopeInformation | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.RootScopeAssignment' } | ForEach-Object { $_.MessageData })
                                     $ScopeNoticeTexts = @($ScopeNotices | ForEach-Object { [string]$_.Warning })

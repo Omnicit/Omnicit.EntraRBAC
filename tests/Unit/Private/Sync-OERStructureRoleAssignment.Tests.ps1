@@ -1630,6 +1630,27 @@ Describe 'Sync-OERStructureRoleAssignment' {
             }
         }
 
+        It 'reports an entry whose resolved scope is ''/.'' Skipped too, with no lookup: the ARM transport would send it to the root' {
+            # System.Uri removes the dot segment, so '/./providers/Microsoft.Authorization/...' is sent as
+            # '/providers/Microsoft.Authorization/...', the root scope's path.
+            InModuleScope $script:moduleName -Parameters @{ Detail = $script:RootGuardDetail } {
+                param($Detail)
+                $Item = [PSCustomObject]@{ scope = '/.'; role = 'User Access Administrator'; principal = 'person1@example.com' }
+                $Out = Invoke-SyncRaRootCapture -Splat @{ Item = $Item; ResolvedScope = '/.'; DeclaredAtScope = @($Item); Prune = $true; ReconcileScope = $true; Confirm = $false }
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Skipped'
+                $Out.Rows[0].Item | Should -BeExactly 'User Access Administrator -> person1@example.com @ /.'
+                $Out.Rows[0].Detail | Should -BeExactly $Detail
+                @($Out.Warnings).Count | Should -Be 1
+                Should -Invoke Resolve-OERStructurePrincipal -Times 0
+                Should -Invoke Resolve-OERRoleDefinitionId -Times 0
+                Should -Invoke Get-OERRoleAssignment -Times 0
+                Should -Invoke New-OERRoleAssignment -Times 0
+                Should -Invoke Remove-OERRoleAssignment -Times 0
+                Should -Invoke Invoke-OERArmRequest -Times 0
+            }
+        }
+
         It 'asks no confirmation under -Confirm, in a script with no try above it' {
             $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
             $Scenario = [scriptblock]::Create((@'

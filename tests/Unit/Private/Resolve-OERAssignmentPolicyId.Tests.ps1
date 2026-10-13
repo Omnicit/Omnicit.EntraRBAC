@@ -67,10 +67,8 @@ Describe 'Resolve-OERAssignmentPolicyId' {
                         @{ id = '55555555-5555-5555-5555-555555555555'; displayName = 'Standard' }
                     ) }
             }
-            $R = $null
-            $Thrown = { $R = Resolve-OERAssignmentPolicyId -AccessPackageId '11111111-1111-1111-1111-111111111111' -AssignmentPolicy 'Standard' -AccessPackageLabel 'AP-Sales' } |
+            $Thrown = { Resolve-OERAssignmentPolicyId -AccessPackageId '11111111-1111-1111-1111-111111111111' -AssignmentPolicy 'Standard' -AccessPackageLabel 'AP-Sales' } |
                 Should -Throw -PassThru
-            $R | Should -BeNullOrEmpty
             Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
             [string]$Thrown.FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
             $Thrown.CategoryInfo.Category | Should -Be 'InvalidArgument'

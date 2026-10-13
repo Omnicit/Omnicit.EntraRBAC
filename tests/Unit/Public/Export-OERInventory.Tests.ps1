@@ -927,6 +927,28 @@ Describe 'Export-OERInventory (role assignments at the root scope, BL-126)' {
         }
     }
 
+    It 'passes -InformationAction SilentlyContinue to every per-scope call, so the root notices are captured and never shown per scope' {
+        Invoke-RootExport -Splat @{ OutputPath = (Join-Path $TestDrive 'root-info-params'); Include = 'RoleAssignments' } | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly -ParameterFilter {
+            $InformationAction -eq 'SilentlyContinue'
+        }
+    }
+
+    It 'reads every scope and names the root row once under a caller''s -InformationAction Stop' {
+        # Without -InformationAction on the per-scope call, a caller's Stop information preference
+        # reached Get-OERInventory's root notice, which stopped the call, and every scope below a root
+        # assignment was skipped.
+        $All = @(Export-OERInventory -OutputPath (Join-Path $TestDrive 'root-info-stop') -Include RoleAssignments -InformationAction Stop `
+                -WarningAction Continue -ErrorAction SilentlyContinue 3>&1)
+        $Result = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+        $Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly
+        @($Result.SkippedScopes) | Should -BeNullOrEmpty
+        $Warnings | Should -Be @($script:RootExportWarning)
+        $Section = Get-ReadmeRootSection -BundlePath $Result.BundlePath
+        $Section | Should -Match '(?m)^This export read 1 role assignment\(s\) at the root scope:\r?$'
+    }
+
 }
 
 Describe 'Export-OERInventory (role assignments at the root scope, through the real Get-OERInventory, BL-126)' {

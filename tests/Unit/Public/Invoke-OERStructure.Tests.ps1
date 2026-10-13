@@ -1462,11 +1462,14 @@ Describe 'Invoke-OERStructure never reaches the root scope (BL-126)' {
             'access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or ' +
             'written for this entry'
         $script:RtUndeclaredItem = "bbbb7777-0000-0000-0000-000000000001 -> dddd7777-0000-0000-0000-000000000009 @ $($script:RtSub)"
-        # The recorded requests whose path is an ARM call at the root scope.
+        # The recorded requests whose path is an ARM call at the root scope. Each recorded path is first
+        # normalised as the transport's URI normalises it: Invoke-OERArmRequest sends "<host><path>"
+        # through System.Uri, which removes dot segments, decodes '%2e' and reads '\' as '/', so
+        # '/./providers/Microsoft.Authorization/...' is SENT as '/providers/Microsoft.Authorization/...'.
         function Get-RootRequest {
             param([string[]]$Log)
             @($Log | Where-Object { $_ } | Where-Object {
-                    $RequestPath = ($_ -split ' ', 2)[1]
+                    $RequestPath = ([uri]('https://scope.invalid' + ($_ -split ' ', 2)[1])).AbsolutePath
                     $RequestPath.StartsWith('//') -or $RequestPath.StartsWith('/providers/Microsoft.Authorization/', [System.StringComparison]::OrdinalIgnoreCase)
                 })
         }
@@ -1545,6 +1548,39 @@ Describe 'Invoke-OERStructure never reaches the root scope (BL-126)' {
         (Get-RootRequest -Log $script:RtArmLog) | Should -BeNullOrEmpty
         Should -Invoke -ModuleName $script:moduleName Resolve-OERStructurePrincipal -Times 0 -ParameterFilter { $Reference -eq 'person1@example.com' }
         $Rows.Count | Should -Be 4
+    }
+
+    It 'skips every dot-segment spelling of the root scope, sends nothing there, and still prunes the subscription' {
+        # '/.', '/..' and '/%2e' are not '/' as written, but the transport's URI sends a request for each
+        # of them to the root scope's path. Test-OERAzureRootScope answers for the path the transport
+        # sends, so the handler's guard skips all three.
+        $Json = '{ "version": "1.0", "roleAssignments": [ ' +
+            '{ "scope": "/.", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/..", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/%2e", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Contributor", "principal": "person3@example.com" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        # Positive proof first: the subscription was read once for each of its two entries, reconciled,
+        # and its undeclared assignment removed.
+        @($script:RtArmLog | Where-Object { $_ -eq "GET $($script:RtSub)/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()" }).Count | Should -Be 2
+        @($Rows | Where-Object { $_.Item -eq "Reader -> person2@example.com @ $($script:RtSub)" }).Action | Should -Be @('Unchanged')
+        @($Rows | Where-Object { $_.Item -eq "Contributor -> person3@example.com @ $($script:RtSub)" }).Action | Should -Be @('Created')
+        @($Rows | Where-Object { $_.Item -eq $script:RtUndeclaredItem }).Action | Should -Be @('Removed')
+        @($script:RtArmLog | Where-Object { $_ -like 'PUT *' }).Count | Should -Be 1
+        @($script:RtArmLog | Where-Object { $_ -like 'DELETE *' }) | Should -Be @("DELETE $($script:RtUndeclaredId)?api-version=2022-04-01")
+
+        # Every root spelling: one Skipped row, and not one request that reaches the root scope.
+        foreach ($Spelling in @('/.', '/..', '/%2e')) {
+            $Root = @($Rows | Where-Object { $_.Item -eq "User Access Administrator -> person1@example.com @ $Spelling" })
+            $Root.Count | Should -Be 1 -Because "the entry at '$Spelling' reports one row"
+            $Root[0].Action | Should -Be 'Skipped' -Because "the entry at '$Spelling' is the root scope as the transport sends it"
+            $Root[0].Detail | Should -BeExactly $script:RtRootDetail
+        }
+        (Get-RootRequest -Log $script:RtArmLog) | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERStructurePrincipal -Times 0 -ParameterFilter { $Reference -eq 'person1@example.com' }
+        $Rows.Count | Should -Be 6
     }
 
     It 'skips the root entry and still removes the undeclared assignment at the subscription, in a script with no try above it' {

@@ -4398,6 +4398,22 @@ Describe 'Test-OERStructureSchema warns about a role assignment at the root scop
         $V.Valid | Should -BeFalse
     }
 
+    It 'warns about <Scope> in roleAssignments, a spelling the ARM transport sends to the root, with no Error' -ForEach @(
+        @{ Scope = '/.' }
+        @{ Scope = '/..' }
+        @{ Scope = '/%2e' }
+    ) {
+        # System.Uri removes the dot segment (and decodes '%2e' first), so a request for this scope reaches
+        # the root scope's path; Test-OERAzureRootScope says so, and the validator warns as for '/'.
+        $V = Invoke-RootValidation -Json ('{ "version": "1.0", "roleAssignments": [ { "scope": "' + $Scope + '", "role": "User Access Administrator", "principal": "person1@example.com" } ] }')
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        $Warnings = @($V.Errors | Where-Object { $_.Severity -eq 'Warning' })
+        $Warnings.Count | Should -Be 1
+        $Warnings[0].Path | Should -BeExactly 'roleAssignments[0].scope'
+        $Warnings[0].Message | Should -BeExactly $script:RootFindingText
+        $V.Valid | Should -BeTrue
+    }
+
     It 'names the index of a later entry at the root scope, and warns about no other entry' {
         $V = Invoke-RootValidation -Json ('{ "version": "1.0", "roleAssignments": [ ' +
             '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person1@example.com" }, ' +
@@ -4411,6 +4427,9 @@ Describe 'Test-OERStructureSchema warns about a role assignment at the root scop
 
     It 'says nothing about the root scope for <Case>' -ForEach @(
         @{ Case = '''/'' in roleManagementPolicies'; Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "/", "role": "Owner" } ] }' }
+        @{ Case = '''/.'' in roleManagementPolicies'; Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "/.", "role": "Owner" } ] }' }
+        @{ Case = '''/..'' in roleManagementPolicies'; Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "/..", "role": "Owner" } ] }' }
+        @{ Case = '''/%2e'' in roleManagementPolicies'; Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "/%2e", "role": "Owner" } ] }' }
         @{ Case = 'a directoryRoleAssignments entry with scope ''/'''; Json = '{ "version": "1.0", "directoryRoleAssignments": [ { "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "scope": "/" } ] }' }
         @{ Case = 'a directoryRoleManagementPolicies entry with scope ''/'''; Json = '{ "version": "1.0", "directoryRoleManagementPolicies": [ { "role": "Reports Reader", "scope": "/" } ] }' }
         @{ Case = 'a roleAssignments entry below the root'; Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/providers/Microsoft.Management/managementGroups/plat", "role": "Owner", "principal": "person1@example.com" } ] }' }
