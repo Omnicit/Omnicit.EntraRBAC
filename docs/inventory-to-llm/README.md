@@ -25,8 +25,10 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
   validated without the module (e.g. `Test-Json -Json (Get-Content proposal.json -Raw) -Schema (Get-Content schema.json -Raw)`).
 - `rbac-architect-prompt.md` -- the predefined prompt.
 - `README.md` -- explains the bundle, lists under "What this export could not read" everything the
-  export could not read (or says that nothing was left unread), and holds the next steps. The list
-  is written into this file only, never into `inventory.json` or any other JSON file.
+  export could not read (or says that nothing was left unread), lists under "Role assignments at the
+  root scope (elevated access)" the role assignments at the Azure root scope the export left out
+  (see below), and holds the next steps. Both lists are written into this file only, never into
+  `inventory.json` or any other JSON file.
 
 By default the Entra sections -- including the Microsoft Entra directory role sections,
 `DirectoryRoleManagementPolicies` and `DirectoryRoleAssignments` -- plus tenant-wide
@@ -210,6 +212,28 @@ member or owner declared for it is held back for PIM for Groups. When a standing
 meant, add it with `Add-OERGroupMember`. The read needs the permission
 `PrivilegedAssignmentSchedule.Read.AzureADGroup`.
 
+## Role assignments at the root scope
+
+The Azure root scope `/` stands above every management group and subscription in the tenant, so a
+role assignment there reaches every Azure resource. It is elevated access -- most often User Access
+Administrator, which the Microsoft Entra setting "Access management for Azure resources" grants a
+Global Administrator -- and a finding to review, not part of the RBAC model a proposal describes.
+
+- **The export leaves it out.** The read at every management group and subscription returns a root
+  assignment as inherited. `inventory.json` and `roleAssignments.json` never carry one. The export
+  writes one warning for the whole walk that names each such assignment once, by role and principal
+  and, when it is known, the principal type, and the bundle's `README.md` lists them, with their
+  count, under "Role assignments at the root scope (elevated access)", or says that none was read.
+- **The prompt treats it as a finding.** It tells the model never to keep, recreate or declare one,
+  and to name what the README lists there in its rationale.
+- **The validator warns.** `Test-OERStructure` reports a `roleAssignments` entry whose scope is `/`
+  as a `Warning` at the entry's scope path; the finding does not make the document invalid. A
+  `roleManagementPolicies` scope `/` is not reported.
+- **The apply engine skips it.** `Invoke-OERStructure` reports such an entry `Skipped`, with a
+  warning, before it looks up, reads or writes anything for it, the same under `-WhatIf`, and never
+  prunes the root scope, with or without `-Prune`. An entry at any other scope in the same document
+  is applied and pruned as before.
+
 ## Renaming a group
 
 `displayName` is the match key for a group. To rename a group through the apply document, declare
@@ -307,6 +331,30 @@ Both sections are ordinary apply-document sections: propose changes to them like
 directory role's policy always exists, so there is nothing to create or remove and `-Prune` has no
 effect on `directoryRoleManagementPolicies`; `directoryRoleAssignments` reconciles, and can be
 pruned, only for the `(role, assignmentType)` pairs the document declares.
+
+## Access reviews are matched by name
+
+An `accessReviews[]` entry is matched to a live review by `displayName`, looked up in the whole
+tenant, and access review display names are not unique. The review found is therefore updated only
+when it reviews the `accessPackage` and the `assignmentPolicy` the entry declares: a GUID is
+compared as written, and a name is resolved the way `New-OERAccessReviewDefinition` resolves it when
+it creates a review. The scope of a review cannot be changed on an existing one.
+
+- A review that reviews a group, a role, another access package or another policy is reported
+  `Failed` with `AccessReviewScopeMismatch`, naming what it reviews, and nothing is written to it. A
+  review of no access package at all is refused with no access package or assignment policy lookup.
+- A declared name that matches nothing is reported `Failed` with `AccessPackageNotFound` or
+  `AssignmentPolicyNotFound`; a lookup that fails (an ambiguous name, a 403) is reported `Failed`
+  with its own error. Nothing is written in either case.
+- An access package name is not unique in the tenant, nor an assignment policy name in its access
+  package, and the export writes both by name: when such a name is shared, the entry is reported
+  `Failed` with `AmbiguousName` until it gives the package or the policy by id.
+- The check runs before the reviewer lookups and before any confirmation, so a `-WhatIf` plan and a
+  real run report the same `Failed` row.
+
+The export captures only access-package-scoped, single-stage reviews, so a name missing from
+`accessReviews.json` may still be in use by a review the bundle leaves out. Give a new review a
+display name no other review in the tenant uses.
 
 ## Access package assignment policy schema
 

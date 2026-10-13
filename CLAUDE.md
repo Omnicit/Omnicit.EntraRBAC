@@ -986,6 +986,23 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `administrativeUnit` the way `New-OERGroup` does: the created-membership match in
   `Sync-OERStructureAdministrativeUnit` and the unit placement check in `Test-OERStructureSchema`.
   `Why: docs/development/rationale.md#guid-predicate`
+- **`Test-OERAzureRootScope` is the single owner of whether an Azure role assignment scope addresses
+  the root scope `/` (any spelling the ARM transport sends there)**, and
+  `Format-OERRootScopeAssignment` of the order, the deduplication and the list text of the
+  root-scope assignments that `Get-OERInventory` and `Export-OERInventory` name in their warnings.
+  The rule is for the Azure `roleAssignments` section only: never apply it to
+  `roleManagementPolicies`, nor to the directory role sections, whose
+  `/` is the Microsoft Entra tenant scope (`directoryScopeId`), not the Azure root scope. The export
+  never writes a root-scope assignment, the validator warns on one, and `Sync-OERStructureRoleAssignment`
+  skips one before any lookup or request and never prunes the root scope.
+  **`Get-OERAccessReviewTargetMismatch` is the single owner of whether a live access review found by
+  display name reviews the access package and assignment policy an `accessReviews[]` entry
+  declares**, and `Resolve-OERAssignmentPolicyId` of the assignment policy name lookup it shares with
+  creation (`Resolve-OERAccessReviewScopeTarget`). A review that does not is refused with
+  `AccessReviewScopeMismatch` before any reviewer lookup or `ShouldProcess`, and nothing is written to
+  it. Never re-implement either check, or the policy lookup, inline.
+  `Why: docs/development/rationale.md#root-scope-is-not-in-the-document`,
+  `docs/development/rationale.md#access-review-target`
 - **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared, and
   `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax** -- never re-implement
   either inline; the first is pure, since the offline validator uses it. A document scope that

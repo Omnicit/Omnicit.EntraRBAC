@@ -8,8 +8,9 @@ function Resolve-OERAccessReviewScopeTarget {
     Resolves -AccessPackage (display name or GUID) to an id via Resolve-OERAccessPackageId. The catalog
     id is taken from -Catalog when supplied (display name resolved via Resolve-OERCatalogId, GUID used
     verbatim), otherwise read from the access package. The assignment policy id is taken from
-    -AssignmentPolicy: a GUID is used verbatim, otherwise the package's assignment policies are queried
-    and matched by display name. Returns a hashtable with AccessPackageId, AssignmentPolicyId, CatalogId
+    -AssignmentPolicy through Resolve-OERAssignmentPolicyId, the single owner of that lookup: a GUID is
+    used verbatim, otherwise the package's assignment policies are queried and matched by display
+    name. Returns a hashtable with AccessPackageId, AssignmentPolicyId, CatalogId
     and FailedKind/FailedValue describing the first unresolved input ($null when all resolve).
     FailedErrorId and FailedMessage are optional companions to FailedKind/FailedValue: they are $null
     for a plain not-found on the AccessPackage, explicit-Catalog, and AssignmentPolicy paths, but are
@@ -167,37 +168,24 @@ function Resolve-OERAccessReviewScopeTarget {
         }
     }
 
-    if (Test-OERGuid -Value $AssignmentPolicy) {
-        $PolId = $AssignmentPolicy
-    }
-    else {
-        # A listing that THROWS has not shown that the package has no such policy: carry the record out
-        # in FailedRecord, never as the not-found below. Only a listing that returned and held no policy
-        # of that name is a not-found.
-        $Resp = $null
-        try {
-            $Resp = Invoke-OERGraphRequest -Uri ("v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq '{0}'" -f $ApId)
-        } catch {
-            Remove-OERErrorRecord -Record $PSItem
-            return (& $Fail 'AssignmentPolicy' $AssignmentPolicy $null $null $null $PSItem)
+    # The policy lookup is Resolve-OERAssignmentPolicyId's (Ruling R11): a GUID comes back verbatim with
+    # no request, and a display name is matched among the package's policies. Several policies carrying
+    # the name (decision D3: names are not unique within a package) is an AmbiguousName throw, reported
+    # through the same FailedErrorId/FailedMessage/FailedCategory triple the access package branch uses,
+    # naming every candidate id; the first is never taken. A listing that THROWS has not shown that the
+    # package has no such policy: carry the record out in FailedRecord, never as the not-found below.
+    # Only a listing that returned and held no policy of that name is a not-found.
+    $PolId = $null
+    try {
+        $PolId = Resolve-OERAssignmentPolicyId -AccessPackageId $ApId -AssignmentPolicy $AssignmentPolicy -AccessPackageLabel $AccessPackage
+    } catch {
+        Remove-OERErrorRecord -Record $PSItem
+        if (Test-OERAmbiguousNameError -Record $PSItem) {
+            return (& $Fail 'AssignmentPolicy' $AssignmentPolicy 'AmbiguousName' $PSItem.Exception.Message 'InvalidArgument')
         }
-        # Every match is kept, never just the first (decision D3). Assignment policy display names are
-        # NOT unique within an access package in Microsoft Graph, and the review is scoped by the id
-        # this resolves, so taking the first of several would silently scope it to an arbitrary policy.
-        # More than one match is reported through the same FailedErrorId/FailedMessage/FailedCategory
-        # triple the access package branch uses, naming every candidate id. A GUID -AssignmentPolicy
-        # skips this listing altogether, so for a caller the id IS the way out of the ambiguity.
-        $PolicyMatches = @(@($Resp.value) | Where-Object { $_.displayName -eq $AssignmentPolicy })
-        if ($PolicyMatches.Count -gt 1) {
-            $AmbiguousIds = ($PolicyMatches | ForEach-Object { [string]$_.id }) -join ', '
-            return (& $Fail 'AssignmentPolicy' $AssignmentPolicy 'AmbiguousName' (
-                    "Assignment policy display name '$AssignmentPolicy' matches $($PolicyMatches.Count) policies ($AmbiguousIds) in access package '$AccessPackage'. " +
-                    'Access packages do not enforce unique policy display names, so this name ' +
-                    'cannot identify a single policy. Re-run with the assignment policy id instead of the display name.') 'InvalidArgument')
-        }
-        $PolId = [string]($PolicyMatches | Select-Object -First 1).id
-        if (-not $PolId) { return (& $Fail 'AssignmentPolicy' $AssignmentPolicy) }
+        return (& $Fail 'AssignmentPolicy' $AssignmentPolicy $null $null $null $PSItem)
     }
+    if (-not $PolId) { return (& $Fail 'AssignmentPolicy' $AssignmentPolicy) }
 
     return @{ AccessPackageId = $ApId; AssignmentPolicyId = $PolId; CatalogId = $CatId; FailedKind = $null; FailedValue = $null; FailedRecord = $null }
 }

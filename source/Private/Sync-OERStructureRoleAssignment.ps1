@@ -13,6 +13,17 @@ function Sync-OERStructureRoleAssignment {
     Azure Resource Manager call and for the at-scope comparison. The scope text the document wrote is
     used only in the labels of this item's rows.
 
+    The root scope (BL-126): a role assignment at the Azure root scope '/', above every management
+    group and subscription in the tenant, is elevated access, which the apply engine never creates,
+    edits or removes. When -ResolvedScope is the root scope (Test-OERAzureRootScope decides), the
+    handler's first step writes one warning and reports the entry Skipped, with a Detail that starts
+    "the root scope '/' grants access over every management group and subscription", and returns:
+    nothing is looked up, read or written for the entry, and with -ReconcileScope the root scope is
+    never pruned. No ShouldProcess is involved, so a plan and a real run report the same row. An
+    assignment inherited from the root scope at a declared scope (step 4) is reported Skipped as any
+    inherited match is, but its warning and Detail say it comes from the root scope, which the
+    document never manages, instead of advising to declare the entry there.
+
     Per-item processing:
     1. Resolve the principal object id via Resolve-OERStructurePrincipal (returns $null -> Failed + return).
        When the document item has an optional 'principalType' property (User, Group, or ServicePrincipal),
@@ -156,7 +167,8 @@ function Sync-OERStructureRoleAssignment {
     Invoke-OERStructure and Resolve-OERStructureRoleAssignmentScope). Every item of one resolved scope
     is handed the same string. The handler never resolves the scope again: it passes this exact
     string to Resolve-OERRoleDefinitionId, Get-OERRoleAssignment and New-OERRoleAssignment, and
-    compares a live assignment's scope against it.
+    compares a live assignment's scope against it. When it is the Azure root scope '/', the entry is
+    reported Skipped and none of those is called (see "The root scope" above).
 
     .PARAMETER DeclaredAtScope
     All document roleAssignment items that resolve to this item's scope, this item included (the
@@ -316,6 +328,22 @@ function Sync-OERStructureRoleAssignment {
 
         $Label  = "$($Item.role) -> $($Item.principal) @ $($Item.scope)"
         $Section = 'roleAssignments'
+
+        # -- 0. The Azure root scope is never written (BL-126) ----------------------------
+        # A role assignment at the root scope '/' (Test-OERAzureRootScope owns the rule) is elevated
+        # access over every management group and subscription in the tenant. The engine never creates,
+        # edits or removes one, so this guard stands before every lookup and request below -- the
+        # principal and role lookups, the read at the scope (an ARM call at '/'), any write and the
+        # prune pass, which -ReconcileScope would otherwise run -- and involves no ShouldProcess, so a
+        # plan and a real run report the same Skipped row
+        # (docs/development/rationale.md#root-scope-is-not-in-the-document).
+        if (Test-OERAzureRootScope -Scope $ResolvedScope) {
+            Write-Warning "Sync-OERStructureRoleAssignment: '$($Item.role)' for '$($Item.principal)' names the root scope '/' (elevated access); the apply engine never creates or removes a role assignment there. Nothing was read or written for this entry."
+            ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Skipped' `
+                -Detail "the root scope '/' grants access over every management group and subscription in the tenant (elevated access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or written for this entry"
+            return
+        }
+
         $PrincipalType = if (Test-DeclHas -Node $Item -Name 'principalType') { [string]$Item.principalType } else { $null }
 
         # The engine resolved the scope before dispatch (Resolve-OERStructureRoleAssignmentScope) and
@@ -488,9 +516,18 @@ function Sync-OERStructureRoleAssignment {
             # The drift is therefore surfaced as a visible Skipped record naming the ancestor, never as
             # a misleading Updated or a silent Unchanged.
             $AncestorScope = [string]$Inherited.Scope
-            Write-Warning "Sync-OERStructureRoleAssignment: '$($Item.role)' for '$($Item.principal)' is not defined at '$RawScope' -- it is inherited from the ancestor scope '$AncestorScope'. Nothing was written; declare this entry under scope '$AncestorScope' to manage it there."
-            ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Skipped' `
-                -Detail "no role assignment is defined at '$RawScope': the principal holds this role here through the assignment defined at the ancestor scope '$AncestorScope' ($($Inherited.RoleAssignmentId)). Nothing was written -- editing that assignment would change the ancestor grant, and creating one here would add a grant that survives removal of the ancestor. Declare this entry under scope '$AncestorScope' to manage it"
+            if (Test-OERAzureRootScope -Scope $AncestorScope) {
+                # BL-126 (R7): the ancestor is the root scope '/', which the document never manages, so
+                # the advice to declare the entry there would contradict the guard above. The record
+                # says where the access comes from instead.
+                Write-Warning "Sync-OERStructureRoleAssignment: '$($Item.role)' for '$($Item.principal)' is not defined at '$RawScope' -- it is inherited from the root scope '/' (elevated access), which the document never manages. Nothing was written."
+                ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Skipped' `
+                    -Detail "no role assignment is defined at '$RawScope': the principal holds this role here through the assignment defined at the root scope '/' ($($Inherited.RoleAssignmentId)), elevated access the document never manages. Nothing was written -- editing that assignment would change the root grant, and creating one here would add a grant that survives removal of the root one"
+            } else {
+                Write-Warning "Sync-OERStructureRoleAssignment: '$($Item.role)' for '$($Item.principal)' is not defined at '$RawScope' -- it is inherited from the ancestor scope '$AncestorScope'. Nothing was written; declare this entry under scope '$AncestorScope' to manage it there."
+                ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Skipped' `
+                    -Detail "no role assignment is defined at '$RawScope': the principal holds this role here through the assignment defined at the ancestor scope '$AncestorScope' ($($Inherited.RoleAssignmentId)). Nothing was written -- editing that assignment would change the ancestor grant, and creating one here would add a grant that survives removal of the ancestor. Declare this entry under scope '$AncestorScope' to manage it"
+            }
         } else {
             # -- 5. Create (absent) -------------------------------------------------------
             if (-not $Caller.ShouldProcess($RawScope, "Create role assignment '$($Item.role)' for '$($Item.principal)'")) {

@@ -13,7 +13,7 @@ AfterAll {
 Describe 'Get-OERInventoryReadme' {
     It 'returns markdown that names every bundle file and the next-step cmdlets' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
             $Md | Should -BeOfType ([string])
             # Every file Export-OERInventory writes, the two directory role area files included.
             foreach ($File in @('inventory.json', 'groups.json', 'administrativeUnits.json',
@@ -33,7 +33,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'states where the bundle stops covering the tenant' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
             # An operator must not read the bundle as a complete picture: all four areas below are
             # absent entirely -- none of them is captured lossily (a multi-stage review used to be
             # fabricated as a lossy single-stage self review; it is skipped instead).
@@ -52,7 +52,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'states eligible Azure PIM assignments are read-only context in azurePimEligibility.json' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
             # Regression guard for a stale claim: eligible Azure PIM assignments used to be entirely
             # uncaptured; Export-OERInventory now writes them into azurePimEligibility.json as
             # read-only context, so the README must say so rather than repeat the old blanket claim.
@@ -64,7 +64,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'states a multi-stage review is skipped rather than fabricated as a lossy self review' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
             # Regression guard for a stale claim: Get-OERInventory no longer fabricates a
             # single-stage self review out of a multi-stage one (commit 611f241) -- it skips the
             # review entirely with a warning, so the README must not claim otherwise.
@@ -76,7 +76,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'names the access-package-scope carve-out as its own coverage limit' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
             # Regression guard: a group/application/directory-role review is excluded regardless
             # of stage count -- a different cause from the multi-stage skip above, so it needs its
             # own bullet rather than being folded into that one.
@@ -86,7 +86,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'says in the file roster that groupsRoster.json carries onPremisesSynced among its flags (A15)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
             $Flat = $Md -replace '\s+', ' '
             $Flat | Should -Match ([regex]::Escape('(names + flags, including `onPremisesSynced`)'))
         }
@@ -94,7 +94,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'says in the file roster that memberCount is null for a group the export did not read in full, and why (R3)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
             # The groupsRoster.json bullet alone: from its own marker to the next bullet, whitespace
             # collapsed so the assertion does not depend on where the line wraps.
             $Md | Should -Match '(?m)^- `groupsRoster\.json` '
@@ -111,7 +111,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'explains in "Which groups are covered" that a synchronized group is detailed only on request and is never written by the apply (A15)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
             $Md | Should -Match '(?m)^## Which groups are covered\r?$'
             $Section = (($Md -split '(?m)^## Which groups are covered\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
             $Section | Should -Match ([regex]::Escape('A group synchronized from on-premises Active Directory (`onPremisesSynced` true in `groupsRoster.json`) is managed there and read-only in the cloud: it cannot be role-assignable or managed in PIM for Groups, so `inventory.json` details it only when the export ran with `-IncludeSyncedGroups` or `-AllGroupsDetailed`, and there it carries `onPremisesSynced: true`. `Invoke-OERStructure` writes nothing to such a group.'))
@@ -122,7 +122,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'explains in "Which groups are covered" how the export chose the groups it detailed, and that -GroupFilter only narrows (A13)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
             $Section = (($Md -split '(?m)^## Which groups are covered\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
             # Which groups are detailed, and that a group found not relevant was never read in full.
             $Section | Should -Match ([regex]::Escape('Unless the export ran with `-AllGroupsDetailed`, `inventory.json` details only the RBAC-relevant security groups: role-assignable ones, ones with PIM eligibility, ones found to use PIM for Groups (written with a `pimPolicy` block), and synchronized ones when the export ran with `-IncludeSyncedGroups`.'))
@@ -140,7 +140,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'warns that an unread members, scopedRoles, resources or resourceRoles collection is written as null and must never be changed to []' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
             $Md | Should -Match '(?m)^## Unread collections\r?$'
             # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
             $Section = (($Md -split '(?m)^## Unread collections\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
@@ -181,7 +181,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'tells the reader in Next steps that a proposal keeping tenantId is applied only in the tenant the export came from' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
             # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
             $Section = ($Md -split '(?m)^## Next steps\r?$')[1] -replace '\s+', ' '
             $Section | Should -Match ([regex]::Escape('A proposal that keeps the `tenantId` of `inventory.json` is applied only in the tenant this export came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in another tenant, change or remove `tenantId` first.'))
@@ -192,7 +192,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'contains only ASCII characters' {
         InModuleScope $script:moduleName {
-            $Bytes = [System.Text.Encoding]::UTF8.GetBytes((Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()))
+            $Bytes = [System.Text.Encoding]::UTF8.GetBytes((Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()))
             ($Bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
         }
     }
@@ -210,7 +210,7 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
             param([string[]]$IncompleteReads = @(), [string[]]$SkippedScopes = @(), [string[]]$SkippedEligibilityScopes = @(), [object[]]$PimLeftOut = @())
             InModuleScope $script:moduleName -Parameters @{ A = $IncompleteReads; B = $SkippedScopes; C = $SkippedEligibilityScopes; D = $PimLeftOut } {
                 param($A, $B, $C, $D)
-                Get-OERInventoryReadme -IncompleteReads $A -SkippedScopes $B -SkippedEligibilityScopes $C -PimLeftOut $D
+                Get-OERInventoryReadme -IncompleteReads $A -SkippedScopes $B -SkippedEligibilityScopes $C -PimLeftOut $D -RootScopeAssignments @()
             }
         }
         # The section, heading included, up to the next level 2 heading.
@@ -408,7 +408,7 @@ Describe 'Get-OERInventoryReadme (members and owners left out as PIM for Groups 
             param([object[]]$PimLeftOut = @(), [string[]]$IncompleteReads = @())
             InModuleScope $script:moduleName -Parameters @{ P = $PimLeftOut; I = $IncompleteReads } {
                 param($P, $I)
-                Get-OERInventoryReadme -IncompleteReads $I -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $P
+                Get-OERInventoryReadme -IncompleteReads $I -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $P -RootScopeAssignments @()
             }
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -451,7 +451,9 @@ Describe 'Get-OERInventoryReadme (members and owners left out as PIM for Groups 
         $Index = [array]::IndexOf($Headings, '## What this export could not read')
         $Index | Should -BeGreaterOrEqual 0
         $Headings[$Index + 1] | Should -BeExactly $script:PimHeading
-        $Headings[$Index + 2] | Should -BeExactly '## Files'
+        # BL-126: the root scope section follows this one, and ## Files follows it.
+        $Headings[$Index + 2] | Should -BeExactly '## Role assignments at the root scope (elevated access)'
+        $Headings[$Index + 3] | Should -BeExactly '## Files'
     }
 
     It 'says that none was left out when the list is empty' {
@@ -535,12 +537,128 @@ Describe 'Get-OERInventoryReadme (members and owners left out as PIM for Groups 
     }
 }
 
+Describe 'Get-OERInventoryReadme (role assignments at the root scope, BL-126)' {
+    # BL-126 (R4). A role assignment at the Azure root scope '/' is elevated access, left out of
+    # inventory.json and roleAssignments.json, so the README names each one -- role, principal and type
+    # -- in both states: "none was read" is a claim the reader needs to rely on as much as the list.
+    BeforeAll {
+        $script:RootHeading = '## Role assignments at the root scope (elevated access)'
+        function Get-RootReadme {
+            param([object[]]$Rows = @())
+            InModuleScope $script:moduleName -Parameters @{ R = $Rows } {
+                param($R)
+                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments $R
+            }
+        }
+        # The section, heading included, up to the next level 2 heading; $null when it is missing.
+        function Get-RootSection {
+            param([string]$Readme)
+            $Start = $Readme.IndexOf($script:RootHeading)
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
+        }
+        function Get-RootBullets {
+            param([string]$Section)
+            @($Section -split '\r?\n' | Where-Object { $_ -like '- *' })
+        }
+        function New-RootRow {
+            param([string]$Role, [string]$Principal, [string]$PrincipalType, [string]$RoleAssignmentId = '')
+            [PSCustomObject]@{ RoleAssignmentId = $RoleAssignmentId; Role = $Role; Principal = $Principal; PrincipalType = $PrincipalType }
+        }
+        $script:RootProse = 'The root scope `/` stands above every management group and subscription in the tenant, so a role assignment there reaches every Azure resource. It is elevated access -- most often User Access Administrator, which the Microsoft Entra setting "Access management for Azure resources" grants a Global Administrator -- and a finding to review, not part of the RBAC model this bundle describes. `inventory.json` and `roleAssignments.json` never carry a role assignment at the root scope, and `Invoke-OERStructure` never creates or removes one, even when a document declares it. Leaving them out of the export changes nothing in the tenant.'
+        $script:RootNone = 'None. No role assignment this export read is at the root scope `/`. Role assignments are read only when the export includes `RoleAssignments`.'
+    }
+
+    It 'says that none was read when the list is empty' {
+        $Section = Get-RootSection -Readme (Get-RootReadme)
+        $Section | Should -Not -BeNullOrEmpty
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape($script:RootProse))
+        $Collapsed | Should -Match ([regex]::Escape($script:RootNone))
+        @(Get-RootBullets -Section $Section).Count | Should -Be 0
+        $Section | Should -Not -MatchExactly 'This export read \d+'
+    }
+
+    It 'writes the count line and one bullet per row, in the order given, and no "None"' {
+        $Section = Get-RootSection -Readme (Get-RootReadme -Rows @(
+                (New-RootRow -Role 'User Access Administrator' -Principal 'person1@example.com' -PrincipalType 'User')
+                (New-RootRow -Role 'Owner' -Principal 'Zeta Partners' -PrincipalType '')
+            ))
+        ($Section -replace '\s+', ' ') | Should -Match ([regex]::Escape($script:RootProse))
+        $Section | Should -Match '(?m)^This export read 2 role assignment\(s\) at the root scope:\r?$'
+        $Expected = @(
+            '- `User Access Administrator` for `person1@example.com` (User)'
+            '- `Owner` for `Zeta Partners`'
+        )
+        ((Get-RootBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
+        # The count line stands between the prose and the bullets.
+        $Section.IndexOf('Leaving them') | Should -BeLessThan $Section.IndexOf('This export read 2')
+        $Section.IndexOf('This export read 2') | Should -BeLessThan $Section.IndexOf('- `User Access Administrator`')
+        $Section | Should -Not -Match 'None\.'
+    }
+
+    It 'writes a role or principal that holds a backtick as a code span with the fence rule of the other bullets' {
+        $Section = Get-RootSection -Readme (Get-RootReadme -Rows @(
+                (New-RootRow -Role 'Owner' -Principal 'Odd`Name' -PrincipalType 'Group')
+            ))
+        ((Get-RootBullets -Section $Section) -join "`n") | Should -BeExactly '- `Owner` for `` Odd`Name `` (Group)'
+        $Section | Should -Match '(?m)^This export read 1 role assignment\(s\) at the root scope:\r?$'
+    }
+
+    It 'places the section after "Members and owners left out as PIM for Groups access" and ahead of ## Files (<State>)' -ForEach @(
+        @{ State = 'none'; Rows = @() }
+        @{ State = 'one row'; Rows = @([PSCustomObject]@{ RoleAssignmentId = ''; Role = 'Owner'; Principal = 'Ops'; PrincipalType = 'Group' }) }
+    ) {
+        $Md = Get-RootReadme -Rows $Rows
+        ([regex]::Matches($Md, '(?m)^## Role assignments at the root scope \(elevated access\)\r?$')).Count | Should -Be 1
+        $Headings = @([regex]::Matches($Md, '(?m)^## .*$') | ForEach-Object { $_.Value.TrimEnd("`r") })
+        $Index = [array]::IndexOf($Headings, $script:RootHeading)
+        $Headings[$Index - 1] | Should -BeExactly '## Members and owners left out as PIM for Groups access'
+        $Headings[$Index + 1] | Should -BeExactly '## Files'
+    }
+
+    It 'names roles and principals only, never the role assignment id' {
+        $Md = Get-RootReadme -Rows @(
+            (New-RootRow -Role 'User Access Administrator' -Principal 'person1@example.com' -PrincipalType 'User' `
+                    -RoleAssignmentId '/providers/Microsoft.Authorization/roleAssignments/11111111-1111-1111-1111-111111111111')
+        )
+        $Section = Get-RootSection -Readme $Md
+        $Section | Should -Match ([regex]::Escape('`person1@example.com`'))
+        $Md | Should -Not -Match '11111111-1111-1111-1111-111111111111'
+        $Md | Should -Not -Match 'roleAssignments/'
+    }
+
+    It 'declares RootScopeAssignments Mandatory, so a caller cannot forget it and write a README that claims none was read' {
+        $Parameter = InModuleScope $script:moduleName {
+            $Meta = (Get-Command Get-OERInventoryReadme).Parameters['RootScopeAssignments']
+            [PSCustomObject]@{
+                Type           = $Meta.ParameterType
+                Mandatory      = @($Meta.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Where-Object { $_.Mandatory }).Count
+                AllowsEmptyArr = @($Meta.Attributes | Where-Object { $_ -is [System.Management.Automation.AllowEmptyCollectionAttribute] }).Count
+            }
+        }
+        $Parameter.Type | Should -Be ([object[]])
+        $Parameter.Mandatory | Should -Be 1
+        $Parameter.AllowsEmptyArr | Should -Be 1
+    }
+
+    It 'contains only ASCII characters with rows' {
+        $Md = Get-RootReadme -Rows @(
+            (New-RootRow -Role 'Owner' -Principal 'Ops' -PrincipalType 'Group')
+        )
+        $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Md)
+        ($Bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
+    }
+}
+
 Describe 'Get-OERInventoryReadme apply-document section list' {
     # The coverage paragraph counts and lists the apply-document sections. Tie both to the sections
     # schema.json declares, so a section added to the schema cannot leave the README claiming fewer.
     It 'counts and names every section schema.json declares, and names both directory role sections as captured' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
             $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
                     Where-Object { $_ -notin @('version', 'tenantId', 'tenantAlias') })
             $Word = @{ 7 = 'seven'; 8 = 'eight'; 9 = 'nine'; 10 = 'ten' }[$Sections.Count]

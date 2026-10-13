@@ -158,7 +158,13 @@ function Test-OERStructureSchema {
     above. A roleAssignments or roleManagementPolicies scope that ends with '/' (other than the root
     '/' itself) or contains '//' is an Error at the entry's scope path: the canonical form would merge
     it with the scope written without the stray '/', so a scope written only that way would start to
-    be pruned and '//' would become the root, and the document is refused instead. An OMITTED
+    be pruned and '//' would become the root, and the document is refused instead. A roleAssignments
+    scope that is the Azure root scope '/' (Test-OERAzureRootScope decides, so '//' is reported this
+    way too, beside its Error, and so is a spelling the Azure Resource Manager transport sends to the
+    root, such as '/.' or '/%2e') is a Warning at the entry's scope path (BL-126): a role assignment
+    there is elevated access, which Invoke-OERStructure never creates or removes, so the entry is
+    reported Skipped and the root scope is never pruned. A roleManagementPolicies scope '/' is not reported,
+    and neither is the '/' of the directory role sections, the Microsoft Entra tenant scope. An OMITTED
     groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
     catalogs[].resources or accessPackages[].resourceRoles key is a Warning naming the collection:
     each of those is still reconciled against an empty declared set when its key is omitted, so
@@ -1424,6 +1430,18 @@ function Test-OERStructureSchema {
                     }
                 }
                 Add-ScopeSlashFinding -Node $RA -Section 'roleAssignments' -Item $RAItem -Path $RAPath
+                # BL-126: a role assignment at the Azure root scope '/' (Test-OERAzureRootScope owns the
+                # rule, so '//' is it too, beside its slash Error, and so is '/.', which the ARM
+                # transport's URI sends to the root) is elevated access, which a document
+                # never carries and the apply engine never creates, removes or prunes: it reports the
+                # entry Skipped. A Warning, not an Error, so an older export that holds one still applies
+                # for the rest (docs/development/rationale.md#root-scope-is-not-in-the-document). Never
+                # applied to roleManagementPolicies, nor to the directory role sections, whose '/' is the
+                # Microsoft Entra tenant scope.
+                if ((Test-HasProp -Node $RA -Name 'scope') -and (Test-OERAzureRootScope -Scope ([string]$RA.scope))) {
+                    Add-Finding -Section 'roleAssignments' -Item $RAItem -Path "$RAPath.scope" -Severity 'Warning' `
+                        -Message "'scope' at $RAPath is the root scope '/', which grants access over every management group and subscription in the tenant (elevated access). Invoke-OERStructure never creates or removes a role assignment there: the entry is reported Skipped and the root scope is never pruned. Remove the entry and manage elevated access outside the document."
+                }
                 # The scope is compared in the canonical form ConvertTo-OERCanonicalScope owns (a pure
                 # helper shared with the apply engine; the validator must never resolve a scope online).
                 # A role is compared as written: a role by name in one entry and by id in another cannot

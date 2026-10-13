@@ -392,7 +392,7 @@ function Get-OERStructureSchemaJson {
     },
     "accessReviews": {
       "type": "array",
-      "description": "Access review series. displayName is the match key: an existing review is updated in place through a full-object PUT (read-modify-write), so every writable property the module models or explicitly carries forward is preserved. A writable top-level property added to the Microsoft Graph accessReviewScheduleDefinition resource in future and not yet modelled here would be dropped by that PUT.",
+      "description": "Access review series. displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy; otherwise the entry fails and nothing is written. The update is a full-object PUT (read-modify-write), so every writable property the module models or explicitly carries forward is preserved. A writable top-level property added to the Microsoft Graph accessReviewScheduleDefinition resource in future and not yet modelled here would be dropped by that PUT.",
       "items": {
         "type": "object",
         "required": [ "displayName", "accessPackage", "assignmentPolicy" ],

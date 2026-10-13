@@ -23,6 +23,12 @@ function Test-OERStructure {
     to leave the collection untouched, or declare it. The members key of a group or administrative
     unit declared "dynamic": true is not reported.
 
+    A roleAssignments entry whose scope is the Azure root scope '/', above every management group
+    and subscription in the tenant, is reported as a Warning at the entry's scope path, which does
+    not make the document invalid: a role assignment there is elevated access, and
+    Invoke-OERStructure reports such an entry Skipped and never prunes the root scope. A
+    roleManagementPolicies scope '/' is not reported.
+
     A top-level tenantId, when present, must be a string holding a canonical GUID (an explicit null, a
     value that is not a string, such as an array, or any other value is an Error; a document without
     the key is valid). The check is offline: Test-OERStructure does not compare tenantId with any

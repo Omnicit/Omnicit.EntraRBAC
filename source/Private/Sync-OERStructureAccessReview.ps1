@@ -25,10 +25,16 @@ function Sync-OERStructureAccessReview {
     additionalNotificationRecipients, neither of which the document models). A writable property added
     to the Microsoft Graph accessReviewScheduleDefinition resource in future and not yet on that
     carry-forward list would still be cleared by the PUT -- see Set-OERAccessReviewDefinition.
-    The review SCOPE (accessPackage, assignmentPolicy) is immutable on an existing definition: a
-    declared scope that differs from the live one is reported as a Skipped record with a warning
-    rather than a misleading Unchanged. There are no child collections to reconcile, so -Prune is
-    accepted for a uniform Sync-OERStructure* signature but is a no-op in this handler.
+    The review SCOPE (accessPackage, assignmentPolicy) is immutable on an existing definition, and the
+    definition was found by display name only, so before anything else is done with it the handler
+    asks Get-OERAccessReviewTargetMismatch whether it reviews the access package and assignment policy
+    the entry declares (BL-127). A live review of a group, a role, another access package or another
+    policy is REFUSED: the entry is reported Failed with an AccessReviewScopeMismatch error naming both
+    targets, and nothing is read further or written for it -- no reviewer lookup, no diff, no update,
+    the same in a -WhatIf plan and in a real run. A declared name that matches nothing (AccessPackageNotFound,
+    AssignmentPolicyNotFound) or a lookup that fails (an ambiguous name, a 403) is reported Failed the
+    same way, with that record. There are no child collections to reconcile, so -Prune is accepted for a
+    uniform Sync-OERStructure* signature but is a no-op in this handler.
 
     Microsoft Graph limits which updates it accepts (reviewers are updatable only when individual
     users are assigned, and a multi-stage review is updatable only through stageSettings). A rejected
@@ -290,8 +296,32 @@ function Sync-OERStructureAccessReview {
 
         # -- Existing -> reconcile ---------------------------------------------------------------
         if ($Existing) {
+            # BL-127 (Ruling R10): the review was found by display name in the whole tenant, and display
+            # names are not unique, so it may review a group, a role or another access package. It is
+            # updated only when it reviews the access package and assignment policy this entry declares.
+            # Get-OERAccessReviewTargetMismatch is the single owner of that check. It runs first -- before
+            # the reviewer lookups, the diff and ShouldProcess -- so a plan and a real run report the same
+            # Failed row, and nothing is read further or written for the entry. A record it returns is
+            # either the refusal (AccessReviewScopeMismatch) or a lookup that could not answer (a name
+            # that matches nothing, an ambiguous name, a 403), published as itself. See
+            # docs/development/rationale.md#access-review-target.
+            $TargetMismatch = Get-OERAccessReviewTargetMismatch -Declared $Item -Current $Existing
+            if ($TargetMismatch) {
+                $Caller.WriteError($TargetMismatch)
+                $MismatchDetail = if (([string]$TargetMismatch.FullyQualifiedErrorId).StartsWith('AccessReviewScopeMismatch', [System.StringComparison]::Ordinal)) {
+                    $TargetMismatch.Exception.Message
+                } else {
+                    "could not resolve the access package or assignment policy of access review '$Name': " +
+                    "$($TargetMismatch.Exception.Message); nothing was written"
+                }
+                ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
+                    -Detail $MismatchDetail -ErrorRecord $TargetMismatch
+                return
+            }
+
             # Resolve the declared reviewer tokens to object ids so the diff compares ids, not names.
-            # This is the only Graph work the update path does; the diff itself is pure.
+            # Besides the target check above, this is the only Graph work the update path does; the diff
+            # itself is pure.
             $DeclaredReviewer = $null
             # Test-OERDeclaredProperty is the single owner of the declared rule -- the same predicate
             # Test-HasProp wraps in Test-OERStructureSchema and Test-DeclHas wraps in the pure diffs.

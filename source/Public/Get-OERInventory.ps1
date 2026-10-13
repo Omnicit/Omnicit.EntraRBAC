@@ -118,11 +118,16 @@ function Get-OERInventory {
     directory-role or multi-stage review is skipped, with an aggregate warning naming how many were
     skipped. The AccessReviews projection carries accessPackage, assignmentPolicy, reviewers and
     recurrence so a captured review round-trips through Invoke-OERStructure (create-or-update: a
-    review is matched by displayName, created when it does not exist and reconciled field by field
-    when it does, with the immutable scope reported as a skipped drift rather than a misleading
-    Unchanged). A multi-stage review (StageCount greater than zero) is skipped with a warning
-    instead of being exported, because its reviewers live in stageSettings -- which the apply
-    schema does not model -- and the top-level reviewers collection Graph returns for it is
+    review is matched by displayName and created when it does not exist; when it does, it is
+    reconciled field by field only if it reviews the accessPackage and assignmentPolicy the entry
+    declares, and is otherwise refused, since the scope of a review cannot be changed -- see the
+    Invoke-OERStructure help). The projection writes accessPackage and assignmentPolicy as names, and
+    the apply engine resolves a name as creation resolves it, so when the access package name is not
+    unique in the tenant, or the assignment policy name is not unique in its access package,
+    re-applying the entry is refused with the lookup's AmbiguousName error, and nothing is written,
+    until the entry names it by id. A multi-stage review (StageCount greater than zero) is skipped
+    with a warning instead of being exported, because its reviewers live in stageSettings -- which
+    the apply schema does not model -- and the top-level reviewers collection Graph returns for it is
     empty by construction, which would otherwise be misreported as a configured self review. A
     live recurrence interval outside the module's cadence vocabulary (for example an
     absoluteMonthly interval other than 1, 3, 6 or 12) is exported as the nearest coarser cadence
@@ -147,8 +152,18 @@ function Get-OERInventory {
     carries the hidden flag so a hidden package stays
     hidden across a round-trip. The RoleAssignments projection carries the ABAC condition,
     conditionVersion and description so a condition-scoped assignment is not exported as an
-    unconditioned one. The RoleManagementPolicies projection carries activation window and
-    enablement, approval and approvers, authentication context, and eligible and active permanence
+    unconditioned one. A role assignment at the Azure root scope '/', above every management group
+    and subscription in the tenant, is left out of the RoleAssignments section: it is elevated
+    access, a finding to review rather than part of the RBAC model a document describes, and
+    Invoke-OERStructure never creates or removes one. A read at a management group or a subscription
+    returns it as inherited. One warning names every such assignment, each by role and principal and,
+    when it is known, the principal type, and an information record tagged
+    Omnicit.EntraRBAC.RootScopeAssignment hands the caller the same rows (RoleAssignmentId, Role,
+    Principal and PrincipalType) and the warning's text; under the default $InformationPreference
+    the record is not displayed. Under a Stop warning preference (-WarningAction Stop, or
+    $WarningPreference set to 'Stop') the command stops at that warning, before it returns the
+    inventory. The RoleManagementPolicies projection carries activation window and enablement,
+    approval and approvers, authentication context, and eligible and active permanence
     plus their day counts, so a policy round-trips instead of losing everything but permanence and
     the activation window. Notification rules are excluded from that projection: they are readable
     through Get-OERRoleManagementPolicy and writable through Set-OERRoleManagementPolicy
@@ -1057,6 +1072,21 @@ function Get-OERInventory {
                     $RaProjected.Add([PSCustomObject]@{ Ra = $Ra; Proj = $Proj; Type = $PrincipalType })
                 }
 
+                # BL-126 (A4): a role assignment at the Azure root scope '/' (Test-OERAzureRootScope owns
+                # the rule) is elevated access over every management group and subscription in the
+                # tenant, a finding to review and not part of the RBAC model a document describes. A
+                # read at a management group or a subscription returns it as inherited. It is taken out
+                # of the projected rows here, BEFORE the collision pass below, so it never changes how
+                # another row is named, and the document never carries it: the rows are named in one
+                # warning and one information record after the section is built
+                # (docs/development/rationale.md#root-scope-is-not-in-the-document).
+                $RaRootRows = [System.Collections.Generic.List[object]]::new()
+                $RaKeptRows = [System.Collections.Generic.List[object]]::new()
+                foreach ($Row in $RaProjected) {
+                    if (Test-OERAzureRootScope -Scope ([string]$Row.Proj.scope)) { $RaRootRows.Add($Row) } else { $RaKeptRows.Add($Row) }
+                }
+                $RaProjected = $RaKeptRows
+
                 # Entra does not keep display names unique, a group can carry a user's user principal
                 # name as its display name, and Azure may return one scope in two spellings -- so two
                 # rows can export the same (scope, role, principal), which the validator refuses as a
@@ -1098,6 +1128,31 @@ function Get-OERInventory {
                     }
                 } while ($RaMoved)
                 foreach ($Row in $RaProjected) { $RoleAssignments.Add([PSCustomObject]$Row.Proj) }
+
+                # BL-126: the root rows taken out above, one per assignment: Role and Principal are the
+                # projected names, PrincipalType the normalised ARM type ('' when unknown).
+                # Format-OERRootScopeAssignment owns their order and list text, which Export-OERInventory
+                # shares. One warning names them all, and one information record (tag
+                # Omnicit.EntraRBAC.RootScopeAssignment) carries the rows and the exact warning text, so
+                # a caller -- Export-OERInventory among them -- reads the rows without parsing the text.
+                if ($RaRootRows.Count -gt 0) {
+                    $RootList = Format-OERRootScopeAssignment -Assignment @(foreach ($Row in $RaRootRows) {
+                            [PSCustomObject]@{
+                                RoleAssignmentId = [string]$Row.Ra.RoleAssignmentId
+                                Role             = [string]$Row.Proj.role
+                                Principal        = [string]$Row.Proj.principal
+                                PrincipalType    = [string]$Row.Type
+                            }
+                        })
+                    $RootWarning = "Get-OERInventory: left out $(@($RootList.Assignments).Count) role assignment(s) at the root scope '/', which grants access over every management group and subscription in the tenant (elevated access): $($RootList.Text). A document never carries a role assignment at the root scope, and Invoke-OERStructure never creates or removes one; review them as a finding."
+                    Write-Warning $RootWarning
+                    $RootNotice = [PSCustomObject]@{
+                        Warning     = $RootWarning
+                        Assignments = @($RootList.Assignments)
+                    }
+                    $RootNotice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.RootScopeAssignmentNotice')
+                    Write-Information -MessageData $RootNotice -Tags 'Omnicit.EntraRBAC.RootScopeAssignment'
+                }
             }
         }
 

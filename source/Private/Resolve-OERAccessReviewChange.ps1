@@ -73,6 +73,9 @@ function Resolve-OERAccessReviewChange {
     divergence instead of a misleading Unchanged. Because the document carries display names while the
     live definition carries ids, a scope difference is only reported when the declared value is a GUID
     that does not match the live id -- a display name cannot be compared without a Graph call.
+    Sync-OERStructureAccessReview refuses a live review of another access package or assignment policy
+    before this diff runs (Get-OERAccessReviewTargetMismatch, BL-127), so this note is reached only by a
+    direct caller.
 
     This diff is run TWICE per update by Sync-OERStructureAccessReview: once against the live
     definition to decide what to send, and once against the definition Set-OERAccessReviewDefinition

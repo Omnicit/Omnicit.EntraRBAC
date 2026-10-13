@@ -138,6 +138,24 @@ function Export-OERInventory {
     only the policies a document declares, so a policy the export leaves out stays as it is when the
     document, or a proposal built from it, is applied.
 
+    ROLE ASSIGNMENTS AT THE ROOT SCOPE. A role assignment at the Azure root scope '/', above every
+    management group and subscription in the tenant, is elevated access: a finding to review, which
+    Invoke-OERStructure never creates or removes. inventory.json and roleAssignments.json never carry
+    one. The read at each management group and subscription returns it as inherited, and
+    Get-OERInventory leaves it out of every scope's read (the Get-OERInventory help describes the
+    rule). When the walk finds any, the export writes ONE warning for the whole export that names
+    each such assignment once, by role and principal and, when it is known, the principal type. It
+    writes it after the walk and before the bundle is written, so -WhatIf shows it too. The
+    generated README.md lists them, with their count, in a section "Role assignments at the root
+    scope (elevated access)", directly after "Members and owners left out as PIM for Groups access",
+    or says that none was read. Leaving them out of the export changes nothing in the tenant. Under a
+    Stop warning preference (-WarningAction Stop, or $WarningPreference set to 'Stop') the export
+    stops at that warning, before it writes the bundle. Any other warning of a scope's read is
+    written after that read. An operator's -WarningVariable also collects the warnings of the
+    per-scope reads -- Get-OERInventory's root-scope warning once per scope, and any other per-scope
+    warning twice -- while the display shows each other per-scope warning once, and the root-scope
+    assignments only in the export's one warning.
+
     Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
     Groups read when it left anything unread, then one entry per partial report from
     Get-OERInventory, which reads the other Entra ID sections. Each entry names the affected
@@ -547,6 +565,10 @@ function Export-OERInventory {
         # $IncompleteReads and appended after them, so the Entra ID entries keep their documented order
         # and own clause.
         $RolePolicySelectionReads = [System.Collections.Generic.List[string]]::new()
+        # BL-126 (R3): the role assignments at the Azure root scope '/' that the per-scope
+        # Get-OERInventory calls left out, as each call's Omnicit.EntraRBAC.RootScopeAssignment
+        # information record carries them: one list for the whole walk, deduplicated after it.
+        $RootScopeRows = [System.Collections.Generic.List[object]]::new()
 
         if ($AzureSections.Count -gt 0) {
             $TreeParams = @{}
@@ -601,7 +623,41 @@ function Export-OERInventory {
                                 # -ErrorAction Stop is load-bearing: without it a NON-terminating failure
                                 # inside Get-OERInventory never reaches this catch under the default
                                 # preference, so the scope contributed nothing and did not even warn.
-                                $ScopeInv = Get-OERInventory @ScopeParams -ErrorAction Stop
+                                #
+                                # BL-126 (R3): every read below the root scope returns a root assignment as
+                                # inherited, so each call would warn about the same rows. Its warnings are
+                                # therefore captured, not shown, and its root notices read from the
+                                # information stream: the rows join $RootScopeRows, and ONE warning after
+                                # the walk names them. -InformationAction SilentlyContinue keeps a caller's
+                                # own information preference off the call, so a notice is never displayed
+                                # per scope and never stops the call (under Stop, every scope below a root
+                                # assignment would otherwise be skipped); -InformationVariable still
+                                # captures it.
+                                # Every other captured warning is written again here,
+                                # with its own text, so it is shown once per scope as before; under a Stop
+                                # preference that write stops, and the catch below skips the scope as
+                                # before. The capture runs in a finally, so what a call wrote before it
+                                # failed -- a warning, a root notice -- still counts before the scope is
+                                # skipped. A caller's own
+                                # -WarningVariable still collects the captured warnings too: PowerShell
+                                # appends a nested command's warnings to every enclosing -WarningVariable,
+                                # whatever that command's -WarningAction (measured).
+                                $ScopeWarnings = $null
+                                $ScopeInformation = $null
+                                try {
+                                    $ScopeInv = Get-OERInventory @ScopeParams -ErrorAction Stop -WarningAction SilentlyContinue -WarningVariable ScopeWarnings `
+                                        -InformationAction SilentlyContinue -InformationVariable ScopeInformation
+                                } finally {
+                                    $ScopeNotices = @($ScopeInformation | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.RootScopeAssignment' } | ForEach-Object { $_.MessageData })
+                                    $ScopeNoticeTexts = @($ScopeNotices | ForEach-Object { [string]$_.Warning })
+                                    foreach ($ScopeNotice in $ScopeNotices) {
+                                        foreach ($RootRow in @($ScopeNotice.Assignments)) { if ($null -ne $RootRow) { $RootScopeRows.Add($RootRow) } }
+                                    }
+                                    foreach ($ScopeWarning in @($ScopeWarnings)) {
+                                        if ($null -eq $ScopeWarning) { continue }
+                                        if ($ScopeNoticeTexts -cnotcontains [string]$ScopeWarning.Message) { Write-Warning ([string]$ScopeWarning.Message) }
+                                    }
+                                }
                             }
                             if ($SelectRolePolicies) {
                                 # The role assignments listed at (or above) the scope, FIRST: its sign-in
@@ -681,6 +737,18 @@ function Export-OERInventory {
                     }
                 }
             }
+        }
+
+        # BL-126 (R3): the role assignments at the root scope the walk's reads left out, each once
+        # (Format-OERRootScopeAssignment deduplicates them on the role assignment id and owns their
+        # order and list text, shared with Get-OERInventory's warning). One warning names them, here
+        # after the walk and before the bundle's ShouldProcess, so -WhatIf shows it too, and the
+        # README lists them (docs/development/rationale.md#root-scope-is-not-in-the-document).
+        $RootScopeAssignments = @()
+        if ($RootScopeRows.Count -gt 0) {
+            $RootList = Format-OERRootScopeAssignment -Assignment $RootScopeRows.ToArray()
+            $RootScopeAssignments = @($RootList.Assignments)
+            Write-Warning "Export-OERInventory: left out $($RootScopeAssignments.Count) role assignment(s) at the root scope '/', which grants access over every management group and subscription in the tenant (elevated access), from inventory.json and roleAssignments.json: $($RootList.Text). README.md names them under 'Role assignments at the root scope (elevated access)'; review them as a finding. Invoke-OERStructure never creates or removes a role assignment at the root scope."
         }
 
         # --- Group split: RBAC-relevant kept in inventory.json; unfiltered roster written separately ---
@@ -916,8 +984,9 @@ function Export-OERInventory {
             # mandatory, so a README that claims a complete read cannot be written by forgetting one.
             # The role policy selection's entries follow the Entra ID entries, as in the output object.
             # The members and owners the group reader left out as PIM for Groups access go into the
-            # README alone too, per group by name, for the groups inventory.json writes (BL-125).
-            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut) |
+            # README alone too, per group by name, for the groups inventory.json writes (BL-125), and
+            # so do the role assignments at the root scope the walk left out (BL-126).
+            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments) |
                 Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
         }
         $WrittenFiles.Add('README.md')

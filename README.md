@@ -794,6 +794,28 @@ added to or removed from its members and owners; a group the same run creates is
 member or owner declared for it is held back for PIM for Groups. The read needs the permission
 `PrivilegedAssignmentSchedule.Read.AzureADGroup`, which `Get-OERRequiredScope` lists.
 
+A role assignment at the Azure root scope `/`, above every management group and subscription in the
+tenant, is elevated access, which the export and the apply engine leave alone. `Get-OERInventory`
+leaves it out of `roleAssignments`, and `Export-OERInventory` out of `inventory.json` and
+`roleAssignments.json`, each with a warning that names it by role and principal. The export writes
+one such warning for the whole walk, and its `README.md` lists the assignments under "Role
+assignments at the root scope (elevated access)", as a finding to review. `Test-OERStructure`
+reports a `roleAssignments` entry at the root scope as a `Warning` finding, which does not make the
+document invalid. `Invoke-OERStructure` reports such an entry `Skipped`, with a warning, before it
+looks up, reads or writes anything for it, also under `-WhatIf`, and never prunes the root scope,
+also with `-Prune`.
+
+An existing access review is matched by display name, and display names are not unique in a tenant.
+`Invoke-OERStructure` updates the review it finds only when that review reviews the access package
+and assignment policy the entry declares (a GUID compared as written, a name resolved as
+`New-OERAccessReviewDefinition` resolves it). A review of a group, a role, another access package or
+another policy is reported `Failed` with `AccessReviewScopeMismatch`, and nothing is written to it,
+the same in a `-WhatIf` plan; a name that matches nothing is reported `Failed` with
+`AccessPackageNotFound` or `AssignmentPolicyNotFound`. An access package name is not unique in the
+tenant, nor an assignment policy name in its access package, and the export writes both by name:
+when such a name is shared, the entry is reported `Failed` with `AmbiguousName` until it gives the
+package or the policy by id. Give a new review a display name no other review in the tenant uses.
+
 `Export-OERInventory` stays fast in a large tenant by deciding which security groups are
 RBAC-relevant before it reads any group in full: role-assignable groups, groups with PIM
 eligibility, groups found to use PIM for Groups and, with `-IncludeSyncedGroups`, synchronized

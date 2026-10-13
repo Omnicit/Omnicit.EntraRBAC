@@ -1437,6 +1437,209 @@ Describe 'Invoke-OERStructure roleAssignments grouped on the resolved scope' {
     }
 }
 
+Describe 'Invoke-OERStructure never reaches the root scope (BL-126)' {
+    # A role assignment at the Azure root scope '/' is elevated access, which the apply engine never
+    # creates, edits or removes. The real engine, the real handler and the real ARM cmdlets run here;
+    # only the sign-in, the principal lookups and the ARM transport are mocked, and the transport
+    # records every request. The document declares one entry at the root scope and two at a
+    # subscription, where the live state holds one of them, one undeclared assignment and the root
+    # assignment as inherited. No recorded request may be an ARM call at the root scope: its path would
+    # start with '//' (the root scope followed by '/providers/...') or with
+    # '/providers/Microsoft.Authorization/'. The subscription is reconciled as before. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        $script:RtSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:RtReaderId = "$($script:RtSub)/providers/Microsoft.Authorization/roleDefinitions/bbbb7777-0000-0000-0000-000000000001"
+        $script:RtContributorId = "$($script:RtSub)/providers/Microsoft.Authorization/roleDefinitions/bbbb7777-0000-0000-0000-000000000002"
+        $script:RtUndeclaredId = "$($script:RtSub)/providers/Microsoft.Authorization/roleAssignments/cccc7777-0000-0000-0000-000000000009"
+        $script:RtJson = '{ "version": "1.0", "roleAssignments": [ ' +
+            '{ "scope": "/", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Contributor", "principal": "person3@example.com" } ] }'
+        $script:RtRootLabel = 'User Access Administrator -> person1@example.com @ /'
+        $script:RtRootDetail = "the root scope '/' grants access over every management group and subscription in the tenant (elevated " +
+            'access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or ' +
+            'written for this entry'
+        $script:RtUndeclaredItem = "bbbb7777-0000-0000-0000-000000000001 -> dddd7777-0000-0000-0000-000000000009 @ $($script:RtSub)"
+        # The recorded requests whose path is an ARM call at the root scope. Each recorded path is first
+        # normalised as the transport's URI normalises it: Invoke-OERArmRequest sends "<host><path>"
+        # through System.Uri, which removes dot segments, decodes '%2e' and reads '\' as '/', so
+        # '/./providers/Microsoft.Authorization/...' is SENT as '/providers/Microsoft.Authorization/...'.
+        function Get-RootRequest {
+            param([string[]]$Log)
+            @($Log | Where-Object { $_ } | Where-Object {
+                    $RequestPath = ([uri]('https://scope.invalid' + ($_ -split ' ', 2)[1])).AbsolutePath
+                    $RequestPath.StartsWith('//') -or $RequestPath.StartsWith('/providers/Microsoft.Authorization/', [System.StringComparison]::OrdinalIgnoreCase)
+                })
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:RtArmLog = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal {
+            param($Reference, $Type)
+            switch ($Reference) {
+                'person1@example.com' { 'dddd7777-0000-0000-0000-000000000001' }
+                'person2@example.com' { 'dddd7777-0000-0000-0000-000000000002' }
+                'person3@example.com' { 'dddd7777-0000-0000-0000-000000000003' }
+            }
+        }
+        # New-OERRoleAssignment looks up the principal it creates for on its own.
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipal {
+            [PSCustomObject]@{ PrincipalId = 'dddd7777-0000-0000-0000-000000000003'; PrincipalType = 'User' }
+        }
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest {
+            $RequestMethod = if ($Method) { $Method } else { 'GET' }
+            $script:RtArmLog.Add("$RequestMethod $Path")
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:RtSub)/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=roleName%20eq%20%27Reader%27") {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:RtReaderId }) }
+            }
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:RtSub)/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=roleName%20eq%20%27Contributor%27") {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:RtContributorId }) }
+            }
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:RtSub)/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()") {
+                return [PSCustomObject]@{ value = @(
+                        [PSCustomObject]@{ id = '/providers/Microsoft.Authorization/roleAssignments/cccc7777-0000-0000-0000-000000000001'; name = 'cccc7777-0000-0000-0000-000000000001'
+                            properties = [PSCustomObject]@{ scope = '/'; principalId = 'dddd7777-0000-0000-0000-000000000001'; principalType = 'User'
+                                roleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/bbbb7777-0000-0000-0000-00000000000a' } }
+                        [PSCustomObject]@{ id = "$($script:RtSub)/providers/Microsoft.Authorization/roleAssignments/cccc7777-0000-0000-0000-000000000002"; name = 'cccc7777-0000-0000-0000-000000000002'
+                            properties = [PSCustomObject]@{ scope = $script:RtSub; principalId = 'dddd7777-0000-0000-0000-000000000002'; principalType = 'User'; roleDefinitionId = $script:RtReaderId } }
+                        [PSCustomObject]@{ id = $script:RtUndeclaredId; name = 'cccc7777-0000-0000-0000-000000000009'
+                            properties = [PSCustomObject]@{ scope = $script:RtSub; principalId = 'dddd7777-0000-0000-0000-000000000009'; principalType = 'User'; roleDefinitionId = $script:RtReaderId } }
+                    ) }
+            }
+            if ($RequestMethod -eq 'PUT' -and $Path -like "$($script:RtSub)/providers/Microsoft.Authorization/roleAssignments/*?api-version=2022-04-01") {
+                return [PSCustomObject]@{ id = $Path.Split('?')[0]; name = 'created'; properties = [PSCustomObject]@{
+                        scope = $script:RtSub; principalId = $Body.properties.principalId; roleDefinitionId = $Body.properties.roleDefinitionId } }
+            }
+            if ($RequestMethod -eq 'DELETE' -and $Path -eq "$($script:RtUndeclaredId)?api-version=2022-04-01") {
+                return [PSCustomObject]@{ id = $script:RtUndeclaredId; name = 'cccc7777-0000-0000-0000-000000000009'; properties = [PSCustomObject]@{ scope = $script:RtSub } }
+            }
+            throw "unexpected ARM call: $RequestMethod $Path"
+        }
+    }
+
+    It 'skips the root entry and reconciles the subscription as before (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run with -Prune'; Splat = @{ Prune = $true; Confirm = $false }; Undeclared = 'Removed'; Contributor = 'Created'; Puts = 1; Deletes = 1 }
+        @{ Mode = 'a real run without -Prune'; Splat = @{ Confirm = $false }; Undeclared = 'Extra'; Contributor = 'Created'; Puts = 1; Deletes = 0 }
+        @{ Mode = 'a plan with -Prune'; Splat = @{ Prune = $true; WhatIf = $true }; Undeclared = 'Skipped'; Contributor = 'Skipped'; Puts = 0; Deletes = 0 }
+    ) {
+        $Rows = @(Invoke-OERStructure -Json $script:RtJson -Include RoleAssignments @Splat -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        # Positive proof first: the subscription was read once for each of its two entries, and
+        # reconciled as its fixtures say.
+        @($script:RtArmLog | Where-Object { $_ -eq "GET $($script:RtSub)/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()" }).Count | Should -Be 2
+        @($Rows | Where-Object { $_.Item -eq "Reader -> person2@example.com @ $($script:RtSub)" }).Action | Should -Be @('Unchanged')
+        @($Rows | Where-Object { $_.Item -eq "Contributor -> person3@example.com @ $($script:RtSub)" }).Action | Should -Be @($Contributor)
+        @($Rows | Where-Object { $_.Item -eq $script:RtUndeclaredItem }).Action | Should -Be @($Undeclared)
+        @($script:RtArmLog | Where-Object { $_ -like 'PUT *' }).Count | Should -Be $Puts
+        @($script:RtArmLog | Where-Object { $_ -eq "DELETE $($script:RtUndeclaredId)?api-version=2022-04-01" }).Count | Should -Be $Deletes
+        @($script:RtArmLog | Where-Object { $_ -like 'DELETE *' }).Count | Should -Be $Deletes
+
+        # The root entry: one Skipped row, and not one request at the root scope.
+        $Root = @($Rows | Where-Object { $_.Item -eq $script:RtRootLabel })
+        $Root.Count | Should -Be 1
+        $Root[0].Action | Should -Be 'Skipped'
+        $Root[0].Detail | Should -BeExactly $script:RtRootDetail
+        (Get-RootRequest -Log $script:RtArmLog) | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERStructurePrincipal -Times 0 -ParameterFilter { $Reference -eq 'person1@example.com' }
+        $Rows.Count | Should -Be 4
+    }
+
+    It 'skips every dot-segment spelling of the root scope, sends nothing there, and still prunes the subscription' {
+        # '/.', '/..' and '/%2e' are not '/' as written, but the transport's URI sends a request for each
+        # of them to the root scope's path. Test-OERAzureRootScope answers for the path the transport
+        # sends, so the handler's guard skips all three.
+        $Json = '{ "version": "1.0", "roleAssignments": [ ' +
+            '{ "scope": "/.", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/..", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/%2e", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Contributor", "principal": "person3@example.com" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        # Positive proof first: the subscription was read once for each of its two entries, reconciled,
+        # and its undeclared assignment removed.
+        @($script:RtArmLog | Where-Object { $_ -eq "GET $($script:RtSub)/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()" }).Count | Should -Be 2
+        @($Rows | Where-Object { $_.Item -eq "Reader -> person2@example.com @ $($script:RtSub)" }).Action | Should -Be @('Unchanged')
+        @($Rows | Where-Object { $_.Item -eq "Contributor -> person3@example.com @ $($script:RtSub)" }).Action | Should -Be @('Created')
+        @($Rows | Where-Object { $_.Item -eq $script:RtUndeclaredItem }).Action | Should -Be @('Removed')
+        @($script:RtArmLog | Where-Object { $_ -like 'PUT *' }).Count | Should -Be 1
+        @($script:RtArmLog | Where-Object { $_ -like 'DELETE *' }) | Should -Be @("DELETE $($script:RtUndeclaredId)?api-version=2022-04-01")
+
+        # Every root spelling: one Skipped row, and not one request that reaches the root scope.
+        foreach ($Spelling in @('/.', '/..', '/%2e')) {
+            $Root = @($Rows | Where-Object { $_.Item -eq "User Access Administrator -> person1@example.com @ $Spelling" })
+            $Root.Count | Should -Be 1 -Because "the entry at '$Spelling' reports one row"
+            $Root[0].Action | Should -Be 'Skipped' -Because "the entry at '$Spelling' is the root scope as the transport sends it"
+            $Root[0].Detail | Should -BeExactly $script:RtRootDetail
+        }
+        (Get-RootRequest -Log $script:RtArmLog) | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERStructurePrincipal -Times 0 -ParameterFilter { $Reference -eq 'person1@example.com' }
+        $Rows.Count | Should -Be 6
+    }
+
+    It 'skips the root entry and still removes the undeclared assignment at the subscription, in a script with no try above it' {
+        # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere
+        # above it, as at a prompt. The script installs its own fakes in ITS copy of the module scope and
+        # logs every ARM request with AppendAllText, whose path is substituted into the text.
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value {
+        param([string]$Reference, [string]$Type)
+        if ($Reference -eq 'person1@example.com') { 'dddd7777-0000-0000-0000-000000000001' } else { 'dddd7777-0000-0000-0000-000000000002' }
+    }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "PRINCIPAL lookup`n")
+        [pscustomobject]@{ PrincipalId = 'dddd7777-0000-0000-0000-000000000001'; PrincipalType = 'User' }
+    }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Method = 'GET', [string]$Path, [hashtable]$Body, [switch]$All)
+        [System.IO.File]::AppendAllText('#LOG#', "$Method $Path`n")
+        $Sub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $Reader = "$Sub/providers/Microsoft.Authorization/roleDefinitions/bbbb7777-0000-0000-0000-000000000001"
+        if ($Method -eq 'GET' -and $Path -like '*/roleDefinitions?*') { return [pscustomobject]@{ value = @([pscustomobject]@{ id = $Reader }) } }
+        if ($Method -eq 'GET' -and $Path -like '*/roleAssignments?*atScope()') {
+            return [pscustomobject]@{ value = @(
+                [pscustomobject]@{ id = "$Sub/providers/Microsoft.Authorization/roleAssignments/cccc7777-0000-0000-0000-000000000002"; name = 'a'
+                    properties = [pscustomobject]@{ scope = $Sub; principalId = 'dddd7777-0000-0000-0000-000000000002'; roleDefinitionId = $Reader } }
+                [pscustomobject]@{ id = "$Sub/providers/Microsoft.Authorization/roleAssignments/cccc7777-0000-0000-0000-000000000009"; name = 'b'
+                    properties = [pscustomobject]@{ scope = $Sub; principalId = 'dddd7777-0000-0000-0000-000000000009'; roleDefinitionId = $Reader } }
+            ) }
+        }
+        if ($Method -eq 'DELETE') { return [pscustomobject]@{ id = $Path.Split('?')[0]; properties = [pscustomobject]@{} } }
+        throw "unexpected $Method $Path"
+    }
+}
+$Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/", "role": "User Access Administrator", "principal": "person1@example.com" }, { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" } ] }'
+Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$($_.Action):$($_.Item)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        $Run.Output[-1] | Should -BeExactly 'END'
+        $Logged = @(Get-Content -LiteralPath $Log)
+        # Reached: the subscription's DELETE of the undeclared assignment is in the log.
+        $Logged | Should -Contain "DELETE $($script:RtUndeclaredId)?api-version=2022-04-01"
+        # Not one request at the root scope; a failure here prints the requests that were.
+        (Get-RootRequest -Log $Logged) | Should -BeNullOrEmpty
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+            "ROW:Skipped:$($script:RtRootLabel)"
+            "ROW:Unchanged:Reader -> person2@example.com @ $($script:RtSub)"
+            "ROW:Removed:$($script:RtUndeclaredItem)"
+        )
+        $Logged | Should -Not -Contain 'PRINCIPAL lookup'
+        @($Run.Errors).Count | Should -Be 0
+        @($Run.Prompts).Count | Should -Be 0
+    }
+}
+
 Describe 'Invoke-OERStructure acts only under the session it began with (BL-76)' {
     # Invoke-OERStructure signs in in its process block. Every begin block of a pipeline runs before
     # any process block, so a DOWNSTREAM command's begin block -- here a ForEach-Object -Begin, the
@@ -2056,5 +2259,165 @@ Describe 'Invoke-OERStructure refuses a document from another tenant (BL-88, A14
         Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
         Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureAdministrativeUnit -Times 0
+    }
+}
+
+Describe 'Invoke-OERStructure updates an access review found by name only when it reviews the declared package and policy (BL-127)' {
+    # The handler finds the live access review by display name in the whole tenant, and display names
+    # are not unique: here the tenant's review with the entry's name reviews a GROUP. The real engine,
+    # the real handler and the real Get-OERAccessReviewTargetMismatch run; only the sign-in, the
+    # definition read, the write, the lookups and the transport are mocked or faked. The review is
+    # refused before any lookup and nothing is written. No id below is version-4 shaped.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        $script:ArJson = '{ "version": "1.0", "accessReviews": [ { "displayName": "Q3 AP review", "accessPackage": "AP-Sales", ' +
+            '"assignmentPolicy": "Standard", "durationInDays": 21, "reviewers": [ "person1@example.com" ] } ] }'
+        $script:ArGroupScope = '/groups/11111111-1111-1111-1111-111111111111/transitiveMembers'
+        $script:ArRefusal = ("Access review 'Q3 AP review' in the tenant does not review an access package (its scope is " +
+            "'$($script:ArGroupScope)'), so it is not the review this entry declares for access package 'AP-Sales' and assignment " +
+            "policy 'Standard'. Nothing was written. Access review display names are not unique: give the entry or the review in " +
+            'the tenant another display name.')
+        # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere
+        # above it, as at a prompt. The script installs its own fakes in ITS copy of the module scope and
+        # logs every lookup and write with AppendAllText, whose path is substituted into the text. #LIVE#
+        # picks the review the tenant holds under the name: a group review, or the review of the declared
+        # package and policy (the control). #FLAGS# are the engine's own switches.
+        function New-ArNoTryScenario {
+            param([string]$Log, [ValidateSet('group', 'package')][string]$Live, [string]$Flags)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value {
+        [CmdletBinding()]
+        param([string]$Filter)
+        $Review = [pscustomobject]@{
+            Id = 'cccc3333-0000-0000-0000-000000000001'; DisplayName = 'Q3 AP review'; Status = 'InProgress'
+            Scope = '/groups/11111111-1111-1111-1111-111111111111/transitiveMembers'; AccessPackageId = $null; AssignmentPolicyId = $null
+            Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @(); DurationInDays = 14; Settings = @{ instanceDurationInDays = 14 }
+        }
+        if ('#LIVE#' -eq 'package') {
+            $Review.Scope = 'the declared package and policy'
+            $Review.AccessPackageId = 'aaaa1111-0000-0000-0000-000000000001'
+            $Review.AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000001'
+        }
+        $Review
+    }
+    Set-Item -Path function:script:Resolve-OERAccessPackageId -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "LOOKUP package`n")
+        'aaaa1111-0000-0000-0000-000000000001'
+    }
+    Set-Item -Path function:script:Resolve-OERAssignmentPolicyId -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "LOOKUP policy`n")
+        'bbbb2222-0000-0000-0000-000000000001'
+    }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "LOOKUP principal`n")
+        'usr-1'
+    }
+    Set-Item -Path function:script:New-OERAccessReviewDefinition -Value { [System.IO.File]::AppendAllText('#LOG#', "NEW`n") }
+    Set-Item -Path function:script:Set-OERAccessReviewDefinition -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "SET`n")
+        [pscustomobject]@{
+            Id = 'cccc3333-0000-0000-0000-000000000001'; DisplayName = 'Q3 AP review'; Status = 'InProgress'
+            Scope = 'the declared package and policy'; AccessPackageId = 'aaaa1111-0000-0000-0000-000000000001'
+            AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000001'
+            Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @(); DurationInDays = 21; Settings = @{ instanceDurationInDays = 21 }
+        }
+    }
+}
+$Json = '#JSON#'
+Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#LIVE#', $Live).Replace('#FLAGS#', $Flags).Replace('#JSON#', $script:ArJson.Replace("'", "''")))
+        }
+        function Get-ArLoggedLine {
+            param([string]$Log)
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log | Where-Object { $_ }) } else { @() }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+            [PSCustomObject]@{
+                Id = 'cccc3333-0000-0000-0000-000000000001'; DisplayName = 'Q3 AP review'; Status = 'InProgress'
+                Scope = '/groups/11111111-1111-1111-1111-111111111111/transitiveMembers'; AccessPackageId = $null; AssignmentPolicyId = $null
+                Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @(); DurationInDays = 14; Settings = @{ instanceDurationInDays = 14 }
+            }
+        }
+        Mock -ModuleName $script:moduleName Set-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'cccc3333-0000-0000-0000-000000000001' } }
+        Mock -ModuleName $script:moduleName New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+        Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { throw 'unexpected access package lookup' }
+        Mock -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId { throw 'unexpected assignment policy lookup' }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { throw 'unexpected reviewer lookup' }
+    }
+
+    It 'reports the entry Failed with the refusal, publishes it, and writes nothing to a group review that carries the entry''s name' {
+        $Errs = $null
+        $Rows = @(Invoke-OERStructure -Json $script:ArJson -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue)
+
+        # Positive proof first: the review was read once, and the entry was reported.
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+        $Rows.Count | Should -Be 1
+        $Rows[0].Section | Should -Be 'accessReviews'
+        $Rows[0].Item | Should -Be 'Q3 AP review'
+        $Rows[0].Action | Should -Be 'Failed'
+        $Rows[0].Detail | Should -BeExactly $script:ArRefusal
+        [string]$Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewScopeMismatch*'
+        $Own = @($Errs | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'AccessReviewScopeMismatch,Invoke-OERStructure' })
+        $Own.Count | Should -Be 1
+        $Own[0].Exception.Message | Should -BeExactly $script:ArRefusal
+
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERStructurePrincipal -Times 0
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed row, and writes nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-ArNoTryScenario -Log $Log -Live group -Flags '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        # Nothing looked up or written; a failure here prints the calls that were.
+        @(Get-ArLoggedLine -Log $Log) | Should -BeNullOrEmpty
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Failed:$($script:ArRefusal)")
+        @($Run.Errors) | Should -Be @($script:ArRefusal)
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'ends a script with no try above it at the refusal under -ErrorAction Stop, having written nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = New-ArNoTryScenario -Log $Log -Live group -Flags '-Confirm:$false -ErrorAction Stop'
+        # A stop outside any try ends the whole script, so the runner throws to its caller and no line
+        # after the engine, 'END' included, is reached.
+        $Thrown = { Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario } | Should -Throw -PassThru
+        $Thrown.Exception.InnerException | Should -BeOfType ([System.Management.Automation.ActionPreferenceStopException])
+        $Stopped = $Thrown.Exception.InnerException.ErrorRecord
+        [string]$Stopped.FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch,Invoke-OERStructure'
+        $Stopped.Exception.Message | Should -BeExactly $script:ArRefusal
+        @(Get-ArLoggedLine -Log $Log) | Should -BeNullOrEmpty
+    }
+
+    It 'asks no confirmation before the refusal, while the review of the declared package and policy is confirmed once and written' {
+        # Without -Confirm:$false the engine's ConfirmImpact High prompts at every ShouldProcess. The
+        # refusal comes before any, so the group review asks nothing; the control proves the prompt count
+        # is not vacuous: the matching review is looked up, confirmed once, and written.
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-ArNoTryScenario -Log $Log -Live group -Flags '')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Failed:$($script:ArRefusal)")
+        @($Run.Prompts).Count | Should -Be 0
+        @(Get-ArLoggedLine -Log $Log) | Should -BeNullOrEmpty
+
+        $ControlLog = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Control = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-ArNoTryScenario -Log $ControlLog -Live package -Flags '')
+        $Control.Output[-1] | Should -BeExactly 'END'
+        @($Control.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Updated:updated access review 'Q3 AP review' (durationInDays=21)")
+        @($Control.Prompts).Count | Should -Be 1
+        @(Get-ArLoggedLine -Log $ControlLog) | Should -Be @('LOOKUP package', 'LOOKUP policy', 'LOOKUP principal', 'SET')
+        @($Control.Errors).Count | Should -Be 0
     }
 }

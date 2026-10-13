@@ -147,7 +147,29 @@ function Invoke-OERStructure {
     every item of its scope and one key cache per scope, and the handler reports the LATER entry
     Failed, naming the earlier one, without reading or writing anything for it. The earlier entry
     owns the assignment, and the prune never removes it. An explicit "roleAssignments": null is not
-    declared: the section is skipped like an absent key, and the pre-pass never runs for it.
+    declared: the section is skipped like an absent key, and the pre-pass never runs for it. An
+    entry whose scope is the Azure root scope '/', above every management group and subscription in
+    the tenant, is never applied: a role assignment there is elevated access, which this command
+    never creates or removes. The entry is reported Skipped, with a warning, before anything is
+    looked up, read or written for it -- no principal or role lookup and no Azure Resource Manager
+    call at '/' -- and the root scope is never pruned (see -Prune). No ShouldProcess is involved, so
+    -WhatIf and a real run report the same row. An entry at any other scope in the same document is
+    applied and pruned as before. Test-OERStructure reports such an entry as a Warning.
+
+    AccessReviews target check: an existing access review is found by its display name in the whole
+    tenant, and display names are not unique, so the review found can be one of a group, a role or
+    another access package. It is updated only when it reviews the access package and the assignment
+    policy the entry declares: a GUID is compared as written, and a name is resolved as
+    New-OERAccessReviewDefinition resolves it. A review that does not is reported Failed with the
+    error AccessReviewScopeMismatch, and nothing is written to it; a review that reviews no access
+    package at all is refused with no access package or assignment policy lookup. A name that matches
+    nothing is reported Failed with AccessPackageNotFound or AssignmentPolicyNotFound, and a lookup
+    that fails (an ambiguous name, a 403) with its own error, and nothing is written either. An
+    access package name is not unique in the tenant, nor an assignment policy name in its access
+    package, and Get-OERInventory exports both by name: when such a name is shared, the entry is
+    reported Failed with AmbiguousName until it names the package or the policy by id. The check runs
+    before the reviewer lookups and before any ShouldProcess, so -WhatIf and a real run report the
+    same Failed row. Under -ErrorAction Stop the error stops the command, as any error does.
 
     DirectoryRoleAssignments section pass: the engine passes every directoryRoleAssignments entry to
     each invocation of its handler and sets -ReconcileSection on the first item only, so the handler
@@ -241,6 +263,11 @@ function Invoke-OERStructure {
     -Prune) with a Detail starting "prune withheld:" that names the entry, or the entries, whose scope
     could not be resolved (in a second sentence, after the one naming an unresolved sibling, when
     such a sibling withholds the same assignment too), and none is removed.
+
+    The Azure root scope '/' is never pruned. A roleAssignments entry at the root scope is reported
+    Skipped, with a warning, and nothing is read or removed there, with or without -Prune (see
+    RoleAssignments scope grouping above). Every other scope the document declares is pruned as
+    described here.
 
     directoryRoleAssignments is reconciled per pair of directory role and assignmentType, and only
     for the pairs the document declares: a directory role the document does not name, or names only

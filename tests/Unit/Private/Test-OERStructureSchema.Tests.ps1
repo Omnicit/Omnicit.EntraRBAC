@@ -4268,9 +4268,11 @@ Describe 'Test-OERStructureSchema scope written with a trailing or doubled slash
         $V.Valid | Should -BeFalse
     }
 
-    It 'accepts <Scope> in <Section>' -ForEach @(
+    It 'accepts <Scope> in <Section> with no finding' -ForEach @(
         foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
-            @{ Section = $Section; Scope = '/' }
+            # BL-126: the root scope '/' is accepted with no finding in roleManagementPolicies only. In
+            # roleAssignments it is accepted with a Warning, held in the Describe below.
+            if ($Section -eq 'roleManagementPolicies') { @{ Section = $Section; Scope = '/' } }
             @{ Section = $Section; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
             @{ Section = $Section; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' }
             @{ Section = $Section; Scope = '/providers/Microsoft.Management/managementGroups/plat' }
@@ -4281,6 +4283,7 @@ Describe 'Test-OERStructureSchema scope written with a trailing or doubled slash
     ) {
         $V = Invoke-SlashValidation -Doc (New-SlashDoc -Section $Section -Scope $Scope)
         @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        @($V.Errors | Where-Object { $_.Severity -eq 'Warning' }).Count | Should -Be 0
         $V.Valid | Should -BeTrue
     }
 
@@ -4335,6 +4338,106 @@ Describe 'Test-OERStructureSchema scope written with a trailing or doubled slash
         $Errs = @($V.Errors | Where-Object { $_.Severity -eq 'Error' })
         @($Errs.Path) | Should -BeExactly @('roleAssignments[1].scope', 'roleAssignments[1]')
         $V.Valid | Should -BeFalse
+    }
+}
+
+Describe 'Test-OERStructureSchema warns about a role assignment at the root scope (BL-126)' {
+    # The Azure root scope '/' stands above every management group and subscription, so a role
+    # assignment there is elevated access. The document never carries one and the apply engine never
+    # creates or removes one: a roleAssignments entry at the root scope is a Warning (an older export
+    # that holds one still applies for the rest), and the entry is reported Skipped. A
+    # roleManagementPolicies entry at '/' is unchanged, and the '/' of the directory role sections is the
+    # Microsoft Entra tenant scope, not the Azure root scope. No id below is version-4 shaped.
+    BeforeAll {
+        function Invoke-RootValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        function Get-RootWarning {
+            param([object]$Validation)
+            @($Validation.Errors | Where-Object { $_.Message -match 'is the root scope' })
+        }
+        $script:RootFindingText = "'scope' at roleAssignments[0] is the root scope '/', which grants access over every management group and " +
+            'subscription in the tenant (elevated access). Invoke-OERStructure never creates or removes a role assignment there: the entry ' +
+            'is reported Skipped and the root scope is never pruned. Remove the entry and manage elevated access outside the document.'
+    }
+
+    It 'warns about ''/'' in roleAssignments at the entry''s scope path, and the document stays valid' {
+        $V = Invoke-RootValidation -Json '{ "version": "1.0", "roleAssignments": [ { "scope": "/", "role": "User Access Administrator", "principal": "person1@example.com" } ] }'
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        $Warnings = @($V.Errors | Where-Object { $_.Severity -eq 'Warning' })
+        $Warnings.Count | Should -Be 1
+        $Warnings[0].Section | Should -BeExactly 'roleAssignments'
+        $Warnings[0].Item | Should -BeExactly 'User Access Administrator'
+        $Warnings[0].Path | Should -BeExactly 'roleAssignments[0].scope'
+        $Warnings[0].Message | Should -BeExactly $script:RootFindingText
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'names the entry by its index when it has no role' {
+        $V = Invoke-RootValidation -Json '{ "version": "1.0", "roleAssignments": [ { "scope": "/", "principal": "person1@example.com" } ] }'
+        $Root = Get-RootWarning -Validation $V
+        $Root.Count | Should -Be 1
+        $Root[0].Item | Should -BeExactly 'roleAssignments[0]'
+        $Root[0].Path | Should -BeExactly 'roleAssignments[0].scope'
+    }
+
+    It 'reports ''//'' in roleAssignments with its slash Error and the root Warning, since both are true' {
+        $V = Invoke-RootValidation -Json '{ "version": "1.0", "roleAssignments": [ { "scope": "//", "role": "Owner", "principal": "person1@example.com" } ] }'
+        $Errs = @($V.Errors | Where-Object { $_.Severity -eq 'Error' })
+        $Errs.Count | Should -Be 1
+        $Errs[0].Message | Should -BeExactly "'scope' at roleAssignments[0] must be written without a trailing or doubled '/'. Got: '//'."
+        $Root = Get-RootWarning -Validation $V
+        $Root.Count | Should -Be 1
+        $Root[0].Severity | Should -BeExactly 'Warning'
+        $Root[0].Message | Should -BeExactly $script:RootFindingText
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'warns about <Scope> in roleAssignments, a spelling the ARM transport sends to the root, with no Error' -ForEach @(
+        @{ Scope = '/.' }
+        @{ Scope = '/..' }
+        @{ Scope = '/%2e' }
+    ) {
+        # System.Uri removes the dot segment (and decodes '%2e' first), so a request for this scope reaches
+        # the root scope's path; Test-OERAzureRootScope says so, and the validator warns as for '/'.
+        $V = Invoke-RootValidation -Json ('{ "version": "1.0", "roleAssignments": [ { "scope": "' + $Scope + '", "role": "User Access Administrator", "principal": "person1@example.com" } ] }')
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        $Warnings = @($V.Errors | Where-Object { $_.Severity -eq 'Warning' })
+        $Warnings.Count | Should -Be 1
+        $Warnings[0].Path | Should -BeExactly 'roleAssignments[0].scope'
+        $Warnings[0].Message | Should -BeExactly $script:RootFindingText
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'names the index of a later entry at the root scope, and warns about no other entry' {
+        $V = Invoke-RootValidation -Json ('{ "version": "1.0", "roleAssignments": [ ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/", "role": "Owner", "principal": "person2@example.com" } ] }')
+        $Root = Get-RootWarning -Validation $V
+        $Root.Count | Should -Be 1
+        $Root[0].Path | Should -BeExactly 'roleAssignments[1].scope'
+        $Root[0].Message | Should -BeExactly $script:RootFindingText.Replace('roleAssignments[0]', 'roleAssignments[1]')
+        @($V.Errors).Count | Should -Be 1
+    }
+
+    It 'says nothing about the root scope for <Case>' -ForEach @(
+        @{ Case = '''/'' in roleManagementPolicies'; Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "/", "role": "Owner" } ] }' }
+        @{ Case = '''/.'' in roleManagementPolicies'; Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "/.", "role": "Owner" } ] }' }
+        @{ Case = '''/..'' in roleManagementPolicies'; Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "/..", "role": "Owner" } ] }' }
+        @{ Case = '''/%2e'' in roleManagementPolicies'; Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "/%2e", "role": "Owner" } ] }' }
+        @{ Case = 'a directoryRoleAssignments entry with scope ''/'''; Json = '{ "version": "1.0", "directoryRoleAssignments": [ { "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "scope": "/" } ] }' }
+        @{ Case = 'a directoryRoleManagementPolicies entry with scope ''/'''; Json = '{ "version": "1.0", "directoryRoleManagementPolicies": [ { "role": "Reports Reader", "scope": "/" } ] }' }
+        @{ Case = 'a roleAssignments entry below the root'; Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/providers/Microsoft.Management/managementGroups/plat", "role": "Owner", "principal": "person1@example.com" } ] }' }
+        @{ Case = 'a roleAssignments entry with no scope'; Json = '{ "version": "1.0", "roleAssignments": [ { "role": "Owner", "principal": "person1@example.com" } ] }' }
+        @{ Case = 'a roleAssignments entry whose scope is null'; Json = '{ "version": "1.0", "roleAssignments": [ { "scope": null, "role": "Owner", "principal": "person1@example.com" } ] }' }
+    ) {
+        $V = Invoke-RootValidation -Json $Json
+        @(Get-RootWarning -Validation $V).Count | Should -Be 0
     }
 }
 
