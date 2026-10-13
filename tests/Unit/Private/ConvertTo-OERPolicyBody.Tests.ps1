@@ -418,3 +418,221 @@ Describe 'ConvertTo-OERPolicyBody requestorSettings merge (stop-loss)' {
         }
     }
 }
+
+Describe 'ConvertTo-OERPolicyBody custom extension stages (Sprint 11 step 3)' {
+    # MEASURED 2026-10-13: Microsoft Graph removes a policy's customExtensionStageSettings on a PUT that
+    # omits them, and the read returns each stage as { id, stage } with the extension's own id only under
+    # $expand=customExtensionStageSettings($expand=customExtension). -Existing is the raw Graph HASHTABLE,
+    # so every fixture here is a nested hashtable, the production shape. The carried body is the
+    # documented update shape: the stage and the extension's type and id, nothing else.
+    BeforeAll {
+        Import-Module Omnicit.EntraRBAC -Force
+    }
+
+    It 'carries one stage in the documented update shape: only stage and customExtension (@odata.type, id)' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Existing = @{
+                customExtensionStageSettings = @(
+                    @{
+                        id              = 'aaaaaaaa-0000-0000-0000-000000000001'
+                        stage           = 'assignmentRequestCreated'
+                        customExtension = @{
+                            '@odata.type'         = '#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension'
+                            id                    = 'aaaaaaaa-0000-0000-0000-000000000002'
+                            displayName           = 'ext'
+                            endpointConfiguration = @{ url = 'https://example.invalid/x' }
+                        }
+                    }
+                )
+            }
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+
+            $Body.ContainsKey('customExtensionStageSettings') | Should -Be $true
+            @($Body.customExtensionStageSettings).Count | Should -Be 1
+            $Stage = @($Body.customExtensionStageSettings)[0]
+            ($Stage.Keys | Sort-Object) -join ',' | Should -Be 'customExtension,stage'
+            $Stage.stage | Should -Be 'assignmentRequestCreated'
+            ($Stage.customExtension.Keys | Sort-Object) -join ',' | Should -Be '@odata.type,id'
+            $Stage.customExtension['@odata.type'] | Should -Be '#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension'
+            $Stage.customExtension.id | Should -Be 'aaaaaaaa-0000-0000-0000-000000000002'
+        }
+    }
+
+    It 'carries two stages in order' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Existing = @{
+                customExtensionStageSettings = @(
+                    @{
+                        id              = 'aaaaaaaa-0000-0000-0000-000000000011'
+                        stage           = 'assignmentRequestCreated'
+                        customExtension = @{ '@odata.type' = '#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension'; id = 'aaaaaaaa-0000-0000-0000-000000000012' }
+                    }
+                    @{
+                        id              = 'aaaaaaaa-0000-0000-0000-000000000013'
+                        stage           = 'assignmentRequestGranted'
+                        customExtension = @{ '@odata.type' = '#microsoft.graph.accessPackageAssignmentWorkflowExtension'; id = 'aaaaaaaa-0000-0000-0000-000000000014' }
+                    }
+                )
+            }
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+
+            $Carried = @($Body.customExtensionStageSettings)
+            $Carried.Count | Should -Be 2
+            $Carried[0].stage | Should -Be 'assignmentRequestCreated'
+            $Carried[0].customExtension.id | Should -Be 'aaaaaaaa-0000-0000-0000-000000000012'
+            $Carried[1].stage | Should -Be 'assignmentRequestGranted'
+            $Carried[1].customExtension.id | Should -Be 'aaaaaaaa-0000-0000-0000-000000000014'
+            $Carried[1].customExtension['@odata.type'] | Should -Be '#microsoft.graph.accessPackageAssignmentWorkflowExtension'
+        }
+    }
+
+    It 'carries a stage whose extension read no @odata.type with the id alone' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Existing = @{
+                customExtensionStageSettings = @(
+                    @{ stage = 'assignmentRequestCreated'; customExtension = @{ id = 'aaaaaaaa-0000-0000-0000-000000000002'; displayName = 'ext' } }
+                )
+            }
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+
+            $Ref = @($Body.customExtensionStageSettings)[0].customExtension
+            ($Ref.Keys | Sort-Object) -join ',' | Should -Be 'id'
+            $Ref.id | Should -Be 'aaaaaaaa-0000-0000-0000-000000000002'
+        }
+    }
+
+    It 'adds no customExtensionStageSettings key when the live list is <Name>' -ForEach @(
+        @{ Name = 'an empty array'; Existing = @{ customExtensionStageSettings = @() } }
+        @{ Name = 'null'; Existing = @{ customExtensionStageSettings = $null } }
+        @{ Name = 'absent'; Existing = @{ displayName = 'Live' } }
+        @{ Name = 'a list of only null entries'; Existing = @{ customExtensionStageSettings = @($null, $null) } }
+    ) {
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Existing = $Existing } {
+            param($Existing)
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+
+            $Body.ContainsKey('customExtensionStageSettings') | Should -Be $false
+        }
+    }
+
+    It 'adds no customExtensionStageSettings key on New (no -Existing)' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorScope $Scope
+
+            $Body.ContainsKey('customExtensionStageSettings') | Should -Be $false
+        }
+    }
+
+    It 'fails closed when a stage <Name>: throws, so no stage is silently dropped' -ForEach @(
+        @{ Name = 'is an empty entry (a lone stage, whose Count is its key count, not 1)'; Stage = @{} }
+        @{ Name = 'has no customExtension'; Stage = @{ id = 'aaaaaaaa-0000-0000-0000-000000000001'; stage = 'assignmentRequestCreated' } }
+        @{ Name = 'has a null customExtension'; Stage = @{ stage = 'assignmentRequestCreated'; customExtension = $null } }
+        @{ Name = 'has a customExtension with no id'; Stage = @{ stage = 'assignmentRequestCreated'; customExtension = @{ '@odata.type' = '#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension'; displayName = 'ext' } } }
+        @{ Name = 'has a customExtension with an empty id'; Stage = @{ stage = 'assignmentRequestCreated'; customExtension = @{ id = '' } } }
+        @{ Name = 'has a customExtension with a white space id'; Stage = @{ stage = 'assignmentRequestCreated'; customExtension = @{ id = '  ' } } }
+    ) {
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Stage = $Stage } {
+            param($Stage)
+            $Existing = @{ customExtensionStageSettings = @($Stage) }
+
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } |
+                Should -Throw '*custom extension*'
+        }
+    }
+
+    It 'fails closed on the second stage when only the first read its extension id' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Existing = @{
+                customExtensionStageSettings = @(
+                    @{ stage = 'assignmentRequestCreated'; customExtension = @{ id = 'aaaaaaaa-0000-0000-0000-000000000002' } }
+                    @{ stage = 'assignmentRequestGranted' }
+                )
+            }
+
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } |
+                Should -Throw "*custom extension stage 'assignmentRequestGranted'*"
+        }
+    }
+}
+
+Describe 'ConvertTo-OERPolicyBody automatic request settings (Sprint 11 step 3)' {
+    # MEASURED 2026-10-13: an update of an automatic assignment policy that omits automaticRequestSettings
+    # is refused (400 InvalidSpecificAllowedTargets); with them it is accepted and they are kept. They
+    # travel with the CARRIED scope as one unit: a declared -RequestorScope replaces the allowed targets
+    # and must never inherit automatic assignment.
+    BeforeAll {
+        Import-Module Omnicit.EntraRBAC -Force
+    }
+
+    It 'carries the existing automaticRequestSettings when -RequestorScope is omitted' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Existing = @{
+                allowedTargetScope       = 'specificDirectoryUsers'
+                specificAllowedTargets   = @(@{ '@odata.type' = '#microsoft.graph.attributeRuleMembers'; description = 'rule'; membershipRule = '(user.department -eq "x")' })
+                automaticRequestSettings = @{
+                    requestAccessForAllowedTargets             = $true
+                    removeAccessWhenTargetLeavesAllowedTargets = $true
+                    gracePeriodBeforeAccessRemoval             = 'P7D'
+                }
+            }
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+
+            $Body.ContainsKey('automaticRequestSettings') | Should -Be $true
+            $Body.automaticRequestSettings.requestAccessForAllowedTargets | Should -Be $true
+            $Body.automaticRequestSettings.removeAccessWhenTargetLeavesAllowedTargets | Should -Be $true
+            $Body.automaticRequestSettings.gracePeriodBeforeAccessRemoval | Should -Be 'P7D'
+            # It travels with the carried scope, which is carried too.
+            $Body.allowedTargetScope | Should -Be 'specificDirectoryUsers'
+            @($Body.specificAllowedTargets).Count | Should -Be 1
+        }
+    }
+
+    It 'never inherits automaticRequestSettings into a declared -RequestorScope' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
+            $Existing = @{
+                allowedTargetScope       = 'specificDirectoryUsers'
+                specificAllowedTargets   = @(@{ '@odata.type' = '#microsoft.graph.attributeRuleMembers'; description = 'rule'; membershipRule = '(user.department -eq "x")' })
+                automaticRequestSettings = @{
+                    requestAccessForAllowedTargets             = $true
+                    removeAccessWhenTargetLeavesAllowedTargets = $true
+                    gracePeriodBeforeAccessRemoval             = 'P7D'
+                }
+            }
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorScope $Scope -Existing $Existing
+
+            # The scope really was replaced (the path was reached) and the settings did not follow it.
+            $Body.allowedTargetScope | Should -Be 'allMemberUsers'
+            $Body.ContainsKey('automaticRequestSettings') | Should -Be $false
+        }
+    }
+
+    It 'adds no automaticRequestSettings key when the live value is null' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Existing = @{ allowedTargetScope = 'allMemberUsers'; automaticRequestSettings = $null }
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+
+            $Body.allowedTargetScope | Should -Be 'allMemberUsers'
+            $Body.ContainsKey('automaticRequestSettings') | Should -Be $false
+        }
+    }
+
+    It 'adds no automaticRequestSettings key when the live policy does not read one' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Existing = @{ allowedTargetScope = 'allMemberUsers' }
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing
+
+            $Body.ContainsKey('automaticRequestSettings') | Should -Be $false
+        }
+    }
+
+    It 'adds no automaticRequestSettings key on New (no -Existing)' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
+            $Body = ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -RequestorScope $Scope
+
+            $Body.ContainsKey('automaticRequestSettings') | Should -Be $false
+        }
+    }
+}

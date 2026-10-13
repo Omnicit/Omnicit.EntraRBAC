@@ -13,10 +13,17 @@ function Set-OERAccessPackageAssignmentPolicy {
     -DisableAssignmentNotifications, -DisplayName, -Description.
     Read-modify-write semantics: the existing policy is fetched once (same GET used to resolve the access
     package id); undeclared settings (requestorScope, requestorSettings, requestApprovalSettings approval
-    flags, reviewSettings, questions, expiration) are carried forward from the existing policy so only the
-    fields you explicitly pass are changed. The body is assembled by the shared ConvertTo-OERPolicyBody
-    helper. Output is the updated tagged Omnicit.EntraRBAC.AssignmentPolicy object. Supports -WhatIf and
-    -Confirm. The duration parameters also accept the module-standard -DurationDays / -DurationHours names.
+    flags, reviewSettings, questions, expiration, custom extension stages and, while -RequestorScope is
+    not passed, automatic assignment settings) are carried forward from the existing policy so only the
+    fields you explicitly pass are changed. Microsoft Graph removes the custom extension stages from a
+    policy on an update that does not send them (measured), so the read expands each stage's custom
+    extension and the update sends every stage back; a stage whose custom extension id could not be read
+    is refused with a non-terminating InvalidPolicyInput error, also under -WhatIf, and nothing is sent.
+    The automatic assignment settings travel with the live scope: a declared -RequestorScope replaces
+    the allowed targets and never inherits them. The body is assembled by the shared
+    ConvertTo-OERPolicyBody helper. Output is the updated tagged Omnicit.EntraRBAC.AssignmentPolicy
+    object. Supports -WhatIf and -Confirm. The duration parameters also accept the module-standard
+    -DurationDays / -DurationHours names.
 
     At least one property beyond the mandatory -DisplayName must be supplied or a non-terminating
     NothingToUpdate error is emitted. Because -DisplayName is Mandatory it is re-sent on every call and
@@ -47,8 +54,9 @@ function Set-OERAccessPackageAssignmentPolicy {
 
     .PARAMETER RequestorScope
     An optional tagged Omnicit.EntraRBAC.RequestorScope object from New-OERAccessPackageRequestorScope.
-    When omitted, the policy keeps its live allowedTargetScope and specificAllowedTargets instead of
-    being reset to a default scope. A scope whose allowedTargetScope is SpecificConnectedOrganizationUsers
+    When omitted, the policy keeps its live allowedTargetScope and specificAllowedTargets, and the
+    automatic assignment settings that go with them, instead of being reset to a default scope; a
+    declared scope never inherits the automatic assignment settings. A scope whose allowedTargetScope is SpecificConnectedOrganizationUsers
     and that names no connected organization is refused with a non-terminating InvalidPolicyInput error
     after the live policy is read and before anything is sent, also under -WhatIf: that is the scope
     New-OERAccessPackageRequestorScope -Scope SpecificConnectedOrganizationUsers builds, since the
@@ -221,9 +229,12 @@ function Set-OERAccessPackageAssignmentPolicy {
         }
 
         # Single GET: used both to resolve the access package id and as the -Existing baseline for
-        # read-modify-write (undeclared settings are carried forward from this response).
+        # read-modify-write (undeclared settings are carried forward from this response). It expands
+        # the custom extension of each stage as well as the access package: $expand=accessPackage alone
+        # returns a stage as { id, stage } WITHOUT the extension's own id (measured 2026-10-13, Sprint 11
+        # step 3), and a PUT that omits the stages removes them, so the id is what lets them be sent back.
         try {
-            $Existing = Invoke-OERGraphRequest -Uri ("v1.0/identityGovernance/entitlementManagement/assignmentPolicies/{0}?`$expand=accessPackage" -f $Id)
+            $Existing = Invoke-OERGraphRequest -Uri ("v1.0/identityGovernance/entitlementManagement/assignmentPolicies/{0}?`$expand=accessPackage,customExtensionStageSettings(`$expand=customExtension)" -f $Id)
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $PSCmdlet.WriteError($PSItem)

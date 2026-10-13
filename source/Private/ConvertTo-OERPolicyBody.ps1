@@ -27,6 +27,16 @@ function ConvertTo-OERPolicyBody {
     default. Omitting -RequestorScope with no -Existing baseline (New, with no scope supplied) is a
     caller error and throws.
 
+    Custom extension stages are carried forward from -Existing in the documented update shape, per stage
+    the stage name and a customExtension holding the extension's type and id and nothing else, since
+    Microsoft Graph removes a policy's custom extension stages on an update that does not send them
+    (measured). A stage whose custom extension id was not read cannot be carried, and dropping it would
+    disconnect the extension, so the function throws instead; an empty or absent list adds no key.
+    automaticRequestSettings is carried forward from -Existing together with the carried scope, and only
+    while -RequestorScope is omitted: a declared scope replaces the allowed targets and never inherits
+    automatic assignment. Without them an update of an automatic assignment policy is refused by
+    Microsoft Graph (measured).
+
     .PARAMETER DisplayName
     The policy display name.
 
@@ -82,7 +92,9 @@ function ConvertTo-OERPolicyBody {
     .PARAMETER Existing
     The current raw Graph accessPackageAssignmentPolicy hashtable, supplied by Set for read-modify-write.
     Values not provided as parameters are carried forward from it, and reviewSettings and questions are
-    preserved verbatim. Absent on New.
+    preserved verbatim. Its customExtensionStageSettings must hold each custom extension's id (read with
+    $expand=customExtensionStageSettings($expand=customExtension)) or the function throws, and its
+    automaticRequestSettings is carried only while -RequestorScope is omitted. Absent on New.
 
     .EXAMPLE
     ConvertTo-OERPolicyBody -DisplayName 'Default' -AccessPackageId 'ap-1' -RequestorScope $s -ApprovalStage $stage -DurationInDays 30
@@ -297,6 +309,38 @@ function ConvertTo-OERPolicyBody {
     # Preserve carry-forward-only collections verbatim from Existing; omitted entirely on New.
     if ($Existing -and $Existing.reviewSettings) { $Body.reviewSettings = $Existing.reviewSettings }
     if ($Existing -and $Existing.questions) { $Body.questions = $Existing.questions }
+
+    # Custom extension stages (measured 2026-10-13, Sprint 11 step 3): Microsoft Graph REMOVES a
+    # policy's customExtensionStageSettings on a PUT that omits them, so a read-modify-write must send
+    # them back. Carried in the documented update shape -- the stage and the custom extension's type and
+    # id -- never the expanded extension object the read returns. A stage whose extension id was not
+    # read cannot be carried, and dropping it would disconnect the extension: refuse instead.
+    # The outer @() keeps a lone stage an array: an if-expression unrolls a one-element array, and a
+    # lone hashtable's Count is its key count, so an empty entry would otherwise be dropped unseen.
+    $ExistingStages = @(if ($null -ne $Existing -and $Existing.ContainsKey('customExtensionStageSettings')) {
+            @($Existing['customExtensionStageSettings'] | Where-Object { $null -ne $_ })
+        })
+    if ($ExistingStages.Count -gt 0) {
+        $Body.customExtensionStageSettings = @(foreach ($StageSetting in $ExistingStages) {
+                $Extension = $StageSetting['customExtension']
+                $ExtensionId = if ($Extension -is [System.Collections.IDictionary]) { [string]$Extension['id'] } else { '' }
+                if ([string]::IsNullOrWhiteSpace($ExtensionId)) {
+                    throw "The existing policy has a custom extension stage '$([string]$StageSetting['stage'])' whose custom extension id was not read, so it cannot be carried forward and the update would remove it."
+                }
+                $Ref = @{ id = $ExtensionId }
+                if ($Extension['@odata.type']) { $Ref['@odata.type'] = [string]$Extension['@odata.type'] }
+                @{ stage = [string]$StageSetting['stage']; customExtension = $Ref }
+            })
+    }
+
+    # Automatic assignment (measured): an update of an automatic assignment policy that omits
+    # automaticRequestSettings is refused (400 InvalidSpecificAllowedTargets); with it the update is
+    # accepted and the settings are kept. Carried only together with the carried scope: a declared
+    # -RequestorScope replaces the allowed targets, and must never inherit automatic assignment.
+    if ($null -ne $Existing -and -not $PSBoundParameters.ContainsKey('RequestorScope') -and
+        $Existing.ContainsKey('automaticRequestSettings') -and $null -ne $Existing['automaticRequestSettings']) {
+        $Body.automaticRequestSettings = $Existing['automaticRequestSettings']
+    }
 
     $Body
 }

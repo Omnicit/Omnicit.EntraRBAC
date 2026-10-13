@@ -102,7 +102,9 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
     }
 
-    It 'GETs the existing policy with $expand=accessPackage to learn the package and includes it in the PUT body' {
+    It 'GETs the existing policy once, expanding the access package and each stage''s custom extension, to learn the package and includes it in the PUT body' {
+        # The exact URI: $expand=accessPackage alone returns a stage as { id, stage } WITHOUT the custom
+        # extension's own id (measured 2026-10-13, Sprint 11 step 3), so the stages could not be carried.
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             @{ id = 'pol-1'; accessPackage = @{ id = 'ap-99' }; displayName = 'Old' }
         } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
@@ -112,8 +114,9 @@ Describe 'Set-OERAccessPackageAssignmentPolicy' {
         $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
         $R = Set-OERAccessPackageAssignmentPolicy -Id 'pol-1' -DisplayName 'New' -RequestorScope $Scope
         $R.AccessPackageId | Should -Be 'ap-99'
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter {
-            (-not $Method -or $Method -eq 'GET') -and $Uri -like '*assignmentPolicies/pol-1?*expand=accessPackage*'
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            (-not $Method -or $Method -eq 'GET') -and
+            $Uri -ceq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage,customExtensionStageSettings($expand=customExtension)'
         }
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter {
             $Method -eq 'PUT' -and $Body.accessPackage.id -eq 'ap-99'
@@ -564,7 +567,8 @@ Describe 'Set-OERAccessPackageAssignmentPolicy refuses a connected-organization 
             # Positive proof that the guard was reached: the live policy was read, once, and that was
             # the only request made.
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
-                (-not $Method -or $Method -eq 'GET') -and $Uri -like '*assignmentPolicies/11111111-1111-1111-1111-111111111111?*expand=accessPackage*'
+                (-not $Method -or $Method -eq 'GET') -and
+                $Uri -ceq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/11111111-1111-1111-1111-111111111111?$expand=accessPackage,customExtensionStageSettings($expand=customExtension)'
             }
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
@@ -771,5 +775,276 @@ $Results = @(
             'Invoke-OERGraphRequest GET'
             'Invoke-OERGraphRequest PUT targets=1'
         )
+    }
+}
+
+Describe 'Set-OERAccessPackageAssignmentPolicy keeps custom extension stages and automatic assignment settings (Sprint 11 step 3)' {
+    # MEASURED 2026-10-13: (1) Microsoft Graph removes a policy's customExtensionStageSettings on a PUT
+    # that omits them; (2) the read returns a stage as { id, stage } only, the extension's own id coming
+    # with $expand=customExtensionStageSettings($expand=customExtension); (3) an update of an automatic
+    # assignment policy that omits automaticRequestSettings is refused (400 InvalidSpecificAllowedTargets).
+    BeforeAll {
+        Import-Module $script:moduleName -Force
+        $script:S11Id = 'aaaaaaaa-0000-0000-0000-000000000031'
+        $script:S11GetUri = 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/aaaaaaaa-0000-0000-0000-000000000031?$expand=accessPackage,customExtensionStageSettings($expand=customExtension)'
+        $script:S11Rules = @(@{ '@odata.type' = '#microsoft.graph.attributeRuleMembers'; description = 'rule'; membershipRule = '(user.department -eq "x")' })
+
+        # The policy as Microsoft Graph returns it for the R3 URI. -Stage and -Automatic are optional.
+        function New-S11Policy {
+            param($Stage, $Automatic, [switch]$WithAutomatic)
+            $Policy = @{
+                id                 = 'aaaaaaaa-0000-0000-0000-000000000031'
+                displayName        = 'Policy'
+                description        = 'live description'
+                accessPackage      = @{ id = 'ap-1' }
+                allowedTargetScope = 'allMemberUsers'
+                expiration         = @{ type = 'noExpiration' }
+            }
+            if ($PSBoundParameters.ContainsKey('Stage')) { $Policy.customExtensionStageSettings = $Stage }
+            if ($WithAutomatic) {
+                $Policy.allowedTargetScope = 'specificDirectoryUsers'
+                $Policy.specificAllowedTargets = $script:S11Rules
+                $Policy.automaticRequestSettings = $Automatic
+            }
+            $Policy
+        }
+
+        function New-S11Stage {
+            @{
+                id              = 'aaaaaaaa-0000-0000-0000-000000000032'
+                stage           = 'assignmentRequestCreated'
+                customExtension = @{
+                    '@odata.type'         = '#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension'
+                    id                    = 'aaaaaaaa-0000-0000-0000-000000000033'
+                    displayName           = 'ext'
+                    endpointConfiguration = @{ url = 'https://example.invalid/x' }
+                }
+            }
+        }
+
+        function Invoke-S11Set {
+            param([hashtable]$Extra = @{}, [bool]$UseWhatIf = $false)
+            $Err = $null
+            $Result = Set-OERAccessPackageAssignmentPolicy -Id $script:S11Id -DisplayName 'Policy' -Description 'new description' `
+                @Extra -WhatIf:$UseWhatIf -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+            [PSCustomObject]@{ Result = $Result; Errors = @($Err) }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ id = 'aaaaaaaa-0000-0000-0000-000000000031'; displayName = 'Policy'; allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' } }
+        } -ParameterFilter { $Method -eq 'PUT' }
+    }
+
+    Context 'custom extension stages' {
+        It 'sends the stage the read returned in the update shape: the stage and the extension type and id only' {
+            $Policy = New-S11Policy -Stage @(New-S11Stage)
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $Policy } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+
+            $Run = Invoke-S11Set
+
+            $Run.Errors.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                (-not $Method -or $Method -eq 'GET') -and $Uri -ceq $script:S11GetUri
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and
+                @($Body.customExtensionStageSettings).Count -eq 1 -and
+                $Body.customExtensionStageSettings[0].stage -eq 'assignmentRequestCreated' -and
+                $Body.customExtensionStageSettings[0].customExtension.id -eq 'aaaaaaaa-0000-0000-0000-000000000033' -and
+                $Body.customExtensionStageSettings[0].customExtension['@odata.type'] -eq '#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension' -and
+                (($Body.customExtensionStageSettings[0].Keys | Sort-Object) -join ',') -eq 'customExtension,stage' -and
+                (($Body.customExtensionStageSettings[0].customExtension.Keys | Sort-Object) -join ',') -eq '@odata.type,id'
+            }
+        }
+
+        It 'sends no customExtensionStageSettings when the live policy has <Name>' -ForEach @(
+            @{ Name = 'an empty list'; Policy = @{ Stage = @() } }
+            @{ Name = 'a null list'; Policy = @{ Stage = $null } }
+            @{ Name = 'no list at all'; Policy = @{} }
+        ) {
+            $Params = $Policy
+            $Live = New-S11Policy @Params
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $Live } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+
+            $Run = Invoke-S11Set
+
+            $Run.Errors.Count | Should -Be 0
+            # Positive proof that the PUT was reached, then the absence of the key.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and -not $Body.ContainsKey('customExtensionStageSettings')
+            }
+        }
+
+        It 'refuses a stage whose extension id was not read: InvalidPolicyInput once, GET once, no PUT (WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ UseWhatIf = $false }
+            @{ UseWhatIf = $true }
+        ) {
+            $Live = New-S11Policy -Stage @(@{ id = 'aaaaaaaa-0000-0000-0000-000000000032'; stage = 'assignmentRequestCreated' })
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $Live } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+
+            $Run = Invoke-S11Set -UseWhatIf $UseWhatIf
+
+            $Run.Result | Should -BeNullOrEmpty
+            # The cmdlet-qualified record is the call's own; the engine also records the helper's throw.
+            $Own = @($Run.Errors | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidPolicyInput,Set-OERAccessPackageAssignmentPolicy' })
+            $Own.Count | Should -Be 1
+            $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Own[0].TargetObject | Should -Be 'ap-1'
+            $Own[0].Exception.Message | Should -BeLike "Invalid policy input: The existing policy has a custom extension stage 'assignmentRequestCreated' whose custom extension id was not read*"
+            # The path was reached (the live policy was read, once) and nothing was written.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                (-not $Method -or $Method -eq 'GET') -and $Uri -ceq $script:S11GetUri
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'refuses when the second of two stages has no extension id, and sends nothing' {
+            $Live = New-S11Policy -Stage @((New-S11Stage), @{ id = 'aaaaaaaa-0000-0000-0000-000000000034'; stage = 'assignmentRequestGranted'; customExtension = @{ id = '' } })
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $Live } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+
+            $Run = Invoke-S11Set
+
+            @($Run.Errors | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidPolicyInput,Set-OERAccessPackageAssignmentPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+    }
+
+    Context 'automatic assignment settings' {
+        BeforeEach {
+            $script:S11Automatic = @{
+                requestAccessForAllowedTargets             = $true
+                removeAccessWhenTargetLeavesAllowedTargets = $true
+                gracePeriodBeforeAccessRemoval             = 'P7D'
+            }
+            $script:S11Live = New-S11Policy -WithAutomatic -Automatic $script:S11Automatic
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $script:S11Live } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+        }
+
+        It 'sends the live automaticRequestSettings with the carried scope when -RequestorScope is omitted' {
+            $Run = Invoke-S11Set
+
+            $Run.Errors.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and
+                $Body.allowedTargetScope -ceq 'specificDirectoryUsers' -and
+                @($Body.specificAllowedTargets).Count -eq 1 -and
+                $Body.automaticRequestSettings.requestAccessForAllowedTargets -eq $true -and
+                $Body.automaticRequestSettings.removeAccessWhenTargetLeavesAllowedTargets -eq $true -and
+                $Body.automaticRequestSettings.gracePeriodBeforeAccessRemoval -ceq 'P7D'
+            }
+        }
+
+        It 'sends no automaticRequestSettings when -RequestorScope is bound: a declared scope never inherits automatic assignment' {
+            $Scope = New-OERAccessPackageRequestorScope -Scope AllMemberUsers
+
+            $Run = Invoke-S11Set -Extra @{ RequestorScope = $Scope }
+
+            $Run.Errors.Count | Should -Be 0
+            # The declared scope replaced the live one (the PUT was reached), and the settings did not follow.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and $Body.allowedTargetScope -ceq 'allMemberUsers'
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter {
+                $Method -eq 'PUT' -and $Body.ContainsKey('automaticRequestSettings')
+            }
+        }
+
+        It 'sends no automaticRequestSettings for a request-based policy whose live value is null' {
+            $script:S11Live = New-S11Policy -WithAutomatic -Automatic $null
+
+            $Run = Invoke-S11Set
+
+            $Run.Errors.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and -not $Body.ContainsKey('automaticRequestSettings')
+            }
+        }
+    }
+}
+
+Describe 'Set-OERAccessPackageAssignmentPolicy: the unreadable custom extension refusal in a script with no try (Sprint 11 step 3)' {
+    # A refused call writes a NON-terminating error and the script goes on, so what it must not do is
+    # send the PUT on the way. The script stands in no try, prints a sentinel at its end, and the
+    # stubbed transport appends every request to a log file whose path is substituted into the text.
+    # The control runs the same script with a stage that DOES carry its extension id, so a refused run
+    # with no PUT in the log cannot be an artefact of a stub that never logs one. The stub writes its
+    # log with -WhatIf:$false: a -WhatIf call passes its preference down to Add-Content, which would
+    # otherwise skip the write and make a -WhatIf request invisible in the log.
+    BeforeAll {
+        $script:S11NoTryScenario = {
+            param([string]$Log, [string]$Stage, [string]$Calls)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        if ($Method -eq 'PUT') {
+            $Carried = if ($Body.ContainsKey('customExtensionStageSettings')) { @($Body.customExtensionStageSettings).Count } else { 'none' }
+            Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value "Invoke-OERGraphRequest PUT stages=$Carried"
+            return @{ id = 'aaaaaaaa-0000-0000-0000-000000000031'; displayName = 'Policy'; allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' } }
+        }
+        Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value "Invoke-OERGraphRequest $Method"
+        @{
+            id                           = 'aaaaaaaa-0000-0000-0000-000000000031'
+            displayName                  = 'Policy'
+            accessPackage                = @{ id = 'ap-1' }
+            allowedTargetScope           = 'allMemberUsers'
+            expiration                   = @{ type = 'noExpiration' }
+            customExtensionStageSettings = @(#STAGE#)
+        }
+    }
+}
+#CALLS#
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#STAGE#', $Stage).Replace('#CALLS#', $Calls))
+        }
+
+        $script:S11UnreadStage = "@{ id = 'aaaaaaaa-0000-0000-0000-000000000032'; stage = 'assignmentRequestCreated' }"
+        $script:S11ReadStage = "@{ id = 'aaaaaaaa-0000-0000-0000-000000000032'; stage = 'assignmentRequestCreated'; customExtension = @{ '@odata.type' = '#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension'; id = 'aaaaaaaa-0000-0000-0000-000000000033' } }"
+        $script:S11Calls = @'
+$Results = @(
+    Set-OERAccessPackageAssignmentPolicy -Id 'aaaaaaaa-0000-0000-0000-000000000031' -DisplayName 'Policy' -Description 'd' -Confirm:$false
+    Set-OERAccessPackageAssignmentPolicy -Id 'aaaaaaaa-0000-0000-0000-000000000031' -DisplayName 'Policy' -Description 'd' -WhatIf
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        function Get-S11RequestLog ([string]$Log) {
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        }
+    }
+
+    It 'reaches the end of the script, sends no PUT, and writes the refusal once per call (with and without -WhatIf)' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:S11NoTryScenario -Log $Log -Stage $script:S11UnreadStage -Calls $script:S11Calls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:0|END'
+        # Positive proof: each refused call read the live policy, and that was all it sent.
+        @(Get-S11RequestLog -Log $Log) | Should -Be @('Invoke-OERGraphRequest GET', 'Invoke-OERGraphRequest GET')
+        @($Run.Errors | Where-Object { $_ -like "Invalid policy input: The existing policy has a custom extension stage 'assignmentRequestCreated' whose custom extension id was not read*" }).Count |
+            Should -Be 2
+    }
+
+    It 'the control: the same script with a stage that carries its extension id sends the PUT, with the stage' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Calls = @'
+$Results = @(
+    Set-OERAccessPackageAssignmentPolicy -Id 'aaaaaaaa-0000-0000-0000-000000000031' -DisplayName 'Policy' -Description 'd' -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        $Scenario = & $script:S11NoTryScenario -Log $Log -Stage $script:S11ReadStage -Calls $Calls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:1|END'
+        @($Run.Errors).Count | Should -Be 0
+        @(Get-S11RequestLog -Log $Log) | Should -Be @('Invoke-OERGraphRequest GET', 'Invoke-OERGraphRequest PUT stages=1')
     }
 }
