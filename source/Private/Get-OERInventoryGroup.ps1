@@ -616,7 +616,13 @@ function Get-OERInventoryGroup {
                         Owners  = $OwnersLeftOut
                         Basis   = $PimBasis
                     })
-                Write-Verbose "Get-OERInventory: group '$($G.DisplayName)': $MembersLeftOut member(s) and $OwnersLeftOut owner(s) left out, since PIM for Groups holds their access ($PimBasis)."
+                # Worded per basis: on the eligibility basis they are eligible, not known to be held.
+                $LeftOutWhy = if ($PimBasis -eq 'Eligibility') {
+                    "since they are eligible for the same access in PIM for Groups and the group's PIM assignments could not be read"
+                } else {
+                    'since PIM for Groups holds their access'
+                }
+                Write-Verbose "Get-OERInventory: group '$($G.DisplayName)': $MembersLeftOut member(s) and $OwnersLeftOut owner(s) left out, $LeftOutWhy."
             }
             if ($G.PSObject.Properties.Name -contains 'PimEligibility') {
                 $EligIds = @(@($G.PimEligibility) | ForEach-Object { [string]$_.principalId } | Where-Object { $_ })

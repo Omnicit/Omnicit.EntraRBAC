@@ -857,7 +857,7 @@ Describe 'Get-OERInventoryGroup' {
             $Entry.Basis | Should -BeExactly 'Assignments'
             $Read.Result.Unread.Count | Should -Be 0
             $Read.Result.Causes.Count | Should -Be 0
-            @($Read.Verbose) | Should -Contain "Get-OERInventory: group 'role_sec_pim': 1 member(s) and 1 owner(s) left out, since PIM for Groups holds their access (Assignments)."
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: group 'role_sec_pim': 1 member(s) and 1 owner(s) left out, since PIM for Groups holds their access."
             Should -Invoke -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment -Exactly -Times 1 -ParameterFilter { $GroupId -eq 'g-pim' }
         }
 
@@ -953,7 +953,9 @@ Describe 'Get-OERInventoryGroup' {
             $Read.Result.PimLeftOut[0].Members | Should -Be 1
             $Read.Result.PimLeftOut[0].Owners | Should -Be 1
             $Read.Result.PimLeftOut[0].Basis | Should -BeExactly 'Eligibility'
-            @($Read.Verbose) | Should -Contain "Get-OERInventory: group 'role_sec_pim': 1 member(s) and 1 owner(s) left out, since PIM for Groups holds their access (Eligibility)."
+            # On the eligibility basis they are eligible, not known to be held, and the line says so.
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: group 'role_sec_pim': 1 member(s) and 1 owner(s) left out, since they are eligible for the same access in PIM for Groups and the group's PIM assignments could not be read."
+            @($Read.Verbose | Where-Object { $_ -like '*holds their access*' }).Count | Should -Be 0
         }
 
         It 'writes members as an explicit null and omits owners when neither the assignments nor the eligibility could be read (Review Focus 1) (<Mode>)' -ForEach @(

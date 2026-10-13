@@ -24,11 +24,12 @@ function Read-OERGroupPimAssignment {
 
     The request declares ResourceTypeNotSupported to the transport as an answer, as the eligibility
     read does: a group PIM for Groups cannot manage then comes back as the transport's marker and
-    is returned as a successful, empty read. That answer is not measured for this endpoint (a group
-    never onboarded answered 200 with its members and owners). Every failure that arrives thrown, of
-    any kind and whatever its code, is returned as unread, the safe direction: a caller that cannot
-    tell a standing member from one PIM for Groups holds writes neither as standing. The catch scrubs
-    the record first (Remove-OERErrorRecord).
+    is returned as a successful, empty read. A dynamic group answered this read with that code
+    (measured live 2026-10-13); the group never onboarded that was measured the same day answered
+    200 with its members and owners. Every failure that arrives thrown, of any kind and whatever its
+    code, is returned as unread, the safe direction: a caller that cannot tell a standing member from
+    one PIM for Groups holds writes neither as standing. The catch scrubs the record first
+    (Remove-OERErrorRecord).
 
     Call it only for a group whose id is known; it makes no sign-in of its own, so the calling command
     must already have signed in (Initialize-OERAuth).

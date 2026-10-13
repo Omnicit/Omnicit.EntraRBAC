@@ -13,10 +13,10 @@ function Get-OERGroupPimHeldAccess {
     named at all.
 
     The rule (docs/development/rationale.md#pim-activation-is-not-membership). An assignment schedule
-    instance holds its principal's access through PIM for Groups unless it is a standing one: its assignmentType is 'assigned' (compared without regard to
-    letter case) AND it has no endDateTime. Graph lists a membership or ownership added outside PIM in
-    exactly that standing shape (measured live 2026-10-13), and it is never returned. Every other
-    instance is returned, with the Kind:
+    instance holds its principal's access through PIM for Groups unless it is a standing one: its
+    assignmentType is 'assigned' (compared without regard to letter case) AND it has no endDateTime.
+    Graph lists a membership or ownership added outside PIM in exactly that standing shape (measured
+    live 2026-10-13), and it is never returned. Every other instance is returned, with the Kind:
     - Activated when its assignmentType is 'activated';
     - otherwise TimeBound when it has an endDateTime;
     - otherwise Unrecognized (any other assignmentType, or none).
