@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 1.2.0. A preview published from this point differs from 1.2.0 only
-in documentation, tests or the build.
+A PIM for Groups activation is no longer written or applied as a standing membership.
+`Get-OERInventory` and `Export-OERInventory` leave out a member or owner whose access PIM for Groups
+holds (an activation, or a time-bound active assignment), and the bundle README counts them per
+group; when a group's PIM assignments cannot be read they leave out those eligible for the same
+access and report `InventoryPartial`. `Invoke-OERStructure` adds no standing member or owner for a
+principal PIM holds or makes eligible, and `-Prune` removes none. Needs
+`PrivilegedAssignmentSchedule.Read.AzureADGroup`.
 
 ## [1.2.0] - 2026-10-11
 

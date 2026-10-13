@@ -776,6 +776,22 @@ nothing from it. It decides on the group as read live. The export marks such a g
 the synchronized security groups in full detail in `inventory.json`, where the key is information
 only.
 
+A PIM for Groups activation is never written, or applied, as a standing membership.
+`Get-OERInventory` and `Export-OERInventory` write a group's standing members and owners only: one
+whose access PIM for Groups holds (an activation, or another active assignment that is not standing,
+such as a time-bound one) is left out, and the bundle's `README.md` counts them per group, by group
+name, under "Members and owners left out as PIM for Groups access". Where the group's PIM
+assignments cannot be read, the members and owners eligible for the same access are left out
+instead and `groups/<name>/pimAssignments` is named in `InventoryPartial`; where its eligibility
+cannot be read either, a `members` collection that holds entries is `null` and an `owners`
+collection that holds entries is left out. `Invoke-OERStructure` adds no standing member or owner for a principal PIM
+for Groups holds or makes eligible for the same access (`Skipped`, with a warning, also under
+`-WhatIf`), and `-Prune` removes none (`Skipped` with `-Prune`, `Extra` without). So an activation
+that a document exported by an earlier version lists under `members` is not added while PIM for
+Groups still holds that principal or makes it eligible. While a group's PIM state cannot be read,
+nothing is added to or removed from its members and owners. The read needs the permission
+`PrivilegedAssignmentSchedule.Read.AzureADGroup`, which `Get-OERRequiredScope` lists.
+
 `Export-OERInventory` stays fast in a large tenant by deciding which security groups are
 RBAC-relevant before it reads any group in full: role-assignable groups, groups with PIM
 eligibility, groups found to use PIM for Groups and, with `-IncludeSyncedGroups`, synchronized

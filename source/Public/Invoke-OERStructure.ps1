@@ -41,9 +41,31 @@ function Invoke-OERStructure {
     instead of being removed or reported Extra. A group's service principal, as a member or an
     owner, is never removed, the run that creates a group into an administrative unit does not
     remove that membership, and nothing is written to, or removed from, a group whose live read shows
-    it synchronized from on-premises (see -Prune). An OMITTED members, scopedRoles, resources or
-    resourceRoles key still prunes, so before the first write the engine lists every such key in one
-    warning (see -Prune).
+    it synchronized from on-premises (see -Prune). A group member or owner whose access PIM for Groups
+    holds, or makes eligible, is not removed either (see -Prune). An OMITTED members, scopedRoles,
+    resources or resourceRoles key still prunes, so before the first write the engine lists every such
+    key in one warning (see -Prune).
+
+    PIM for Groups and standing members: a principal whose membership or ownership of a group PIM for
+    Groups grants -- an activation, or another active assignment that is not standing, such as a
+    time-bound one -- is a member or owner of the group while it lasts, and an eligible principal can
+    become one by activating. So a declared member or owner that is not present in the group and that
+    the live group holds, or makes eligible, for the same access is NOT added: the entry is reported
+    Skipped, with one warning and no ShouldProcess prompt, so -WhatIf and a real run report the same
+    row and the same warning. A hold for member access never stands for owner access, and the other
+    way round. A declared principal that is already present stays Unchanged, an activation in force
+    included. A document exported by an earlier version may list an activation under members; applying
+    it does not add a principal PIM for Groups still holds or makes eligible. A standing membership
+    that is really meant is added with Add-OERGroupMember. The state is read from the group's PIM for
+    Groups assignment schedule instances and its eligibility, at most once for each group entry and
+    only when a member or owner has to be added, or an undeclared one reaches the prune pass and no
+    other prune rule withholds it: never for an entry whose members and owners already match, never
+    for a group the same run created, and never for a group synchronized from on-premises. When that
+    state cannot be read, nothing is added to the group's members and owners and nothing is removed
+    from them: each declared entry that is not present is reported Skipped, each undeclared one is
+    withheld (see -Prune), and one warning for the group entry names the cause. The read needs the
+    Microsoft Graph permission PrivilegedAssignmentSchedule.Read.AzureADGroup (Get-OERRequiredScope
+    lists it).
 
     WhatIf plan mode (-WhatIf): handlers receive the engine's $PSCmdlet as -Caller and read
     ShouldProcess from it. Under -WhatIf all writes return Skipped results; reads (diff queries)
@@ -186,6 +208,19 @@ function Invoke-OERStructure {
     reason -- an unresolved declared entry in its collection, or a service principal -- keeps that
     reason's row. The document's onPremisesSynced key is never consulted or sent: the live read alone
     decides.
+
+    A member or owner of a group whose access PIM for Groups holds -- an activation, or another active
+    assignment that is not standing, such as a time-bound one -- or that is eligible for the same
+    access, is never removed, since removing it could end access PIM for Groups manages. It is
+    reported Extra without -Prune, with a hint that -Prune leaves it in place, and Skipped, with a
+    Detail starting "prune withheld:", with -Prune, with no warning and no ShouldProcess prompt. A
+    principal that is a standing member and also eligible for member access is covered too. An owner
+    withheld this way still counts as an owner standing, for the rule that the last owner is not
+    removed. While the group's PIM for Groups state cannot be read, no member or owner is removed
+    from that group: each undeclared one is reported Skipped, with a Detail starting "prune
+    withheld:", with or without -Prune, and one warning for the group names the cause. Manage the
+    access in PIM for Groups, or remove a standing member with Remove-OERGroupMember, when it is
+    meant to go.
 
     A group the document creates into an administrative unit (a groups[] entry's
     administrativeUnit) is not removed from that unit by the run that creates it. administrativeUnit

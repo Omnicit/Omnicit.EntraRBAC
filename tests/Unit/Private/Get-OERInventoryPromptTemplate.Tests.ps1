@@ -73,6 +73,18 @@ Describe 'Get-OERInventoryPromptTemplate' {
         }
     }
 
+    It 'tells the model that members[] and owners[] hold standing members and owners only, and that PIM for Groups access is not written there (BL-125)' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape("members[] and owners[] hold a group's STANDING members and owners only. A member or owner whose access PIM for Groups holds -- an activation, or another active assignment that is not standing, such as a time-bound one -- is not written there, and an older export can have one there."))
+            # The README section that counts what was left out is named, so the model can find it.
+            $T | Should -Match ([regex]::Escape('(section "Members and owners left out as PIM for Groups access")'))
+            $T | Should -Match ([regex]::Escape('Do not propose a principal that is eligible in PIM for Groups, or one the README lists as left out, as a standing member or owner, and do not read a member or owner that is missing from members[] or owners[] as a removal: it may still hold the access through PIM for Groups. Invoke-OERStructure adds no standing member or owner for a principal that PIM for Groups holds or makes eligible for the same access, and -Prune removes none.'))
+            # The directory-role note it sits beside is unchanged.
+            $T | Should -Match ([regex]::Escape('activations and assignments inherited through a group are not listed'))
+        }
+    }
+
     It 'documents the granular assignment policy fields' {
         InModuleScope $script:moduleName {
             $T = Get-OERInventoryPromptTemplate
