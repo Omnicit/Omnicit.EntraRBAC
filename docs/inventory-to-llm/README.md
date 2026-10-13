@@ -205,9 +205,10 @@ warning, also under `-WhatIf`. So an activation that a document from an earlier 
 without. The apply engine is stricter than the export about what it could not read: when EITHER of a
 group's PIM for Groups reads (its assignments or its eligibility) fails for a group that already
 existed, nothing is added to or removed from that group's members and owners, whereas the export
-writes `members` as `null` only when BOTH failed. A group the same run creates is not read, and its
-declared members and owners are added. When a standing membership is meant, add it with
-`Add-OERGroupMember`. The read needs the permission `PrivilegedAssignmentSchedule.Read.AzureADGroup`.
+writes `members` as `null` only when BOTH failed. A group the same run creates is not read, so no
+member or owner declared for it is held back for PIM for Groups. When a standing membership is
+meant, add it with `Add-OERGroupMember`. The read needs the permission
+`PrivilegedAssignmentSchedule.Read.AzureADGroup`.
 
 ## Renaming a group
 

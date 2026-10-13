@@ -790,8 +790,8 @@ also under `-WhatIf`), and `-Prune` removes none (`Skipped` with `-Prune`, `Extr
 activation that a document exported by an earlier version lists under `members` is not added while
 PIM for Groups still holds that principal or makes it eligible. While either of a group's PIM for
 Groups reads (its assignments or its eligibility) fails for a group that already existed, nothing is
-added to or removed from its members and owners; a group the same run creates is not read, and its
-declared members and owners are added. The read needs the permission
+added to or removed from its members and owners; a group the same run creates is not read, so no
+member or owner declared for it is held back for PIM for Groups. The read needs the permission
 `PrivilegedAssignmentSchedule.Read.AzureADGroup`, which `Get-OERRequiredScope` lists.
 
 `Export-OERInventory` stays fast in a large tenant by deciding which security groups are

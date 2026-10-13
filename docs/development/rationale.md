@@ -7579,8 +7579,9 @@ still did not hold `PrivilegedAssignmentSchedule.Read.AzureADGroup`, added two s
 had not met:
 
 - On a ROLE-ASSIGNABLE group the assignment read is refused, 403, on beta and on v1.0 alike, while
-  the eligibility read of the same group answers 200 and the assignment read of four groups that are
-  not role-assignable answers 200 (see **The permission** below).
+  the eligibility read of the same group answers 200; the assignment read of the four plain groups,
+  which are not role-assignable, had answered 200 in the first measurement (DEL 1) and in checks 0.2
+  and 1.1 (see **The permission** below).
 - On a DYNAMIC group the assignment read and the eligibility read both answer 400
   `ResourceTypeNotSupported`, on beta and on v1.0 alike (see Rule 10).
 
@@ -7677,7 +7678,7 @@ key. If wrong: rename the label; nothing depends on it but the README and the me
 `ResourceTypeNotSupported` to the transport as an answer, as the eligibility read does, and returns
 it as a successful read that found no assignment. That answer is now measured, not only reasoned: a
 dynamic group, which PIM for Groups cannot manage, answered the assignment read and the eligibility
-read alike with 400 `ResourceTypeNotSupported`, on beta and on v1.0 (check 1.4), and the reader took
+read alike with 400 `ResourceTypeNotSupported`, on beta and on v1.0 (check 1.3), and the reader took
 it as an answer -- read, no rows -- so `Export-OERInventory` wrote the group's rule-made member and
 its owner with no partial signal. Every other group's assignment read answered 200, a never
 onboarded one included, or 403 for a role-assignable group read without the permission (above). A
@@ -7695,9 +7696,9 @@ before, so `tests/QA/requiredscope.tests.ps1` now splits the endpoint map by sch
 requests `PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup` by default (`Initialize-OERAuth`); an
 app-only identity is documented to need the read permission granted on its app registration. What was
 measured, as `oer-live-cc` while it did NOT hold `PrivilegedAssignmentSchedule.Read.AzureADGroup`
-(2026-10-13): the read of a group that is not role-assignable answered 200 (in the measurement above,
-in the checklist's check 0.2, where the grant was still not visible, and for four such groups in check
-1.3), but the read of a ROLE-ASSIGNABLE group was refused, on beta and on v1.0 alike, with 403, the
+(2026-10-13): the read of a group that is neither role-assignable nor dynamic answered 200 (in the
+measurement above and in the checklist's check 0.2, where the grant was still not visible), but the
+read of a ROLE-ASSIGNABLE group was refused, on beta and on v1.0 alike, with 403, the
 code `UnauthorizedAccessException` and the error code `PermissionScopeNotGranted`, whose message names
 four permission scopes as missing: `PrivilegedAssignmentSchedule.Read.AzureADGroup`,
 `PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup`, `PrivilegedAccess.Read.AzureADGroup` and
@@ -7708,8 +7709,8 @@ permission to the gate changes no grant. On that refusal the module did what it 
 (check 1.3): `Read-OERGroupPimAssignment` returned the read as unread with the cause; the apply
 engine's hold read came back unread, which by rules 6 and 7 means it adds and removes no member or
 owner of such a group that already existed (a group the same run creates is not read); and
-`Export-OERInventory -AllGroupsDetailed` fell back to the reserve of rule 3, wrote the group's
-members (none of them was eligible) and its owners, named `groups/<name>/pimAssignments` in
+`Export-OERInventory -AllGroupsDetailed` (check 1.4) fell back to the reserve of rule 3, wrote the
+group's members (none of them was eligible) and its owners, named `groups/<name>/pimAssignments` in
 `IncompleteReads` and ended with `InventoryPartial` carrying the cause. Never a wrong write.
 
 **Why the apply engine refuses, and why it says so.** The document is a declaration of the standing

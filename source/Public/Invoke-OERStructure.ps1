@@ -65,9 +65,9 @@ function Invoke-OERStructure {
     two reads fails for a group that already existed, nothing is added to its members and owners and
     nothing is removed from them: each declared entry that is not present is reported Skipped, each
     undeclared one is withheld (see -Prune), and one warning for the group entry names the cause. A
-    group the same run creates is not read, so its declared members and owners are added. The read
-    needs the Microsoft Graph permission PrivilegedAssignmentSchedule.Read.AzureADGroup
-    (Get-OERRequiredScope lists it).
+    group the same run creates is not read, so no member or owner declared for it is held back for
+    PIM for Groups. The read needs the Microsoft Graph permission
+    PrivilegedAssignmentSchedule.Read.AzureADGroup (Get-OERRequiredScope lists it).
 
     WhatIf plan mode (-WhatIf): handlers receive the engine's $PSCmdlet as -Caller and read
     ShouldProcess from it. Under -WhatIf all writes return Skipped results; reads (diff queries)
