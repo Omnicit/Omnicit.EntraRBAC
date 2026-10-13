@@ -2421,3 +2421,98 @@ Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($
         @($Control.Errors).Count | Should -Be 0
     }
 }
+
+Describe 'Invoke-OERStructure -WhatIf plans a package in a catalog the document creates (BL-128, A5)' {
+    # Under -WhatIf the catalogs section reports "would create catalog" and creates nothing, so the
+    # catalog-scoped lookup of a package declared in it used to fail with CatalogNotFound and report
+    # the package Failed ("NOT created") while the real run creates both. The real engine and the real
+    # catalog and access package handlers run; the cmdlets they call are mocked. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        $script:PlanDoc = ('{ "version": "1.0", ' +
+            '"catalogs": [ { "displayName": "cat-new" } ], ' +
+            '"accessPackages": [ { "displayName": "ap-new", "catalog": "cat-new", ' +
+            '"assignmentPolicies": [ { "displayName": "pol-new" } ] } ] }')
+        $script:PlanDocNoCatalog = ('{ "version": "1.0", ' +
+            '"accessPackages": [ { "displayName": "ap-new", "catalog": "cat-new", ' +
+            '"assignmentPolicies": [ { "displayName": "pol-new" } ] } ] }')
+    }
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+        # The catalog does not exist in the tenant.
+        Mock -ModuleName $script:moduleName Resolve-OERCatalogId { $null }
+        Mock -ModuleName $script:moduleName New-OERCatalog { [PSCustomObject]@{ Id = '66666666-6666-6666-6666-bbbbbbbbbbbb'; DisplayName = $DisplayName } }
+        Mock -ModuleName $script:moduleName Get-OERCatalogResource { @() }
+        Mock -ModuleName $script:moduleName New-OERAccessPackage { [PSCustomObject]@{ Id = '66666666-6666-6666-6666-cccccccccccc'; DisplayName = $DisplayName } }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @() }
+        # What the real cmdlet does for a catalog that does not exist: one non-terminating
+        # CatalogNotFound, promoted by the handler's -ErrorAction Stop. A CMDLET failure mock, never
+        # Write-Error.
+        Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+            [CmdletBinding()] param([string]$Catalog)
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Catalog '$Catalog' was not found."),
+                    'CatalogNotFound', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Catalog))
+        }
+    }
+
+    It 'plans the catalog, the package and its policy as created, with no Failed row and no package lookup' {
+        $Rows = @(Invoke-OERStructure -Json $script:PlanDoc -WhatIf -ErrorAction Stop -WarningAction SilentlyContinue)
+
+        @($Rows | Where-Object { $_.Section -eq 'catalogs' -and $_.Item -eq 'cat-new' -and $_.Action -eq 'Skipped' -and $_.Detail -eq 'would create catalog cat-new' }).Count | Should -Be 1
+        @($Rows | Where-Object { $_.Section -eq 'accessPackages' -and $_.Item -eq 'ap-new' -and $_.Action -eq 'Skipped' -and $_.Detail -eq 'would create access package ap-new' }).Count | Should -Be 1
+        @($Rows | Where-Object { $_.Section -eq 'accessPackages' -and $_.Item -eq 'ap-new' -and $_.Action -eq 'Skipped' -and $_.Detail -eq "would create assignmentPolicy 'pol-new' after access package is created" }).Count | Should -Be 1
+        @($Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+        $Rows.Count | Should -Be 3
+        # The positive control for the next lines: the catalog was looked up, so the plan was made.
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERCatalogId -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERCatalog -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+    }
+
+    It 'still reports the package Failed, NOT created, when the document does not declare its missing catalog' {
+        # The catalog is not in the document and not in the tenant: the lookup is made and fails, as it
+        # does in a real run.
+        $Rows = @(Invoke-OERStructure -Json $script:PlanDocNoCatalog -WhatIf -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-new' }
+        $Failed = @($Rows | Where-Object { $_.Action -eq 'Failed' })
+        $Failed.Count | Should -Be 1
+        $Failed[0].Section | Should -Be 'accessPackages'
+        $Failed[0].Item | Should -Be 'ap-new'
+        $Failed[0].Detail | Should -Match "failed to look up access packages in catalog 'cat-new'"
+        $Failed[0].Detail | Should -Match 'NOT created'
+        @($Rows | Where-Object { $_.Detail -match 'would create' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+    }
+
+    It 'does not plan the package when the plan does not include the catalogs section (-Include AccessPackages)' {
+        # The catalog is declared, but the catalogs section is not dispatched, so nothing in this run
+        # would create it, and the lookup fails as it would in a real run with the same -Include.
+        $Rows = @(Invoke-OERStructure -Json $script:PlanDoc -Include AccessPackages -WhatIf -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly
+        @($Rows | Where-Object { $_.Section -eq 'catalogs' }).Count | Should -Be 0
+        $Failed = @($Rows | Where-Object { $_.Action -eq 'Failed' })
+        $Failed.Count | Should -Be 1
+        $Failed[0].Detail | Should -Match 'NOT created'
+    }
+
+    It 'is unchanged in a real run: the catalog is created and the package is then looked up in it' {
+        # The catalog exists once the run has created it: the lookup finds no package in it.
+        Mock -ModuleName $script:moduleName Get-OERAccessPackage { @() }
+        $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-new" } ], "accessPackages": [ { "displayName": "ap-new", "catalog": "cat-new" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Doc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+
+        @($Rows | Where-Object { $_.Section -eq 'catalogs' -and $_.Action -eq 'Created' }).Count | Should -Be 1
+        @($Rows | Where-Object { $_.Section -eq 'accessPackages' -and $_.Action -eq 'Created' }).Count | Should -Be 1
+        @($Rows | Where-Object { $_.Detail -match 'would' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName New-OERCatalog -Times 1 -Exactly
+        # The catalog-scoped lookup ran: a real run never takes the planned shortcut.
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-new' }
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 1 -Exactly
+    }
+}

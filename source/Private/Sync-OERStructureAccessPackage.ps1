@@ -137,7 +137,16 @@ function Sync-OERStructureAccessPackage {
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false; the handler
     emits Skipped records instead of calling child cmdlets. When the access package itself does not
-    exist and its creation is skipped under -WhatIf, no child read or write calls are made.
+    exist and its creation is skipped under -WhatIf, no child read or write calls are made: the plan
+    is one "would create access package" row, a "would configure resourceRole" row for each declared
+    resource role and a "would create assignmentPolicy ... after access package is created" row for
+    each declared assignment policy.
+
+    A package declared in a catalog the same -WhatIf plan would create (-PlannedCatalog) is planned
+    that way without any read: the catalog does not exist yet, so the catalog-scoped lookup of the
+    package would fail with CatalogNotFound and report the package Failed ("the access package was NOT
+    created") while the real run creates the catalog and then the package. A catalog that is neither
+    in -PlannedCatalog nor in the tenant still fails the package, with or without -WhatIf.
 
     .PARAMETER Item
     One element from the accessPackages[] array in the structure document, as a PSCustomObject
@@ -165,6 +174,14 @@ function Sync-OERStructureAccessPackage {
     Optional Tenant Profile alias forwarded to Resolve-OERStructureDefault so that omitted
     assignmentPolicy approver fields can be resolved from the stored tenant defaults.
 
+    .PARAMETER PlannedCatalog
+    Optional list of the catalog names a -WhatIf plan would create in this run, filled by
+    Sync-OERStructureCatalog (only under -WhatIf, when it reports "would create catalog") and passed
+    on by Invoke-OERStructure. A package whose catalog is in the list (compared without regard to
+    letter case) skips the catalog-scoped lookup and is planned as created, with its resource roles
+    and assignment policies. When the list is omitted, empty or does not hold the catalog, the lookup
+    runs as it always has. A real run never fills the list, so it is not affected.
+
     .EXAMPLE
     Sync-OERStructureAccessPackage -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
     Reconciles one access package entry from the document, pruning undeclared resource role
@@ -184,7 +201,8 @@ function Sync-OERStructureAccessPackage {
         [Parameter(Mandatory)][PSCustomObject]$Item,
         [Parameter(Mandatory)][System.Management.Automation.PSCmdlet]$Caller,
         [switch]$Prune,
-        [string]$TenantAlias
+        [string]$TenantAlias,
+        [System.Collections.Generic.List[string]]$PlannedCatalog
     )
     process {
         # -- Resolve the display name -------------------------------------------------------
@@ -195,7 +213,17 @@ function Sync-OERStructureAccessPackage {
         # declared catalog. Get-OERAccessPackage's -DisplayName and -Catalog are mutually exclusive
         # parameter sets, so list by catalog and match the name client-side.
         $ApId = $null
-        if (Test-OERDeclaredProperty -Node $Item -Name 'catalog') {
+        # BL-128 (A5): under -WhatIf a catalog the same document creates does not exist yet, so the
+        # catalog-scoped lookup below would fail with CatalogNotFound and report the package Failed,
+        # NOT created, while the real run creates it. Plan it as created instead. Only a name the
+        # catalogs handler planned in this run is trusted; a missing catalog the document does not
+        # declare still fails below.
+        $CatalogPlanned = ($null -ne $PlannedCatalog) -and (@($PlannedCatalog) -icontains [string]$Item.catalog)
+        if ($CatalogPlanned) {
+            # $ApId stays $null: the package cannot exist in a catalog that does not exist yet, so
+            # Step 1 takes its create branch, which under -WhatIf reports the plan and returns.
+            Write-Verbose "Access package '$Name': catalog '$($Item.catalog)' is created by this plan, so the catalog lookup is skipped."
+        } elseif (Test-OERDeclaredProperty -Node $Item -Name 'catalog') {
             # A throw here (forced by -ErrorAction Stop) is a transport/permission/throttling failure on
             # the catalog-scoped read itself, or the catalog failing to resolve -- NOT evidence that no
             # package exists. Get-OERAccessPackage -Catalog reports every one of those (catalog not
@@ -273,7 +301,7 @@ function Sync-OERStructureAccessPackage {
                 if (Test-OERDeclaredProperty -Node $Item -Name 'assignmentPolicies') {
                     foreach ($Pol in @($Item.assignmentPolicies)) {
                         $PolRef = if (Test-OERDeclaredProperty -Node $Pol -Name 'displayName') { $Pol.displayName } else { '?' }
-                        ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Skipped' -Detail "would configure assignmentPolicy '$PolRef' after access package is created"
+                        ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Skipped' -Detail "would create assignmentPolicy '$PolRef' after access package is created"
                     }
                 }
                 return

@@ -65,7 +65,12 @@ function Test-OERStructureSchema {
     inventory README used to document before they were renamed (activationEnabledRules,
     activeEnabledRules, eligibleAlertRecipients, activeAlertRecipients, activationAlertRecipients) gets a
     "Did you mean '<current name>'?" suffix pointing at its replacement. Other sections keep accepting
-    unknown keys without comment. An accessPackages assignmentPolicies entry declaring requireApproval true together
+    unknown keys without comment, except previousDisplayName: only groups can be renamed through the
+    document, so a previousDisplayName declared on an administrativeUnits, catalogs or accessPackages
+    entry, on an assignmentPolicies entry of an access package, or on an accessReviews entry is an
+    Error (BL-128), since those sections match an entry by displayName alone and Invoke-OERStructure
+    would create a new object under the new displayName beside the existing one instead of renaming
+    it. An explicit null is not declared and is not reported. An accessPackages assignmentPolicies entry declaring requireApproval true together
     with an empty approvalStages array is a Warning naming the measured outcome: Microsoft Graph refuses
     the write with InvalidApprovalStages ("If approval is required, a valid list of stages must be
     provided."), so the assignment policy is reported Failed and left completely unchanged and the
@@ -236,6 +241,20 @@ function Test-OERStructureSchema {
                     -Severity 'Warning'
             }
         }
+    }
+
+    # BL-128 (A5): only groups[] can be renamed through the document. The other sections match an
+    # entry by displayName alone, so a previousDisplayName there would be ignored and the engine would
+    # create a second object beside the one the document means to rename. Refused as an Error until
+    # those sections support it (Sprint 11 step 4). A null value is not declared and is not reported.
+    function Add-UnsupportedRenameFinding {
+        param([object]$Node, [string]$Section, [string]$Item, [string]$Path, [string]$Kind)
+        if (-not (Test-HasProp -Node $Node -Name 'previousDisplayName')) { return }
+        Add-Finding -Section $Section -Item $Item -Path "$Path.previousDisplayName" `
+            -Message ("'previousDisplayName' at $Path is not supported for $Kind yet: only groups can be renamed " +
+                "through the document. Invoke-OERStructure matches $Kind by displayName alone, so it would " +
+                "create a new $Kind named by displayName beside the existing one instead of renaming it. " +
+                "Remove previousDisplayName, and rename the existing object outside the document first.")
     }
 
     # Enum casing has a single owner: Resolve-OERStructureEnumCasing. This validator deliberately
@@ -693,6 +712,8 @@ function Test-OERStructureSchema {
                         -Consequence ('Both entries reconcile one administrative unit, so each would undo the other''s settings and, ' +
                             'under -Prune, remove the members and scoped roles the other declares.')
                 }
+                Add-UnsupportedRenameFinding -Node $AU -Section 'administrativeUnits' -Item $AUItem -Path $AUPath `
+                    -Kind 'administrative unit'
 
                 foreach ($AUBoolProp in @('dynamic', 'restricted', 'hiddenMembership')) {
                     if (Test-HasProp -Node $AU -Name $AUBoolProp) {
@@ -787,6 +808,8 @@ function Test-OERStructureSchema {
                         -Consequence ('Both entries reconcile one catalog, so each would undo the other''s settings and, ' +
                             'under -Prune, remove the resources the other declares.')
                 }
+                Add-UnsupportedRenameFinding -Node $Cat -Section 'catalogs' -Item $CatItem -Path $CatPath `
+                    -Kind 'catalog'
 
                 if (Test-HasProp -Node $Cat -Name 'externallyVisible') {
                     if ($Cat.externallyVisible -isnot [bool]) {
@@ -877,6 +900,8 @@ function Test-OERStructureSchema {
                         -Consequence ('Both entries reconcile one access package, so each would undo the other''s settings and, ' +
                             'under -Prune, remove the resource role bindings the other declares.')
                 }
+                Add-UnsupportedRenameFinding -Node $AP -Section 'accessPackages' -Item $APItem -Path $APPath `
+                    -Kind 'access package'
 
                 if (Test-HasProp -Node $AP -Name 'hidden') {
                     if ($AP.hidden -isnot [bool]) {
@@ -932,6 +957,8 @@ function Test-OERStructureSchema {
                                     -Path "$PolPath.displayName" `
                                     -Message "'displayName' is required at $PolPath."
                             }
+                            Add-UnsupportedRenameFinding -Node $Pol -Section 'accessPackages' -Item $APItem -Path $PolPath `
+                                -Kind 'assignment policy'
 
                             if (Test-HasProp -Node $Pol -Name 'requestorScope') {
                                 $RScope = $Pol.requestorScope
@@ -1253,6 +1280,8 @@ function Test-OERStructureSchema {
                         -What "display name '$($AR.displayName)'" `
                         -Consequence 'Both entries reconcile one access review, so applying the document would rewrite its settings on every run.'
                 }
+                Add-UnsupportedRenameFinding -Node $AR -Section 'accessReviews' -Item $ARItem -Path $ARPath `
+                    -Kind 'access review'
 
                 if (Test-HasProp -Node $AR -Name 'recurrence') {
                     if ($ValidRecurrence -inotcontains $AR.recurrence) {

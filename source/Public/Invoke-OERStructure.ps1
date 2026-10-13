@@ -71,7 +71,14 @@ function Invoke-OERStructure {
 
     WhatIf plan mode (-WhatIf): handlers receive the engine's $PSCmdlet as -Caller and read
     ShouldProcess from it. Under -WhatIf all writes return Skipped results; reads (diff queries)
-    still execute so the plan is complete. The engine does NOT call ShouldProcess itself.
+    still execute so the plan is complete. The engine does NOT call ShouldProcess itself. An access
+    package declared in a catalog that the same document creates is planned the same way: the plan
+    reports the catalog as "would create catalog", then the package as "would create access package"
+    and each of its assignment policies as "would create assignmentPolicy ... after access package is
+    created", instead of failing the package because its catalog does not exist yet. A package
+    declared in a catalog that neither the document creates nor the tenant holds is still reported
+    Failed, and so is one whose catalog the plan would create but a declined -Confirm leaves
+    uncreated. A real run reads the catalog as before.
 
     Include filter (-Include): only sections listed in -Include are dispatched. Sections whose
     key is absent from the document or whose array is empty are also silently skipped.
@@ -486,6 +493,12 @@ function Invoke-OERStructure {
         # membership in this run. One list per document; the -EnsureOnly pre-pass does not need it.
         $CreatedUnitMembership = [System.Collections.Generic.List[object]]::new()
 
+        # BL-128 (A5): the catalogs a -WhatIf plan would create. Sync-OERStructureCatalog adds a name only
+        # under -WhatIf, when it reports "would create catalog"; Sync-OERStructureAccessPackage, dispatched
+        # after it, then plans a package declared in such a catalog as created instead of failing its
+        # catalog lookup. A real run never fills it, so it applies exactly as before.
+        $PlannedCatalog = [System.Collections.Generic.List[string]]::new()
+
         # -- Before the first write: omitted collection keys that -Prune still reconciles ------------
         # Five collections are reconciled against an empty declared set when their key is omitted, so
         # -Prune removes every live entry in them. Get-OEROmittedPruneCollection owns which keys those
@@ -621,6 +634,10 @@ function Invoke-OERStructure {
                 # prune. Both get the same list.
                 if ($Section.IncludeName -eq 'Groups' -or $Section.IncludeName -eq 'AdministrativeUnits') {
                     $ExtraParams.CreatedUnitMembership = $CreatedUnitMembership
+                }
+                # Catalogs record the catalogs a -WhatIf plan would create; AccessPackages read them.
+                if ($Section.IncludeName -eq 'Catalogs' -or $Section.IncludeName -eq 'AccessPackages') {
+                    $ExtraParams.PlannedCatalog = $PlannedCatalog
                 }
                 try {
                     $Records = & $Section.Handler -Item $It -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias @ExtraParams

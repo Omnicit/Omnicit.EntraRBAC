@@ -889,4 +889,109 @@ Describe 'Sync-OERStructureCatalog' {
             }
         }
     }
+
+    Context 'the catalogs a -WhatIf plan would create (BL-128, A5)' {
+        # Sync-OERStructureCatalog adds a name to the passed list ONLY when it reports "would create
+        # catalog" under -WhatIf, so Sync-OERStructureAccessPackage, dispatched after it, can plan a
+        # package declared in that catalog as created. The wrapper below is the handler's Caller: a
+        # SupportsShouldProcess function, whose ShouldProcess returns false under -WhatIf. -DeclineOnly
+        # stands for a declined -Confirm: ShouldProcess still returns false, but $WhatIfPreference is
+        # false, which is the state the handler sees when the operator answers No.
+
+        It 'adds the name of a missing catalog to the list under -WhatIf, and creates nothing' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncCatViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[string]]$PlannedCatalog, [switch]$DeclineOnly)
+                    if ($DeclineOnly) { $WhatIfPreference = $false }
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -PlannedCatalog $PlannedCatalog
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERCatalogId { $null }
+                Mock New-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'cat-new' } }
+                $Planned = [System.Collections.Generic.List[string]]::new()
+                $r = @(Invoke-SyncCatViaCaller -Item ([PSCustomObject]@{ displayName = 'cat-new' }) -PlannedCatalog $Planned -WhatIf)
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq 'would create catalog cat-new' }).Count | Should -Be 1
+                $Planned.Count | Should -Be 1
+                $Planned[0] | Should -BeExactly 'cat-new'
+                Should -Invoke New-OERCatalog -Times 0
+            }
+        }
+
+        It 'adds nothing when ShouldProcess is declined and -WhatIf is not in force (a declined -Confirm)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncCatViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[string]]$PlannedCatalog, [switch]$DeclineOnly)
+                    if ($DeclineOnly) { $WhatIfPreference = $false }
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -PlannedCatalog $PlannedCatalog
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERCatalogId { $null }
+                Mock New-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'cat-new' } }
+                $Planned = [System.Collections.Generic.List[string]]::new()
+                $r = @(Invoke-SyncCatViaCaller -Item ([PSCustomObject]@{ displayName = 'cat-new' }) -PlannedCatalog $Planned -WhatIf -DeclineOnly)
+                # The branch was reached: the handler declined to create, and said so.
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq 'would create catalog cat-new' }).Count | Should -Be 1
+                Should -Invoke New-OERCatalog -Times 0
+                # A catalog the operator declined to create is not planned: its packages stay Failed.
+                $Planned.Count | Should -Be 0
+            }
+        }
+
+        It 'adds nothing for a catalog that already exists' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncCatViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[string]]$PlannedCatalog)
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -PlannedCatalog $PlannedCatalog
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'cat-old'; Description = $null } }
+                Mock Get-OERCatalogResource { @() }
+                $Planned = [System.Collections.Generic.List[string]]::new()
+                $r = @(Invoke-SyncCatViaCaller -Item ([PSCustomObject]@{ displayName = 'cat-old' }) -PlannedCatalog $Planned -WhatIf)
+                # The existing-catalog branch was reached.
+                Should -Invoke Get-OERCatalog -Times 1 -Exactly
+                @($r | Where-Object { $_.Detail -match 'would create catalog' }).Count | Should -Be 0
+                $Planned.Count | Should -Be 0
+            }
+        }
+
+        It 'adds nothing on a real run that creates the catalog' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncCatViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[string]]$PlannedCatalog)
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -PlannedCatalog $PlannedCatalog
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERCatalogId { $null }
+                Mock New-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'cat-new' } }
+                Mock Get-OERCatalogResource { @() }
+                $Planned = [System.Collections.Generic.List[string]]::new()
+                $r = @(Invoke-SyncCatViaCaller -Item ([PSCustomObject]@{ displayName = 'cat-new' }) -PlannedCatalog $Planned)
+                @($r | Where-Object { $_.Action -eq 'Created' }).Count | Should -Be 1
+                Should -Invoke New-OERCatalog -Times 1 -Exactly
+                $Planned.Count | Should -Be 0
+            }
+        }
+
+        It 'does not need the list: a -WhatIf plan without one reports the same row' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncCatViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[string]]$PlannedCatalog)
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -PlannedCatalog $PlannedCatalog
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERCatalogId { $null }
+                Mock New-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'cat-new' } }
+                $r = @(Invoke-SyncCatViaCaller -Item ([PSCustomObject]@{ displayName = 'cat-new' }) -PlannedCatalog $null -WhatIf)
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq 'would create catalog cat-new' }).Count | Should -Be 1
+                Should -Invoke New-OERCatalog -Times 0
+            }
+        }
+    }
 }

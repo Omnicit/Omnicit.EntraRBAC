@@ -3752,6 +3752,89 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
         }
     }
 
+    Context 'previousDisplayName outside groups (BL-128, A5)' {
+        # Only groups[] can be renamed through the document. The other five places match an entry by
+        # displayName alone, so a previousDisplayName there would be ignored and the engine would
+        # create a second object beside the one the document means to rename. Refused as an Error.
+        BeforeDiscovery {
+            $script:OutsideGroupCase = @(
+                @{
+                    Where = 'an administrative unit'
+                    Kind  = 'administrative unit'
+                    Path  = 'administrativeUnits[0].previousDisplayName'
+                    Json  = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "au-new", "previousDisplayName": "au-old" } ] }'
+                }
+                @{
+                    Where = 'a catalog'
+                    Kind  = 'catalog'
+                    Path  = 'catalogs[0].previousDisplayName'
+                    Json  = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-new", "previousDisplayName": "cat-old" } ] }'
+                }
+                @{
+                    Where = 'an access package'
+                    Kind  = 'access package'
+                    Path  = 'accessPackages[0].previousDisplayName'
+                    Json  = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap-new", "catalog": "cat-x", "previousDisplayName": "ap-old" } ] }'
+                }
+                @{
+                    Where = 'an assignment policy'
+                    Kind  = 'assignment policy'
+                    Path  = 'accessPackages[0].assignmentPolicies[0].previousDisplayName'
+                    Json  = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap-new", "catalog": "cat-x", "assignmentPolicies": [ { "displayName": "pol-new", "previousDisplayName": "pol-old" } ] } ] }'
+                }
+                @{
+                    Where = 'an access review'
+                    Kind  = 'access review'
+                    Path  = 'accessReviews[0].previousDisplayName'
+                    Json  = '{ "version": "1.0", "accessReviews": [ { "displayName": "rev-new", "accessPackage": "ap-x", "assignmentPolicy": "pol-x", "previousDisplayName": "rev-old" } ] }'
+                }
+            )
+        }
+
+        It 'refuses previousDisplayName on <Where> with one Error that says it is not supported' -ForEach $script:OutsideGroupCase {
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Kind = $Kind; Path = $Path } {
+                param($Doc, $Kind, $Path)
+                $V = Test-OERStructureSchema -Document $Doc
+                $V.Valid | Should -BeFalse
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Error'
+                $Hit[0].Message | Should -Match 'not supported'
+                $Hit[0].Message | Should -Match ('would create a new ' + [regex]::Escape($Kind))
+                # It is the only Error of the document: the entry is otherwise valid.
+                @($V.Errors | Where-Object Severity -eq 'Error').Count | Should -Be 1
+            }
+        }
+
+        It 'does not report previousDisplayName on <Where> when its value is null (not declared)' -ForEach $script:OutsideGroupCase {
+            # The same document with the value in place is refused (the code path is reached), and with
+            # an explicit null it is not: Test-HasProp is present-and-not-null.
+            $Declared = $Json | ConvertFrom-Json
+            $NullJson = $Json -replace '"previousDisplayName": "[^"]*"', '"previousDisplayName": null'
+            $NullJson | Should -Not -BeExactly $Json
+            $NullDoc = $NullJson | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; NullDoc = $NullDoc; Path = $Path } {
+                param($Declared, $NullDoc, $Path)
+                @((Test-OERStructureSchema -Document $Declared).Errors | Where-Object { $_.Path -eq $Path }).Count | Should -Be 1
+                $V = Test-OERStructureSchema -Document $NullDoc
+                @($V.Errors | Where-Object { $_.Path -eq $Path }) | Should -BeNullOrEmpty
+                @($V.Errors | Where-Object Severity -eq 'Error') | Should -BeNullOrEmpty
+                $V.Valid | Should -BeTrue
+            }
+        }
+
+        It 'still accepts previousDisplayName on a group with no refusal of this kind' {
+            InModuleScope $script:moduleName {
+                $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
+                $V = Test-OERStructureSchema -Document $Doc
+                @($V.Errors | Where-Object { $_.Message -match 'not supported' }) | Should -BeNullOrEmpty
+                @($V.Errors | Where-Object Path -eq 'groups[0].previousDisplayName') | Should -BeNullOrEmpty
+                $V.Valid | Should -BeTrue
+            }
+        }
+    }
+
     # Task 8: the worked example must carry every section the schema understands, so it stays a
     # complete starting point rather than a document missing the directory-role sections.
     # Three Split-Path hops from tests\Unit\Private: tests\Unit\Private -> tests\Unit -> tests ->
