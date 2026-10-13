@@ -337,6 +337,9 @@ document.
     nothing is written to it. Access review display names are not unique in a tenant, and this bundle
     leaves out the reviews it does not capture, so a displayName missing from accessReviews.json may
     already be in use: give a new review a displayName no other review in the tenant uses.
+    An access package name is not unique in the tenant, nor an assignment policy name in its access
+    package, and a name shared that way is refused: keep an accessPackage or assignmentPolicy that
+    inventory.json gives as an id as that id, and give a shared name by id.
   - "reviewers": [] is a declared EMPTY list and means a SELF review, on both the create and the
     update path. It is NOT the same as omitting reviewers, which defaults to the requestor's manager
     and then REQUIRES fallbackReviewers; an explicit null counts as omitted.

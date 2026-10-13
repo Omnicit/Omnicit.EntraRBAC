@@ -16,10 +16,10 @@ no member or owner of an existing group whose PIM state is unread. Needs
 `PrivilegedAssignmentSchedule.Read.AzureADGroup`.
 
 `Get-OERInventory` and `Export-OERInventory` leave out role assignments at the Azure root scope `/`
-with a warning; the bundle README lists them as elevated access. `Test-OERStructure` flags one;
-`Invoke-OERStructure` never creates or prunes there. An access review found by name is updated only
-if it reviews the declared package and policy, else it fails (`AccessReviewScopeMismatch`), writing
-nothing.
+with a warning; the bundle README lists them as elevated access. `Test-OERStructure` warns on one,
+and `Invoke-OERStructure` never creates or prunes there. It updates an access review found by name
+only if it reviews the declared package and policy (a non-unique name must be an id), else fails it
+(`AccessReviewScopeMismatch`), writing nothing.
 
 ## [1.2.0] - 2026-10-11
 

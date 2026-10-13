@@ -811,8 +811,10 @@ and assignment policy the entry declares (a GUID compared as written, a name res
 `New-OERAccessReviewDefinition` resolves it). A review of a group, a role, another access package or
 another policy is reported `Failed` with `AccessReviewScopeMismatch`, and nothing is written to it,
 the same in a `-WhatIf` plan; a name that matches nothing is reported `Failed` with
-`AccessPackageNotFound` or `AssignmentPolicyNotFound`. Give a new review a display name no other
-review in the tenant uses.
+`AccessPackageNotFound` or `AssignmentPolicyNotFound`. An access package name is not unique in the
+tenant, nor an assignment policy name in its access package, and the export writes both by name:
+when such a name is shared, the entry is reported `Failed` with `AmbiguousName` until it gives the
+package or the policy by id. Give a new review a display name no other review in the tenant uses.
 
 `Export-OERInventory` stays fast in a large tenant by deciding which security groups are
 RBAC-relevant before it reads any group in full: role-assignable groups, groups with PIM

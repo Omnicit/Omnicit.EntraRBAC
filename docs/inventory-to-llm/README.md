@@ -342,10 +342,13 @@ it creates a review. The scope of a review cannot be changed on an existing one.
 
 - A review that reviews a group, a role, another access package or another policy is reported
   `Failed` with `AccessReviewScopeMismatch`, naming what it reviews, and nothing is written to it. A
-  review of no access package at all is refused before any lookup.
+  review of no access package at all is refused with no access package or assignment policy lookup.
 - A declared name that matches nothing is reported `Failed` with `AccessPackageNotFound` or
   `AssignmentPolicyNotFound`; a lookup that fails (an ambiguous name, a 403) is reported `Failed`
   with its own error. Nothing is written in either case.
+- An access package name is not unique in the tenant, nor an assignment policy name in its access
+  package, and the export writes both by name: when such a name is shared, the entry is reported
+  `Failed` with `AmbiguousName` until it gives the package or the policy by id.
 - The check runs before the reviewer lookups and before any confirmation, so a `-WhatIf` plan and a
   real run report the same `Failed` row.
 

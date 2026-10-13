@@ -162,11 +162,14 @@ function Invoke-OERStructure {
     policy the entry declares: a GUID is compared as written, and a name is resolved as
     New-OERAccessReviewDefinition resolves it. A review that does not is reported Failed with the
     error AccessReviewScopeMismatch, and nothing is written to it; a review that reviews no access
-    package at all is refused with no lookup. A name that matches nothing is reported Failed with
-    AccessPackageNotFound or AssignmentPolicyNotFound, and a lookup that fails (an ambiguous name, a
-    403) with its own error, and nothing is written either. The check runs before the reviewer
-    lookups and before any ShouldProcess, so -WhatIf and a real run report the same Failed row. Under
-    -ErrorAction Stop the error stops the command, as any error does.
+    package at all is refused with no access package or assignment policy lookup. A name that matches
+    nothing is reported Failed with AccessPackageNotFound or AssignmentPolicyNotFound, and a lookup
+    that fails (an ambiguous name, a 403) with its own error, and nothing is written either. An
+    access package name is not unique in the tenant, nor an assignment policy name in its access
+    package, and Get-OERInventory exports both by name: when such a name is shared, the entry is
+    reported Failed with AmbiguousName until it names the package or the policy by id. The check runs
+    before the reviewer lookups and before any ShouldProcess, so -WhatIf and a real run report the
+    same Failed row. Under -ErrorAction Stop the error stops the command, as any error does.
 
     DirectoryRoleAssignments section pass: the engine passes every directoryRoleAssignments entry to
     each invocation of its handler and sets -ReconcileSection on the first item only, so the handler

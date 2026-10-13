@@ -217,8 +217,12 @@ ACCESS REVIEWS ARE MATCHED BY NAME
     another access package or another policy is reported Failed with
     AccessReviewScopeMismatch, and nothing is written to it, the same in a
     -WhatIf plan; a name that matches nothing is reported Failed with
-    AccessPackageNotFound or AssignmentPolicyNotFound. Give a new review a
-    display name no other review in the tenant uses.
+    AccessPackageNotFound or AssignmentPolicyNotFound. An access package name
+    is not unique in the tenant, nor an assignment policy name in its access
+    package, and the export writes both by name: when such a name is shared,
+    the entry is reported Failed with AmbiguousName until it gives the
+    package or the policy by id. Give a new review a display name no other
+    review in the tenant uses.
 
 PERMISSIONS
 

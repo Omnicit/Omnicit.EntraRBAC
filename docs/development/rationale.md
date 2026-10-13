@@ -7757,14 +7757,39 @@ under `-Prune`, the removal of every undeclared one there (whether Azure Resourc
 path the module built for `/` is not measured; see below). A bundle handed to a model presented
 elevated access as an assignment to keep, and an export applied with `-Prune` set out to manage it.
 
-**Rule 1 (the predicate; `Test-OERAzureRootScope`).** An Azure scope is the root scope when
-`ConvertTo-OERCanonicalScope` returns exactly `/` for it: `/` itself, and every run of slashes, which
-the validator already refuses as a spelling (see [#role-assignment-key](#role-assignment-key)). It is
-used for the Azure `roleAssignments` section only. It is never applied to `roleManagementPolicies`,
-which this step does not change, nor to the Microsoft Entra directory role sections, whose `/` is the
-Microsoft Entra tenant scope of a directory role (`directoryScopeId`) and has nothing to do with the
-Azure root scope. If wrong: a spelling of the root the canonical form does not map to `/` would slip
-through; Azure Resource Manager returns none, and the validator refuses every other slash spelling.
+**Rule 1 (the predicate; `Test-OERAzureRootScope`).** An Azure scope addresses the root scope in
+either of two cases: when `ConvertTo-OERCanonicalScope` returns exactly `/` for it -- `/` itself, and
+every run of slashes, which the validator already refuses as a spelling (see
+[#role-assignment-key](#role-assignment-key)) -- or when it starts with `/` and the role assignment
+request the ARM transport would send for it reaches the root. It is used for the Azure
+`roleAssignments` section only. It is never applied to `roleManagementPolicies`, which this step does
+not change, nor to the Microsoft Entra directory role sections, whose `/` is the Microsoft Entra
+tenant scope of a directory role (`directoryScopeId`) and has nothing to do with the Azure root scope.
+
+The second case exists because the first version tested the canonical form alone, and its "If wrong"
+premise -- that a spelling of the root the canonical form does not map to `/` could not reach the
+engine, since Azure Resource Manager returns none and the validator refuses every other slash
+spelling -- was false for a document. `/.`, `/..`, `/%2e`, `/\` and `/subscriptions/<id>/../..`
+passed the validator with no finding (only `/./`, which ends with `/`, drew the slash `Error`), and
+the engine went on:
+`Invoke-OERArmRequest` builds `"$BaseUrl$CallPath"`, and `Invoke-WebRequest -Uri` sends it as a
+`System.Uri`, which removes dot segments, decodes `%2e` and reads `\` as `/`, so a request for
+`/./providers/Microsoft.Authorization/...` is sent to `/providers/Microsoft.Authorization/...`, the
+root. The final review's probe (the real validator, engine, handler and `New-OERRoleAssignment`, with
+the transports mocked) reported `Created` for `/.`, `/..` and `/%2e`, with the PUT at a path that is
+the root's once normalised. So the predicate now builds the URI the transport builds -- the scope
+followed by `/providers/Microsoft.Authorization/roleAssignments`, as `Get-OERRoleAssignment` and
+`New-OERRoleAssignment` write it -- on the neutral host `scope.invalid` (never an Azure host, which
+`Get-OERCloudEndpoint` owns), with `[uri]::TryCreate`, and the scope is the root when the URI's path
+is one or more slashes followed by `providers/Microsoft.Authorization/roleAssignments` and nothing
+else. A scope that cannot form a URI is not the
+root: the transport could not send it either. With the wider predicate, the validator's Warning
+(Rule 5), the engine's guard (Rule 6) and the export's filter (Rule 2) cover these spellings with no
+other change. A dot segment, a `%` escape or white space in a scope that is NOT the root -- such as
+`/subscriptions/<id>/..`, which is sent as `/subscriptions` -- is not refused: that would be a new
+validator rule outside decision A4, and it is left as a finding. If wrong: a spelling that System.Uri
+leaves alone but Azure Resource Manager itself reads as the root (an escape System.Uri keeps encoded,
+such as `%2f` or `%5c`) would still slip through; that is not measured.
 
 **Rule 2 (the read; `Get-OERInventory`).** The root rows are taken out of the projected rows BEFORE
 the name-collision pass, so they never change how another row is named, and the document never
@@ -7808,8 +7833,9 @@ file, output property or parameter. If wrong: a later step adds a read-only file
 **Rule 5 (the validator: a `Warning`).** A `roleAssignments` entry whose scope is the root scope gets
 a `Warning` at `roleAssignments[N].scope`, not an `Error`: an older export that holds such a row still
 applies for the rest, and the engine never writes there (Rule 6). `roleManagementPolicies` on `/` is
-not reported. `//` keeps its slash `Error` and gets this `Warning` too, since both are true. If wrong:
-change the severity; the engine's guard stands either way.
+not reported. `//` keeps its slash `Error` and gets this `Warning` too, since both are true, and so
+does `/./`; `/.`, `/..` and `/%2e` get the `Warning` alone (Rule 1). If wrong: change the severity;
+the engine's guard stands either way.
 
 **Rule 6 (the engine: one guard, in the handler).** `Sync-OERStructureRoleAssignment` tests the
 resolved scope with `Test-OERAzureRootScope` as its first step for each entry: one warning, one
@@ -7831,8 +7857,9 @@ Nothing else in that branch changes. If wrong: one sentence of advice.
 for `/` to a path that starts `//providers/Microsoft.Authorization/` (the scope `/` with the provider
 path appended, as the request log of a test with the guard removed shows). Whether Azure Resource
 Manager accepts that path was not measured: it needs an identity with elevated access at the root
-scope (class B). The guard makes the question moot for the apply engine. Everything above was derived
-from the code and proven with mocked tests.
+scope (class B). The guard makes the question moot for the apply engine. That a dot-segment spelling
+reaches the root (Rule 1) is System.Uri's normalisation, measured with `[uri]` in a console, not on
+the wire. Everything above was derived from the code and proven with mocked tests.
 
 ## access-review-target
 
@@ -7859,20 +7886,28 @@ reviews the access package AND the assignment policy the entry declares, and oth
 record, which it never writes. The checks run in this order, and the first that fails decides:
 
 1. An entry that declares no `accessPackage` or no `assignmentPolicy` -- absent, an explicit null, or
-   empty or white space -- is refused with no request. The validator requires both keys but accepts
-   an empty string, and an entry that names no target cannot be compared, so the check fails closed
+   empty or white space -- is refused with no access package or assignment policy lookup (the
+   handler's display-name lookup has already run). The validator requires both keys but accepts an
+   empty string, and an entry that names no target cannot be compared, so the check fails closed
    rather than reaching a lookup that refuses an empty name with a message about its own parameters.
-2. A live review with no `AccessPackageId` is refused with no request.
-   `ConvertTo-OERAccessReviewDefinition` sets `AccessPackageId` and `AssignmentPolicyId` only from an
-   access-package scope query, so a review of a group, a role or anything else carries neither, and a
-   group review that shares the document's name costs no lookup.
-3. The declared access package is resolved as creation resolves it: a GUID is used as written, with
-   no read to show it exists (one equal to the live id IS the live id, and one that differs is refused
-   anyway), and a name goes through `Resolve-OERAccessPackageId -DisplayName`. It is compared with the
-   live id without regard to letter case; another package is refused.
-4. The declared assignment policy is resolved the same way: a GUID as written, a name through
-   `Resolve-OERAssignmentPolicyId` against the package id. It is compared with the live policy id;
-   another policy is refused.
+2. A live review with no `AccessPackageId` is refused with no access package or assignment policy
+   lookup. `ConvertTo-OERAccessReviewDefinition` sets `AccessPackageId` and `AssignmentPolicyId` only
+   from an access-package scope query, so a review of a group, a role or anything else carries
+   neither, and a group review that shares the document's name costs no such lookup.
+3. A declared access package GUID is used as written, with no existence read, which creation makes
+   (one equal to the live id IS the live id, and one that differs is refused anyway). Only a NAME is
+   resolved as creation resolves it, through `Resolve-OERAccessPackageId -DisplayName`. It is
+   compared with the live id without regard to letter case; another package is refused.
+4. The declared assignment policy is treated the same way: a GUID as written (creation reads none
+   either), a name through `Resolve-OERAssignmentPolicyId` against the package id. It is compared with
+   the live policy id; another policy is refused.
+
+A name is resolved in the whole tenant for an access package and within its access package for an
+assignment policy, and neither kind of name is unique there. The export writes both by name
+(`Get-OERInventory`), so an export re-applied unchanged is refused, with the lookup's `AmbiguousName`
+and nothing written, when such a name is shared, until the entry gives the package or the policy by
+id; before this step such a review was updated without resolving any name. Kept on purpose: the step's
+specification says a name is resolved as when the review is created, and the refusal fails closed.
 
 If wrong: an update the operator meant is refused with a message naming both targets, and nothing is
 ever written to another review.
@@ -7886,11 +7921,13 @@ are not unique. A name that matches nothing is `AccessPackageNotFound` or
 `New-OERAccessReviewDefinition` already publishes for the same lookup
 (`AccessPackage 'name' not found.`). A lookup that throws -- an ambiguous name, a 403, an exhausted
 429 -- is scrubbed with `Remove-OERErrorRecord` and published as itself, never as a not-found and
-never as a mismatch: a read that failed is no evidence about the review. One difference from creation remains: an ambiguous
-access package NAME on this path is published as the resolver's own `AmbiguousName` record, while
-`New-OERAccessReviewDefinition` maps the same ambiguity to `AmbiguousAccessPackageName`; both are
-`Ambiguous*` ids, and nothing else differs. If wrong: rename the id before the stable release;
-nothing depends on it but the record.
+never as a mismatch: a read that failed is no evidence about the review. Two differences from
+creation remain. An ambiguous access package NAME on this path is published as the resolver's own
+`AmbiguousName` record, while `New-OERAccessReviewDefinition` maps the same ambiguity to
+`AmbiguousAccessPackageName`; both are `Ambiguous*` ids. And a declared access package GUID is not
+read on this path, so a stale one is refused as `AccessReviewScopeMismatch`, where creation's
+existence read publishes `AccessPackageNotFound`. A policy GUID is not read on either path. If wrong:
+rename the id before the stable release; nothing depends on it but the record.
 
 **Rule 3 (the handler).** The check is the first statement for an existing review in
 `Sync-OERStructureAccessReview`, before the reviewer lookups, the diff and `ShouldProcess`. On a

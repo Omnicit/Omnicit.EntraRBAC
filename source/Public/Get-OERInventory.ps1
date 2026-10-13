@@ -121,9 +121,13 @@ function Get-OERInventory {
     review is matched by displayName and created when it does not exist; when it does, it is
     reconciled field by field only if it reviews the accessPackage and assignmentPolicy the entry
     declares, and is otherwise refused, since the scope of a review cannot be changed -- see the
-    Invoke-OERStructure help). A multi-stage review (StageCount greater than zero) is skipped with a
-    warning instead of being exported, because its reviewers live in stageSettings -- which the apply
-    schema does not model -- and the top-level reviewers collection Graph returns for it is
+    Invoke-OERStructure help). The projection writes accessPackage and assignmentPolicy as names, and
+    the apply engine resolves a name as creation resolves it, so when the access package name is not
+    unique in the tenant, or the assignment policy name is not unique in its access package,
+    re-applying the entry is refused with the lookup's AmbiguousName error, and nothing is written,
+    until the entry names it by id. A multi-stage review (StageCount greater than zero) is skipped
+    with a warning instead of being exported, because its reviewers live in stageSettings -- which
+    the apply schema does not model -- and the top-level reviewers collection Graph returns for it is
     empty by construction, which would otherwise be misreported as a configured self review. A
     live recurrence interval outside the module's cadence vocabulary (for example an
     absoluteMonthly interval other than 1, 3, 6 or 12) is exported as the nearest coarser cadence

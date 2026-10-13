@@ -439,6 +439,8 @@ Describe 'Get-OERInventoryPromptTemplate root scope and access review target (BL
         InModuleScope $script:moduleName {
             $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
             $T | Should -Match ([regex]::Escape('accessPackage and assignmentPolicy are the review SCOPE, which cannot be changed on an existing review. An existing review is matched by displayName and updated only when it reviews the declared accessPackage and assignmentPolicy; a review with that displayName that reviews something else (a group, a role, another access package or another policy) is refused, and nothing is written to it. Access review display names are not unique in a tenant, and this bundle leaves out the reviews it does not capture, so a displayName missing from accessReviews.json may already be in use: give a new review a displayName no other review in the tenant uses.'))
+            # A package or policy name is resolved as creation resolves it, and a shared one is refused.
+            $T | Should -Match ([regex]::Escape('An access package name is not unique in the tenant, nor an assignment policy name in its access package, and a name shared that way is refused: keep an accessPackage or assignmentPolicy that inventory.json gives as an id as that id, and give a shared name by id.'))
             # The old sentence said a changed scope was reported as a skipped drift while the rest was
             # applied; the engine now refuses the whole entry.
             $T | Should -Not -Match 'reported as a skipped drift'

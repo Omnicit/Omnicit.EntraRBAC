@@ -986,11 +986,12 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `administrativeUnit` the way `New-OERGroup` does: the created-membership match in
   `Sync-OERStructureAdministrativeUnit` and the unit placement check in `Test-OERStructureSchema`.
   `Why: docs/development/rationale.md#guid-predicate`
-- **`Test-OERAzureRootScope` is the single owner of whether an Azure role assignment scope is the
-  root scope `/`** (its canonical form is exactly `/`), and `Format-OERRootScopeAssignment` of the
-  order, the deduplication and the list text of the root-scope assignments that `Get-OERInventory`
-  and `Export-OERInventory` name in their warnings. The rule is for the Azure `roleAssignments`
-  section only: never apply it to `roleManagementPolicies`, nor to the directory role sections, whose
+- **`Test-OERAzureRootScope` is the single owner of whether an Azure role assignment scope addresses
+  the root scope `/` (any spelling the ARM transport sends there)**, and
+  `Format-OERRootScopeAssignment` of the order, the deduplication and the list text of the
+  root-scope assignments that `Get-OERInventory` and `Export-OERInventory` name in their warnings.
+  The rule is for the Azure `roleAssignments` section only: never apply it to
+  `roleManagementPolicies`, nor to the directory role sections, whose
   `/` is the Microsoft Entra tenant scope (`directoryScopeId`), not the Azure root scope. The export
   never writes a root-scope assignment, the validator warns on one, and `Sync-OERStructureRoleAssignment`
   skips one before any lookup or request and never prunes the root scope.

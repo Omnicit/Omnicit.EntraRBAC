@@ -721,6 +721,13 @@ Describe 'Get-OERStructureSchemaJson round-trip precedence documentation' {
         }
     }
 
+    It 'documents that an existing access review is updated only when it reviews the declared package and policy (BL-127)' {
+        InModuleScope Omnicit.EntraRBAC {
+            (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessReviews.description |
+                Should -Match ([regex]::Escape('an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy; otherwise the entry fails and nothing is written.'))
+        }
+    }
+
     It 'still recommends rather than requires a SharePointSite url' {
         InModuleScope Omnicit.EntraRBAC {
             $Res = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.catalogs.items.properties.resources.items
