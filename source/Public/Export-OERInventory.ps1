@@ -67,13 +67,13 @@ function Export-OERInventory {
     eligible for the same access is left out instead; when the group's eligibility could not be read
     either, a members collection that holds entries is written as an explicit null and an owners
     collection that holds entries is left out, both named in IncompleteReads, and the roster's
-    memberCount for that group is null. The generated README.md names the groups concerned in a
-    section "Members and owners left out as PIM for Groups access": for each group, by name and never
-    by principal, how many members and owners were left out and on which basis, or the statement that
-    none was. Leaving a member or owner out of the export changes nothing in the tenant. The roster's
-    memberCount counts the members written plus the members left out, so it keeps meaning the group's
-    live member count. The read needs the Microsoft Graph permission
-    PrivilegedAssignmentSchedule.Read.AzureADGroup (Get-OERRequiredScope lists it).
+    memberCount is null for a group whose members are written as null. The generated README.md names
+    the groups concerned in a section "Members and owners left out as PIM for Groups access": for
+    each group, by name and never by principal, how many members and owners were left out and on
+    which basis, or the statement that none was. Leaving a member or owner out of the export changes
+    nothing in the tenant. The roster's memberCount counts the members written plus the members left
+    out, so it keeps meaning the group's live member count. The read needs the Microsoft Graph
+    permission PrivilegedAssignmentSchedule.Read.AzureADGroup (Get-OERRequiredScope lists it).
 
     Azure coverage is reported, not assumed. ScopesEnumerated is how many ARM scopes the walk found,
     ScopeCount is how many of them were actually read, and SkippedScopes names the ones that were
@@ -168,7 +168,8 @@ function Export-OERInventory {
     could not be read, or that has an entry the export could name by nothing the apply engine
     accepts, is NOT written into inventory.json as an empty one or with an empty name: its key is an
     explicit null, which the apply engine reads as "leave untouched" (so is the members key of a group
-    whose PIM for Groups state could not be read, as described above). Do not hand-edit that null to
+    that has members when neither its PIM for Groups assignments nor its eligibility could be read, as
+    described above). Do not hand-edit that null to
     [] -- under Invoke-OERStructure -Prune an empty declared collection deletes every live member,
     binding or resource. Any other collection IncompleteReads names is left out of the document or
     written only as far as it was read, as the Get-OERInventory help describes; Invoke-OERStructure

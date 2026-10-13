@@ -6716,8 +6716,8 @@ group this run created into the unit (`-CreatedGroup`, BL-07, below); and, since
 every live member, owner or eligibility of a group synchronized from on-premises (`-SyncedGroup`,
 A15, under [#synced-groups](#synced-groups)); and, since Sprint 11 step 1 (BL-125), a live group
 member or owner that PIM for Groups holds or makes eligible for the same access (`-PimHeldReason`),
-and every undeclared member or owner of a group whose PIM for Groups state could not be read
-(`-PimUnread`), both under
+and every undeclared member or owner of a group that already existed when either of its PIM for
+Groups reads failed (`-PimUnread`), both under
 [#pim-activation-is-not-membership](#pim-activation-is-not-membership). The directory role prune's two
 guards for the signed-in identity, under [#directory-role-assignments](#directory-role-assignments),
 write their own `prune withheld:` rows.
@@ -7631,8 +7631,10 @@ state as empty. If wrong: one read more per item; never a wrong write.
 group holds for the same access, of any Kind and `Eligible` included, is NOT added: one warning for
 the entry, written with no `ShouldProcess` call, and a `Skipped` row that says why, the same under
 `-WhatIf`. A declared principal that is already present stays `Unchanged`, an activation in force
-included. When the hold could not be read, nothing is added to the group (it already existed: a group
-the run creates is never read): one warning for the item names the cause, and each declared entry
+included. When the hold could not be read (either read, the assignments or the eligibility, failed;
+the export is more lenient and writes `members` as null only when both failed), no member or owner
+is added to the group (it already existed: a group the run creates is never read; its eligibility
+and `pimPolicy` steps still run): one warning for the item names the cause, and each declared entry
 that is not present is `Skipped`. If wrong: a principal the
 operator really wants as a standing member or owner has to be added with `Add-OERGroupMember`.
 
@@ -7652,7 +7654,7 @@ state (recorded, not changed). If the hold rule is wrong: a removal the operator
 Groups access", that lists by group name, never by principal, how many members and owners were left
 out and on which basis, or says that none was. The roster's `memberCount` keeps meaning the group's
 live member count: the members written plus the members left out, and null when `members` is null.
-No new output property, parameter or ErrorId (decision A9). If wrong: the roster counts too few
+No new output property, parameter or ErrorId (this step's decision). If wrong: the roster counts too few
 members, or too many.
 
 **Rule 9 (the name of the unread entry).** The entry for a failed assignment read is
@@ -7667,18 +7669,22 @@ of any kind, is unread. If wrong: the declaration is inert, or a group PIM for G
 reads as unread, which is the safe direction.
 
 **The permission.** Microsoft Learn names `PrivilegedAssignmentSchedule.Read.AzureADGroup` as the
-least privileged application permission for the read and `PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup`
-as the next one. It is a different permission family from the eligibility one the module's gate held
-every `privilegedAccess/group` path to before, so `tests/QA/requiredscope.tests.ps1` now splits the
-endpoint map by schedule kind, and `Get-OERRequiredScope` lists the new permission for
+least privileged application permission for the read and
+`PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup` as the next one. It is a different permission
+family from the eligibility one the module's gate held every `privilegedAccess/group` path to
+before, so `tests/QA/requiredscope.tests.ps1` now splits the endpoint map by schedule kind, and
+`Get-OERRequiredScope` lists the new permission for
 `Get-OERInventory`, `Export-OERInventory` and `Invoke-OERStructure`. A delegated sign-in already
 requests `PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup` by default (`Initialize-OERAuth`); an
-app-only identity needs the read permission granted on its app registration. The live read answered
-200 before the documented permission was added to the gate, so which of the identity's permissions
-allowed it is not established. If the permission is missing the read fails: the export reports the
-assignments as unread and falls back to the reserve of rule 3, and the apply engine treats the hold
-as unreadable and adds and removes no member or owner in a group that already existed (a group the
-same run creates is not read, and its declared members and owners are added), never a wrong write.
+app-only identity is documented to need the read permission granted on its app registration. What was
+measured differs: `oer-live-cc` read the endpoint with 200 while it did NOT yet hold
+`PrivilegedAssignmentSchedule.Read.AzureADGroup` (twice on 2026-10-13, in the measurement above and in
+the checklist's check 0.2, where the grant was still not visible). So which of the identity's
+permissions allowed the read is not established, and adding the permission to the gate changes no
+grant. When the read is refused, the export reports the assignments as unread and falls back to the
+reserve of rule 3, and the apply engine adds and removes no member or owner of a group that already
+existed (a group the same run creates is not read, and its declared members and owners are added),
+never a wrong write.
 
 **Why the apply engine refuses, and why it says so.** The document is a declaration of the standing
 state, so a principal PIM holds is not part of it, and an older export may still list one. Adding it

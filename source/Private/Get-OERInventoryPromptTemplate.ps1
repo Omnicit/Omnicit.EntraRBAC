@@ -205,14 +205,15 @@ document.
     resource roles). Keep the key as exported, and never add it to a group yourself.
   - members[] and owners[] hold a group's STANDING members and owners only. A member or owner whose
     access PIM for Groups holds -- an activation, or another active assignment that is not standing,
-    such as a time-bound one -- is not written there, and an older export can have one there. The
-    README lists, group by group, how many members and owners were left out as PIM for Groups access
-    (section "Members and owners left out as PIM for Groups access"). Do not propose a principal
-    that is eligible in PIM for Groups, or one the README lists as left out, as a standing member or
-    owner, and do not read a member or owner that is missing from members[] or owners[] as a removal:
-    it may still hold the access through PIM for Groups. Invoke-OERStructure adds no standing member
-    or owner for a principal that PIM for Groups holds or makes eligible for the same access, and
-    -Prune removes none.
+    such as a time-bound one -- is not written there, unless the README names the group's
+    pimAssignments as unread, when a time-bound one can be; and an older export can have one there.
+    The README lists, group by group, how many members and owners were left out as PIM for Groups
+    access (section "Members and owners left out as PIM for Groups access"). Do not propose a
+    principal that is eligible in PIM for Groups, or one you know holds the access through PIM for
+    Groups, as a standing member or owner; for a group the README counts there, do not add members
+    to make up the count, and do not read a missing activation as a removal. Invoke-OERStructure adds
+    no standing member or owner for a principal that PIM for Groups holds or makes eligible for the
+    same access, and -Prune removes none.
   - displayName is the match key: an existing group is matched and updated by it. To rename a
     group, declare its new name as displayName and its current name as previousDisplayName: the
     group found under previousDisplayName alone is renamed in place. When both names match

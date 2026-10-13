@@ -784,13 +784,14 @@ name, under "Members and owners left out as PIM for Groups access". Where the gr
 assignments cannot be read, the members and owners eligible for the same access are left out
 instead and `groups/<name>/pimAssignments` is named in `InventoryPartial`; where its eligibility
 cannot be read either, a `members` collection that holds entries is `null` and an `owners`
-collection that holds entries is left out. `Invoke-OERStructure` adds no standing member or owner for a principal PIM
-for Groups holds or makes eligible for the same access (`Skipped`, with a warning, also under
-`-WhatIf`), and `-Prune` removes none (`Skipped` with `-Prune`, `Extra` without). So an activation
-that a document exported by an earlier version lists under `members` is not added while PIM for
-Groups still holds that principal or makes it eligible. While the PIM state of a group that already
-existed cannot be read, nothing is added to or removed from its members and owners (a group the same
-run creates is not read, and its declared members and owners are added). The read needs the permission
+collection that holds entries is left out. `Invoke-OERStructure` adds no standing member or owner for
+a principal PIM for Groups holds or makes eligible for the same access (`Skipped`, with a warning,
+also under `-WhatIf`), and `-Prune` removes none (`Skipped` with `-Prune`, `Extra` without). So an
+activation that a document exported by an earlier version lists under `members` is not added while
+PIM for Groups still holds that principal or makes it eligible. While either of a group's PIM for
+Groups reads (its assignments or its eligibility) fails for a group that already existed, nothing is
+added to or removed from its members and owners; a group the same run creates is not read, and its
+declared members and owners are added. The read needs the permission
 `PrivilegedAssignmentSchedule.Read.AzureADGroup`, which `Get-OERRequiredScope` lists.
 
 `Export-OERInventory` stays fast in a large tenant by deciding which security groups are

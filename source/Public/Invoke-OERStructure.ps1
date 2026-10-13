@@ -61,9 +61,9 @@ function Invoke-OERStructure {
     only when a member or owner has to be added, or an undeclared one reaches the prune pass and no
     other prune rule withholds it: never for an entry whose members and owners already match, never
     for a group the same run created (a group New-OERGroup finds already existing in place of creating
-    it counts as created), and never for a group synchronized from on-premises. When that state cannot
-    be read for a group that already existed, nothing is added to its members and owners and nothing
-    is removed from them: each declared entry that is not present is reported Skipped, each
+    it counts as created), and never for a group synchronized from on-premises. When either of those
+    two reads fails for a group that already existed, nothing is added to its members and owners and
+    nothing is removed from them: each declared entry that is not present is reported Skipped, each
     undeclared one is withheld (see -Prune), and one warning for the group entry names the cause. A
     group the same run creates is not read, so its declared members and owners are added. The read
     needs the Microsoft Graph permission PrivilegedAssignmentSchedule.Read.AzureADGroup
@@ -198,8 +198,8 @@ function Invoke-OERStructure {
     saw one in a group or pruned one, and no document an earlier version exported lists one. An
     undeclared service principal is therefore reported Extra without -Prune, and Skipped with a
     Detail starting "prune withheld:" with -Prune, with no warning and no ShouldProcess prompt; every
-    other member and owner is pruned as described here. Remove one with Remove-OERGroupMember when
-    it is meant to go.
+    other member and owner is pruned as described here, unless a rule below withholds it. Remove one
+    with Remove-OERGroupMember when it is meant to go.
 
     A group whose live read shows OnPremisesSyncEnabled True is synchronized from on-premises Active
     Directory and managed there, so nothing is ever written to it. Every property, member, owner,
@@ -219,11 +219,11 @@ function Invoke-OERStructure {
     principal that is a standing member and also eligible for member access is covered too. An owner
     withheld this way still counts as an owner in the group for the rule that the last owner is not
     removed, so -Prune can remove the last standing owner while an activated or time-bound owner
-    remains, and when that activation ends the group has no owner. While the PIM for Groups state of a group that already existed cannot be read, no member
-    or owner is removed from that group: each undeclared one is reported Skipped, with a Detail
-    starting "prune withheld:", with or without -Prune, and one warning for the group names the
-    cause. Manage the
-    access in PIM for Groups, or remove a standing member with Remove-OERGroupMember, when it is
+    remains, and when that activation ends the group has no owner. While the PIM for Groups
+    assignments or the eligibility of a group that already existed cannot be read, no member or owner
+    is removed from that group: each undeclared one is reported Skipped, with a Detail starting
+    "prune withheld:", with or without -Prune, and one warning for the group names the cause. Manage
+    the access in PIM for Groups, or remove a standing member with Remove-OERGroupMember, when it is
     meant to go.
 
     A group the document creates into an administrative unit (a groups[] entry's
@@ -259,9 +259,11 @@ function Invoke-OERStructure {
     fails is reported Failed, and nothing in it is removed or reported Extra.
 
     Five collections are reconciled even when their key is omitted, against an empty declared set,
-    so -Prune removes every live entry in them (a group's service principals and every member of a
-    group synchronized from on-premises excepted, and, in the run that creates it, a group's
-    membership of the unit it was created into, as above):
+    so -Prune removes every live entry in them (a group's service principals, every member of a
+    group synchronized from on-premises, every group member PIM for Groups holds or makes eligible
+    and, for a group that already existed, every member while its PIM for Groups state cannot be
+    read, all excepted, and, in the run that creates it, a group's membership of the unit it was
+    created into, as above):
     groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
     catalogs[].resources and accessPackages[].resourceRoles. When
     -Prune is set, one warning lists every such omitted key in a section selected by -Include before

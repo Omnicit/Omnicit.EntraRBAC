@@ -1112,7 +1112,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   matched per access type. `Read-OERGroupPimAssignment` is the single reader of
   `assignmentScheduleInstances` (`ResourceTypeNotSupported` is an empty answer, a thrown failure is
   unread) and `Read-OERGroupPimHold` the apply engine's one read of the hold state. The export leaves
-  a held member or owner out of `members`/`owners`; the engine adds and prunes none. Never
+  out of `members`/`owners` a member or owner held by an assignment kind (eligibility alone decides
+  only when the assignment read failed); the engine adds and prunes none, Eligible included. Never
   re-implement the rule inline. `Why: docs/development/rationale.md#pim-activation-is-not-membership`
 - **`Format-OERUnreadCauseClause` is the single owner of the causes clause of an inventory's
   `InventoryPartial` message** -- the deduplication with the failing object's id normalised away, the

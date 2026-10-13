@@ -165,13 +165,14 @@ PIM ACTIVATIONS ARE NOT STANDING MEMBERS
 
     Invoke-OERStructure adds no standing member or owner for a principal PIM for
     Groups holds or makes eligible for the same access: the entry is Skipped,
-    with a warning, also under -WhatIf. So an activation that a document an
-    earlier version exported lists under members is not added while PIM for
-    Groups still holds that principal or makes it eligible. -Prune removes none
-    (Skipped with -Prune, Extra without). While the PIM state of a group that
-    already existed cannot be read, nothing is added to or removed from its
-    members and owners; a group the same run creates is not read, and its
-    declared members and owners are added. The read needs the permission
+    with a warning, also under -WhatIf. So an activation listed under members in
+    a document an earlier version exported is not added while PIM for Groups
+    still holds that principal or makes it eligible. -Prune removes none
+    (Skipped with -Prune, Extra without). While either of a group's PIM for
+    Groups reads (its assignments or its eligibility) fails for a group that
+    already existed, nothing is added to or removed from its members and owners;
+    a group the same run creates is not read, and its declared members and
+    owners are added. The read needs the permission
     PrivilegedAssignmentSchedule.Read.AzureADGroup, which Get-OERRequiredScope
     lists.
 
