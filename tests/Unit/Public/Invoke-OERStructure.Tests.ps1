@@ -1550,10 +1550,40 @@ Describe 'Invoke-OERStructure never reaches the root scope (BL-126)' {
         $Rows.Count | Should -Be 4
     }
 
-    It 'skips every dot-segment spelling of the root scope, sends nothing there, and still prunes the subscription' {
+    It 'refuses a document that spells the root scope with a dot segment or a percent escape, before any sign-in or request (A13)' {
+        # '/.', '/..' and '/%2e' are not '/' as written, but the transport's URI sends a request for each
+        # of them to the root scope's path. Since A13 (BL-141) the validator refuses each of the three
+        # spellings as an Error, beside the root Warning, so the whole document stops at validation:
+        # nothing is signed in to, read, looked up or written, the valid subscription entries included.
+        # The engine's own root-scope guard for the same three spellings is held by the next test.
+        $Json = '{ "version": "1.0", "roleAssignments": [ ' +
+            '{ "scope": "/.", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/..", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/%2e", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" } ] }'
+        $Err = $null
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+        $Rows.Count | Should -Be 0
+        $Refused = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'StructureValidationFailed,*' })
+        $Refused.Count | Should -Be 1
+        $Refused[0].Exception.Message | Should -BeLike "*roleAssignments``[0``].scope: 'scope' at roleAssignments``[0``] must be written without a '.' or '..' segment*Got: '/.'.*"
+        $Refused[0].Exception.Message | Should -BeLike "*roleAssignments``[1``].scope: 'scope' at roleAssignments``[1``] must be written without a '.' or '..' segment*Got: '/..'.*"
+        $Refused[0].Exception.Message | Should -BeLike "*roleAssignments``[2``].scope: 'scope' at roleAssignments``[2``] must be written without a '%' escape*Got: '/%2e'.*"
+        $Refused[0].Exception.Message | Should -Not -BeLike "*roleAssignments``[3``]*"
+        $script:RtArmLog.Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERStructurePrincipal -Times 0
+    }
+
+    It 'skips every dot-segment spelling of the root scope, sends nothing there, and still prunes the subscription, when the validator lets them through' {
         # '/.', '/..' and '/%2e' are not '/' as written, but the transport's URI sends a request for each
         # of them to the root scope's path. Test-OERAzureRootScope answers for the path the transport
-        # sends, so the handler's guard skips all three.
+        # sends, so the handler's guard skips all three. The validator refuses these spellings since A13
+        # (BL-141), so it is stood in for here: this is the engine's own guard, kept as a second line
+        # of defence for a spelling the validator might one day let through, and the real validator's
+        # refusal is held by the test above.
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
         $Json = '{ "version": "1.0", "roleAssignments": [ ' +
             '{ "scope": "/.", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
             '{ "scope": "/..", "role": "User Access Administrator", "principal": "person1@example.com" }, ' +
@@ -1562,6 +1592,7 @@ Describe 'Invoke-OERStructure never reaches the root scope (BL-126)' {
             '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Contributor", "principal": "person3@example.com" } ] }'
         $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
 
+        Should -Invoke -ModuleName $script:moduleName Test-OERStructureSchema -Times 1 -Exactly
         # Positive proof first: the subscription was read once for each of its two entries, reconciled,
         # and its undeclared assignment removed.
         @($script:RtArmLog | Where-Object { $_ -eq "GET $($script:RtSub)/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()" }).Count | Should -Be 2

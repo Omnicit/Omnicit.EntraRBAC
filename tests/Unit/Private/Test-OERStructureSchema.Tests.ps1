@@ -4685,20 +4685,25 @@ Describe 'Test-OERStructureSchema warns about a role assignment at the root scop
         $V.Valid | Should -BeFalse
     }
 
-    It 'warns about <Scope> in roleAssignments, a spelling the ARM transport sends to the root, with no Error' -ForEach @(
-        @{ Scope = '/.' }
-        @{ Scope = '/..' }
-        @{ Scope = '/%2e' }
+    It 'warns about <Scope> in roleAssignments, a spelling the ARM transport sends to the root, and refuses its spelling (A13)' -ForEach @(
+        @{ Scope = '/.'; Needle = '*without a ''.'' or ''..'' segment*' }
+        @{ Scope = '/..'; Needle = '*without a ''.'' or ''..'' segment*' }
+        @{ Scope = '/%2e'; Needle = '*without a ''%'' escape*' }
     ) {
         # System.Uri removes the dot segment (and decodes '%2e' first), so a request for this scope reaches
-        # the root scope's path; Test-OERAzureRootScope says so, and the validator warns as for '/'.
+        # the root scope's path; Test-OERAzureRootScope says so, and the validator warns as for '/'. Since
+        # A13 (BL-141) the spelling itself is also an Error: the Warning no longer stands alone, and the
+        # document is refused before the engine's own root-scope guard is reached.
         $V = Invoke-RootValidation -Json ('{ "version": "1.0", "roleAssignments": [ { "scope": "' + $Scope + '", "role": "User Access Administrator", "principal": "person1@example.com" } ] }')
-        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        $Errs = @($V.Errors | Where-Object { $_.Severity -eq 'Error' })
+        $Errs.Count | Should -Be 1
+        $Errs[0].Path | Should -BeExactly 'roleAssignments[0].scope'
+        $Errs[0].Message | Should -BeLike $Needle
         $Warnings = @($V.Errors | Where-Object { $_.Severity -eq 'Warning' })
         $Warnings.Count | Should -Be 1
         $Warnings[0].Path | Should -BeExactly 'roleAssignments[0].scope'
         $Warnings[0].Message | Should -BeExactly $script:RootFindingText
-        $V.Valid | Should -BeTrue
+        $V.Valid | Should -BeFalse
     }
 
     It 'names the index of a later entry at the root scope, and warns about no other entry' {
@@ -4725,6 +4730,181 @@ Describe 'Test-OERStructureSchema warns about a role assignment at the root scop
     ) {
         $V = Invoke-RootValidation -Json $Json
         @(Get-RootWarning -Validation $V).Count | Should -Be 0
+    }
+}
+
+Describe 'Test-OERStructureSchema refuses a dot segment, a percent escape or white space in an Azure scope (A13, BL-141)' {
+    # A scope written as an Azure Resource Manager path is sent as written, and the request URI
+    # resolves a '.' or '..' segment (with '/' or '\' as the separator, since System.Uri reads '\' as
+    # '/'), decodes a '%' escape, and no scope carries white space. Such a spelling names another scope
+    # than the text says, while the engine groups entries on the text's canonical form, so two spellings
+    # of one scope would form two groups and each prune pass could remove what the other declares. It is
+    # an Error at the entry's scope path in roleAssignments and roleManagementPolicies. The mg:, sub: and
+    # subscription: forms are exempt: they name a management group or subscription by id, name or display
+    # name (which may hold spaces) and are resolved by a lookup, never sent as written. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        function New-SegmentDoc {
+            param([string]$Section, [string]$Scope)
+            $Entry = if ($Section -eq 'roleAssignments') {
+                [pscustomobject]@{ scope = $Scope; role = 'Reader'; principal = 'person1@example.com' }
+            } else {
+                [pscustomobject]@{ scope = $Scope; role = 'Reader' }
+            }
+            [pscustomobject]@{ version = '1.0'; $Section = @($Entry) }
+        }
+        function Invoke-SegmentValidation {
+            param([object]$Doc)
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        function Get-SegmentError {
+            param([object]$Validation)
+            @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' })
+        }
+        $script:SegmentRootWarning = "'scope' at roleAssignments[0] is the root scope '/', which grants access over every management group and " +
+            'subscription in the tenant (elevated access). Invoke-OERStructure never creates or removes a role assignment there: the entry ' +
+            'is reported Skipped and the root scope is never pruned. Remove the entry and manage elevated access outside the document.'
+    }
+
+    It 'refuses <Scope> in <Section> as one dot segment Error at the entry''s scope path' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/../other' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/./resourceGroups/rg' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/..' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/.' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111\..\x' }
+            @{ Section = $Section; Scope = '/.' }
+            @{ Section = $Section; Scope = '/..' }
+        }
+    ) {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 1
+        $Errs[0].Section | Should -BeExactly $Section
+        $Errs[0].Path | Should -BeExactly "$Section[0].scope"
+        $Errs[0].Message | Should -BeExactly "'scope' at $Section[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '$Scope'."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses <Scope> in <Section> as one percent escape Error at the entry''s scope path' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg%2Fx' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/%2e%2e' }
+            @{ Section = $Section; Scope = '/%2e' }
+        }
+    ) {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 1
+        $Errs[0].Section | Should -BeExactly $Section
+        $Errs[0].Path | Should -BeExactly "$Section[0].scope"
+        $Errs[0].Message | Should -BeExactly "'scope' at $Section[0] must be written without a '%' escape: the request would decode it and name another scope than the one written. Got: '$Scope'."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses a scope with white space in <Section> as one white space Error at the entry''s scope path (<Case>)' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            @{ Section = $Section; Case = 'a space inside'; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/my rg' }
+            @{ Section = $Section; Case = 'a leading space'; Scope = ' /subscriptions/11111111-1111-1111-1111-111111111111' }
+            @{ Section = $Section; Case = 'a trailing tab'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111$([char]9)" }
+            @{ Section = $Section; Case = 'a line feed'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111$([char]10)" }
+        }
+    ) {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 1
+        $Errs[0].Section | Should -BeExactly $Section
+        $Errs[0].Path | Should -BeExactly "$Section[0].scope"
+        $Errs[0].Message | Should -BeExactly "'scope' at $Section[0] must be written without white space. Got: '$Scope'."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'reports a dot segment, a percent escape and white space in one scope as three separate Errors in <Section>' -ForEach @(
+        @{ Section = 'roleAssignments' }
+        @{ Section = 'roleManagementPolicies' }
+    ) {
+        $Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/my rg/../%2e'
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 3
+        @($Errs.Path | Select-Object -Unique) | Should -BeExactly @("$Section[0].scope")
+        $Errs[0].Message | Should -BeLike "*without a '.' or '..' segment*"
+        $Errs[1].Message | Should -BeLike "*without a '%' escape*"
+        $Errs[2].Message | Should -BeLike '*without white space*'
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'accepts <Scope> in <Section> with no Error and no Warning' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg.name' }
+            # Dots inside a segment are not a dot segment.
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Web/sites/a..b' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Web/sites/.hidden' }
+            # The friendly forms name a subscription or management group, which a lookup resolves; a display
+            # name may hold spaces, and the prefix is read in any letter case.
+            @{ Section = $Section; Scope = 'sub:Visual Studio Enterprise' }
+            @{ Section = $Section; Scope = 'mg:Contoso Root' }
+            @{ Section = $Section; Scope = 'subscription:My Sub' }
+            @{ Section = $Section; Scope = 'SUB:x y' }
+            @{ Section = $Section; Scope = 'Mg:Contoso Root' }
+            @{ Section = $Section; Scope = 'SUBSCRIPTION:My Sub' }
+        }
+    ) {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        @($V.Errors).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'accepts the root scope in roleManagementPolicies with no finding' {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section 'roleManagementPolicies' -Scope '/')
+        @($V.Errors).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'reports ''/.'' in roleAssignments with one dot segment Error and the root Warning, since both are true' {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section 'roleAssignments' -Scope '/.')
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 1
+        $Errs[0].Message | Should -BeLike "*without a '.' or '..' segment*"
+        $Warnings = @($V.Errors | Where-Object { $_.Severity -eq 'Warning' })
+        $Warnings.Count | Should -Be 1
+        $Warnings[0].Message | Should -BeExactly $script:SegmentRootWarning
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'reports ''/'' in roleAssignments with the root Warning only, and no Error' {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section 'roleAssignments' -Scope '/')
+        (Get-SegmentError -Validation $V).Count | Should -Be 0
+        $Warnings = @($V.Errors | Where-Object { $_.Severity -eq 'Warning' })
+        $Warnings.Count | Should -Be 1
+        $Warnings[0].Message | Should -BeExactly $script:SegmentRootWarning
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'exempts a scope as ConvertTo-OERScopeSplat reads it as a friendly form, and no other text that merely starts with the prefix' {
+        # 'mg:' followed by a line feed names no management group (the splat's value needs a character that
+        # is not a line break), so the text is sent as written like any other path and is refused twice:
+        # the line feed is white space and '..' is a dot segment.
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section 'roleManagementPolicies' -Scope "mg:$([char]10)/../x")
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 2
+        $Errs[0].Message | Should -BeLike "*without a '.' or '..' segment*"
+        $Errs[1].Message | Should -BeLike '*without white space*'
+    }
+
+    It 'leaves a friendly form with a dot segment or a percent escape to its lookup, which never sends it as written' -ForEach @(
+        @{ Scope = 'mg:a%20b' }
+        @{ Scope = 'sub:/../x' }
+    ) {
+        # The friendly forms are exempt as a whole (ruling R9): the value is looked up by id, name or
+        # display name, and a management group name is escaped as one path segment before it is sent.
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section 'roleAssignments' -Scope $Scope)
+        (Get-SegmentError -Validation $V).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
     }
 }
 

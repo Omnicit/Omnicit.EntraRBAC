@@ -173,9 +173,18 @@ function Test-OERStructureSchema {
     '/' itself) or contains '//' is an Error at the entry's scope path: the canonical form would merge
     it with the scope written without the stray '/', so a scope written only that way would start to
     be pruned and '//' would become the root, and the document is refused instead. A roleAssignments
+    or roleManagementPolicies scope that is written as an Azure path and holds a '.' or '..' segment
+    (split at '/' and at '\', since the request URI reads '\' as '/'), a '%' escape or white space is
+    an Error at the entry's scope path for each of the three (A13, BL-141): the request URI resolves
+    the segment, decodes the escape and so names another scope than the text says, while the engine
+    groups entries on the text's canonical form, so two spellings of one scope would each prune what
+    the other declares. A scope in the mg:, sub: or subscription: form is exempt, as
+    ConvertTo-OERScopeSplat reads the form: it names a management group or subscription by id, name or
+    display name (a display name may contain spaces), a lookup resolves it, and it is never sent as
+    written. A lone '\', '?' and '#' are not refused by this rule. A roleAssignments
     scope that is the Azure root scope '/' (Test-OERAzureRootScope decides, so '//' is reported this
     way too, beside its Error, and so is a spelling the Azure Resource Manager transport sends to the
-    root, such as '/.' or '/%2e') is a Warning at the entry's scope path (BL-126): a role assignment
+    root, such as '/.' or '/%2e', beside its A13 Error) is a Warning at the entry's scope path (BL-126): a role assignment
     there is elevated access, which Invoke-OERStructure never creates or removes, so the entry is
     reported Skipped and the root scope is never pruned. A roleManagementPolicies scope '/' is not reported,
     and neither is the '/' of the directory role sections, the Microsoft Entra tenant scope. An OMITTED
@@ -1482,7 +1491,7 @@ function Test-OERStructureSchema {
     # a scope written ONLY with the stray '/' would start to be pruned, and '//' would become the root
     # '/'. Before the engine grouped on the canonical scope, neither was ever pruned, and a refusal
     # removes nothing. Azure Resource Manager never returns a scope carrying either spelling, so an
-    # exported document is not hit.
+    # exported document is not hit. Add-ScopeSegmentFinding, below, is the second spelling rule (A13).
     function Add-ScopeSlashFinding {
         param([object]$Node, [string]$Section, [string]$Item, [string]$Path)
         if (-not (Test-HasProp -Node $Node -Name 'scope')) { return }
@@ -1490,6 +1499,36 @@ function Test-OERStructureSchema {
         if (($ScopeText.EndsWith('/') -and $ScopeText -cne '/') -or $ScopeText.Contains('//')) {
             Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
                 -Message "'scope' at $Path must be written without a trailing or doubled '/'. Got: '$ScopeText'."
+        }
+    }
+
+    # A13 (BL-141): a scope written as an Azure Resource Manager path is sent as written, and the request
+    # URI resolves a '.' or '..' segment (with '/' or '\' as the separator, since System.Uri reads '\' as
+    # '/'), decodes a '%' escape, and no scope carries white space. Such a spelling names another scope
+    # than the text says, while the engine groups entries on the text's canonical form, so two spellings
+    # of one scope would form two groups and each prune pass could remove what the other declares (the
+    # mechanism of BL-01). Refused as an Error, in the form of the slash rule above. The mg:, sub: and
+    # subscription: forms are exempt: they name a management group or subscription by id, name or
+    # display name (a display name may contain spaces) and are resolved by a lookup, never sent as
+    # written. ConvertTo-OERScopeSplat owns that syntax, so the exemption asks it: only a scope it
+    # returns as @{ Scope = ... } is the text that is sent as written, and the prefix pattern is never
+    # repeated here. A lone backslash, '?' and '#' are not refused by this rule.
+    function Add-ScopeSegmentFinding {
+        param([object]$Node, [string]$Section, [string]$Item, [string]$Path)
+        if (-not (Test-HasProp -Node $Node -Name 'scope')) { return }
+        $ScopeText = [string]$Node.scope
+        if (-not (ConvertTo-OERScopeSplat -Scope $ScopeText).ContainsKey('Scope')) { return }
+        if (@($ScopeText -split '[/\\]' | Where-Object { $_ -ceq '.' -or $_ -ceq '..' }).Count -gt 0) {
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
+                -Message "'scope' at $Path must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '$ScopeText'."
+        }
+        if ($ScopeText.Contains('%')) {
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
+                -Message "'scope' at $Path must be written without a '%' escape: the request would decode it and name another scope than the one written. Got: '$ScopeText'."
+        }
+        if (@($ScopeText.ToCharArray() | Where-Object { [char]::IsWhiteSpace($_) }).Count -gt 0) {
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
+                -Message "'scope' at $Path must be written without white space. Got: '$ScopeText'."
         }
     }
 
@@ -1515,9 +1554,11 @@ function Test-OERStructureSchema {
                     }
                 }
                 Add-ScopeSlashFinding -Node $RA -Section 'roleAssignments' -Item $RAItem -Path $RAPath
+                Add-ScopeSegmentFinding -Node $RA -Section 'roleAssignments' -Item $RAItem -Path $RAPath
                 # BL-126: a role assignment at the Azure root scope '/' (Test-OERAzureRootScope owns the
-                # rule, so '//' is it too, beside its slash Error, and so is '/.', which the ARM
-                # transport's URI sends to the root) is elevated access, which a document
+                # rule, so '//' is it too, beside its slash Error, and so are '/.', '/..' and '/%2e',
+                # which the ARM transport's URI sends to the root, each beside its A13 segment Error:
+                # the Warning no longer stands alone for them) is elevated access, which a document
                 # never carries and the apply engine never creates, removes or prunes: it reports the
                 # entry Skipped. A Warning, not an Error, so an older export that holds one still applies
                 # for the rest (docs/development/rationale.md#root-scope-is-not-in-the-document). Never
@@ -1712,6 +1753,7 @@ function Test-OERStructureSchema {
                 Test-PimPolicySectionItem -Node $RMP -Section 'roleManagementPolicies' -Path $RMPPath -Item $RMPItem `
                     -KnownKey (@('scope') + $PimPolicyItemKey) -RequiredKey @('scope', 'role') -PimLabel 'Azure PIM'
                 Add-ScopeSlashFinding -Node $RMP -Section 'roleManagementPolicies' -Item $RMPItem -Path $RMPPath
+                Add-ScopeSegmentFinding -Node $RMP -Section 'roleManagementPolicies' -Item $RMPItem -Path $RMPPath
                 if ((Test-HasProp -Node $RMP -Name 'scope') -and (Test-HasProp -Node $RMP -Name 'role')) {
                     $RMPCanonicalScope = ConvertTo-OERCanonicalScope -Scope ([string]$RMP.scope)
                     Add-DuplicateEntryFinding -Seen $RMPSeen -Key "$RMPCanonicalScope|$($RMP.role)" -Index $I `
