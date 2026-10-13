@@ -18,6 +18,16 @@ function Get-OERInventoryReadme {
     export kept role management policies it could not judge, not an Entra ID read, and is listed
     under the label 'Azure role management policies kept without being judged'.
 
+    Directly after it comes the section "Members and owners left out as PIM for Groups access"
+    (BL-125, A3). It says that inventory.json and groups.json write a group's standing members and
+    owners only, why a member or owner whose access PIM for Groups holds is left out, and what was
+    left out where the PIM for Groups assignments could not be read. Then it lists one bullet per
+    -PimLeftOut entry: the group's name as a code span (the same fence rule as the entries above),
+    how many members and owners were left out, and the basis -- an activation or a time-bound active
+    assignment, or, where the group's assignments could not be read, eligibility for the same access.
+    It names groups only, never a principal. When -PimLeftOut is empty it says that none was left out.
+    That parameter is mandatory for the same reason as the three above.
+
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
     collections or objects that could not be read, could not be written without an empty name, or
@@ -39,29 +49,57 @@ function Get-OERInventoryReadme {
     the Export-OERInventory output), absent from azurePimEligibility.json. Pass an empty array when
     there are none.
 
-    .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @()
-    Returns the README Markdown as a single string. Its "What this export could not read" section
-    says that nothing was left unread.
+    .PARAMETER PimLeftOut
+    The groups that left members or owners out as PIM for Groups access (the PimLeftOut list of
+    Get-OERInventoryGroup): one object per group with Group (the display name), Members and Owners
+    (how many were left out) and Basis ('Assignments' or 'Eligibility'). Pass an empty array when
+    there are none.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>')
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()
+    Returns the README Markdown as a single string. Its "What this export could not read" section
+    says that nothing was left unread, and its "Members and owners left out as PIM for Groups access"
+    section that none was left out.
+
+    .EXAMPLE
+    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @()
     Returns the README Markdown with one bullet per entry under "What this export could not read".
+
+    .EXAMPLE
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut
+    Returns the README Markdown with one bullet per group under "Members and owners left out as PIM
+    for Groups access".
     #>
     [OutputType([string])]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$IncompleteReads,
         [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$SkippedScopes,
-        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$SkippedEligibilityScopes
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$SkippedEligibilityScopes,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$PimLeftOut
     )
 
-    # One bullet per non-blank entry, in the order each list holds them. An entry is written as a
-    # Markdown code span so '<all Azure scopes: scope enumeration failed>' is shown, not swallowed
-    # as an HTML tag. CR and LF become a space, so a bullet stays on one line. The fence is one
-    # backtick longer than the longest run of backticks inside the entry (a single backtick when the
-    # entry holds none, two for an entry with a lone backtick), padded with a space each side so an
-    # entry that starts or ends with a backtick still closes cleanly.
+    # A text written as a Markdown code span, so '<all Azure scopes: scope enumeration failed>' is
+    # shown, not swallowed as an HTML tag. CR and LF become a space, so a bullet stays on one line. The
+    # fence is one backtick longer than the longest run of backticks inside the text (a single
+    # backtick when the text holds none, two for a text with a lone backtick), padded with a space
+    # each side so a text that starts or ends with a backtick still closes cleanly.
+    function Format-CodeSpan {
+        param([string]$Text)
+        $OneLine = $Text -replace '\r\n|\r|\n', ' '
+        $LongestRun = 0
+        foreach ($Run in [regex]::Matches($OneLine, '`+')) {
+            if ($Run.Length -gt $LongestRun) { $LongestRun = $Run.Length }
+        }
+        if ($LongestRun -eq 0) {
+            '`' + $OneLine + '`'
+        } else {
+            $Fence = '`' * ($LongestRun + 1)
+            "$Fence $OneLine $Fence"
+        }
+    }
+
+    # One bullet per non-blank entry, in the order each list holds them, each entry a code span.
     $Bullets = [System.Collections.Generic.List[string]]::new()
     # An IncompleteReads entry that starts with 'roleManagementPolicies/' is not an Entra ID read: it is
     # an Azure scope where Export-OERInventory kept role management policies it could not judge
@@ -79,18 +117,7 @@ function Get-OERInventoryReadme {
             if ([string]::IsNullOrWhiteSpace($Entry)) { continue }
             $Label = $List.Label
             if ($Entry.StartsWith($AzurePolicyPrefix, [System.StringComparison]::Ordinal)) { $Label = $AzurePolicyLabel }
-            $OneLine = $Entry -replace '\r\n|\r|\n', ' '
-            $LongestRun = 0
-            foreach ($Run in [regex]::Matches($OneLine, '`+')) {
-                if ($Run.Length -gt $LongestRun) { $LongestRun = $Run.Length }
-            }
-            $CodeSpan = if ($LongestRun -eq 0) {
-                '`' + $OneLine + '`'
-            } else {
-                $Fence = '`' * ($LongestRun + 1)
-                "$Fence $OneLine $Fence"
-            }
-            $Bullets.Add("- $($Label): $CodeSpan")
+            $Bullets.Add("- $($Label): $(Format-CodeSpan -Text $Entry)")
         }
     }
 
@@ -126,6 +153,38 @@ that failed.
 '@
     }
 
+    # BL-125 (A3, R8): the members and owners left out as PIM for Groups access, one bullet per group
+    # by its name -- never a principal -- with how many and on which basis, in the order the export
+    # holds them. The basis is worded here: 'Assignments' when the group's PIM for Groups assignments
+    # decided it, 'Eligibility' when they could not be read and the eligibility decided it instead.
+    # The parameter is mandatory, so binding has already refused a null entry.
+    $PimBullets = [System.Collections.Generic.List[string]]::new()
+    foreach ($Entry in @($PimLeftOut)) {
+        $BasisText = if ([string]$Entry.Basis -eq 'Eligibility') {
+            "eligible for the same access; the group's PIM for Groups assignments could not be read"
+        } else {
+            'an activation or a time-bound active assignment in PIM for Groups'
+        }
+        $PimBullets.Add("- $(Format-CodeSpan -Text ([string]$Entry.Group)): $([int]$Entry.Members) member(s) and $([int]$Entry.Owners) owner(s) left out -- $BasisText")
+    }
+    $PimIntro = @'
+## Members and owners left out as PIM for Groups access
+
+`inventory.json` and `groups.json` write a group's standing members and owners only. A member or
+owner whose access PIM for Groups holds -- an activation, or a time-bound active assignment -- is
+left out, since applying it would make a time-limited access standing, past PIM's time limit,
+approval and multi-factor authentication. Where the PIM for Groups assignments of a group could not
+be read, every member or owner that is also eligible for the same access was left out, and the group
+is listed under "What this export could not read"; where its eligibility could not be read either,
+its `members` key is written as `null` and its `owners` key is left out. A member or owner left out
+is still a member or owner in the tenant until its activation, or its time-bound assignment, ends.
+'@
+    $PimLeftOutSection = if ($PimBullets.Count -gt 0) {
+        $PimIntro + "`n`n" + ($PimBullets -join "`n")
+    } else {
+        $PimIntro + "`n`n" + 'None. This export left no member or owner out as PIM for Groups access.'
+    }
+
     $Readme = @'
 # OER RBAC Inventory Bundle
 
@@ -134,6 +193,8 @@ tenant's current posture -- see Coverage limits below for what is deliberately e
 includes a predefined prompt that turns it into appliable improvement proposals.
 
 @@COULD-NOT-READ@@
+
+@@PIM-LEFT-OUT@@
 
 ## Files
 
@@ -270,5 +331,5 @@ came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in anothe
 remove `tenantId` first.
 '@
 
-    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead)
+    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection)
 }

@@ -6,6 +6,13 @@ BeforeAll {
     Install-OERTransportTripwire
     . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 
+    # BL-125 (A3): where a test reaches the REAL group reader, its PIM for Groups assignment read
+    # answers as a successful read that lists nothing, so every member and owner a fixture lists reads
+    # as standing and every existing expectation keeps its meaning. A test about the read overrides it.
+    Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment {
+        [PSCustomObject]@{ Read = $true; Value = @(); Message = $null; Exception = $null }
+    }
+
     # F2 / A17. The bundle's README.md lists what the export could not read; the apply document and
     # every other JSON file must not. These helpers read the section back from a written bundle.
     $script:CouldNotReadHeading = '## What this export could not read'
@@ -1855,6 +1862,202 @@ Describe 'Export-OERInventory (prompt + readme + self-check)' {
         }
         Export-OERInventory -OutputPath $TestDrive -Include Groups -WarningVariable Warn | Out-Null
         ($Warn -join "`n") | Should -Match 'schema'
+    }
+}
+
+Describe 'Export-OERInventory (members and owners left out as PIM for Groups access, BL-125)' {
+    # A3 / R8. The group reader leaves out a member or owner whose access PIM for Groups holds and
+    # names the group in its PimLeftOut list; the export writes that list into the README, adds the
+    # members left out to the roster's member count, and carries an unread assignment read into
+    # IncompleteReads through the reader's Unread list, like every other unread collection.
+    BeforeAll {
+        $script:PimHeading = '## Members and owners left out as PIM for Groups access'
+        function Get-ReadmePimSection {
+            param([string]$BundlePath)
+            $Readme = Get-Content (Join-Path $BundlePath 'README.md') -Raw
+            $Start = $Readme.IndexOf($script:PimHeading)
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $inv = [PSCustomObject]@{ Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @(); AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @() }
+            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory'); $inv
+        }
+        # The roster: the two groups the reader below returns, by the same ids.
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            [PSCustomObject]@{ Id = 'g-pim'; DisplayName = 'role_sec_pim'; GroupType = 'Assigned'; IsAssignableToRole = $true }
+            [PSCustomObject]@{ Id = 'g-unread'; DisplayName = 'role_sec_unread'; GroupType = 'Assigned'; IsAssignableToRole = $true }
+        }
+        # g-pim: two members written and one left out as an activation. g-unread: members unread
+        # (an explicit null), one owner left out.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            param($IncludeId)
+            $G1 = [PSCustomObject]@{ displayName = 'role_sec_pim'; roleAssignable = $true; dynamic = $false; description = $null; members = @('person1@contoso.com', 'person2@contoso.com'); eligibility = @() }
+            $G2 = [PSCustomObject]@{ displayName = 'role_sec_unread'; roleAssignable = $true; dynamic = $false; description = $null; members = $null; eligibility = @() }
+            if ($IncludeId) {
+                $G1 | Add-Member -NotePropertyName id -NotePropertyValue 'g-pim' -Force
+                $G2 | Add-Member -NotePropertyName id -NotePropertyValue 'g-unread' -Force
+            }
+            [PSCustomObject]@{
+                Groups     = @($G1, $G2)
+                Unread     = @('groups/role_sec_unread/members')
+                Causes     = @()
+                PimLeftOut = @(
+                    [PSCustomObject]@{ GroupId = 'g-pim'; Group = 'role_sec_pim'; Members = 1; Owners = 0; Basis = 'Assignments' }
+                    [PSCustomObject]@{ GroupId = 'g-unread'; Group = 'role_sec_unread'; Members = 0; Owners = 1; Basis = 'Assignments' }
+                )
+            }
+        }
+    }
+
+    It 'writes one README bullet per group the reader left members or owners out of' {
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'pim-readme') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $Section = Get-ReadmePimSection -BundlePath $Bundle.BundlePath
+        $Section | Should -Not -BeNullOrEmpty
+        ((Get-SectionBullets -Section $Section) -join "`n") | Should -BeExactly (@(
+                '- `role_sec_pim`: 1 member(s) and 0 owner(s) left out -- an activation or a time-bound active assignment in PIM for Groups'
+                '- `role_sec_unread`: 0 member(s) and 1 owner(s) left out -- an activation or a time-bound active assignment in PIM for Groups'
+            ) -join "`n")
+        $Section | Should -Not -Match 'None\.'
+        # The list goes into the README alone: inventory.json keeps its shape and no JSON file names it.
+        Assert-ListStaysOutOfJson -BundlePath $Bundle.BundlePath -Forbidden @($script:PimHeading, 'left out -- an activation')
+    }
+
+    It 'adds the members left out to the roster member count, and keeps an unknown count unknown' {
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'pim-roster') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $Roster = @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
+        $Roster.Count | Should -Be 2
+        ($Roster | Where-Object { $_.displayName -eq 'role_sec_pim' }).memberCount | Should -Be 3
+        $null -eq ($Roster | Where-Object { $_.displayName -eq 'role_sec_unread' }).memberCount |
+            Should -BeTrue -Because 'members is null, unread, so the count stays the roster''s "not known" value'
+        # inventory.json holds the two members written, not the one left out.
+        $Inv = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @(($Inv.Groups | Where-Object { $_.displayName -eq 'role_sec_pim' }).members) | Should -Be @('person1@contoso.com', 'person2@contoso.com')
+    }
+
+    It 'says in the README that none was left out when the reader left nobody out, also for a reader result without the list' {
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() }
+        }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'pim-none') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+        $Section = Get-ReadmePimSection -BundlePath $Bundle.BundlePath
+        ($Section -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. This export left no member or owner out as PIM for Groups access.'))
+        @(Get-SectionBullets -Section $Section).Count | Should -Be 0
+        @($ExErr).Count | Should -Be 0
+    }
+
+    It 'writes the "none" text, and no error from the missing list, when the group read stops (the catch path)' {
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { throw [System.Exception]::new('stop') }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'pim-stop') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+        # Reach proof: the read stopped and the groups section is reported unread.
+        @($Bundle.IncompleteReads)[0] | Should -Be 'groups'
+        $Section = Get-ReadmePimSection -BundlePath $Bundle.BundlePath
+        $Section | Should -Not -BeNullOrEmpty
+        ($Section -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. This export left no member or owner out as PIM for Groups access.'))
+        # The only error the export publishes is its own InventoryPartial. -ErrorVariable also collects
+        # the records raised inside nested calls (the reader's stop among them), so the export's own are
+        # the ones whose id names it; and no record at all is about the list.
+        @($ExErr | Where-Object { @(([string]$_.FullyQualifiedErrorId) -split ',') -contains 'Export-OERInventory' } |
+                ForEach-Object { $_.FullyQualifiedErrorId }) | Should -Be @('InventoryPartial,Export-OERInventory')
+        @($ExErr | Where-Object { "$($_.Exception.Message)" -match 'PimLeftOut' }).Count | Should -Be 0
+    }
+
+    It 'names an unread assignment read in IncompleteReads, the README and the InventoryPartial message' {
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            param($IncludeId)
+            $G1 = [PSCustomObject]@{ displayName = 'role_sec_pim'; roleAssignable = $true; dynamic = $false; description = $null; members = @('person1@contoso.com'); eligibility = @() }
+            if ($IncludeId) { $G1 | Add-Member -NotePropertyName id -NotePropertyValue 'g-pim' -Force }
+            [PSCustomObject]@{
+                Groups     = @($G1)
+                Unread     = @('groups/role_sec_pim/pimAssignments')
+                Causes     = @([PSCustomObject]@{ Cause = 'Could not read the PIM for Groups assignments of group g-pim: refused (403).'; Target = 'g-pim' })
+                PimLeftOut = @([PSCustomObject]@{ GroupId = 'g-pim'; Group = 'role_sec_pim'; Members = 1; Owners = 0; Basis = 'Eligibility' })
+            }
+        }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'pim-unread') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+        @($Bundle.IncompleteReads) | Should -Be @('groups/role_sec_pim/pimAssignments')
+        $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+        $Partial.Count | Should -Be 1
+        $Partial[0].Exception.Message | Should -Match ([regex]::Escape('groups/role_sec_pim/pimAssignments'))
+        $Partial[0].Exception.Message | Should -Match ([regex]::Escape('Could not read the PIM for Groups assignments of group'))
+        $CouldNotRead = Get-ReadmeCouldNotReadSection -BundlePath $Bundle.BundlePath
+        ((Get-SectionBullets -Section $CouldNotRead) -join "`n") | Should -BeExactly '- Entra ID: `groups/role_sec_pim/pimAssignments`'
+        ((Get-SectionBullets -Section (Get-ReadmePimSection -BundlePath $Bundle.BundlePath)) -join "`n") |
+            Should -BeExactly '- `role_sec_pim`: 1 member(s) and 0 owner(s) left out -- eligible for the same access; the group''s PIM for Groups assignments could not be read'
+        $Roster = @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
+        ($Roster | Where-Object { $_.displayName -eq 'role_sec_pim' }).memberCount | Should -Be 2
+    }
+}
+
+Describe 'Export-OERInventory (members and owners left out as PIM for Groups access, through the real group reader, BL-125)' {
+    # The real Get-OERInventoryGroup and Get-OERGroupPimHeldAccess; the reads above the transport are
+    # mocked (the list, the per-group collections, the criterion, the policy lookup and the PIM for
+    # Groups assignment read). The export's default relevant-only read keeps the role-assignable group.
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            [PSCustomObject]@{ Id = 'g-pim'; DisplayName = 'role_sec_pim'; GroupType = 'Assigned'; IsAssignableToRole = $true; SecurityEnabled = $true }
+        }
+        Mock -ModuleName $script:moduleName Read-OERGroupCollection {
+            param($GroupId, $Collection)
+            $Value = switch ($Collection) {
+                'Members' { @(@{ id = 'u-std'; userPrincipalName = 'person1@contoso.com' }, @{ id = 'u-act'; userPrincipalName = 'person2@contoso.com' }) }
+                'Owners' { @(@{ id = 'o-act'; userPrincipalName = 'person6@contoso.com' }) }
+                default { @() }
+            }
+            [PSCustomObject]@{ Collection = $Collection; Read = $true; Value = $Value; ErrorId = $null; Message = $null; Exception = $null }
+        }
+        Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+        Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment {
+            [PSCustomObject]@{
+                Read      = $true
+                Value     = @(
+                    @{ principalId = 'u-std'; accessId = 'member'; memberType = 'direct'; assignmentType = 'assigned'; startDateTime = $null; endDateTime = $null }
+                    @{ principalId = 'u-act'; accessId = 'member'; memberType = 'direct'; assignmentType = 'activated'; startDateTime = '2026-10-13T08:00:00Z'; endDateTime = '2026-10-13T16:00:00Z' }
+                    @{ principalId = 'o-act'; accessId = 'owner'; memberType = 'direct'; assignmentType = 'activated'; startDateTime = '2026-10-13T08:00:00Z'; endDateTime = '2026-10-13T16:00:00Z' }
+                )
+                Message   = $null
+                Exception = $null
+            }
+        }
+    }
+
+    It 'leaves the activated member and owner out of inventory.json, names the group in the README and counts the roster in full' {
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'pim-e2e') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+        # Reach proof: the assignment read ran once, for the group.
+        Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimAssignment -Exactly -Times 1 -ParameterFilter { $GroupId -eq 'g-pim' }
+        $Inv = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.Groups).Count | Should -Be 1
+        @($Inv.Groups[0].members) | Should -Be @('person1@contoso.com')
+        $Inv.Groups[0].PSObject.Properties.Name | Should -Not -Contain 'owners'
+        $Inv.Groups[0].PSObject.Properties.Name | Should -Not -Contain 'id'
+        $Roster = @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
+        $Roster[0].memberCount | Should -Be 2
+        $Readme = Get-Content (Join-Path $Bundle.BundlePath 'README.md') -Raw
+        $Readme | Should -Match ([regex]::Escape('- `role_sec_pim`: 1 member(s) and 1 owner(s) left out -- an activation or a time-bound active assignment in PIM for Groups'))
+        # Nothing was unread: the export is complete, and no principal of the group reaches the README.
+        @($Bundle.IncompleteReads).Count | Should -Be 0
+        @($ExErr).Count | Should -Be 0
+        $Readme | Should -Not -Match ([regex]::Escape('person2@contoso.com'))
+        $Readme | Should -Not -Match ([regex]::Escape('person6@contoso.com'))
     }
 }
 

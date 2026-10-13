@@ -4,6 +4,13 @@ BeforeAll {
     Import-Module $script:moduleName -Force -ErrorAction Stop
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    # BL-125 (A3): the groups section reads each group's PIM for Groups assignments to leave an
+    # activation out of members and owners. Answered here as a successful read that lists nothing, so
+    # every member and owner a fixture lists reads as standing and every expectation in this file keeps
+    # the meaning it had; Get-OERInventoryGroup.Tests.ps1 tests the read itself.
+    Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment {
+        [PSCustomObject]@{ Read = $true; Value = @(); Message = $null; Exception = $null }
+    }
     # Three Split-Path hops from tests\Unit\Public: tests\Unit\Public -> tests\Unit -> tests ->
     # repo root. A two-hop version resolves to tests\ and was corrected once already on this
     # branch (Task 1) -- do not repeat that mistake.
@@ -6621,6 +6628,13 @@ Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' {
     # Get-OERGroupRelation -- can only run here. Only the transport is answered.
     BeforeAll {
         $script:moduleName = 'Omnicit.EntraRBAC'
+        # BL-125: the root default mock of the PIM for Groups assignment read is gone by now -- the
+        # Describes above re-import the module, and a mock lives in the module instance it was made
+        # in -- so it is made again here, with the same answer: a read that lists nothing, so the
+        # members and owners below read as standing.
+        Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment {
+            [PSCustomObject]@{ Read = $true; Value = @(); Message = $null; Exception = $null }
+        }
     }
 
     Context 'a service principal only the typed read lists is exported by its id' {

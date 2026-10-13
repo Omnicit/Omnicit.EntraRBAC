@@ -394,9 +394,10 @@ function Export-OERInventory {
                 $GroupReadCause = "Could not read groups: $($PSItem.Exception.Message)"
                 Write-Warning $GroupReadCause
                 $GroupRead = [PSCustomObject]@{
-                    Groups = @()
-                    Unread = @('groups')
-                    Causes = @([PSCustomObject]@{ Cause = $GroupReadCause; Target = '' })
+                    Groups     = @()
+                    Unread     = @('groups')
+                    Causes     = @([PSCustomObject]@{ Cause = $GroupReadCause; Target = '' })
+                    PimLeftOut = @()
                 }
             }
         }
@@ -713,6 +714,18 @@ function Export-OERInventory {
                 $CountById[[string]$G.id] = $MemberCount
             }
         }
+        # BL-125 (R8): the reader leaves a member whose membership PIM for Groups holds out of members,
+        # and counts it per group in PimLeftOut, so the roster's memberCount keeps meaning the group's
+        # live member count: the members written plus the members left out. A count that is not known
+        # ($null, an unread membership) stays not known. The null-filter keeps a reader result that
+        # carries no PimLeftOut list from becoming one null entry.
+        $PimLeftOut = @(if ($GroupRead) { @($GroupRead.PimLeftOut) | Where-Object { $null -ne $_ } })
+        foreach ($LeftOut in $PimLeftOut) {
+            $LeftOutId = [string]$LeftOut.GroupId
+            if ($LeftOutId -and $CountById.ContainsKey($LeftOutId) -and $null -ne $CountById[$LeftOutId]) {
+                $CountById[$LeftOutId] += [int]$LeftOut.Members
+            }
+        }
 
         # inventory.json staying id-free is a documented portability property of the export
         # (Get-OERInventory's own .DESCRIPTION) -- the reader's -IncludeId above exists purely to key
@@ -863,7 +876,9 @@ function Export-OERInventory {
             # document and must stay exactly the shape the schema describes. The parameters are
             # mandatory, so a README that claims a complete read cannot be written by forgetting one.
             # The role policy selection's entries follow the Entra ID entries, as in the output object.
-            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes)) |
+            # The members and owners the group reader left out as PIM for Groups access go into the
+            # README alone too, per group by name (BL-125).
+            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $PimLeftOut) |
                 Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
         }
         $WrittenFiles.Add('README.md')
