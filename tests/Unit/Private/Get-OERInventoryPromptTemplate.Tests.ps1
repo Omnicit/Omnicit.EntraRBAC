@@ -421,6 +421,31 @@ Describe 'Get-OERInventoryPromptTemplate group rename through previousDisplayNam
     }
 }
 
+Describe 'Get-OERInventoryPromptTemplate root scope and access review target (BL-126, BL-127)' {
+    # BL-126: the export leaves a role assignment at the Azure root scope '/' out of inventory.json and
+    # lists it in the bundle README; a model that recreated or declared one would propose elevated
+    # access the engine skips. BL-127: a review is updated only when it reviews the declared package and
+    # policy, so a model must not reuse a display name another review carries.
+    It 'tells the model the README lists the root scope assignments as findings, never as entries to declare (BL-126)' {
+        InModuleScope $script:moduleName {
+            # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('README.md also lists, under "Role assignments at the root scope (elevated access)", the role assignments at the Azure root scope / that this export read and left out of inventory.json: findings to review (see roleAssignments[] below)'))
+            $T | Should -Match ([regex]::Escape('the Azure root scope / (above every management group and subscription in the tenant) is never the scope of a roleAssignments entry. A role assignment there is elevated access: the export leaves it out of inventory.json and lists it in README.md under "Role assignments at the root scope (elevated access)". Treat what the README lists there as a finding to review, and name it in your rationale; never keep, recreate or declare it as an assignment. The offline check reports an entry at the root scope as a Warning, and Invoke-OERStructure skips it and never prunes the root scope.'))
+        }
+    }
+
+    It 'tells the model a review found by displayName is updated only when it reviews the declared accessPackage and assignmentPolicy (BL-127)' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('accessPackage and assignmentPolicy are the review SCOPE, which cannot be changed on an existing review. An existing review is matched by displayName and updated only when it reviews the declared accessPackage and assignmentPolicy; a review with that displayName that reviews something else (a group, a role, another access package or another policy) is refused, and nothing is written to it. Access review display names are not unique in a tenant, and this bundle leaves out the reviews it does not capture, so a displayName missing from accessReviews.json may already be in use: give a new review a displayName no other review in the tenant uses.'))
+            # The old sentence said a changed scope was reported as a skipped drift while the rest was
+            # applied; the engine now refuses the whole entry.
+            $T | Should -Not -Match 'reported as a skipped drift'
+        }
+    }
+}
+
 Describe 'Get-OERInventoryPromptTemplate tenantId (BL-88, A14)' {
     # An exported inventory.json carries a top-level tenantId, and Invoke-OERStructure refuses to apply
     # a document in any other tenant. A model that dropped, changed or invented one would hand the

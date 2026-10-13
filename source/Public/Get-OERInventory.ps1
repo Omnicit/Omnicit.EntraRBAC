@@ -118,10 +118,11 @@ function Get-OERInventory {
     directory-role or multi-stage review is skipped, with an aggregate warning naming how many were
     skipped. The AccessReviews projection carries accessPackage, assignmentPolicy, reviewers and
     recurrence so a captured review round-trips through Invoke-OERStructure (create-or-update: a
-    review is matched by displayName, created when it does not exist and reconciled field by field
-    when it does, with the immutable scope reported as a skipped drift rather than a misleading
-    Unchanged). A multi-stage review (StageCount greater than zero) is skipped with a warning
-    instead of being exported, because its reviewers live in stageSettings -- which the apply
+    review is matched by displayName and created when it does not exist; when it does, it is
+    reconciled field by field only if it reviews the accessPackage and assignmentPolicy the entry
+    declares, and is otherwise refused, since the scope of a review cannot be changed -- see the
+    Invoke-OERStructure help). A multi-stage review (StageCount greater than zero) is skipped with a
+    warning instead of being exported, because its reviewers live in stageSettings -- which the apply
     schema does not model -- and the top-level reviewers collection Graph returns for it is
     empty by construction, which would otherwise be misreported as a configured self review. A
     live recurrence interval outside the module's cadence vocabulary (for example an
@@ -147,8 +148,18 @@ function Get-OERInventory {
     carries the hidden flag so a hidden package stays
     hidden across a round-trip. The RoleAssignments projection carries the ABAC condition,
     conditionVersion and description so a condition-scoped assignment is not exported as an
-    unconditioned one. The RoleManagementPolicies projection carries activation window and
-    enablement, approval and approvers, authentication context, and eligible and active permanence
+    unconditioned one. A role assignment at the Azure root scope '/', above every management group
+    and subscription in the tenant, is left out of the RoleAssignments section: it is elevated
+    access, a finding to review rather than part of the RBAC model a document describes, and
+    Invoke-OERStructure never creates or removes one. A read at a management group or a subscription
+    returns it as inherited. One warning names every such assignment, each by role and principal and,
+    when it is known, the principal type, and an information record tagged
+    Omnicit.EntraRBAC.RootScopeAssignment hands the caller the same rows (RoleAssignmentId, Role,
+    Principal and PrincipalType) and the warning's text; under the default $InformationPreference
+    the record is not displayed. Under a Stop warning preference (-WarningAction Stop, or
+    $WarningPreference set to 'Stop') the command stops at that warning, before it returns the
+    inventory. The RoleManagementPolicies projection carries activation window and enablement,
+    approval and approvers, authentication context, and eligible and active permanence
     plus their day counts, so a policy round-trips instead of losing everything but permanence and
     the activation window. Notification rules are excluded from that projection: they are readable
     through Get-OERRoleManagementPolicy and writable through Set-OERRoleManagementPolicy

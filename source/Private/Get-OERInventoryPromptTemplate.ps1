@@ -51,7 +51,9 @@ PowerShell module.
 
 - README.md -- read its section "What this export could not read" first: it lists every collection,
   object or Azure scope this export could not read, or says that nothing was left unread; anything
-  listed there is unknown, not empty
+  listed there is unknown, not empty. README.md also lists, under "Role assignments at the root
+  scope (elevated access)", the role assignments at the Azure root scope / that this export read and
+  left out of inventory.json: findings to review (see roleAssignments[] below)
 - inventory.json -- the current state, within this document's coverage limits (see below), in the
   exact apply schema. Your proposals reshape this.
 - groupsRoster.json -- every group in the tenant (names + flags only, onPremisesSynced among them).
@@ -328,8 +330,13 @@ document.
   autoApplyDecisions (bool), defaultDecision (None | Approve | Deny | Recommendation) }
   - displayName is the match key: an existing review is UPDATED in place, and renaming a review
     through the document is not possible.
-  - accessPackage and assignmentPolicy are the review SCOPE and are immutable on an existing review;
-    changing them is reported as a skipped drift, not applied.
+  - accessPackage and assignmentPolicy are the review SCOPE, which cannot be changed on an existing
+    review. An existing review is matched by displayName and updated only when it reviews the
+    declared accessPackage and assignmentPolicy; a review with that displayName that reviews
+    something else (a group, a role, another access package or another policy) is refused, and
+    nothing is written to it. Access review display names are not unique in a tenant, and this bundle
+    leaves out the reviews it does not capture, so a displayName missing from accessReviews.json may
+    already be in use: give a new review a displayName no other review in the tenant uses.
   - "reviewers": [] is a declared EMPTY list and means a SELF review, on both the create and the
     update path. It is NOT the same as omitting reviewers, which defaults to the requestor's manager
     and then REQUIRES fallbackReviewers; an explicit null counts as omitted.
@@ -367,6 +374,13 @@ document.
     spellings of one scope are ONE scope -- the entries that name it share one prune pass.
   - write a scope without a trailing / and without //: the offline check reports either as an Error,
     and the whole document is refused before anything is written.
+  - the Azure root scope / (above every management group and subscription in the tenant) is never
+    the scope of a roleAssignments entry. A role assignment there is elevated access: the export
+    leaves it out of inventory.json and lists it in README.md under "Role assignments at the root
+    scope (elevated access)". Treat what the README lists there as a finding to review, and name it
+    in your rationale; never keep, recreate or declare it as an assignment. The offline check reports
+    an entry at the root scope as a Warning, and Invoke-OERStructure skips it and never prunes the
+    root scope.
   - declare each (scope, role, principal) once. A duplicate is an Error in the offline check and the
     whole document is refused before anything is written. Two spellings the offline check cannot tell
     apart (a subscription's name and its id, a management group's display name and its path) are

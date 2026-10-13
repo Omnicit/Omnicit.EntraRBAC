@@ -138,6 +138,20 @@ function Export-OERInventory {
     only the policies a document declares, so a policy the export leaves out stays as it is when the
     document, or a proposal built from it, is applied.
 
+    ROLE ASSIGNMENTS AT THE ROOT SCOPE. A role assignment at the Azure root scope '/', above every
+    management group and subscription in the tenant, is elevated access: a finding to review, which
+    Invoke-OERStructure never creates or removes. inventory.json and roleAssignments.json never carry
+    one. The read at each management group and subscription returns it as inherited, and
+    Get-OERInventory leaves it out of every scope's read (the Get-OERInventory help describes the
+    rule). When the walk finds any, the export writes ONE warning for the whole export that names
+    each such assignment once, by role and principal and, when it is known, the principal type. It
+    writes it after the walk and before the bundle is written, so -WhatIf shows it too. The
+    generated README.md lists them, with their count, in a section "Role assignments at the root
+    scope (elevated access)", directly after "Members and owners left out as PIM for Groups access",
+    or says that none was read. Leaving them out of the export changes nothing in the tenant. Under a
+    Stop warning preference (-WarningAction Stop, or $WarningPreference set to 'Stop') the export
+    stops at that warning, before it writes the bundle.
+
     Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
     Groups read when it left anything unread, then one entry per partial report from
     Get-OERInventory, which reads the other Entra ID sections. Each entry names the affected

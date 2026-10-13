@@ -600,20 +600,23 @@ each with its own exemption or non-vacuity mechanism:
 (CLAUDE.md ## Code Style); no apply-document-walking file may read a document node's
 `PSObject.Properties.Name` directly outside a named, reasoned allowlist. The violation is flagged on
 the READ itself rather than on the `-contains`-family operator that might later consume it, so an
-intermediate variable cannot hide the same defect. Its scope control asserts the eighteen scanned
+intermediate variable cannot hide the same defect. Its scope control asserts the nineteen scanned
 files BY NAME rather than by count -- the nine `Sync-OERStructure*` handlers (AccessPackage,
 AccessReview, AdministrativeUnit, Catalog, DirectoryRoleAssignment, DirectoryRoleManagementPolicy,
 Group, RoleAssignment and RoleManagementPolicy) plus `Read-OERStructureDocument.ps1`,
 `Get-OEROmittedPruneCollection.ps1`, `Resolve-OERDeclaredApprover.ps1`,
-`Resolve-OERStructureRoleAssignmentScope.ps1` and the five `Resolve-OER*Change` helpers that take a
-`-Declared` node -- because a bare count says only that eighteen became seventeen, never which file
-left the scan. Two earlier rounds of that gate each claimed to cover every document consumer while
-missing some, so the named list is the finding, not the tidy-up. Sprint 6 step 2 added
-`Resolve-OERDeclaredApprover.ps1` (a document consumer, not a `Sync-OERStructure*` handler); Sprint 6
-step 3 added `Sync-OERStructureDirectoryRoleManagementPolicy.ps1` (an eighth handler); Sprint 6 step
-4 added `Resolve-OERDirectoryRoleAssignmentChange.ps1` (a fifth `Resolve-OER*Change` helper) and
+`Resolve-OERStructureRoleAssignmentScope.ps1`, `Get-OERAccessReviewTargetMismatch.ps1` and the five
+`Resolve-OER*Change` helpers that take a `-Declared` node -- because a bare count says only that
+nineteen became eighteen, never which file left the scan. Two earlier rounds of that gate each
+claimed to cover every document consumer while missing some, so the named list is the finding, not
+the tidy-up. Sprint 6 step 2 added `Resolve-OERDeclaredApprover.ps1` (a document consumer, not a
+`Sync-OERStructure*` handler); Sprint 6 step 3 added
+`Sync-OERStructureDirectoryRoleManagementPolicy.ps1` (an eighth handler); Sprint 6 step 4 added
+`Resolve-OERDirectoryRoleAssignmentChange.ps1` (a fifth `Resolve-OER*Change` helper) and
 `Sync-OERStructureDirectoryRoleAssignment.ps1` (a ninth handler); Sprint 8 step 1 added
-`Resolve-OERStructureRoleAssignmentScope.ps1`, the `roleAssignments` scope pre-pass.
+`Resolve-OERStructureRoleAssignmentScope.ps1`, the `roleAssignments` scope pre-pass; Sprint 11 step
+2 added `Get-OERAccessReviewTargetMismatch.ps1`, the access review target check
+([#access-review-target](#access-review-target)).
 
 **9. Az context hygiene** (fix, stopping `Disconnect-OER` signing out the operator's own Az
 session). CLAUDE.md ## Dependencies states that no Az module is a dependency of this module and no
@@ -6922,7 +6925,9 @@ document the validator accepts it changes nothing -- a unit test walks the candi
 shows that every accepted path is its own canonical form and only `/` itself becomes `/` -- and the
 engine still applies it to the scope it resolved. The first round of this change accepted the merge
 as a cost; it was withdrawn on review. Every effect of the change is now to remove fewer assignments,
-or the same.
+or the same. The root scope `/` itself, where `//` would have landed, is never applied or pruned
+either since Sprint 11 step 2, and `//` draws that rule's `Warning` beside its `Error`: see
+[#root-scope-is-not-in-the-document](#root-scope-is-not-in-the-document).
 
 **A failed read of the assignments at a scope is `Failed`, never an empty list (A14).**
 `Get-OERRoleAssignment` reports a failed read, for instance a 403 at a management group, as a
@@ -7729,3 +7734,191 @@ the live C-check (Philip, after the merge): that an activated member and owner r
 `assigned` instance with an end, and are left out of the export; and that a time-bound active
 assignment reads as `TimeBound`. The unit tests prove the rule on mocked reads of the shapes Learn
 documents and the standing shape that was measured.
+
+## root-scope-is-not-in-the-document
+
+Sprint 11 step 2 (BL-126, decision A4) took the Azure root scope `/` out of everything the module
+exports and applies. This anchor records the problem, the rulings each with its cost if wrong, and
+what is NOT measured. `Test-OERAzureRootScope` is the single owner of what the root scope is, and
+`Format-OERRootScopeAssignment` of the order, the deduplication and the list text of the two
+warnings that name the rows (CLAUDE.md, Code Style).
+
+**The problem (BL-126).** The root scope `/` is the tenant root of Azure Resource Manager, above
+every management group and subscription in the tenant, so a role assignment there reaches every
+Azure resource. It is elevated access -- most often User Access Administrator, which the Microsoft
+Entra setting "Access management for Azure resources" grants a Global Administrator -- and a finding
+to review, not part of an RBAC model a document describes. The `RoleAssignments` read at a management
+group or a subscription is unfiltered (direct, inherited and below), so a root assignment arrives as
+inherited on every such read, with the scope `/`. Before this step the export wrote it into
+`inventory.json` and `roleAssignments.json` as read, the validator accepted `/` without a word, and
+the apply engine resolved `/` offline, dispatched the entry and went on to Azure Resource Manager at
+the root: a role lookup and a read of the assignments at `/`, then a create of a missing one and,
+under `-Prune`, the removal of every undeclared one there (whether Azure Resource Manager accepts the
+path the module built for `/` is not measured; see below). A bundle handed to a model presented
+elevated access as an assignment to keep, and an export applied with `-Prune` set out to manage it.
+
+**Rule 1 (the predicate; `Test-OERAzureRootScope`).** An Azure scope is the root scope when
+`ConvertTo-OERCanonicalScope` returns exactly `/` for it: `/` itself, and every run of slashes, which
+the validator already refuses as a spelling (see [#role-assignment-key](#role-assignment-key)). It is
+used for the Azure `roleAssignments` section only. It is never applied to `roleManagementPolicies`,
+which this step does not change, nor to the Microsoft Entra directory role sections, whose `/` is the
+Microsoft Entra tenant scope of a directory role (`directoryScopeId`) and has nothing to do with the
+Azure root scope. If wrong: a spelling of the root the canonical form does not map to `/` would slip
+through; Azure Resource Manager returns none, and the validator refuses every other slash spelling.
+
+**Rule 2 (the read; `Get-OERInventory`).** The root rows are taken out of the projected rows BEFORE
+the name-collision pass, so they never change how another row is named, and the document never
+carries them. One warning per call names each row, `'<role>' for '<principal>'` followed by the
+principal type in parentheses when the type is known, sorted by role, then principal, then role
+assignment id, each compared ordinal and without regard to letter case. One information record per
+call, tagged `Omnicit.EntraRBAC.RootScopeAssignment`, carries the rows (`RoleAssignmentId`, `Role`,
+`Principal`, `PrincipalType`) and the exact warning text, so a caller reads the rows without parsing
+the text; under the default `$InformationPreference` it is not displayed. Nothing else in the section
+changes. Under a Stop warning preference the command stops at that warning, before it returns the
+inventory. If wrong (a caller wanted the rows in the document): the rows are in the warning and on
+the information stream, and nothing was written.
+
+**Rule 3 (the export carries the rows on the information stream).** `Export-OERInventory` reads every
+walked scope with its own `Get-OERInventory` call, and 26 test mocks in
+`Export-OERInventory.Tests.ps1` stood in for that call when this step began, so the call is kept as
+it is. Left alone it
+would print the same root warning once per management group and subscription. The call therefore
+gains `-WarningAction SilentlyContinue -WarningVariable -InformationVariable`, and in a `finally`
+around it the export collects the rows of every root notice and writes again every captured warning
+whose text is not the notice's, so any other warning is still shown once per scope, and under a Stop
+preference that write still stops and the scope is skipped as before. The `finally` makes what a call
+wrote before it failed -- a warning, a notice -- count before the scope is skipped. After the walk the
+rows are deduplicated on `RoleAssignmentId` without regard to letter case (on role and principal for a
+row with no id), and ONE warning names them, before the bundle's `ShouldProcess`, so `-WhatIf` shows
+it too; under a Stop preference the export stops there, before it writes the bundle. What the
+operator is shown is one warning. A `-WarningVariable` is another matter: PowerShell appends a nested
+command's warnings to every enclosing `-WarningVariable` whatever that command's `-WarningAction`
+(measured), so an operator's `-WarningVariable` on `Export-OERInventory` also collects
+`Get-OERInventory`'s per-scope root warning, once per scope. If wrong: a future per-scope warning is
+printed by `Export-OERInventory` rather than by `Get-OERInventory`, with the same text.
+
+**Rule 4 (the bundle: a README section, not a file).** The bundle `README.md` has a section "Role
+assignments at the root scope (elevated access)", directly after "Members and owners left out as PIM
+for Groups access": what the root scope is, why its assignments are left out, that leaving them out
+changes nothing in the tenant, then the count and one bullet per row (role, principal, type), never
+the role assignment id, or "None.". A JSON file would read as data to carry into a proposal; the
+section is read with the prompt, which tells the model to treat the rows as findings. No new bundle
+file, output property or parameter. If wrong: a later step adds a read-only file from the same rows.
+
+**Rule 5 (the validator: a `Warning`).** A `roleAssignments` entry whose scope is the root scope gets
+a `Warning` at `roleAssignments[N].scope`, not an `Error`: an older export that holds such a row still
+applies for the rest, and the engine never writes there (Rule 6). `roleManagementPolicies` on `/` is
+not reported. `//` keeps its slash `Error` and gets this `Warning` too, since both are true. If wrong:
+change the severity; the engine's guard stands either way.
+
+**Rule 6 (the engine: one guard, in the handler).** `Sync-OERStructureRoleAssignment` tests the
+resolved scope with `Test-OERAzureRootScope` as its first step for each entry: one warning, one
+`Skipped` row with the reason, and `return` -- before the principal lookup, the role lookup (an Azure
+Resource Manager call at the scope), the read at the scope, any create and the prune pass, so
+`-ReconcileScope` on a root entry never prunes. `Invoke-OERStructure` dispatches the entry as before:
+its pre-pass resolves `/` with no request, since `Resolve-OERScope` returns a scope that starts with
+`/` as given. No `ShouldProcess` is involved, so a plan and a real run report the same row. An entry at
+any other scope in the same document is applied and pruned as before. If wrong: a second guard, in the
+engine, would be needed only if another caller dispatched the handler; none does.
+
+**Rule 7 (inherited from the root).** The handler's existing `Skipped` row and warning for an
+assignment inherited from an ancestor scope advise to "declare this entry under scope" the ancestor.
+When the ancestor is the root scope that advice would contradict Rule 6, so the warning and the Detail
+say instead that the access is inherited from the root scope, which the document never manages.
+Nothing else in that branch changes. If wrong: one sentence of advice.
+
+**What is NOT measured.** The module would have sent its role definition and role assignment reads
+for `/` to a path that starts `//providers/Microsoft.Authorization/` (the scope `/` with the provider
+path appended, as the request log of a test with the guard removed shows). Whether Azure Resource
+Manager accepts that path was not measured: it needs an identity with elevated access at the root
+scope (class B). The guard makes the question moot for the apply engine. Everything above was derived
+from the code and proven with mocked tests.
+
+## access-review-target
+
+Sprint 11 step 2 (BL-127) made the apply engine update an access review it found by name only when
+that review reviews the access package and the assignment policy the document entry declares. This
+anchor records the problem, the rulings each with its cost if wrong, and the ids.
+`Get-OERAccessReviewTargetMismatch` is the single owner of the check, and
+`Resolve-OERAssignmentPolicyId` of the assignment policy name lookup it shares with creation
+(CLAUDE.md, Code Style).
+
+**The problem (BL-127).** `Sync-OERStructureAccessReview` finds the live access review definition for
+an `accessReviews[]` entry by `displayName`, in the whole tenant, and access review display names are
+not unique: a review of a group, a directory role or another access package can carry the name a
+document uses for a package review. The export captures only access-package-scoped, single-stage
+reviews, so neither the operator nor a model reading the bundle sees the others. Before this step the
+diff (`Resolve-OERAccessReviewChange`) compared the scope only when the declared value was a GUID, and
+only into its `NotApplied` notes, which the handler reported as a `Skipped` row and a warning, while
+every other declared change was still written to the review it had found, with the full-object PUT.
+A declared name was not compared at all. So a document could rewrite the reviewers and settings of
+an unrelated review.
+
+**Rule 1 (the check; `Get-OERAccessReviewTargetMismatch`).** It returns nothing when the live review
+reviews the access package AND the assignment policy the entry declares, and otherwise ONE error
+record, which it never writes. The checks run in this order, and the first that fails decides:
+
+1. An entry that declares no `accessPackage` or no `assignmentPolicy` -- absent, an explicit null, or
+   empty or white space -- is refused with no request. The validator requires both keys but accepts
+   an empty string, and an entry that names no target cannot be compared, so the check fails closed
+   rather than reaching a lookup that refuses an empty name with a message about its own parameters.
+2. A live review with no `AccessPackageId` is refused with no request.
+   `ConvertTo-OERAccessReviewDefinition` sets `AccessPackageId` and `AssignmentPolicyId` only from an
+   access-package scope query, so a review of a group, a role or anything else carries neither, and a
+   group review that shares the document's name costs no lookup.
+3. The declared access package is resolved as creation resolves it: a GUID is used as written, with
+   no read to show it exists (one equal to the live id IS the live id, and one that differs is refused
+   anyway), and a name goes through `Resolve-OERAccessPackageId -DisplayName`. It is compared with the
+   live id without regard to letter case; another package is refused.
+4. The declared assignment policy is resolved the same way: a GUID as written, a name through
+   `Resolve-OERAssignmentPolicyId` against the package id. It is compared with the live policy id;
+   another policy is refused.
+
+If wrong: an update the operator meant is refused with a message naming both targets, and nothing is
+ever written to another review.
+
+**Rule 2 (the ids).** The refusal is the new ErrorId `AccessReviewScopeMismatch`, category
+`InvalidOperation` as `DocumentTenantMismatch` is, with the review's display name as its target; its
+message names what the live review reviews and what the entry declares (an entry that declares no
+target is told so instead), and says that nothing was written and that access review display names
+are not unique. A name that matches nothing is `AccessPackageNotFound` or
+`AssignmentPolicyNotFound`, category `ObjectNotFound`, with the message
+`New-OERAccessReviewDefinition` already publishes for the same lookup
+(`AccessPackage 'name' not found.`). A lookup that throws -- an ambiguous name, a 403, an exhausted
+429 -- is scrubbed with `Remove-OERErrorRecord` and published as itself, never as a not-found and
+never as a mismatch: a read that failed is no evidence about the review. One difference from creation remains: an ambiguous
+access package NAME on this path is published as the resolver's own `AmbiguousName` record, while
+`New-OERAccessReviewDefinition` maps the same ambiguity to `AmbiguousAccessPackageName`; both are
+`Ambiguous*` ids, and nothing else differs. If wrong: rename the id before the stable release;
+nothing depends on it but the record.
+
+**Rule 3 (the handler).** The check is the first statement for an existing review in
+`Sync-OERStructureAccessReview`, before the reviewer lookups, the diff and `ShouldProcess`. On a
+record the handler writes it through `$Caller.WriteError`, reports one `Failed` row carrying it, and
+returns, so a plan and a real run report the same row and nothing further is read or written for the
+entry. The row's Detail is the record's message for the refusal. For any other record it reads as
+below; a not-found message ends with a period, so there it reads `... not found.; nothing was written`.
+
+`could not resolve the access package or assignment policy of access review '<name>': <message>; nothing was written`
+
+The `NotApplied` scope note in the pure diff is kept unchanged: the handler never reaches it with
+another scope now, since a GUID that differs is refused before the diff and a name is not compared by
+the diff, and its help says so. If wrong: the note is dead weight in the handler path only.
+
+**Rule 4 (the policy lookup, extracted; `Resolve-OERAssignmentPolicyId`).** The assignment policy name
+lookup moved, unchanged, out of `Resolve-OERAccessReviewScopeTarget` into its own helper, so the
+update path resolves a policy name exactly as creation does: a GUID is returned as written; a name
+lists the package's policies once and returns the one id, `$null` for no match, and throws an
+`AmbiguousName` record, with the message as before, for several; a listing that fails propagates.
+`Resolve-OERAccessReviewScopeTarget` keeps its result shapes, and its own test file passed unchanged,
+which is the refactor's proof. If wrong: duplicating the lookup was the alternative, and the review
+rubric refuses it.
+
+**Rule 5 (the guard lists).** `tests/Unit/Public/AmbiguousName.Guard.Tests.ps1` lists the PUBLIC
+cmdlets that call a `Resolve-OER*Id` helper directly; the engine reaches the helpers through a private
+handler, so its ambiguity and 403 cases are proven in the handler's tests and the helper's tests
+instead. `Get-OERAccessReviewTargetMismatch` reads `accessPackage` and `assignmentPolicy` through
+`Test-OERDeclaredProperty`, so it joined gate 8's named list of document consumers
+([#static-source-gates](#static-source-gates)). If wrong: one guard case to add.
+
+Nothing here was measured live: the rules were derived from the code and proven with mocked tests.
