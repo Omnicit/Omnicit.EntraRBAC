@@ -200,8 +200,9 @@ for Groups holds or makes eligible for the same access: the entry is reported `S
 warning, also under `-WhatIf`. So an activation that a document from an earlier version lists under
 `members` is not added while PIM for Groups still holds that principal or makes it eligible.
 `-Prune` removes none: it reports `Skipped` with "prune withheld:" under `-Prune` and `Extra`
-without. While a group's PIM state cannot be read, nothing is added to or
-removed from its members and owners. When a standing membership is meant, add it with
+without. While the PIM state of a group that already existed cannot be read, nothing is added to or
+removed from its members and owners; a group the same run creates is not read, and its declared
+members and owners are added. When a standing membership is meant, add it with
 `Add-OERGroupMember`. The read needs the permission `PrivilegedAssignmentSchedule.Read.AzureADGroup`.
 
 ## Renaming a group

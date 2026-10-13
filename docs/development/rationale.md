@@ -6699,11 +6699,13 @@ could cut its own privileges part-way through the run. Under A9 that service pri
 removed, so the case does not arise. A delegated user removing themselves through a group prune was
 possible before this fix and still is; this change does not touch it.
 
-**The six kinds of withheld prune `ConvertTo-OERPruneWithheldResult` builds.** One parameter set per
+**The eight kinds of withheld prune `ConvertTo-OERPruneWithheldResult` builds.** One parameter set per
 kind, each a `Skipped` row whose Detail starts `prune withheld:` and carries no warning of the
-helper's own and no ShouldProcess prompt (the sixth kind is an `Extra` row without `-Prune`, as the
-`-ObjectType` kind is, and under `-Prune` its group handler writes the one item warning, R6 under
-[#synced-groups](#synced-groups), where the helper writes none): a declared entry that could not be
+helper's own and no ShouldProcess prompt (the sixth and the seventh kind are an `Extra` row without
+`-Prune`, as the `-ObjectType` kind is; under `-Prune` the group handler writes the one item warning
+for the sixth, R6 under [#synced-groups](#synced-groups), where the helper writes none, and no warning
+for the seventh; the eighth is a `Skipped` row with or without `-Prune`, and the handler writes one
+warning for the item that names the cause): a declared entry that could not be
 resolved, which withholds every candidate of its collection (`-Unresolved`); an entry whose scope could not be resolved, which withholds every
 candidate of the section (`-UnresolvedScope`, A12 under [#role-assignment-key](#role-assignment-key));
 a live administrative unit scoped role whose name the directory role list did not give, beside a
@@ -6712,7 +6714,11 @@ nor removed (`-Declared` with `-UnnamedRoleId`); a group member or owner that is
 (`-ObjectType`, A9 above); since Sprint 9 step 6, a live administrative unit member that is a
 group this run created into the unit (`-CreatedGroup`, BL-07, below); and, since Sprint 10 step 7b,
 every live member, owner or eligibility of a group synchronized from on-premises (`-SyncedGroup`,
-A15, under [#synced-groups](#synced-groups)). The directory role prune's two
+A15, under [#synced-groups](#synced-groups)); and, since Sprint 11 step 1 (BL-125), a live group
+member or owner that PIM for Groups holds or makes eligible for the same access (`-PimHeldReason`),
+and every undeclared member or owner of a group whose PIM for Groups state could not be read
+(`-PimUnread`), both under
+[#pim-activation-is-not-membership](#pim-activation-is-not-membership). The directory role prune's two
 guards for the signed-in identity, under [#directory-role-assignments](#directory-role-assignments),
 write their own `prune withheld:` rows.
 
@@ -7616,14 +7622,18 @@ the PIM check. It never reads it for a group the same run created (no PIM state 
 never for a group synchronized from on-premises (its own guard decides first). The read is the
 assignment read plus the eligibility, which is reused from the item's own read when the entry declares
 `eligibility` and is one more `Read-OERGroupCollection` otherwise. So the cost is at most two paged
-reads per item, and none for a converged item. If wrong: one read more per item; never a wrong write.
+reads per item, and none for a converged item. A group `New-OERGroup` hands back as already existing
+(a race between the existence check and the create) is treated as created in this run, so its PIM
+state is not read either: a residual by design, since the handler already takes that path's live
+state as empty. If wrong: one read more per item; never a wrong write.
 
 **Rule 6 (the apply engine: add).** A declared member or owner that is not present and that the live
 group holds for the same access, of any Kind and `Eligible` included, is NOT added: one warning for
 the entry, written with no `ShouldProcess` call, and a `Skipped` row that says why, the same under
 `-WhatIf`. A declared principal that is already present stays `Unchanged`, an activation in force
-included. When the hold could not be read, nothing is added to the group: one warning for the item
-names the cause, and each declared entry that is not present is `Skipped`. If wrong: a principal the
+included. When the hold could not be read, nothing is added to the group (it already existed: a group
+the run creates is never read): one warning for the item names the cause, and each declared entry
+that is not present is `Skipped`. If wrong: a principal the
 operator really wants as a standing member or owner has to be added with `Add-OERGroupMember`.
 
 **Rule 7 (the apply engine: prune).** An undeclared live member or owner that is held for the same
@@ -7634,7 +7644,9 @@ undeclared candidate in that collection is `Skipped` with "prune withheld:" with
 (`-PimUnread`), like an unresolved declared entry, and the item's one warning names the cause. The
 order of the withholds is the unresolved entry, the service principal, the synchronized group, the
 PIM hold and, for owners, the last-owner guard, and a withheld owner counts as an owner still
-standing. If wrong: a removal the operator wanted is withheld, never a wrong removal.
+standing. So `-Prune` can remove the last STANDING owner while an activated or time-bound owner
+remains, and when that activation ends the group has no owner: the guard follows Graph's current
+state (recorded, not changed). If the hold rule is wrong: a removal the operator wanted is withheld.
 
 **Rule 8 (the bundle).** The bundle `README.md` has a section, "Members and owners left out as PIM for
 Groups access", that lists by group name, never by principal, how many members and owners were left
@@ -7665,7 +7677,8 @@ app-only identity needs the read permission granted on its app registration. The
 200 before the documented permission was added to the gate, so which of the identity's permissions
 allowed it is not established. If the permission is missing the read fails: the export reports the
 assignments as unread and falls back to the reserve of rule 3, and the apply engine treats the hold
-as unreadable and adds and removes no member or owner in the group, never a wrong write.
+as unreadable and adds and removes no member or owner in a group that already existed (a group the
+same run creates is not read, and its declared members and owners are added), never a wrong write.
 
 **Why the apply engine refuses, and why it says so.** The document is a declaration of the standing
 state, so a principal PIM holds is not part of it, and an older export may still list one. Adding it

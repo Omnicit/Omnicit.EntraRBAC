@@ -788,8 +788,9 @@ collection that holds entries is left out. `Invoke-OERStructure` adds no standin
 for Groups holds or makes eligible for the same access (`Skipped`, with a warning, also under
 `-WhatIf`), and `-Prune` removes none (`Skipped` with `-Prune`, `Extra` without). So an activation
 that a document exported by an earlier version lists under `members` is not added while PIM for
-Groups still holds that principal or makes it eligible. While a group's PIM state cannot be read,
-nothing is added to or removed from its members and owners. The read needs the permission
+Groups still holds that principal or makes it eligible. While the PIM state of a group that already
+existed cannot be read, nothing is added to or removed from its members and owners (a group the same
+run creates is not read, and its declared members and owners are added). The read needs the permission
 `PrivilegedAssignmentSchedule.Read.AzureADGroup`, which `Get-OERRequiredScope` lists.
 
 `Export-OERInventory` stays fast in a large tenant by deciding which security groups are

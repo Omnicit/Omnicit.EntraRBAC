@@ -60,12 +60,14 @@ function Invoke-OERStructure {
     Groups assignment schedule instances and its eligibility, at most once for each group entry and
     only when a member or owner has to be added, or an undeclared one reaches the prune pass and no
     other prune rule withholds it: never for an entry whose members and owners already match, never
-    for a group the same run created, and never for a group synchronized from on-premises. When that
-    state cannot be read, nothing is added to the group's members and owners and nothing is removed
-    from them: each declared entry that is not present is reported Skipped, each undeclared one is
-    withheld (see -Prune), and one warning for the group entry names the cause. The read needs the
-    Microsoft Graph permission PrivilegedAssignmentSchedule.Read.AzureADGroup (Get-OERRequiredScope
-    lists it).
+    for a group the same run created (a group New-OERGroup finds already existing in place of creating
+    it counts as created), and never for a group synchronized from on-premises. When that state cannot
+    be read for a group that already existed, nothing is added to its members and owners and nothing
+    is removed from them: each declared entry that is not present is reported Skipped, each
+    undeclared one is withheld (see -Prune), and one warning for the group entry names the cause. A
+    group the same run creates is not read, so its declared members and owners are added. The read
+    needs the Microsoft Graph permission PrivilegedAssignmentSchedule.Read.AzureADGroup
+    (Get-OERRequiredScope lists it).
 
     WhatIf plan mode (-WhatIf): handlers receive the engine's $PSCmdlet as -Caller and read
     ShouldProcess from it. Under -WhatIf all writes return Skipped results; reads (diff queries)
@@ -215,10 +217,12 @@ function Invoke-OERStructure {
     reported Extra without -Prune, with a hint that -Prune leaves it in place, and Skipped, with a
     Detail starting "prune withheld:", with -Prune, with no warning and no ShouldProcess prompt. A
     principal that is a standing member and also eligible for member access is covered too. An owner
-    withheld this way still counts as an owner standing, for the rule that the last owner is not
-    removed. While the group's PIM for Groups state cannot be read, no member or owner is removed
-    from that group: each undeclared one is reported Skipped, with a Detail starting "prune
-    withheld:", with or without -Prune, and one warning for the group names the cause. Manage the
+    withheld this way still counts as an owner in the group for the rule that the last owner is not
+    removed, so -Prune can remove the last standing owner while an activated or time-bound owner
+    remains, and when that activation ends the group has no owner. While the PIM for Groups state of a group that already existed cannot be read, no member
+    or owner is removed from that group: each undeclared one is reported Skipped, with a Detail
+    starting "prune withheld:", with or without -Prune, and one warning for the group names the
+    cause. Manage the
     access in PIM for Groups, or remove a standing member with Remove-OERGroupMember, when it is
     meant to go.
 
