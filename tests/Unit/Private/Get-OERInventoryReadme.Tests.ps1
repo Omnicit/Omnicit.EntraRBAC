@@ -399,7 +399,7 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
 }
 
 Describe 'Get-OERInventoryReadme (members and owners left out as PIM for Groups access, BL-125)' {
-    # A3 / R8. A member or owner whose access PIM for Groups holds is left out of inventory.json, so
+    # BL-125 (A3). A member or owner whose access PIM for Groups holds is left out of inventory.json, so
     # the README says so, per group by name and never by principal, in both states: "none was left
     # out" is a claim the reader needs to rely on as much as the list.
     BeforeAll {
@@ -428,7 +428,17 @@ Describe 'Get-OERInventoryReadme (members and owners left out as PIM for Groups 
             param([string]$GroupId, [string]$Group, [int]$Members, [int]$Owners, [string]$Basis)
             [PSCustomObject]@{ GroupId = $GroupId; Group = $Group; Members = $Members; Owners = $Owners; Basis = $Basis }
         }
-        $script:PimProse = '`inventory.json` and `groups.json` write a group''s standing members and owners only. A member or owner whose access PIM for Groups holds -- an activation, or a time-bound active assignment -- is left out, since applying it would make a time-limited access standing, past PIM''s time limit, approval and multi-factor authentication. Where the PIM for Groups assignments of a group could not be read, every member or owner that is also eligible for the same access was left out, and the group is listed under "What this export could not read"; where its eligibility could not be read either, its `members` key is written as `null` and its `owners` key is left out. A member or owner left out is still a member or owner in the tenant until its activation, or its time-bound assignment, ends.'
+        $script:PimProse = '`inventory.json` and `groups.json` write a group''s standing members and owners only. A member or owner whose access PIM for Groups holds -- an activation, or another active assignment that is not standing, such as a time-bound one -- is left out, since applying it would make access that PIM for Groups grants standing, past PIM''s time limit, approval and multi-factor authentication. Where the PIM for Groups assignments of a group could not be read, every member or owner that is also eligible for the same access was left out, and the group is listed under "What this export could not read"; where its eligibility could not be read either, its members and owners are not written -- `members` as `null`, `owners` left out -- unless they were read empty. A member or owner left out is still a member or owner in the tenant: leaving it out of the export changes nothing there.'
+    }
+
+    It 'never claims that a member or owner left out leaves the group' {
+        # A standing member that is also eligible is left out on the Eligibility basis and stays a
+        # member, so the section must not tie its membership to an activation ending.
+        $Section = Get-PimSection -Readme (Get-PimReadme)
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed | Should -Not -Match 'until its activation'
+        $Collapsed | Should -Not -Match 'time-bound assignment, ends'
+        $Collapsed | Should -Match ([regex]::Escape('A member or owner left out is still a member or owner in the tenant: leaving it out of the export changes nothing there.'))
     }
 
     It 'places the section directly after "What this export could not read" and ahead of ## Files (<State>)' -ForEach @(
@@ -459,7 +469,7 @@ Describe 'Get-OERInventoryReadme (members and owners left out as PIM for Groups 
                 (New-LeftOut -GroupId 'g-2' -Group 'role_sec_other' -Members 0 -Owners 3 -Basis 'Eligibility')
             ))
         $Expected = @(
-            '- `role_sec_pim`: 2 member(s) and 1 owner(s) left out -- an activation or a time-bound active assignment in PIM for Groups'
+            '- `role_sec_pim`: 2 member(s) and 1 owner(s) left out -- an activation, or another active assignment that is not standing, such as a time-bound one, in PIM for Groups'
             '- `role_sec_other`: 0 member(s) and 3 owner(s) left out -- eligible for the same access; the group''s PIM for Groups assignments could not be read'
         )
         ((Get-PimBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
@@ -473,8 +483,8 @@ Describe 'Get-OERInventoryReadme (members and owners left out as PIM for Groups 
                 (New-LeftOut -GroupId 'g-2' -Group "<two`nlines>" -Members 1 -Owners 0 -Basis 'Assignments')
             ))
         $Expected = @(
-            '- `` Odd`Name ``: 1 member(s) and 0 owner(s) left out -- an activation or a time-bound active assignment in PIM for Groups'
-            '- `<two lines>`: 1 member(s) and 0 owner(s) left out -- an activation or a time-bound active assignment in PIM for Groups'
+            '- `` Odd`Name ``: 1 member(s) and 0 owner(s) left out -- an activation, or another active assignment that is not standing, such as a time-bound one, in PIM for Groups'
+            '- `<two lines>`: 1 member(s) and 0 owner(s) left out -- an activation, or another active assignment that is not standing, such as a time-bound one, in PIM for Groups'
         )
         ((Get-PimBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
         # Outside its code span the bullet holds no angle bracket: Markdown would read it as a tag.

@@ -12,8 +12,8 @@ function Get-OERGroupPimHeldAccess {
     for Groups holds or makes eligible. A principal it does not return is a standing one, or not
     named at all.
 
-    The rule (R1). An assignment schedule instance holds its principal's access through PIM for
-    Groups unless it is a standing one: its assignmentType is 'assigned' (compared without regard to
+    The rule (docs/development/rationale.md#pim-activation-is-not-membership). An assignment schedule
+    instance holds its principal's access through PIM for Groups unless it is a standing one: its assignmentType is 'assigned' (compared without regard to
     letter case) AND it has no endDateTime. Graph lists a membership or ownership added outside PIM in
     exactly that standing shape (measured live 2026-10-13), and it is never returned. Every other
     instance is returned, with the Kind:
@@ -24,10 +24,12 @@ function Get-OERGroupPimHeldAccess {
     object (the shape the Graph SDK hands back) counts as set. memberType is never consulted. Every
     eligibility schedule instance is returned with the Kind Eligible.
 
-    The access type is the instance's accessId in lower case, 'member' or 'owner' as Graph names them,
-    and 'member' when the instance has none. The principal id is the instance's principalId in lower
-    case, so a caller compares ids without regard to letter case; an instance with no principalId is
-    skipped.
+    The access type is the instance's accessId in lower case, and 'member' when the instance has none.
+    Graph names 'member' and 'owner'; any other value -- a later enum value such as
+    unknownFutureValue -- is passed through lower-cased, not mapped, and a caller matches member and
+    owner only, so such an instance leaves nobody out of either collection. The principal id is the
+    instance's principalId in lower case, so a caller compares ids without regard to letter case; an
+    instance with no principalId is skipped.
 
     At most one object is returned per principal id and access type. An assignment kind wins over
     Eligible for the same principal and access type, and among assignment kinds the first instance in
@@ -117,8 +119,8 @@ function Get-OERGroupPimHeldAccess {
         if ($null -eq $Instance) { continue }
         $Key = & $KeyOf $Instance
         if ($null -eq $Key) { continue }
-        # R1. -eq compares text without regard to letter case, so 'Assigned' and 'Activated' read as
-        # Graph's lower-case values do. A DateTime end is "set": it is not null and reads as text.
+        # The rule. -eq compares text without regard to letter case, so 'Assigned' and 'Activated' read
+        # as Graph's lower-case values do. A DateTime end is "set": it is not null and reads as text.
         $End = $Instance.endDateTime
         $EndSet = $null -ne $End -and -not [string]::IsNullOrWhiteSpace([string]$End)
         $Type = [string]$Instance.assignmentType

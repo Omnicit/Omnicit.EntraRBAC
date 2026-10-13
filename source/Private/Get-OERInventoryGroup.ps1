@@ -21,20 +21,23 @@ function Get-OERInventoryGroup {
     written only when they are standing. For each group whose members or owners were read and hold
     at least one entry, the group's PIM for Groups assignment schedule instances are read ONCE
     (Read-OERGroupPimAssignment); no such read is made for a group whose members and owners were both
-    read empty, or both unread (R4). Get-OERGroupPimHeldAccess owns the rule that decides which
-    instances hold access through PIM for Groups (R1): every instance but a standing one -- an
-    activation, a time-bound active assignment, or any active assignment that is not standing. Ids
-    are compared without regard to letter case, and per access type, so a principal that is a
-    standing member and an activated owner is written as a member and left out of the owners.
+    read empty, or both unread. Get-OERGroupPimHeldAccess owns the rule that decides which instances
+    hold access through PIM for Groups (docs/development/rationale.md#pim-activation-is-not-membership):
+    every instance but a standing one -- an activation, a time-bound active assignment, or any active
+    assignment that is not standing. Ids are compared without regard to letter case, and per access
+    type, so a principal that is a standing member and an activated owner is written as a member and
+    left out of the owners; an instance whose access type is neither member nor owner leaves nobody
+    out.
     - With the assignments read, every member and owner whose id PIM for Groups holds for that access
-      is left out of members or owners (R2). Eligibility alone leaves nobody out: a standing member
-      that is also eligible is written, as before.
+      is left out of members or owners. Eligibility alone leaves nobody out: a standing member that is
+      also eligible is written, as before.
     - When the assignment read fails, its cause is kept in the Causes list (Target the group's id),
-      'groups/<name>/pimAssignments' is named in the Unread list (R9: a collection name, not a
-      document key), and every member and owner that is eligible for the same access is left out
-      instead (R3, the reserve).
-    - When the eligibility was not read either, nothing can be decided: members is written as an
-      explicit null and owners is omitted, and both are named in the Unread list.
+      'groups/<name>/pimAssignments' is named in the Unread list (a collection name, not a document
+      key), and every member and owner that is eligible for the same access is left out instead.
+    - When the eligibility was not read either, nothing can be decided for a collection that holds
+      entries: members is then written as an explicit null and owners is omitted, and each is named in
+      the Unread list. A collection read empty is written as read and not named, since it cannot hold
+      an activation.
     Each group that left at least one member or owner out is counted, by name and never by principal,
     in the PimLeftOut list below, with one verbose line.
 
@@ -506,23 +509,26 @@ function Get-OERInventoryGroup {
             if ($IncludeId) { $Proj.id = $G.Id }
 
             # BL-125 (A3): a member or owner that holds its access through PIM for Groups -- an
-            # activation, or a time-bound active assignment -- is never written as standing.
-            # Get-OERGroupPimHeldAccess owns the rule (docs/development/rationale.md#pim-activation-is-not-membership).
-            # The assignment read lists every direct member and owner, standing ones too (measured live
-            # 2026-10-13), so it is what tells the two apart. It is asked at most ONCE per group (R4),
-            # and not at all for a group whose members and owners were both read empty, or both
-            # unread: there is nothing to leave out. When it fails, the group's eligibility decides
-            # instead (R3, the reserve): a member or owner eligible for the same access is left out,
-            # since an eligible principal that is a member now may be one through an activation. When
-            # the eligibility was not read either, nothing can be decided, and neither collection is
-            # written: members as an explicit null, owners omitted, both named unread.
+            # activation, or another active assignment that is not standing, such as a time-bound one --
+            # is never written as standing. Get-OERGroupPimHeldAccess owns the rule
+            # (docs/development/rationale.md#pim-activation-is-not-membership). The assignment read
+            # lists every direct member and owner, standing ones too (measured live 2026-10-13), so it
+            # is what tells the two apart. It is asked at most ONCE per group, and not at all for a
+            # group whose members and owners were both read empty, or both unread: there is nothing to
+            # leave out. When it fails, the group's eligibility decides instead: a member or owner
+            # eligible for the same access is left out, since an eligible principal that is a member
+            # now may be one through an activation. When the eligibility was not read either, nothing
+            # can be decided for a collection that holds entries, and it is not written: members as an
+            # explicit null, owners omitted, each named unread. A collection read EMPTY cannot hold an
+            # activation, so it is written as read (members [], owners omitted as ever) and not named.
             $MembersRead = $G.PSObject.Properties.Name -contains 'Members'
             $OwnersRead  = $G.PSObject.Properties.Name -contains 'Owners'
+            $MembersHaveEntries = $MembersRead -and @($G.Members | Where-Object { $null -ne $_ }).Count -gt 0
+            $OwnersHaveEntries  = $OwnersRead -and @($G.Owners | Where-Object { $null -ne $_ }).Count -gt 0
             $HeldIds = @{ member = @{}; owner = @{} }
             $PimBasis = $null
             $PimUndecided = $false
-            $NeedPimRead = ($MembersRead -and @($G.Members | Where-Object { $null -ne $_ }).Count -gt 0) -or
-                ($OwnersRead -and @($G.Owners | Where-Object { $null -ne $_ }).Count -gt 0)
+            $NeedPimRead = $MembersHaveEntries -or $OwnersHaveEntries
             if ($NeedPimRead) {
                 $AssignRead = Read-OERGroupPimAssignment -GroupId ([string]$G.Id)
                 $Held = @()
@@ -541,7 +547,9 @@ function Get-OERInventoryGroup {
                     }
                 }
                 # Keyed by access type, so a principal held for one access is never left out of the
-                # other (Review Focus 2). An access type Graph may add later names no collection here.
+                # other. Get-OERGroupPimHeldAccess passes an accessId other than member or owner through
+                # lower-cased (a later enum value, such as unknownFutureValue); it names no collection
+                # here and leaves nobody out, and indexing by it would end the whole read.
                 foreach ($H in $Held) {
                     if ($HeldIds.ContainsKey($H.AccessType)) { $HeldIds[$H.AccessType][$H.PrincipalId] = $H.Kind }
                 }
@@ -554,7 +562,7 @@ function Get-OERInventoryGroup {
             # it here would leave issue #76's chain wide open. An EXPLICIT null is the schema's
             # documented "leave membership untouched" signal, and that is what an unread
             # membership has to be -- and what a membership is whose PIM hold could not be decided.
-            if ($MembersRead -and $PimUndecided) {
+            if ($MembersHaveEntries -and $PimUndecided) {
                 $Proj.members = $null
                 $UnreadCollections.Add("groups/$($G.DisplayName)/members")
             } elseif ($MembersRead) {
@@ -575,7 +583,7 @@ function Get-OERInventoryGroup {
                 $Proj.members = $null
                 $UnreadCollections.Add("groups/$($G.DisplayName)/members")
             }
-            if ($OwnersRead -and $PimUndecided) {
+            if ($OwnersHaveEntries -and $PimUndecided) {
                 # The same hands-off form as an unread owners collection below: omitted, and named.
                 $UnreadCollections.Add("groups/$($G.DisplayName)/owners")
             } elseif ($OwnersRead) {

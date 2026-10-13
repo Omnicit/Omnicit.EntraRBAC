@@ -1866,7 +1866,7 @@ Describe 'Export-OERInventory (prompt + readme + self-check)' {
 }
 
 Describe 'Export-OERInventory (members and owners left out as PIM for Groups access, BL-125)' {
-    # A3 / R8. The group reader leaves out a member or owner whose access PIM for Groups holds and
+    # BL-125 (A3). The group reader leaves out a member or owner whose access PIM for Groups holds and
     # names the group in its PimLeftOut list; the export writes that list into the README, adds the
     # members left out to the roster's member count, and carries an unread assignment read into
     # IncompleteReads through the reader's Unread list, like every other unread collection.
@@ -1925,8 +1925,8 @@ Describe 'Export-OERInventory (members and owners left out as PIM for Groups acc
         $Section = Get-ReadmePimSection -BundlePath $Bundle.BundlePath
         $Section | Should -Not -BeNullOrEmpty
         ((Get-SectionBullets -Section $Section) -join "`n") | Should -BeExactly (@(
-                '- `role_sec_pim`: 1 member(s) and 0 owner(s) left out -- an activation or a time-bound active assignment in PIM for Groups'
-                '- `role_sec_unread`: 0 member(s) and 1 owner(s) left out -- an activation or a time-bound active assignment in PIM for Groups'
+                '- `role_sec_pim`: 1 member(s) and 0 owner(s) left out -- an activation, or another active assignment that is not standing, such as a time-bound one, in PIM for Groups'
+                '- `role_sec_unread`: 0 member(s) and 1 owner(s) left out -- an activation, or another active assignment that is not standing, such as a time-bound one, in PIM for Groups'
             ) -join "`n")
         $Section | Should -Not -Match 'None\.'
         # The list goes into the README alone: inventory.json keeps its shape and no JSON file names it.
@@ -2052,7 +2052,7 @@ Describe 'Export-OERInventory (members and owners left out as PIM for Groups acc
         $Roster = @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
         $Roster[0].memberCount | Should -Be 2
         $Readme = Get-Content (Join-Path $Bundle.BundlePath 'README.md') -Raw
-        $Readme | Should -Match ([regex]::Escape('- `role_sec_pim`: 1 member(s) and 1 owner(s) left out -- an activation or a time-bound active assignment in PIM for Groups'))
+        $Readme | Should -Match ([regex]::Escape('- `role_sec_pim`: 1 member(s) and 1 owner(s) left out -- an activation, or another active assignment that is not standing, such as a time-bound one, in PIM for Groups'))
         # Nothing was unread: the export is complete, and no principal of the group reaches the README.
         @($Bundle.IncompleteReads).Count | Should -Be 0
         @($ExErr).Count | Should -Be 0

@@ -9,9 +9,9 @@ AfterAll {
 }
 
 Describe 'Get-OERGroupPimHeldAccess' {
-    # BL-125 (A3), ruling R1: an assignment schedule instance holds its principal's access through PIM
-    # unless it is a standing one (assignmentType 'assigned' and no endDateTime). Graph answers the
-    # enum values in lower case (measured live 2026-10-13); the rule compares without regard to case.
+    # BL-125 (A3): an assignment schedule instance holds its principal's access through PIM unless it
+    # is a standing one (assignmentType 'assigned' and no endDateTime). Graph answers the enum values
+    # in lower case (measured live 2026-10-13); the rule compares without regard to case.
     # Rows are hashtables, the shape Invoke-MgGraphRequest answers with.
     BeforeAll {
         # Runs the helper in module scope and hands every object back, so a test can count them.
@@ -28,7 +28,7 @@ Describe 'Get-OERGroupPimHeldAccess' {
         }
     }
 
-    Context 'the rule (R1)' {
+    Context 'the rule' {
         It 'returns nothing for a standing assignment: assigned and no end' {
             $Held = @(Invoke-HeldAccess -Assignment @(
                     @{ principalId = 'u-1'; accessId = 'member'; memberType = 'direct'; assignmentType = 'assigned'; startDateTime = $null; endDateTime = $null }
@@ -147,6 +147,18 @@ Describe 'Get-OERGroupPimHeldAccess' {
             $Held = @(Invoke-HeldAccess -Assignment @($Row))
             $Held.Count | Should -Be 1
             $Held[0].AccessType | Should -BeExactly $Expected
+        }
+
+        It 'passes an access type other than member or owner through lower-cased, for an assignment and an eligibility alike' {
+            # Graph's enum has unknownFutureValue; the helper does not map it to member or owner, and a
+            # caller matches member and owner only, so such an instance leaves nobody out.
+            $Held = @(Invoke-HeldAccess `
+                    -Assignment @(@{ principalId = 'u-1'; accessId = 'unknownFutureValue'; assignmentType = 'activated'; endDateTime = $null }) `
+                    -Eligibility @(@{ principalId = 'u-2'; accessId = 'SomethingNew' }))
+            $Held.Count | Should -Be 2
+            @($Held | ForEach-Object { "$($_.PrincipalId)/$($_.AccessType)/$($_.Kind)" }) |
+                Should -BeExactly @('u-1/unknownfuturevalue/Activated', 'u-2/somethingnew/Eligible')
+            $Held[0].Reason | Should -BeExactly 'holds unknownfuturevalue access through an activation in PIM for Groups'
         }
 
         It 'takes the access type of an eligibility from its accessId, member when it has none' {

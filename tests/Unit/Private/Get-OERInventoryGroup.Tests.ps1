@@ -879,7 +879,7 @@ Describe 'Get-OERInventoryGroup' {
             $Read.Result.PimLeftOut[0].Basis | Should -BeExactly 'Assignments'
         }
 
-        It 'writes a standing member that is also eligible for member access (R2) (<Mode>)' -ForEach @(
+        It 'writes a standing member that is also eligible for member access (<Mode>)' -ForEach @(
             @{ Mode = 'full' }
             @{ Mode = 'relevant-only' }
         ) {
@@ -919,7 +919,7 @@ Describe 'Get-OERInventoryGroup' {
             $Read.Result.PimLeftOut[0].Owners | Should -Be 1
         }
 
-        It 'names the assignments unread with the cause, and leaves out only the members and owners eligible for the same access, when the assignment read fails (R3) (<Mode>)' -ForEach @(
+        It 'names the assignments unread with the cause, and leaves out only the members and owners eligible for the same access, when the assignment read fails (<Mode>)' -ForEach @(
             @{ Mode = 'full' }
             @{ Mode = 'relevant-only' }
         ) {
@@ -956,7 +956,7 @@ Describe 'Get-OERInventoryGroup' {
             @($Read.Verbose) | Should -Contain "Get-OERInventory: group 'role_sec_pim': 1 member(s) and 1 owner(s) left out, since PIM for Groups holds their access (Eligibility)."
         }
 
-        It 'writes members as an explicit null and omits owners when neither the assignments nor the eligibility could be read (R3, Review Focus 1) (<Mode>)' -ForEach @(
+        It 'writes members as an explicit null and omits owners when neither the assignments nor the eligibility could be read (Review Focus 1) (<Mode>)' -ForEach @(
             @{ Mode = 'full' }
             @{ Mode = 'relevant-only' }
         ) {
@@ -991,6 +991,85 @@ Describe 'Get-OERInventoryGroup' {
             @($Read.Result.PimLeftOut).Count | Should -Be 0
         }
 
+        It 'writes a collection read empty as read, and names only the one holding entries unread, when neither the assignments nor the eligibility could be read (<Mode>)' -ForEach @(
+            @{ Mode = 'full' }
+            @{ Mode = 'relevant-only' }
+        ) {
+            # An empty read cannot hold an activation, so the undecided form applies to the owners only.
+            $script:PimListing = @(
+                @{ Id = 'g-pim'; Name = 'role_sec_pim'
+                    Members = @()
+                    Owners = @(@{ id = 'o-std'; userPrincipalName = 'person6@contoso.com' }) }
+            )
+            $script:PimFail['g-pim'] = $true
+            $Read = & $script:ReadIn $Mode
+            $Group = & $script:ProjectionOf $Read 'role_sec_pim'
+            $Group.PSObject.Properties.Name | Should -Contain 'members'
+            $null -ne $Group.members | Should -BeTrue -Because 'an empty membership that was read is written as read, not as unread'
+            @($Group.members).Count | Should -Be 0
+            $Group.PSObject.Properties.Name | Should -Not -Contain 'owners'
+            @($Read.Result.Unread) | Should -Be @(
+                'groups/role_sec_pim/pimAssignments'
+                'groups/role_sec_pim/owners'
+                'groups/role_sec_pim/eligibility'
+            )
+            @($Read.Result.Unread) | Should -Not -Contain 'groups/role_sec_pim/members'
+            @($Read.Result.PimLeftOut).Count | Should -Be 0
+            # Reach proof: the assignments were asked for, since the owners hold an entry.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment -Exactly -Times 1 -ParameterFilter { $GroupId -eq 'g-pim' }
+        }
+
+        It 'names only the members unread, not owners read empty, when neither the assignments nor the eligibility could be read (<Mode>)' -ForEach @(
+            @{ Mode = 'full' }
+            @{ Mode = 'relevant-only' }
+        ) {
+            # The mirror of the test above: the members hold an entry and are not written, the owners
+            # were read empty and stay what an empty owner set always is -- omitted, and not named.
+            $script:PimListing = @(
+                @{ Id = 'g-pim'; Name = 'role_sec_pim'
+                    Members = @(@{ id = 'u-std'; userPrincipalName = 'person1@contoso.com' })
+                    Owners = @() }
+            )
+            $script:PimFail['g-pim'] = $true
+            $Read = & $script:ReadIn $Mode
+            $Group = & $script:ProjectionOf $Read 'role_sec_pim'
+            $Group.PSObject.Properties.Name | Should -Contain 'members'
+            $null -eq $Group.members | Should -BeTrue
+            $Group.PSObject.Properties.Name | Should -Not -Contain 'owners'
+            @($Read.Result.Unread) | Should -Be @(
+                'groups/role_sec_pim/pimAssignments'
+                'groups/role_sec_pim/members'
+                'groups/role_sec_pim/eligibility'
+            )
+            @($Read.Result.Unread) | Should -Not -Contain 'groups/role_sec_pim/owners'
+        }
+
+        It 'leaves nobody out for an instance whose access type is neither member nor owner, and still returns the read (<Mode>)' -ForEach @(
+            @{ Mode = 'full' }
+            @{ Mode = 'relevant-only' }
+        ) {
+            # Graph's accessId enum has unknownFutureValue. Get-OERGroupPimHeldAccess passes it through,
+            # and it names no collection here: the standing member is written, and the read does not stop.
+            $script:PimListing = @(
+                @{ Id = 'g-pim'; Name = 'role_sec_pim'
+                    Members = @(@{ id = 'u-std'; userPrincipalName = 'person1@contoso.com' })
+                    Owners = @(); Eligibility = @() }
+            )
+            $script:PimRows['g-pim'] = @(
+                (& $script:Standing 'u-std' 'member')
+                (& $script:Activated 'u-std' 'unknownFutureValue')
+            )
+            $Read = & $script:ReadIn $Mode
+            $Read.Result | Should -Not -BeNullOrEmpty
+            $Read.Result.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.InventoryGroupRead'
+            (& $script:ProjectionOf $Read 'role_sec_pim').members | Should -Be @('person1@contoso.com')
+            @($Read.Result.PimLeftOut).Count | Should -Be 0
+            @($Read.Result.Causes).Count | Should -Be 0
+            $Read.Result.Unread.Count | Should -Be 0
+            # Reach proof: the assignments were read, so the unknown access type reached the projection.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment -Exactly -Times 1 -ParameterFilter { $GroupId -eq 'g-pim' }
+        }
+
         It 'projects exactly what an empty assignment read projects when every member and owner is standing (<Mode>)' -ForEach @(
             @{ Mode = 'full' }
             @{ Mode = 'relevant-only' }
@@ -1018,7 +1097,7 @@ Describe 'Get-OERInventoryGroup' {
             $Read.Result.PimLeftOut.Count | Should -Be 0
         }
 
-        It 'reads the assignments once per group with members or owners read, and never for a group whose members and owners are both empty or both unread (R4) (<Mode>)' -ForEach @(
+        It 'reads the assignments once per group with members or owners read, and never for a group whose members and owners are both empty or both unread (<Mode>)' -ForEach @(
             @{ Mode = 'full' }
             @{ Mode = 'relevant-only' }
         ) {
@@ -1599,7 +1678,7 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
     }
 }
 
-Describe 'Get-OERInventoryGroup, the PIM for Groups assignment read driven through the transport (BL-125, R4)' {
+Describe 'Get-OERInventoryGroup, the PIM for Groups assignment read driven through the transport (BL-125)' {
     # Read-OERGroupPimAssignment and Get-OERPimGroupsGraphPath are the REAL ones here, and
     # Invoke-OERGraphRequest is mocked: every assignment request a group costs reaches the one mock
     # below and is recorded there. The rest of the read is mocked above the transport (the list,

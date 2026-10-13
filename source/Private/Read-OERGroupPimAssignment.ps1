@@ -19,11 +19,11 @@ function Read-OERGroupPimAssignment {
     - Value: the instances read; an empty array when the read succeeded and found none; null when
       the read failed. A failed read is never an empty one.
     - Message: null on success; on failure 'Could not read the PIM for Groups assignments of group
-      <id>: <reason>.'
+      <id>: <reason>.', the reason being the failure's message without its own trailing period.
     - Exception: the failure's exception, or null.
 
     The request declares ResourceTypeNotSupported to the transport as an answer, as the eligibility
-    read does (R10): a group PIM for Groups cannot manage then comes back as the transport's marker and
+    read does: a group PIM for Groups cannot manage then comes back as the transport's marker and
     is returned as a successful, empty read. That answer is not measured for this endpoint (a group
     never onboarded answered 200 with its members and owners). Every failure that arrives thrown, of
     any kind and whatever its code, is returned as unread, the safe direction: a caller that cannot
@@ -76,7 +76,10 @@ function Read-OERGroupPimAssignment {
         $Response = Invoke-OERGraphRequest -Uri (Get-OERPimGroupsGraphPath -Path ("identityGovernance/privilegedAccess/group/assignmentScheduleInstances?`$filter=groupId eq '{0}'" -f $GroupId)) -All -ExpectedErrorCode 'ResourceTypeNotSupported'
     } catch {
         Remove-OERErrorRecord -Record $PSItem
-        return (& $Result $false $null "Could not read the PIM for Groups assignments of group $($GroupId): $($PSItem.Exception.Message)." $PSItem.Exception)
+        # The sentence ends with this function's own period, so the reason's own is dropped: a reason
+        # that already ends in one would otherwise read '..'.
+        $Reason = ([string]$PSItem.Exception.Message).TrimEnd('.')
+        return (& $Result $false $null "Could not read the PIM for Groups assignments of group $($GroupId): $Reason." $PSItem.Exception)
     }
 
     if (@($Response.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') {

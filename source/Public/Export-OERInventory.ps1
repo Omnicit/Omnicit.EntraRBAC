@@ -714,7 +714,7 @@ function Export-OERInventory {
                 $CountById[[string]$G.id] = $MemberCount
             }
         }
-        # BL-125 (R8): the reader leaves a member whose membership PIM for Groups holds out of members,
+        # BL-125: the reader leaves a member whose membership PIM for Groups holds out of members,
         # and counts it per group in PimLeftOut, so the roster's memberCount keeps meaning the group's
         # live member count: the members written plus the members left out. A count that is not known
         # ($null, an unread membership) stays not known. The null-filter keeps a reader result that

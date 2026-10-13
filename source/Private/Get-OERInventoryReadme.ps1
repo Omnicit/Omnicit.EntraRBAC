@@ -23,8 +23,9 @@ function Get-OERInventoryReadme {
     owners only, why a member or owner whose access PIM for Groups holds is left out, and what was
     left out where the PIM for Groups assignments could not be read. Then it lists one bullet per
     -PimLeftOut entry: the group's name as a code span (the same fence rule as the entries above),
-    how many members and owners were left out, and the basis -- an activation or a time-bound active
-    assignment, or, where the group's assignments could not be read, eligibility for the same access.
+    how many members and owners were left out, and the basis -- an activation, or another active
+    assignment that is not standing, such as a time-bound one, or, where the group's assignments could
+    not be read, eligibility for the same access.
     It names groups only, never a principal. When -PimLeftOut is empty it says that none was left out.
     That parameter is mandatory for the same reason as the three above.
 
@@ -153,17 +154,18 @@ that failed.
 '@
     }
 
-    # BL-125 (A3, R8): the members and owners left out as PIM for Groups access, one bullet per group
-    # by its name -- never a principal -- with how many and on which basis, in the order the export
-    # holds them. The basis is worded here: 'Assignments' when the group's PIM for Groups assignments
-    # decided it, 'Eligibility' when they could not be read and the eligibility decided it instead.
-    # The parameter is mandatory, so binding has already refused a null entry.
+    # BL-125 (A3): the members and owners left out as PIM for Groups access, one bullet per group by
+    # its name -- never a principal -- with how many and on which basis, in the order the export holds
+    # them. The basis is worded here: 'Assignments' when the group's PIM for Groups assignments decided
+    # it (an activation, or any other active assignment that is not standing), 'Eligibility' when they
+    # could not be read and the eligibility decided it instead. The parameter is mandatory, so binding
+    # has already refused a null entry.
     $PimBullets = [System.Collections.Generic.List[string]]::new()
     foreach ($Entry in @($PimLeftOut)) {
         $BasisText = if ([string]$Entry.Basis -eq 'Eligibility') {
             "eligible for the same access; the group's PIM for Groups assignments could not be read"
         } else {
-            'an activation or a time-bound active assignment in PIM for Groups'
+            'an activation, or another active assignment that is not standing, such as a time-bound one, in PIM for Groups'
         }
         $PimBullets.Add("- $(Format-CodeSpan -Text ([string]$Entry.Group)): $([int]$Entry.Members) member(s) and $([int]$Entry.Owners) owner(s) left out -- $BasisText")
     }
@@ -171,13 +173,14 @@ that failed.
 ## Members and owners left out as PIM for Groups access
 
 `inventory.json` and `groups.json` write a group's standing members and owners only. A member or
-owner whose access PIM for Groups holds -- an activation, or a time-bound active assignment -- is
-left out, since applying it would make a time-limited access standing, past PIM's time limit,
-approval and multi-factor authentication. Where the PIM for Groups assignments of a group could not
-be read, every member or owner that is also eligible for the same access was left out, and the group
-is listed under "What this export could not read"; where its eligibility could not be read either,
-its `members` key is written as `null` and its `owners` key is left out. A member or owner left out
-is still a member or owner in the tenant until its activation, or its time-bound assignment, ends.
+owner whose access PIM for Groups holds -- an activation, or another active assignment that is not
+standing, such as a time-bound one -- is left out, since applying it would make access that PIM for
+Groups grants standing, past PIM's time limit, approval and multi-factor authentication. Where the
+PIM for Groups assignments of a group could not be read, every member or owner that is also eligible
+for the same access was left out, and the group is listed under "What this export could not read";
+where its eligibility could not be read either, its members and owners are not written -- `members`
+as `null`, `owners` left out -- unless they were read empty. A member or owner left out is still a
+member or owner in the tenant: leaving it out of the export changes nothing there.
 '@
     $PimLeftOutSection = if ($PimBullets.Count -gt 0) {
         $PimIntro + "`n`n" + ($PimBullets -join "`n")

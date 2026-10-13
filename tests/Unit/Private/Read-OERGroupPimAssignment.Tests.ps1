@@ -88,7 +88,7 @@ Describe 'Read-OERGroupPimAssignment' {
         }
     }
 
-    It 'reads the expected-error marker as a successful, empty answer (R10)' {
+    It 'reads the expected-error marker as a successful, empty answer' {
         InModuleScope Omnicit.EntraRBAC {
             Mock Invoke-OERGraphRequest {
                 $M = [PSCustomObject]@{ ExpectedErrorCode = 'ResourceTypeNotSupported'; StatusCode = 400; Message = 'ResourceTypeNotSupported'; Uri = 'x' }
@@ -128,7 +128,7 @@ Describe 'Read-OERGroupPimAssignment' {
         }
     }
 
-    It 'reads a THROWN ResourceTypeNotSupported as unread, never as an empty answer (R10)' {
+    It 'reads a THROWN ResourceTypeNotSupported as unread, never as an empty answer' {
         # Only the marker the transport returns for the declared code is an answer. A failure that
         # arrives thrown, whatever its code, is unread: the safe direction for a read that decides
         # whether a member is written.
@@ -143,8 +143,26 @@ Describe 'Read-OERGroupPimAssignment' {
             $R = Read-OERGroupPimAssignment -GroupId '11111111-1111-1111-1111-111111111111'
             $R.Read | Should -BeFalse
             $null -eq $R.Value | Should -BeTrue
-            $R.Message | Should -BeExactly 'Could not read the PIM for Groups assignments of group 11111111-1111-1111-1111-111111111111: The resource type is not supported..'
+            $R.Message | Should -BeExactly 'Could not read the PIM for Groups assignments of group 11111111-1111-1111-1111-111111111111: The resource type is not supported.'
             Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
+        }
+    }
+
+    It 'ends the failure message with one period when the reason already ends with one' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Remove-OERErrorRecord { }
+            Mock Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)
+            }
+            $R = Read-OERGroupPimAssignment -GroupId '11111111-1111-1111-1111-111111111111'
+            $R.Read | Should -BeFalse
+            $R.Message | Should -BeExactly 'Could not read the PIM for Groups assignments of group 11111111-1111-1111-1111-111111111111: Insufficient privileges to complete the operation.'
+            $R.Message | Should -Not -BeLike '*..'
+            # The exception itself is kept as it was raised, its own period included.
+            $R.Exception.Message | Should -BeExactly 'Insufficient privileges to complete the operation.'
         }
     }
 
