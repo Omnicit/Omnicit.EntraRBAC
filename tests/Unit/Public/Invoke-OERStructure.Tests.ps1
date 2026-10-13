@@ -2225,3 +2225,163 @@ Describe 'Invoke-OERStructure refuses a document from another tenant (BL-88, A14
         Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureAdministrativeUnit -Times 0
     }
 }
+
+Describe 'Invoke-OERStructure updates an access review found by name only when it reviews the declared package and policy (BL-127)' {
+    # The handler finds the live access review by display name in the whole tenant, and display names
+    # are not unique: here the tenant's review with the entry's name reviews a GROUP. The real engine,
+    # the real handler and the real Get-OERAccessReviewTargetMismatch run; only the sign-in, the
+    # definition read, the write, the lookups and the transport are mocked or faked. The review is
+    # refused before any lookup and nothing is written. No id below is version-4 shaped.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        $script:ArJson = '{ "version": "1.0", "accessReviews": [ { "displayName": "Q3 AP review", "accessPackage": "AP-Sales", ' +
+            '"assignmentPolicy": "Standard", "durationInDays": 21, "reviewers": [ "person1@example.com" ] } ] }'
+        $script:ArGroupScope = '/groups/11111111-1111-1111-1111-111111111111/transitiveMembers'
+        $script:ArRefusal = ("Access review 'Q3 AP review' in the tenant does not review an access package (its scope is " +
+            "'$($script:ArGroupScope)'), so it is not the review this entry declares for access package 'AP-Sales' and assignment " +
+            "policy 'Standard'. Nothing was written. Access review display names are not unique: give the entry or the review in " +
+            'the tenant another display name.')
+        # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere
+        # above it, as at a prompt. The script installs its own fakes in ITS copy of the module scope and
+        # logs every lookup and write with AppendAllText, whose path is substituted into the text. #LIVE#
+        # picks the review the tenant holds under the name: a group review, or the review of the declared
+        # package and policy (the control). #FLAGS# are the engine's own switches.
+        function New-ArNoTryScenario {
+            param([string]$Log, [ValidateSet('group', 'package')][string]$Live, [string]$Flags)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value {
+        [CmdletBinding()]
+        param([string]$Filter)
+        $Review = [pscustomobject]@{
+            Id = 'cccc3333-0000-0000-0000-000000000001'; DisplayName = 'Q3 AP review'; Status = 'InProgress'
+            Scope = '/groups/11111111-1111-1111-1111-111111111111/transitiveMembers'; AccessPackageId = $null; AssignmentPolicyId = $null
+            Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @(); DurationInDays = 14; Settings = @{ instanceDurationInDays = 14 }
+        }
+        if ('#LIVE#' -eq 'package') {
+            $Review.Scope = 'the declared package and policy'
+            $Review.AccessPackageId = 'aaaa1111-0000-0000-0000-000000000001'
+            $Review.AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000001'
+        }
+        $Review
+    }
+    Set-Item -Path function:script:Resolve-OERAccessPackageId -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "LOOKUP package`n")
+        'aaaa1111-0000-0000-0000-000000000001'
+    }
+    Set-Item -Path function:script:Resolve-OERAssignmentPolicyId -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "LOOKUP policy`n")
+        'bbbb2222-0000-0000-0000-000000000001'
+    }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "LOOKUP principal`n")
+        'usr-1'
+    }
+    Set-Item -Path function:script:New-OERAccessReviewDefinition -Value { [System.IO.File]::AppendAllText('#LOG#', "NEW`n") }
+    Set-Item -Path function:script:Set-OERAccessReviewDefinition -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "SET`n")
+        [pscustomobject]@{
+            Id = 'cccc3333-0000-0000-0000-000000000001'; DisplayName = 'Q3 AP review'; Status = 'InProgress'
+            Scope = 'the declared package and policy'; AccessPackageId = 'aaaa1111-0000-0000-0000-000000000001'
+            AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000001'
+            Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @(); DurationInDays = 21; Settings = @{ instanceDurationInDays = 21 }
+        }
+    }
+}
+$Json = '#JSON#'
+Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#LIVE#', $Live).Replace('#FLAGS#', $Flags).Replace('#JSON#', $script:ArJson.Replace("'", "''")))
+        }
+        function Get-ArLoggedLine {
+            param([string]$Log)
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log | Where-Object { $_ }) } else { @() }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+            [PSCustomObject]@{
+                Id = 'cccc3333-0000-0000-0000-000000000001'; DisplayName = 'Q3 AP review'; Status = 'InProgress'
+                Scope = '/groups/11111111-1111-1111-1111-111111111111/transitiveMembers'; AccessPackageId = $null; AssignmentPolicyId = $null
+                Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @(); DurationInDays = 14; Settings = @{ instanceDurationInDays = 14 }
+            }
+        }
+        Mock -ModuleName $script:moduleName Set-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'cccc3333-0000-0000-0000-000000000001' } }
+        Mock -ModuleName $script:moduleName New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+        Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId { throw 'unexpected access package lookup' }
+        Mock -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId { throw 'unexpected assignment policy lookup' }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { throw 'unexpected reviewer lookup' }
+    }
+
+    It 'reports the entry Failed with the refusal, publishes it, and writes nothing to a group review that carries the entry''s name' {
+        $Errs = $null
+        $Rows = @(Invoke-OERStructure -Json $script:ArJson -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue)
+
+        # Positive proof first: the review was read once, and the entry was reported.
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+        $Rows.Count | Should -Be 1
+        $Rows[0].Section | Should -Be 'accessReviews'
+        $Rows[0].Item | Should -Be 'Q3 AP review'
+        $Rows[0].Action | Should -Be 'Failed'
+        $Rows[0].Detail | Should -BeExactly $script:ArRefusal
+        [string]$Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewScopeMismatch*'
+        $Own = @($Errs | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'AccessReviewScopeMismatch,Invoke-OERStructure' })
+        $Own.Count | Should -Be 1
+        $Own[0].Exception.Message | Should -BeExactly $script:ArRefusal
+
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERStructurePrincipal -Times 0
+    }
+
+    It 'reaches the end of a script with no try above it, with one Failed row, and writes nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-ArNoTryScenario -Log $Log -Live group -Flags '-Confirm:$false')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        # Nothing looked up or written; a failure here prints the calls that were.
+        @(Get-ArLoggedLine -Log $Log) | Should -BeNullOrEmpty
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Failed:$($script:ArRefusal)")
+        @($Run.Errors) | Should -Be @($script:ArRefusal)
+        @($Run.Prompts).Count | Should -Be 0
+    }
+
+    It 'ends a script with no try above it at the refusal under -ErrorAction Stop, having written nothing' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = New-ArNoTryScenario -Log $Log -Live group -Flags '-Confirm:$false -ErrorAction Stop'
+        # A stop outside any try ends the whole script, so the runner throws to its caller and no line
+        # after the engine, 'END' included, is reached.
+        $Thrown = { Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario } | Should -Throw -PassThru
+        $Thrown.Exception.InnerException | Should -BeOfType ([System.Management.Automation.ActionPreferenceStopException])
+        $Stopped = $Thrown.Exception.InnerException.ErrorRecord
+        [string]$Stopped.FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch,Invoke-OERStructure'
+        $Stopped.Exception.Message | Should -BeExactly $script:ArRefusal
+        @(Get-ArLoggedLine -Log $Log) | Should -BeNullOrEmpty
+    }
+
+    It 'asks no confirmation before the refusal, while the review of the declared package and policy is confirmed once and written' {
+        # Without -Confirm:$false the engine's ConfirmImpact High prompts at every ShouldProcess. The
+        # refusal comes before any, so the group review asks nothing; the control proves the prompt count
+        # is not vacuous: the matching review is looked up, confirmed once, and written.
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-ArNoTryScenario -Log $Log -Live group -Flags '')
+        $Run.Output[-1] | Should -BeExactly 'END'
+        @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Failed:$($script:ArRefusal)")
+        @($Run.Prompts).Count | Should -Be 0
+        @(Get-ArLoggedLine -Log $Log) | Should -BeNullOrEmpty
+
+        $ControlLog = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Control = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-ArNoTryScenario -Log $ControlLog -Live package -Flags '')
+        $Control.Output[-1] | Should -BeExactly 'END'
+        @($Control.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Updated:updated access review 'Q3 AP review' (durationInDays=21)")
+        @($Control.Prompts).Count | Should -Be 1
+        @(Get-ArLoggedLine -Log $ControlLog) | Should -Be @('LOOKUP package', 'LOOKUP policy', 'LOOKUP principal', 'SET')
+        @($Control.Errors).Count | Should -Be 0
+    }
+}

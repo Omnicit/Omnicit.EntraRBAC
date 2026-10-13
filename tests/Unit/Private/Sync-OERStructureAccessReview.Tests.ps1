@@ -12,6 +12,14 @@ AfterAll {
 
 Describe 'Sync-OERStructureAccessReview' {
 
+    BeforeAll {
+        # BL-127: before it updates a review found by name, the handler asks
+        # Get-OERAccessReviewTargetMismatch whether that review reviews the declared access package and
+        # assignment policy. Answered "it does" for this Describe, so every update fixture below keeps its
+        # meaning; the check itself runs for real in the BL-127 Describe at the end of this file.
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewTargetMismatch { $null }
+    }
+
     It 'creates a missing access review with mapped recurrence and manager reviewer' {
         InModuleScope $script:moduleName {
             function Invoke-SyncArViaCaller {
@@ -2170,6 +2178,12 @@ Describe 'Sync-OERStructureAccessReview explicit null reviewer gates' {
     # review with named reviewers into a self review and (because Set-OERAccessReviewDefinition
     # rebuilds BOTH reviewer arrays) wiping its fallback reviewers.
 
+    BeforeAll {
+        # BL-127: answered "the review found by name reviews the declared package and policy", so these
+        # update fixtures keep their meaning; the BL-127 Describe at the end of this file runs the check.
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewTargetMismatch { $null }
+    }
+
     It 'treats an explicit null reviewers as undeclared and leaves the live reviewers alone' {
         InModuleScope $script:moduleName {
             function Invoke-SyncArViaCaller {
@@ -3248,6 +3262,10 @@ Describe 'Sync-OERStructureAccessReview refuses an ambiguous definition name' {
 
     BeforeAll {
         $script:moduleName = 'Omnicit.EntraRBAC'
+        # BL-127: answered "the review found by name reviews the declared package and policy", so the
+        # single-match update fixtures below keep their meaning; the BL-127 Describe at the end of this
+        # file runs the check.
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewTargetMismatch { $null }
     }
 
     BeforeEach {
@@ -3705,5 +3723,254 @@ Describe 'Sync-OERStructureAccessReview publishes a failed derived-catalog read 
             $r[0].Detail | Should -BeLike '*Could not derive the catalog from access package ''AP-Sales''*'
             $r[0].Error.FullyQualifiedErrorId | Should -Match '^CatalogDerivationFailed'
         }
+    }
+}
+
+# BL-127 (Sprint 11 step 2, Rulings R8-R10). The handler finds the live review by display name in the
+# whole tenant, and display names are not unique, so a review of a group, a role or another access
+# package can carry the name an entry uses for a package review. Before it touches the review it found,
+# the handler asks Get-OERAccessReviewTargetMismatch, which runs for REAL here: only the two lookups it
+# makes are mocked (ledger Ruling P2), together with the sign-in, the reads, the write and the transport.
+# A refusal comes first -- before the reviewer lookups, the diff and ShouldProcess -- so a plan and a
+# real run report the same Failed row and nothing is written. No id below is version-4 shaped.
+Describe 'Sync-OERStructureAccessReview updates a review found by name only when it reviews the declared package and policy (BL-127)' {
+
+    BeforeAll {
+        $script:moduleName = 'Omnicit.EntraRBAC'
+        $script:BtName = 'Q3 AP review'
+        $script:BtDefId = 'cccc3333-0000-0000-0000-000000000001'
+        $script:BtPkgId = 'aaaa1111-0000-0000-0000-000000000001'
+        $script:BtOtherPkgId = 'aaaa1111-0000-0000-0000-000000000002'
+        $script:BtPolId = 'bbbb2222-0000-0000-0000-000000000001'
+        $script:BtOtherPolId = 'bbbb2222-0000-0000-0000-000000000002'
+        $script:BtGroupScope = '/groups/11111111-1111-1111-1111-111111111111/transitiveMembers'
+        $script:BtNotUnique = 'Access review display names are not unique: give the entry or the review in the tenant another display name.'
+        $script:BtGroupMessage = ("Access review 'Q3 AP review' in the tenant does not review an access package (its scope is " +
+            "'$($script:BtGroupScope)'), so it is not the review this entry declares for access package 'AP-Sales' and assignment " +
+            "policy 'Standard'. Nothing was written. $($script:BtNotUnique)")
+
+        # The live definitions as ConvertTo-OERAccessReviewDefinition shapes them (Id is the alias the
+        # handler writes by).
+        function New-BtLive {
+            param([string]$Scope, [string]$AccessPackageId, [string]$AssignmentPolicyId, [int]$DurationInDays = 14)
+            [PSCustomObject]@{
+                Id                      = $script:BtDefId
+                DisplayName             = $script:BtName
+                Status                  = 'InProgress'
+                DescriptionForAdmins    = 'admin text'
+                DescriptionForReviewers = 'reviewer text'
+                Scope                   = $Scope
+                AccessPackageId         = $AccessPackageId
+                AssignmentPolicyId      = $AssignmentPolicyId
+                Reviewers               = @(@{ query = '/users/usr-1' })
+                FallbackReviewers       = @()
+                DurationInDays          = $DurationInDays
+                Recurrence              = @{
+                    pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                    range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                }
+                Settings                = @{ instanceDurationInDays = $DurationInDays }
+            }
+        }
+        function New-BtPackageLive {
+            param([int]$DurationInDays = 14)
+            New-BtLive -Scope ("/identityGovernance/entitlementManagement/assignments?`$filter=(accessPackage/id eq '{0}' and assignmentPolicy/id eq '{1}')" -f $script:BtPkgId, $script:BtPolId) `
+                -AccessPackageId $script:BtPkgId -AssignmentPolicyId $script:BtPolId -DurationInDays $DurationInDays
+        }
+        function New-BtEntry {
+            param([string]$AccessPackage = 'AP-Sales', [string]$AssignmentPolicy = 'Standard', [int]$DurationInDays = 21, [string]$DescriptionForAdmins)
+            $Entry = [PSCustomObject]@{
+                displayName      = $script:BtName
+                accessPackage    = $AccessPackage
+                assignmentPolicy = $AssignmentPolicy
+                durationInDays   = $DurationInDays
+                reviewers        = @('person1@example.com')
+            }
+            if ($DescriptionForAdmins) { $Entry | Add-Member -NotePropertyName descriptionForAdmins -NotePropertyValue $DescriptionForAdmins }
+            $Entry
+        }
+        # Applies one entry through a caller that owns ShouldProcess, and returns the rows and the error
+        # records the CALLER itself published (a record's id carries ',Invoke-SyncArViaCaller' when it is).
+        function Invoke-BtSync {
+            param([Parameter(Mandatory)]$Item, [switch]$WhatIf, [string]$ErrorActionValue = 'SilentlyContinue')
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Item = $Item; PlanOnly = $WhatIf.IsPresent; Ea = $ErrorActionValue } {
+                param($Item, $PlanOnly, $Ea)
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet
+                }
+                $Published = $null
+                $Rows = @(Invoke-SyncArViaCaller -Item $Item -WhatIf:$PlanOnly -ErrorAction $Ea -ErrorVariable Published -WarningAction SilentlyContinue)
+                [PSCustomObject]@{
+                    Rows   = $Rows
+                    Errors = @($Published | Where-Object {
+                            $_ -is [System.Management.Automation.ErrorRecord] -and
+                            ([string]$_.FullyQualifiedErrorId).EndsWith(',Invoke-SyncArViaCaller')
+                        })
+                }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        $script:BtLiveNow = New-BtPackageLive
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { param($Uri) throw "Unexpected Graph request: $Uri" }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { $script:BtLiveNow }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal { 'usr-1' }
+        # By default the names resolve to the live package and policy; a test that needs another answer
+        # mocks it again.
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId { 'aaaa1111-0000-0000-0000-000000000001' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId { 'bbbb2222-0000-0000-0000-000000000001' }
+        Mock -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+        # The definition Graph reads back after the PUT: it now carries the declared duration.
+        Mock -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition { New-BtPackageLive -DurationInDays 21 }
+    }
+
+    It 'refuses a live group review that carries the entry''s name, before any lookup or write (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run'; PlanOnly = $false }
+        @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+    ) {
+        $script:BtLiveNow = New-BtLive -Scope $script:BtGroupScope
+        $Run = Invoke-BtSync -Item (New-BtEntry) -WhatIf:$PlanOnly
+
+        # Positive proof first: the review was read, once, and the entry was reported.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 1 -Exactly
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Failed' -Because 'a refusal is not a write, so a plan reports it exactly as a real run does'
+        $Run.Rows[0].Section | Should -Be 'accessReviews'
+        $Run.Rows[0].Item | Should -Be $script:BtName
+        $Run.Rows[0].Detail | Should -BeExactly $script:BtGroupMessage
+        [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewScopeMismatch*'
+
+        # One record, written through the caller.
+        $Run.Errors.Count | Should -Be 1
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch,Invoke-SyncArViaCaller'
+        $Run.Errors[0].CategoryInfo.Category | Should -Be 'InvalidOperation'
+        $Run.Errors[0].TargetObject | Should -Be $script:BtName
+        $Run.Errors[0].Exception.Message | Should -BeExactly $script:BtGroupMessage
+
+        # Nothing written, no reviewer lookup, no package lookup: the refusal comes first.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 0
+    }
+
+    It 'refuses a review of another access package when the entry names its package <Case>, and writes nothing' -ForEach @(
+        @{ Case = 'by name'; Package = 'AP-Sales'; Lookups = 1; DetailLike = "*not the access package 'AP-Sales' ('aaaa1111-0000-0000-0000-000000000002') this entry declares*" }
+        @{ Case = 'by id'; Package = 'aaaa1111-0000-0000-0000-000000000002'; Lookups = 0; DetailLike = "*not the access package 'aaaa1111-0000-0000-0000-000000000002' this entry declares*" }
+    ) {
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId { 'aaaa1111-0000-0000-0000-000000000002' }
+        $Run = Invoke-BtSync -Item (New-BtEntry -AccessPackage $Package)
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Failed'
+        $Run.Rows[0].Detail | Should -BeLike "Access review 'Q3 AP review' in the tenant reviews access package 'aaaa1111-0000-0000-0000-000000000001', *"
+        $Run.Rows[0].Detail | Should -BeLike $DetailLike
+        $Run.Errors.Count | Should -Be 1
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch,Invoke-SyncArViaCaller'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times $Lookups -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal -Times 0
+    }
+
+    It 'refuses a review of another assignment policy and writes nothing, not even the other declared changes' {
+        # Before BL-127 the policy difference was a NotApplied Skipped row while the description was still
+        # written to the review. Now the review is refused, and nothing is written to it.
+        $Run = Invoke-BtSync -Item (New-BtEntry -AccessPackage $script:BtPkgId -AssignmentPolicy $script:BtOtherPolId -DescriptionForAdmins 'new admin text')
+
+        $Run.Rows.Count | Should -Be 1 -Because 'one Failed row stands alone, with no Skipped scope note beside it'
+        $Run.Rows[0].Action | Should -Be 'Failed'
+        $Run.Rows[0].Detail | Should -BeExactly ("Access review 'Q3 AP review' in the tenant reviews assignment policy '$($script:BtPolId)' of access " +
+            "package '$($script:BtPkgId)', not the assignment policy '$($script:BtOtherPolId)' this entry declares, so it is not the review " +
+            "this entry declares. Nothing was written. $($script:BtNotUnique)")
+        $Run.Errors.Count | Should -Be 1
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch,Invoke-SyncArViaCaller'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 0
+    }
+
+    It 'updates the review exactly as before when it reviews the declared package and policy, named <Case>' -ForEach @(
+        @{ Case = 'by name'; Package = 'AP-Sales'; Policy = 'Standard'; Lookups = 1 }
+        @{ Case = 'by id'; Package = 'aaaa1111-0000-0000-0000-000000000001'; Policy = 'bbbb2222-0000-0000-0000-000000000001'; Lookups = 0 }
+    ) {
+        $Run = Invoke-BtSync -Item (New-BtEntry -AccessPackage $Package -AssignmentPolicy $Policy)
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Updated'
+        $Run.Rows[0].Detail | Should -BeExactly "updated access review 'Q3 AP review' (durationInDays=21)"
+        $Run.Errors.Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+            $Id -eq 'cccc3333-0000-0000-0000-000000000001' -and $DurationInDays -eq 21
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times $Lookups -Exactly -ParameterFilter { $DisplayName -eq 'AP-Sales' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times $Lookups -Exactly -ParameterFilter {
+            $AccessPackageId -eq 'aaaa1111-0000-0000-0000-000000000001' -and $AssignmentPolicy -eq 'Standard'
+        }
+    }
+
+    It 'reports Unchanged when the review reviews the declared package and policy and nothing differs, named <Case>' -ForEach @(
+        @{ Case = 'by name'; Package = 'AP-Sales'; Policy = 'Standard' }
+        @{ Case = 'by id'; Package = 'aaaa1111-0000-0000-0000-000000000001'; Policy = 'bbbb2222-0000-0000-0000-000000000001' }
+    ) {
+        $Run = Invoke-BtSync -Item (New-BtEntry -AccessPackage $Package -AssignmentPolicy $Policy -DurationInDays 14)
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Unchanged'
+        $Run.Errors.Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'reports AccessPackageNotFound and writes nothing when the package name matches nothing' {
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId { $null }
+        $Run = Invoke-BtSync -Item (New-BtEntry)
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Failed'
+        $Run.Rows[0].Detail | Should -BeExactly "could not resolve the access package or assignment policy of access review 'Q3 AP review': AccessPackage 'AP-Sales' not found.; nothing was written"
+        [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessPackageNotFound*'
+        $Run.Errors.Count | Should -Be 1
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessPackageNotFound,Invoke-SyncArViaCaller'
+        $Run.Errors[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal -Times 0
+    }
+
+    It 'reports a 403 out of the package lookup as itself and writes nothing' {
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'AP-Sales')
+        }
+        $Run = Invoke-BtSync -Item (New-BtEntry)
+
+        $Run.Rows.Count | Should -Be 1
+        $Run.Rows[0].Action | Should -Be 'Failed'
+        $Run.Rows[0].Detail | Should -BeExactly ("could not resolve the access package or assignment policy of access review 'Q3 AP review': " +
+            'Authorization_RequestDenied: Insufficient privileges to complete the operation.; nothing was written')
+        [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'Authorization_RequestDenied*'
+        $Run.Rows[0].Error.CategoryInfo.Category | Should -Be 'PermissionDenied'
+        $Run.Errors.Count | Should -Be 1
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeLike 'Authorization_RequestDenied*'
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -Not -BeLike 'AccessReviewScopeMismatch*'
+        [string]$Run.Errors[0].FullyQualifiedErrorId | Should -Not -BeLike 'AccessPackageNotFound*'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 0
+    }
+
+    It 'stops with AccessReviewScopeMismatch under the caller''s -ErrorAction Stop, and writes nothing' {
+        $script:BtLiveNow = New-BtLive -Scope $script:BtGroupScope
+        $Thrown = { Invoke-BtSync -Item (New-BtEntry) -ErrorActionValue Stop } | Should -Throw -PassThru
+        [string]$Thrown.FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch,Invoke-SyncArViaCaller'
+        $Thrown.Exception.Message | Should -BeExactly $script:BtGroupMessage
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal -Times 0
     }
 }
