@@ -1,6 +1,6 @@
 # Live verification checklist -- a PIM activation is never a standing membership (fix/never-make-an-activation-standing)
 
-**This branch does not merge until every box in sections S, 0, 1, 2, 3, 4, 5 and T has a written
+**This branch does not merge until every box in sections S, 0, 1, 2, 3, 4, 5, 6 and T has a written
 result.** A box with no result line filled in is not a passed check -- it is an unrun one. If a check
 turns out to be impossible to run, write "cannot be verified, and therefore we do not know" on its
 result line and say why; do not leave it blank and do not tick it. A check that could not run for a
@@ -18,10 +18,13 @@ final review two more were added for checks 1.3 and 1.4: the role-assignable gro
 user1 as its member and owner, and the dynamic group `oer-s111-dyn`, whose rule matches user1, with
 user1 as its owner. The two eligibilities onboard their groups to PIM for Groups, which cannot be
 undone; every group is deleted at teardown, and user1, a member of a role-assignable group, may be
-left as residue for some minutes (its deletion is refused for a while after it leaves such a group). Section 5 adds user1 to `oer-s111-plain` through `Invoke-OERStructure`, the one write
-the module makes in this file. Sections 3 and 4 apply documents that must write nothing. The
-teardown (T.1) removes every prefixed object. Bundles, documents and request logs are written under
-`raw\s111\`, which is deleted after the results are written.
+left as residue for some minutes (its deletion is refused for a while after it leaves such a group).
+Round 1 (6.0, after 1.3 and 1.4) adds two time-bound member eligibilities in `oer-s111-ra`, of user1 and
+of user2, which onboard that group to PIM for Groups too. Section 5 adds user1 to `oer-s111-plain`
+through `Invoke-OERStructure`, the one write the module makes in this file. Sections 3, 4 and 6 apply
+documents that must write nothing. The teardown (T.1) removes every prefixed object. Bundles,
+documents and request logs are written under `raw\s111\`, which is deleted after the results are
+written.
 
 **Who runs it.** Every section: the dedicated certificate identity `oer-live-cc`, through the OerLive
 library, which lives beside the operator's copy of this file outside the repository
@@ -68,7 +71,8 @@ Groups and on one never onboarded, on a role-assignable group and on a dynamic o
 export of the step groups writing the standing
 memberships, with one assignment read per group read in full (2.1, 2.2); an eligible principal
 declared as a member and not added (3.1, 3.2); an eligible member withheld from a prune (4.1, 4.2);
-and a plain member added as before, converging (5.1-5.3).
+a plain member added as before, converging (5.1-5.3); and, in round 1 once the permission was granted,
+the same apply cases on the role-assignable group whose PIM assignments step 1 could not read (6.0-6.5).
 
 ## What this file does not check, and why
 
@@ -77,11 +81,14 @@ and a plain member added as before, converging (5.1-5.3).
   it cannot create one. Class B (B.2).
 - **The reserve, and the partial signal, for a failed assignment read** were planned as class B, since
   `oer-live-cc-noperm` cannot read the groups at all and `oer-live-cc` read the plain groups' PIM
-  assignments without the documented permission (1.1). Check 1.4 then saw them live after all: on the
-  role-assignable group the read was refused (1.3), and the export fell back and reported partial. The
-  unit tests remain the proof for a member that is left out on the eligibility basis (B.1).
-- **The engine with an unread hold state.** 1.3 saw the engine's hold read come back unread for the
-  role-assignable group, but no apply ran against that group here; the refusal itself is class B (B.3).
+  assignments without the documented permission (1.1). Step 1's run of 1.4, before the grant, saw them
+  live after all: on the role-assignable group the read was refused (1.3), and the export fell back and
+  reported partial (both runs are kept in those results). Since the grant (round 1) that read answers
+  200, so this file can no longer produce the refusal. The unit tests remain the proof for a member that
+  is left out on the eligibility basis (B.1).
+- **The engine with an unread hold state.** Step 1's run of 1.3 saw the engine's hold read come back
+  unread for the role-assignable group, but no apply ran against that group then; round 1 ran the apply
+  cases there with the read granted (section 6). The refusal itself is class B (B.3).
 
 ## Setup, once
 
@@ -94,7 +101,8 @@ and a plain member added as before, converging (5.1-5.3).
 - The **built module of this branch** in the step's own worktree (`./build.ps1 -Tasks build`), and
   the environment variable `OER_LIVE_REPO` naming that worktree. H.1 sets the session's `Repo` to it.
 - The **prerequisite objects**, created by `Initialize-OerS111Prereq.ps1 -Unattended` (0.3 records
-  the run).
+  the run), and for section 6 the two eligibilities in `oer-s111-ra` that
+  `-RoleAssignableEligibility` adds (6.0 records that run).
 
 **Run every numbered block in its OWN PowerShell process, after H.1 in the same process.**
 
@@ -152,12 +160,12 @@ function Reset-S111Requests { $global:S111Token.Clear(); $global:S111Graph.Clear
 function Write-S111Requests {
     # The module's requests since the last reset: how many, the writes (a getByIds or getMemberGroups POST
     # is a read), and how many assignment and eligibility reads each step group cost.
-    param([Parameter(Mandatory)][string]$Label)
+    param([Parameter(Mandatory)][string]$Label, [string[]]$Groups = $StepGroups)
     $All = @($global:S111Graph)
     $Writes = @($All | Where-Object { $_.Method -ne 'GET' -and $_.Uri -notmatch 'directoryObjects/(getByIds|[^/?]+/getMemberGroups)' })
     Write-OerLiveStep "$($Label): requests $($All.Count); writes $($Writes.Count); token requests $($global:S111Token.Count)"
     foreach ($W in $Writes) { Write-OerLiveStep ("$($Label): write: {0} {1}" -f $W.Method, (Get-S111Who ([uri]::UnescapeDataString($W.Uri)))) }
-    foreach ($G in $StepGroups) {
+    foreach ($G in $Groups) {
         $Gid = [string]$S111Id[$G]
         $Mine = @($All | Where-Object { $Gid -and $_.Uri.IndexOf($Gid, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 })
         $Assign = @($Mine | Where-Object { $_.Uri -match 'assignmentScheduleInstances' }).Count
@@ -199,13 +207,13 @@ function Save-S111Document {
 function Invoke-S111Apply {
     # One fenced Invoke-OERStructure run of a document (-Include Groups), as a plan (-WhatIf) or a real run
     # (-Confirm:$false); the rows, the warnings, the own errors and the requests printed.
-    param([Parameter(Mandatory)][string]$Path, [switch]$Prune, [switch]$Plan)
+    param([Parameter(Mandatory)][string]$Path, [switch]$Prune, [switch]$Plan, [string[]]$Groups = $StepGroups)
     Reset-S111Requests
     $Common = @{ Path = $Path; Include = 'Groups'; ErrorAction = 'Continue'; ErrorVariable = 'ApErr'; WarningAction = 'SilentlyContinue'; WarningVariable = 'ApWarn' }
     if ($Prune) { $Common.Prune = $true }
     $Rows = if ($Plan) { @(Invoke-OERStructure @Common -WhatIf) } else { @(Invoke-OERStructure @Common -Confirm:$false) }
     Write-S111Rows -Rows $Rows -Warnings @($ApWarn) -Errors @($ApErr)
-    Write-S111Requests -Label $(if ($Plan) { 'plan' } else { 'run' })
+    Write-S111Requests -Label $(if ($Plan) { 'plan' } else { 'run' }) -Groups $Groups
 }
 ```
 
@@ -234,9 +242,25 @@ if (-not $Psm1) { Write-OerLiveStep 'this branch build: not found' } else {
 **Failure looks like:** `False` on the first line (`OER_LIVE_REPO` unset), or fewer than 4 marks
 (build it first, never while the gate runs).
 
-Result: 2026-10-13 12:01 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
+Verdict: PASS (round 1). The session's Repo is round 1's own worktree, not the main clone; the main clone is on main, never switched; the worktree is on this branch at da2ebd5, and the build carries all 4 marks of the change. The 1 tracked change is this checklist's own round-1 edit; round 1 changed no file under source/.
+
+=== Round 1 run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s111] The module loads from a worktree that is not the main clone: True
+[oer-s111] Main clone: branch main
+[oer-s111] Worktree: branch fix/never-make-an-activation-standing; HEAD da2ebd5 docs: record the live results of the PIM activation checks; tracked changes: 1
+[oer-s111] this branch build: version 1.2.1 fix0001; marks of this branch: 4 of 4
+RUNNER: check S.1 exit code 0; started 2026-10-13T15:32:01Z; took 3 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Step 1 run (kept) ===
 Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree on this branch at cf13f0a with 0 tracked changes; the build carries all 4 marks of the change. The build was made from 114d8d8's source; cf13f0a changed help and documents only. (A first run of this block, while the texts task was still committing, read 5 tracked changes; this re-run is the record.)
 
 [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
@@ -270,9 +294,32 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not
 enabled for this run; never sign in another way.
 
-Result: 2026-10-13 12:01 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
+Verdict: PASS (round 1). Every identity line True for the module session as oer-live-cc (app-only, certificate); identity check passed; the module is round 1's worktree build (1.2.1, built from da2ebd5).
+
+=== Round 1 run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] The module is the worktree's build: True
+RUNNER: check 0.1 exit code 0; started 2026-10-13T15:39:30Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Step 1 run (kept) ===
 Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only, certificate); identity check passed; the module is the worktree's build (1.2.1).
 
 [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
@@ -297,7 +344,7 @@ LEAK CHECK: psd1 values surviving redaction: 0
 
 ### 0.2. The identity's PIM-for-Groups permissions, and the assignment read answers (A12)
 
-- [~] **0.2** The Microsoft Graph application permissions of `oer-live-cc`, by name, as True/False; and one read of `assignmentScheduleInstances` per step group, through the module's own reader, answers without a 403.
+- [x] **0.2** The Microsoft Graph application permissions of `oer-live-cc`, by name, as True/False; and one read of `assignmentScheduleInstances` per step group, through the module's own reader, answers without a 403.
 
 ```powershell
 Connect-OerLive -Arm
@@ -319,9 +366,10 @@ Write-OerLiveStep "oer-live-cc holds $($Names.Count) Microsoft Graph application
 foreach ($N in 'PrivilegedAssignmentSchedule.Read.AzureADGroup', 'PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup', 'PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup', 'PrivilegedAccess.Read.AzureADGroup', 'PrivilegedAccess.ReadWrite.AzureADGroup') {
     Write-OerLiveStep "oer-live-cc holds $($N): $($Names -ccontains $N)"
 }
-foreach ($G in $StepGroups) {
+foreach ($G in @($StepGroups) + 'oer-s111-ra') {
+    if (-not $S111Id[$G]) { Write-OerLiveStep "$($G): not created yet (no recorded id); read after the prerequisite run"; continue }
     $Read = & (Get-Module -Name Omnicit.EntraRBAC) { param($Id) Read-OERGroupPimAssignment -GroupId $Id } ([string]$S111Id[$G])
-    Write-OerLiveStep "$($G): read $($Read.Read); rows $(@($Read.Value).Count); message: $(Get-S111Who ([string]$Read.Message))"
+    Write-OerLiveStep "$($G): read $($Read.Read); rows $(@($Read.Value | Where-Object { $null -ne $_ }).Count); message: $(Get-S111Who ([string]$Read.Message))"
 }
 Disconnect-OerLive
 ```
@@ -329,12 +377,78 @@ Disconnect-OerLive
 **Expect:** `oer-live-cc holds PrivilegedAssignmentSchedule.Read.AzureADGroup: True` once Philip has
 granted it (P-14); every step group `read True`, with `rows 2` for `oer-s111-pim` and
 `oer-s111-nopim`, `rows 1` for `oer-s111-both` and `rows 0` for `oer-s111-plain`, and an empty message.
+Round 1 also reads the role-assignable `oer-s111-ra` (1.3), which step 1 saw refused: `read True`,
+`rows 2`. Run it once before the prerequisite run, for the permission alone (every group `not created
+yet`), and again after it.
 **Failure looks like:** `read False` with a 403 in the message -- STOP: the permission the step needs
 is missing (decision A12; never grant it yourself).
 
-Result: 2026-10-13 13:08 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
+Verdict: PASS (round 1). oer-live-cc now holds PrivilegedAssignmentSchedule.Read.AzureADGroup: True -- 19 Microsoft Graph application permissions, one more than step 1's 18; the ReadWrite scope and PrivilegedAccess.* are still False -- so Philip's grant (P-14) is visible. Run once before the prerequisite run, for the permission alone (no group created yet), and again after it: every plain step group read True with rows 2, 1, 2 and 0 and an empty message, and the role-assignable oer-s111-ra, refused with 403 PermissionScopeNotGranted in step 1, read True with rows 2 and an empty message. The stop condition of decision A12 no longer holds.
+
+=== Round 1, before the prerequisite run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.2 ===
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] oer-live-cc holds 19 Microsoft Graph application permission(s).
+[oer-s111] oer-live-cc holds PrivilegedAssignmentSchedule.Read.AzureADGroup: True
+[oer-s111] oer-live-cc holds PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup: False
+[oer-s111] oer-live-cc holds PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup: True
+[oer-s111] oer-live-cc holds PrivilegedAccess.Read.AzureADGroup: False
+[oer-s111] oer-live-cc holds PrivilegedAccess.ReadWrite.AzureADGroup: False
+[oer-s111] oer-s111-pim: not created yet (no recorded id); read after the prerequisite run
+[oer-s111] oer-s111-both: not created yet (no recorded id); read after the prerequisite run
+[oer-s111] oer-s111-nopim: not created yet (no recorded id); read after the prerequisite run
+[oer-s111] oer-s111-plain: not created yet (no recorded id); read after the prerequisite run
+[oer-s111] oer-s111-ra: not created yet (no recorded id); read after the prerequisite run
+RUNNER: check 0.2 exit code 0; started 2026-10-13T15:32:12Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Round 1, after the prerequisite run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.2 ===
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] oer-live-cc holds 19 Microsoft Graph application permission(s).
+[oer-s111] oer-live-cc holds PrivilegedAssignmentSchedule.Read.AzureADGroup: True
+[oer-s111] oer-live-cc holds PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup: False
+[oer-s111] oer-live-cc holds PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup: True
+[oer-s111] oer-live-cc holds PrivilegedAccess.Read.AzureADGroup: False
+[oer-s111] oer-live-cc holds PrivilegedAccess.ReadWrite.AzureADGroup: False
+[oer-s111] oer-s111-pim: read True; rows 2; message: 
+[oer-s111] oer-s111-both: read True; rows 1; message: 
+[oer-s111] oer-s111-nopim: read True; rows 2; message: 
+[oer-s111] oer-s111-plain: read True; rows 0; message: 
+[oer-s111] oer-s111-ra: read True; rows 2; message:
+RUNNER: check 0.2 exit code 0; started 2026-10-13T15:35:06Z; took 8 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Step 1 runs, before the grant (kept) ===
 Verdict: PASS for the plain groups, with the measurement for A12 -- and see 1.3. oer-live-cc does NOT hold PrivilegedAssignmentSchedule.Read.AzureADGroup (False at 11:55 UTC and again at the re-check at 12:55 UTC, after the final build; the grant of P-14 is not visible), yet the module's reader read every step group's assignmentScheduleInstances with no 403 (read True; rows 2, 1, 2, 0 at 11:55 and 2, 1, 2, 1 at 12:55, when oer-s111-plain held the member section 5 added). These four groups are plain security groups. On the role-assignable group added later (1.3) the same read is refused with 403 PermissionScopeNotGranted: the stop condition of A12 holds for that group type until the permission is granted. Which of the identity's 18 Graph permissions allows the plain-group read is not established.
 
 === first run (11:55 UTC) ===
@@ -418,9 +532,172 @@ groups, added the five memberships and ownerships (204 each), and requested the 
 may hold `oer-s111-user1` once section 5 has run; the prerequisite knows that member.)
 **Failure looks like:** a refusal, an exit code other than 0, or a second run that writes.
 
-Result: 2026-10-13 12:01 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
+Verdict: PASS (round 1). raw\s111 had been deleted after step 1, so the prerequisite started from nothing: the plan run wrote nothing (exit 0); the real run wrote a new baseline (users 22, groups 97, the counts step 1 recorded), created the two disabled users and the six groups (201 each), added the eight memberships and ownerships (204 each) and requested the two member eligibilities in oer-s111-pim and oer-s111-both (201, Provisioned; each listed at once), exit 0. The two eligibilities in oer-s111-ra are 6.0's.
+
+=== Round 1 run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.3 ===
+[oer-s111] prereq run: -WhatIf
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s111\prereq-20261013-153229Z.log".
+[oer-s111] Mode: CREATE or complete. Prefix 'oer-s111-'. Objects (fixed): oer-s111-user1, oer-s111-user2 (disabled users), oer-s111-pim, oer-s111-both, oer-s111-nopim, oer-s111-plain (plain security groups), oer-s111-ra (role-assignable), oer-s111-dyn (dynamic). OerLive 1.0.3.
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s111] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s111-' is left.
+[oer-s111] Found: oer-s111-user1 exists: False; oer-s111-user2 exists: False; oer-s111-pim exists: False; oer-s111-both exists: False; oer-s111-nopim exists: False; oer-s111-plain exists: False; oer-s111-ra exists: False; oer-s111-dyn exists: False
+[oer-s111] No baseline yet: it is written now, before the first write to the tenant (users 22, groups 97).
+What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s111\baseline-s111.json".
+What if: Performing the operation "Create a DISABLED test user with a random, unprinted password (Graph v1.0 POST users)" on target "oer-s111-user1".
+What if: Performing the operation "Create a DISABLED test user with a random, unprinted password (Graph v1.0 POST users)" on target "oer-s111-user2".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s111-pim".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s111-both".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s111-nopim".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s111-plain".
+What if: Performing the operation "Create a ROLE-ASSIGNABLE security group (Graph v1.0 POST groups: isAssignableToRole true, not mail-enabled, assigned membership)" on target "oer-s111-ra".
+What if: Performing the operation "Create a DYNAMIC security group (Graph v1.0 POST groups: groupTypes DynamicMembership, a rule matching oer-s111-user1, processing On, not role-assignable, not mail-enabled)" on target "oer-s111-dyn".
+[oer-s111] No membership, ownership or eligibility: a user or a group does not exist (WhatIf).
+[oer-s111] Summary: oer-s111-user1 absent; oer-s111-user2 absent; oer-s111-pim absent; oer-s111-both absent; oer-s111-nopim absent; oer-s111-plain absent; oer-s111-ra absent; oer-s111-dyn absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s111] WhatIf: nothing was created, removed or written.
+[oer-s111] Done.
+[oer-s111] prereq exit code: 0
+[oer-s111] prereq run: -Unattended
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s111] Transcript (redacted): raw\s111\prereq-20261013-153235Z.log; OerLive 1.0.3.
+[oer-s111] Mode: CREATE or complete. Prefix 'oer-s111-'. Objects (fixed): oer-s111-user1, oer-s111-user2 (disabled users), oer-s111-pim, oer-s111-both, oer-s111-nopim, oer-s111-plain (plain security groups), oer-s111-ra (role-assignable), oer-s111-dyn (dynamic). OerLive 1.0.3.
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s111] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s111] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s111-' is left.
+[oer-s111] Found: oer-s111-user1 exists: False; oer-s111-user2 exists: False; oer-s111-pim exists: False; oer-s111-both exists: False; oer-s111-nopim exists: False; oer-s111-plain exists: False; oer-s111-ra exists: False; oer-s111-dyn exists: False
+[oer-s111] No baseline yet: it is written now, before the first write to the tenant (users 22, groups 97).
+[oer-s111] Wrote the baseline raw\s111\baseline-s111.json and read it back.
+[oer-s111] Created user oer-s111-user1 (disabled): 201.
+[oer-s111] Recorded the id of oer-s111-user1 under raw\s111 (not printed).
+[oer-s111] oer-s111-user1 resolves by its user principal name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-user1 resolves by its user principal name: converged after 2 read(s), 2.2 s.
+[oer-s111] Created user oer-s111-user2 (disabled): 201.
+[oer-s111] Recorded the id of oer-s111-user2 under raw\s111 (not printed).
+[oer-s111] oer-s111-user2 resolves by its user principal name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-user2 resolves by its user principal name: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s111] oer-s111-user2 resolves by its user principal name: converged after 3 read(s), 6.2 s.
+[oer-s111] Created group oer-s111-pim: 201.
+[oer-s111] Recorded the id of oer-s111-pim under raw\s111 (not printed).
+[oer-s111] oer-s111-pim resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-pim resolves by its display name: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s111] oer-s111-pim resolves by its display name: converged after 3 read(s), 6.2 s.
+[oer-s111] Created group oer-s111-both: 201.
+[oer-s111] Recorded the id of oer-s111-both under raw\s111 (not printed).
+[oer-s111] oer-s111-both resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-both resolves by its display name: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s111] oer-s111-both resolves by its display name: converged after 3 read(s), 6.2 s.
+[oer-s111] Created group oer-s111-nopim: 201.
+[oer-s111] Recorded the id of oer-s111-nopim under raw\s111 (not printed).
+[oer-s111] oer-s111-nopim resolves by its display name: converged after 1 read(s), 0.1 s.
+[oer-s111] Created group oer-s111-plain: 201.
+[oer-s111] Recorded the id of oer-s111-plain under raw\s111 (not printed).
+[oer-s111] oer-s111-plain resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-plain resolves by its display name: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s111] oer-s111-plain resolves by its display name: converged after 3 read(s), 6.2 s.
+[oer-s111] Created group oer-s111-ra: 201.
+[oer-s111] Recorded the id of oer-s111-ra under raw\s111 (not printed).
+[oer-s111] oer-s111-ra resolves by its display name: converged after 1 read(s), 0 s.
+[oer-s111] Created group oer-s111-dyn: 201.
+[oer-s111] Recorded the id of oer-s111-dyn under raw\s111 (not printed).
+[oer-s111] oer-s111-dyn resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-dyn resolves by its display name: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s111] oer-s111-dyn resolves by its display name: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s111] oer-s111-dyn resolves by its display name: converged after 4 read(s), 14.3 s.
+[oer-s111] Added oer-s111-user1 to the members of oer-s111-pim: 204.
+[oer-s111] oer-s111-user1 is listed in the members of oer-s111-pim: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-user1 is listed in the members of oer-s111-pim: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s111] oer-s111-user1 is listed in the members of oer-s111-pim: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s111] oer-s111-user1 is listed in the members of oer-s111-pim: not yet (read 4, 14.2 s, likely replication delay) -- reading again in 16 s.
+[oer-s111] oer-s111-user1 is listed in the members of oer-s111-pim: converged after 5 read(s), 30.3 s.
+[oer-s111] Added oer-s111-user1 to the owners of oer-s111-pim: 204.
+[oer-s111] oer-s111-user1 is listed in the owners of oer-s111-pim: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-user1 is listed in the owners of oer-s111-pim: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s111] oer-s111-user1 is listed in the owners of oer-s111-pim: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s111] oer-s111-user1 is listed in the owners of oer-s111-pim: not yet (read 4, 14.3 s, likely replication delay) -- reading again in 16 s.
+[oer-s111] oer-s111-user1 is listed in the owners of oer-s111-pim: converged after 5 read(s), 30.4 s.
+[oer-s111] Added oer-s111-user2 to the members of oer-s111-both: 204.
+[oer-s111] oer-s111-user2 is listed in the members of oer-s111-both: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-user2 is listed in the members of oer-s111-both: converged after 2 read(s), 2.1 s.
+[oer-s111] Added oer-s111-user1 to the members of oer-s111-nopim: 204.
+[oer-s111] oer-s111-user1 is listed in the members of oer-s111-nopim: not yet (read 1, 0 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-user1 is listed in the members of oer-s111-nopim: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s111] oer-s111-user1 is listed in the members of oer-s111-nopim: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s111] oer-s111-user1 is listed in the members of oer-s111-nopim: converged after 4 read(s), 14.3 s.
+[oer-s111] Added oer-s111-user1 to the owners of oer-s111-nopim: 204.
+[oer-s111] oer-s111-user1 is listed in the owners of oer-s111-nopim: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-user1 is listed in the owners of oer-s111-nopim: converged after 2 read(s), 2.2 s.
+[oer-s111] Added oer-s111-user1 to the members of oer-s111-ra: 204.
+[oer-s111] oer-s111-user1 is listed in the members of oer-s111-ra: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-user1 is listed in the members of oer-s111-ra: converged after 2 read(s), 2.2 s.
+[oer-s111] Added oer-s111-user1 to the owners of oer-s111-ra: 204.
+[oer-s111] oer-s111-user1 is listed in the owners of oer-s111-ra: converged after 1 read(s), 0 s.
+[oer-s111] Added oer-s111-user1 to the owners of oer-s111-dyn: 204.
+[oer-s111] oer-s111-user1 is listed in the owners of oer-s111-dyn: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] oer-s111-user1 is listed in the owners of oer-s111-dyn: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s111] oer-s111-user1 is listed in the owners of oer-s111-dyn: converged after 3 read(s), 6.2 s.
+[oer-s111] Requested the member eligibility of oer-s111-user2 in oer-s111-pim: 201, status Provisioned; this onboarded the group.
+[oer-s111] the member eligibility of oer-s111-user2 in oer-s111-pim is listed: converged after 1 read(s), 0.4 s.
+[oer-s111] Requested the member eligibility of oer-s111-user2 in oer-s111-both: 201, status Provisioned; this onboarded the group.
+[oer-s111] the member eligibility of oer-s111-user2 in oer-s111-both is listed: converged after 1 read(s), 0.3 s.
+[oer-s111] Summary: oer-s111-user1 present; oer-s111-user2 present; oer-s111-pim present; oer-s111-both present; oer-s111-nopim present; oer-s111-plain present; oer-s111-ra present; oer-s111-dyn present; written to the tenant: True.
+[oer-s111] Done.
+[oer-s111] prereq exit code: 0
+[oer-s111] first prerequisite run: prereq-20261013-153235Z.log
+[oer-s111]   [oer-s111] No baseline yet: it is written now, before the first write to the tenant (users 22, groups 97).
+[oer-s111]   [oer-s111] Wrote the baseline raw\s111\baseline-s111.json and read it back.
+[oer-s111]   [oer-s111] Created user oer-s111-user1 (disabled): 201.
+[oer-s111]   [oer-s111] Created user oer-s111-user2 (disabled): 201.
+[oer-s111]   [oer-s111] Created group oer-s111-pim: 201.
+[oer-s111]   [oer-s111] Created group oer-s111-both: 201.
+[oer-s111]   [oer-s111] Created group oer-s111-nopim: 201.
+[oer-s111]   [oer-s111] Created group oer-s111-plain: 201.
+[oer-s111]   [oer-s111] Created group oer-s111-ra: 201.
+[oer-s111]   [oer-s111] Created group oer-s111-dyn: 201.
+[oer-s111]   [oer-s111] Added oer-s111-user1 to the members of oer-s111-pim: 204.
+[oer-s111]   [oer-s111] Added oer-s111-user1 to the owners of oer-s111-pim: 204.
+[oer-s111]   [oer-s111] Added oer-s111-user2 to the members of oer-s111-both: 204.
+[oer-s111]   [oer-s111] Added oer-s111-user1 to the members of oer-s111-nopim: 204.
+[oer-s111]   [oer-s111] Added oer-s111-user1 to the owners of oer-s111-nopim: 204.
+[oer-s111]   [oer-s111] Added oer-s111-user1 to the members of oer-s111-ra: 204.
+[oer-s111]   [oer-s111] Added oer-s111-user1 to the owners of oer-s111-ra: 204.
+[oer-s111]   [oer-s111] Added oer-s111-user1 to the owners of oer-s111-dyn: 204.
+[oer-s111]   [oer-s111] Requested the member eligibility of oer-s111-user2 in oer-s111-pim: 201, status Provisioned; this onboarded the group.
+[oer-s111]   [oer-s111] Requested the member eligibility of oer-s111-user2 in oer-s111-both: 201, status Provisioned; this onboarded the group.
+[oer-s111]   [oer-s111] Summary: oer-s111-user1 present; oer-s111-user2 present; oer-s111-pim present; oer-s111-both present; oer-s111-nopim present; oer-s111-plain present; oer-s111-ra present; oer-s111-dyn present; written to the tenant: True.
+RUNNER: check 0.3 exit code 0; started 2026-10-13T15:32:27Z; took 151 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Step 1 run (kept) ===
 Verdict: PASS. The first run (DEL 1, 10:01 UTC) wrote the baseline (users 22, groups 97), created the two disabled users and the four groups (201 each), added the five memberships and ownerships (204 each) and requested the two member eligibilities (201, Provisioned; each listed at once). Now the plan run wrote nothing (exit 0) and the real run found every object and wrote nothing (written to the tenant: False, exit 0).
 
 [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
@@ -686,7 +963,7 @@ LEAK CHECK: psd1 values surviving redaction: 0
 
 ### 1.3. The read on a role-assignable group and on a dynamic group
 
-- [~] **1.3** Added after the final review: the same read on the two group types the plain groups above do not cover -- `oer-s111-ra` (role-assignable, the type the module mostly manages) and `oer-s111-dyn` (dynamic, which PIM for Groups cannot manage) -- with the raw SDK on beta and v1.0, and through the module's reader, rule and engine hold read.
+- [x] **1.3** Added after the final review: the same read on the two group types the plain groups above do not cover -- `oer-s111-ra` (role-assignable, the type the module mostly manages) and `oer-s111-dyn` (dynamic, which PIM for Groups cannot manage) -- with the raw SDK on beta and v1.0, and through the module's reader, rule and engine hold read.
 
 ```powershell
 Connect-OerLive -Arm
@@ -726,9 +1003,49 @@ takes as an empty answer (`read True, rows 0`); either way the engine hold read 
 **Failure looks like:** a 403 on either group -- STOP under decision A12: the read the engine depends
 on is refused for that group type; or a module read that is not `True`.
 
-Result: 2026-10-13 12:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
+Verdict: PASS (round 1, after the grant). On the ROLE-ASSIGNABLE oer-s111-ra the assignmentScheduleInstances read now answers 200 on beta and on v1.0, listing oer-s111-user1 as member and as owner, memberType direct, assignmentType assigned, both dates null -- the shape of the plain groups; its eligibility read answers 200 with 0 rows (6.0 adds its eligibilities later). The module's reader reads it (read True, rows 2, empty message), the rule holds nobody, and the engine hold read is True with no key. The DYNAMIC oer-s111-dyn answers 400 ResourceTypeNotSupported on both reads again, which the reader takes as an empty answer (read True, rows 0), hold read True with no key. Step 1's run, before the grant (403 PermissionScopeNotGranted on oer-s111-ra), is kept below.
+
+=== Round 1 run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.3 ===
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] oer-s111-ra: members [oer-s111-user1]; owners [oer-s111-user1]
+[oer-s111] oer-s111-ra beta assignmentScheduleInstances: HTTP 200, 2 row(s)
+[oer-s111]   row: principal oer-s111-user1; accessId owner; memberType direct; assignmentType assigned; startDateTime null; endDateTime null
+[oer-s111]   row: principal oer-s111-user1; accessId member; memberType direct; assignmentType assigned; startDateTime null; endDateTime null
+[oer-s111] oer-s111-ra beta eligibilityScheduleInstances: HTTP 200, 0 row(s)
+[oer-s111] oer-s111-ra v1.0 assignmentScheduleInstances: HTTP 200, 2 row(s)
+[oer-s111]   row: principal oer-s111-user1; accessId owner; memberType direct; assignmentType assigned; startDateTime null; endDateTime null
+[oer-s111]   row: principal oer-s111-user1; accessId member; memberType direct; assignmentType assigned; startDateTime null; endDateTime null
+[oer-s111] oer-s111-ra v1.0 eligibilityScheduleInstances: HTTP 200, 0 row(s)
+[oer-s111] oer-s111-ra: module assignment read True, rows 2, message: ; held through an activation or a time-bound assignment: 0
+[oer-s111] oer-s111-ra: engine hold read True; held keys: 0; cause: 
+[oer-s111] oer-s111-dyn: members [oer-s111-user1]; owners [oer-s111-user1]
+[oer-s111] oer-s111-dyn beta assignmentScheduleInstances: HTTP 400 code 'ResourceTypeNotSupported'
+[oer-s111] oer-s111-dyn beta eligibilityScheduleInstances: HTTP 400 code 'ResourceTypeNotSupported'
+[oer-s111] oer-s111-dyn v1.0 assignmentScheduleInstances: HTTP 400 code 'ResourceTypeNotSupported'
+[oer-s111] oer-s111-dyn v1.0 eligibilityScheduleInstances: HTTP 400 code 'ResourceTypeNotSupported'
+[oer-s111] oer-s111-dyn: module assignment read True, rows 0, message: ; held through an activation or a time-bound assignment: 0
+[oer-s111] oer-s111-dyn: engine hold read True; held keys: 0; cause:
+RUNNER: check 1.3 exit code 0; started 2026-10-13T15:35:21Z; took 11 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Step 1 run, before the grant (kept) ===
 Verdict: STOP CONDITION for oer-s111-ra (decision A12); PASS for oer-s111-dyn. On the ROLE-ASSIGNABLE group the assignmentScheduleInstances read answered 403 UnauthorizedAccessException, errorCode PermissionScopeNotGranted, naming the missing scopes PrivilegedAssignmentSchedule.Read.AzureADGroup, PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup, PrivilegedAccess.Read.AzureADGroup and PrivilegedAccess.ReadWrite.AzureADGroup, on beta and on v1.0, while its eligibility read answered 200. oer-live-cc does not yet hold the permission (0.2), so the read the engine depends on is refused for the group type the module mostly manages; the plain groups were read without it. The module behaved as designed: its reader returned unread with the cause, and the engine hold read is unread, so members and owners of such a group are neither added nor removed. ("rows 1" on the unread line is this block's own @($null).Count, not a row.) On the DYNAMIC group both reads answered 400 ResourceTypeNotSupported, which the module's reader takes as an empty answer (read True, rows 0), and the engine hold read is True with no key: the ResourceTypeNotSupported declaration is now measured. Re-run this check once Philip has granted PrivilegedAssignmentSchedule.Read.AzureADGroup (P-14).
 
 [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
@@ -766,7 +1083,7 @@ LEAK CHECK: psd1 values surviving redaction: 0
 
 ### 1.4. The export of the two groups
 
-- [~] **1.4** `Export-OERInventory -Include Groups -AllGroupsDetailed` narrowed to `oer-s111-ra` and `oer-s111-dyn` writes both groups' standing members and owners, reads the PIM assignments once per group, and is not partial.
+- [x] **1.4** `Export-OERInventory -Include Groups -AllGroupsDetailed` narrowed to `oer-s111-ra` and `oer-s111-dyn` writes both groups' standing members and owners, reads the PIM assignments once per group, and is not partial.
 
 ```powershell
 Connect-OerLive -Arm
@@ -799,9 +1116,39 @@ members` as the rule has processed so far, `owners [oer-s111-user1]`; `assignmen
 group; the README says no member or owner was left out.
 **Failure looks like:** a standing member or owner missing, an `InventoryPartial`, or a 403.
 
-Result: 2026-10-13 12:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
+Verdict: PASS (round 1, after the grant). The export of the two groups writes both with their standing member and owner (oer-s111-ra, role-assignable: members [oer-s111-user1], owners [oer-s111-user1]; oer-s111-dyn, dynamic: the same), reads the PIM assignments once per group, writes nothing, asks for no token, and is NOT partial: IncompleteReads 0, no own error, no warning; the README says nothing was left out. Step 1's run, before the grant (partial, with groups/oer-s111-ra/pimAssignments named), is kept below.
+
+=== Round 1 run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.4 ===
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+[oer-s111] bundle: groups 2; IncompleteReads 0; warnings 0; own errors 0
+[oer-s111] export: requests 16; writes 0; token requests 0
+[oer-s111] export: oer-s111-ra: requests 7; assignment reads 1; eligibility reads 1
+[oer-s111] export: oer-s111-dyn: requests 7; assignment reads 1; eligibility reads 1
+[oer-s111] inventory: oer-s111-dyn: roleAssignable False; dynamic True; members [oer-s111-user1]; owners [oer-s111-user1]
+[oer-s111] inventory: oer-s111-ra: roleAssignable True; dynamic False; members [oer-s111-user1]; owners [oer-s111-user1]
+[oer-s111] README: None. This export left no member or owner out as PIM for Groups access.
+RUNNER: check 1.4 exit code 0; started 2026-10-13T15:35:39Z; took 9 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Step 1 run, before the grant (kept) ===
 Verdict: PARTIAL, as designed for a refused read. The export of the two groups wrote both (oer-s111-ra role-assignable, oer-s111-dyn dynamic) with their standing member and owner, read the PIM assignments once per group, wrote nothing, and -- because the assignment read of oer-s111-ra was refused (1.3) -- named groups/oer-s111-ra/pimAssignments in IncompleteReads and ended with InventoryPartial carrying the cause, falling back on the eligibility (nobody eligible, so nobody left out); the README says nothing was left out. The dynamic group raised no partial signal. Re-run once the permission is granted: then IncompleteReads 0 is expected.
 
 [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
@@ -1401,6 +1748,484 @@ RUNNER: check 5.3 exit code 0; started 2026-10-13T11:59:40Z; took 31 s.
 LEAK CHECK: psd1 values surviving redaction: 0
 ```
 
+## 6. The role-assignable group: the same cases (round 1)
+
+Step 1 could not run the apply cases on a role-assignable group: without
+`PrivilegedAssignmentSchedule.Read.AzureADGroup` the PIM assignment read of `oer-s111-ra` was refused
+(1.3), so the engine's hold state for that group was unread and it adds and prunes nothing there. Round 1
+runs after Philip granted the permission (P-14, 0.2), and repeats on `oer-s111-ra` -- the group type the
+module mostly manages -- the cases sections 3, 4 and 5.3 ran on the plain groups: an eligible principal
+declared as a member (6.1, 6.2), a member who is also eligible and undeclared under `-Prune` (6.3, 6.4),
+and a document that matches the group run twice (6.5, G8). 6.0 gives the group the eligibilities those
+cases need; it runs after 1.3 and 1.4, which read the group without them.
+
+### 6.0. The prerequisite adds two member eligibilities in oer-s111-ra
+
+- [x] **6.0** `Initialize-OerS111Prereq.ps1 -RoleAssignableEligibility` requests a time-bound member eligibility of `oer-s111-user1` (already the group's standing member and owner) and of `oer-s111-user2` (not a member) in `oer-s111-ra`, which onboards the group; a plan run before writes nothing, a second real run after finds both and writes nothing; and the engine's hold read then holds both principals as eligible for member access.
+
+```powershell
+$Script = Join-Path $VaultDir 'Initialize-OerS111Prereq.ps1'
+foreach ($Run in @(@('-RoleAssignableEligibility', '-WhatIf'), @('-RoleAssignableEligibility', '-Unattended'), @('-RoleAssignableEligibility', '-Unattended'))) {
+    Write-OerLiveStep "prereq run: $($Run -join ' ')"
+    & pwsh -NoProfile -NonInteractive -File $Script @Run 2>&1 | ForEach-Object { "$_" }
+    Write-OerLiveStep "prereq exit code: $LASTEXITCODE"
+}
+Connect-OerLive -Arm
+$Out = & (Get-Module -Name Omnicit.EntraRBAC) {
+    param($Id)
+    $A = Read-OERGroupPimAssignment -GroupId $Id
+    $Hold = Read-OERGroupPimHold -GroupId $Id
+    [PSCustomObject]@{ Read = $A.Read; Rows = @($A.Value | Where-Object { $null -ne $_ }).Count; Held = @(Get-OERGroupPimHeldAccess -Assignment @($A.Value)); HoldRead = $Hold.Read; HoldKeys = @($Hold.Held.Keys); HoldReasons = @($Hold.Held.Values) }
+} ([string]$S111Id['oer-s111-ra'])
+Write-OerLiveStep "oer-s111-ra: assignment read $($Out.Read), rows $($Out.Rows); held through an activation or a time-bound assignment: $(@($Out.Held).Count)"
+Write-OerLiveStep ("oer-s111-ra: engine hold read $($Out.HoldRead); held: {0}" -f $(if (@($Out.HoldKeys).Count) { (@(for ($I = 0; $I -lt @($Out.HoldKeys).Count; $I++) { (Get-S111Who ([string]@($Out.HoldKeys)[$I])) + ' -> ' + @($Out.HoldReasons)[$I] }) | Sort-Object) -join '; ' } else { 'none' }))
+Write-OerLiveStep "oer-s111-ra: members [$((Get-S111Relation -Group 'oer-s111-ra' -Relation members) -join ', ')]; owners [$((Get-S111Relation -Group 'oer-s111-ra' -Relation owners) -join ', ')]"
+Disconnect-OerLive
+```
+
+**Expect:** the plan run lists two `What if:` eligibility requests for `oer-s111-ra` and ends
+`WhatIf: nothing was created, removed or written.`; the first real run requests both (201, status
+`Provisioned`), each listed at once; the second real run says both exist, `written to the tenant: False`;
+every exit code 0. The assignment read stays `read True, rows 2` (the eligibilities are not assignment
+rows) with nobody held through an activation; the engine hold read is `True`, holding
+`oer-s111-user1|member` and `oer-s111-user2|member`, each `is eligible for member access in PIM for
+Groups`; members `[oer-s111-user1]`, owners `[oer-s111-user1]`.
+**Failure looks like:** a 401 or 403 on the eligibility request (STOP, G11.7), a `Failed` status, a
+second run that writes, or a hold read that is not `True`.
+
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With -RoleAssignableEligibility, the plan run listed the two eligibility requests for oer-s111-ra as What if lines and wrote nothing (exit 0); the first real run requested the member eligibility of oer-s111-user1 and of oer-s111-user2 in oer-s111-ra (201, Provisioned; each listed at once), onboarding the group (exit 0); the second real run found both and wrote nothing (written to the tenant: False, exit 0). The assignment read stays read True, rows 2 (an eligibility is not an assignment row), with nobody held through an activation; the engine hold read is True and holds oer-s111-user1|member and oer-s111-user2|member as eligible for member access; members and owners [oer-s111-user1].
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 6.0 ===
+[oer-s111] prereq run: -RoleAssignableEligibility -WhatIf
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s111\prereq-20261013-153730Z.log".
+[oer-s111] Mode: CREATE or complete. Prefix 'oer-s111-'. Objects (fixed): oer-s111-user1, oer-s111-user2 (disabled users), oer-s111-pim, oer-s111-both, oer-s111-nopim, oer-s111-plain (plain security groups), oer-s111-ra (role-assignable), oer-s111-dyn (dynamic). OerLive 1.0.3.
+[oer-s111] Round 1: the member eligibilities of oer-s111-user1 and oer-s111-user2 in oer-s111-ra are requested too (-RoleAssignableEligibility).
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s111] Found: oer-s111-user1 exists: True; oer-s111-user2 exists: True; oer-s111-pim exists: True; oer-s111-both exists: True; oer-s111-nopim exists: True; oer-s111-plain exists: True; oer-s111-ra exists: True; oer-s111-dyn exists: True
+[oer-s111] The baseline exists (users 22, groups 97 when it was written).
+[oer-s111] User oer-s111-user1 exists.
+[oer-s111] User oer-s111-user2 exists.
+[oer-s111] Group oer-s111-pim exists.
+[oer-s111] Group oer-s111-both exists.
+[oer-s111] Group oer-s111-nopim exists.
+[oer-s111] Group oer-s111-plain exists.
+[oer-s111] Group oer-s111-ra exists.
+[oer-s111] Group oer-s111-dyn exists.
+[oer-s111] oer-s111-user1 is in the members of oer-s111-pim already.
+[oer-s111] oer-s111-user1 is in the owners of oer-s111-pim already.
+[oer-s111] oer-s111-user2 is in the members of oer-s111-both already.
+[oer-s111] oer-s111-user1 is in the members of oer-s111-nopim already.
+[oer-s111] oer-s111-user1 is in the owners of oer-s111-nopim already.
+[oer-s111] oer-s111-user1 is in the members of oer-s111-ra already.
+[oer-s111] oer-s111-user1 is in the owners of oer-s111-ra already.
+[oer-s111] oer-s111-user1 is in the owners of oer-s111-dyn already.
+[oer-s111] The member eligibility of oer-s111-user2 in oer-s111-pim exists.
+[oer-s111] The member eligibility of oer-s111-user2 in oer-s111-both exists.
+What if: Performing the operation "Request a time-bound (P30D) PIM-for-Groups MEMBER eligibility (Graph beta eligibilityScheduleRequests, adminAssign) -- this onboards the group to PIM for Groups, which cannot be undone" on target "member eligibility of oer-s111-user1 in oer-s111-ra".
+What if: Performing the operation "Request a time-bound (P30D) PIM-for-Groups MEMBER eligibility (Graph beta eligibilityScheduleRequests, adminAssign) -- this onboards the group to PIM for Groups, which cannot be undone" on target "member eligibility of oer-s111-user2 in oer-s111-ra".
+[oer-s111] Summary: oer-s111-user1 present; oer-s111-user2 present; oer-s111-pim present; oer-s111-both present; oer-s111-nopim present; oer-s111-plain present; oer-s111-ra present; oer-s111-dyn present; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s111] WhatIf: nothing was created, removed or written.
+[oer-s111] Done.
+[oer-s111] prereq exit code: 0
+[oer-s111] prereq run: -RoleAssignableEligibility -Unattended
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s111] Transcript (redacted): raw\s111\prereq-20261013-153738Z.log; OerLive 1.0.3.
+[oer-s111] Mode: CREATE or complete. Prefix 'oer-s111-'. Objects (fixed): oer-s111-user1, oer-s111-user2 (disabled users), oer-s111-pim, oer-s111-both, oer-s111-nopim, oer-s111-plain (plain security groups), oer-s111-ra (role-assignable), oer-s111-dyn (dynamic). OerLive 1.0.3.
+[oer-s111] Round 1: the member eligibilities of oer-s111-user1 and oer-s111-user2 in oer-s111-ra are requested too (-RoleAssignableEligibility).
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s111] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s111] Found: oer-s111-user1 exists: True; oer-s111-user2 exists: True; oer-s111-pim exists: True; oer-s111-both exists: True; oer-s111-nopim exists: True; oer-s111-plain exists: True; oer-s111-ra exists: True; oer-s111-dyn exists: True
+[oer-s111] The baseline exists (users 22, groups 97 when it was written).
+[oer-s111] User oer-s111-user1 exists.
+[oer-s111] User oer-s111-user2 exists.
+[oer-s111] Group oer-s111-pim exists.
+[oer-s111] Group oer-s111-both exists.
+[oer-s111] Group oer-s111-nopim exists.
+[oer-s111] Group oer-s111-plain exists.
+[oer-s111] Group oer-s111-ra exists.
+[oer-s111] Group oer-s111-dyn exists.
+[oer-s111] oer-s111-user1 is in the members of oer-s111-pim already.
+[oer-s111] oer-s111-user1 is in the owners of oer-s111-pim already.
+[oer-s111] oer-s111-user2 is in the members of oer-s111-both already.
+[oer-s111] oer-s111-user1 is in the members of oer-s111-nopim already.
+[oer-s111] oer-s111-user1 is in the owners of oer-s111-nopim already.
+[oer-s111] oer-s111-user1 is in the members of oer-s111-ra already.
+[oer-s111] oer-s111-user1 is in the owners of oer-s111-ra already.
+[oer-s111] oer-s111-user1 is in the owners of oer-s111-dyn already.
+[oer-s111] The member eligibility of oer-s111-user2 in oer-s111-pim exists.
+[oer-s111] The member eligibility of oer-s111-user2 in oer-s111-both exists.
+[oer-s111] Requested the member eligibility of oer-s111-user1 in oer-s111-ra: 201, status Provisioned; this onboarded the group.
+[oer-s111] the member eligibility of oer-s111-user1 in oer-s111-ra is listed: converged after 1 read(s), 0.3 s.
+[oer-s111] Requested the member eligibility of oer-s111-user2 in oer-s111-ra: 201, status Provisioned; this onboarded the group.
+[oer-s111] the member eligibility of oer-s111-user2 in oer-s111-ra is listed: converged after 1 read(s), 0.5 s.
+[oer-s111] Summary: oer-s111-user1 present; oer-s111-user2 present; oer-s111-pim present; oer-s111-both present; oer-s111-nopim present; oer-s111-plain present; oer-s111-ra present; oer-s111-dyn present; written to the tenant: True.
+[oer-s111] Done.
+[oer-s111] prereq exit code: 0
+[oer-s111] prereq run: -RoleAssignableEligibility -Unattended
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s111] Transcript (redacted): raw\s111\prereq-20261013-153750Z.log; OerLive 1.0.3.
+[oer-s111] Mode: CREATE or complete. Prefix 'oer-s111-'. Objects (fixed): oer-s111-user1, oer-s111-user2 (disabled users), oer-s111-pim, oer-s111-both, oer-s111-nopim, oer-s111-plain (plain security groups), oer-s111-ra (role-assignable), oer-s111-dyn (dynamic). OerLive 1.0.3.
+[oer-s111] Round 1: the member eligibilities of oer-s111-user1 and oer-s111-user2 in oer-s111-ra are requested too (-RoleAssignableEligibility).
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s111] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s111] Found: oer-s111-user1 exists: True; oer-s111-user2 exists: True; oer-s111-pim exists: True; oer-s111-both exists: True; oer-s111-nopim exists: True; oer-s111-plain exists: True; oer-s111-ra exists: True; oer-s111-dyn exists: True
+[oer-s111] The baseline exists (users 22, groups 97 when it was written).
+[oer-s111] User oer-s111-user1 exists.
+[oer-s111] User oer-s111-user2 exists.
+[oer-s111] Group oer-s111-pim exists.
+[oer-s111] Group oer-s111-both exists.
+[oer-s111] Group oer-s111-nopim exists.
+[oer-s111] Group oer-s111-plain exists.
+[oer-s111] Group oer-s111-ra exists.
+[oer-s111] Group oer-s111-dyn exists.
+[oer-s111] oer-s111-user1 is in the members of oer-s111-pim already.
+[oer-s111] oer-s111-user1 is in the owners of oer-s111-pim already.
+[oer-s111] oer-s111-user2 is in the members of oer-s111-both already.
+[oer-s111] oer-s111-user1 is in the members of oer-s111-nopim already.
+[oer-s111] oer-s111-user1 is in the owners of oer-s111-nopim already.
+[oer-s111] oer-s111-user1 is in the members of oer-s111-ra already.
+[oer-s111] oer-s111-user1 is in the owners of oer-s111-ra already.
+[oer-s111] oer-s111-user1 is in the owners of oer-s111-dyn already.
+[oer-s111] The member eligibility of oer-s111-user2 in oer-s111-pim exists.
+[oer-s111] The member eligibility of oer-s111-user2 in oer-s111-both exists.
+[oer-s111] The member eligibility of oer-s111-user1 in oer-s111-ra exists.
+[oer-s111] The member eligibility of oer-s111-user2 in oer-s111-ra exists.
+[oer-s111] Summary: oer-s111-user1 present; oer-s111-user2 present; oer-s111-pim present; oer-s111-both present; oer-s111-nopim present; oer-s111-plain present; oer-s111-ra present; oer-s111-dyn present; written to the tenant: False.
+[oer-s111] Done.
+[oer-s111] prereq exit code: 0
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] oer-s111-ra: assignment read True, rows 2; held through an activation or a time-bound assignment: 0
+[oer-s111] oer-s111-ra: engine hold read True; held: oer-s111-user1|member -> is eligible for member access in PIM for Groups; oer-s111-user2|member -> is eligible for member access in PIM for Groups
+[oer-s111] oer-s111-ra: members [oer-s111-user1]; owners [oer-s111-user1]
+RUNNER: check 6.0 exit code 0; started 2026-10-13T15:37:28Z; took 37 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
+
+### 6.1. The plan: an eligible principal declared as a member is not added
+
+- [x] **6.1** A document declaring `oer-s111-user1` and `oer-s111-user2` as the members of `oer-s111-ra` (user2 is eligible, not a member): `Invoke-OERStructure -WhatIf` plans user1 `Unchanged`, user2 `Skipped` with the reason, one warning, and no write.
+
+```powershell
+Connect-OerLive -Arm
+Start-S111Fence
+$Doc = Save-S111Document -Name 'doc-ra-eligible-declared' -Groups @([ordered]@{ displayName = 'oer-s111-ra'; members = @($Upn['oer-s111-user1'], $Upn['oer-s111-user2']) })
+Invoke-S111Apply -Path $Doc -Plan -Groups 'oer-s111-ra'
+Write-OerLiveStep "members of oer-s111-ra: $((Get-S111Relation -Group 'oer-s111-ra' -Relation members) -join ', ')"
+Disconnect-OerLive
+```
+
+**Expect:** rows `groups | oer-s111-ra | Unchanged | group properties match`, `... | Unchanged | member
+'oer-s111-user1' already present`, and `... | Skipped | member 'oer-s111-user2' not added: it is eligible
+for member access in PIM for Groups, and the apply engine never adds a standing membership for a
+principal PIM for Groups holds or makes eligible for the same access (our own guard, not a Graph
+rejection)`; `warnings: 1`, naming `oer-s111-user2` and the group; no `What if:` line; `writes 0`; for
+`oer-s111-ra` `assignment reads 1; eligibility reads 1` (in step 1 that assignment read was refused);
+members of `oer-s111-ra`: `oer-s111-user1`.
+**Failure looks like:** a `would add member` row for user2, a row saying the PIM state could not be
+read, no warning, or any write.
+
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The plan for a document declaring oer-s111-user1 and the eligible non-member oer-s111-user2 as members of the role-assignable oer-s111-ra: user1 Unchanged, user2 Skipped with the reason, one warning naming user2 and the group, no What if line, no write, no token request; one assignment read (refused in step 1, answered now) and one eligibility read; members unchanged (oer-s111-user1).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 6.1 ===
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+[oer-s111] document doc-ra-eligible-declared: {"version":"1.0","groups":[{"displayName":"oer-s111-ra","members":["oer-s111-user1","oer-s111-user2"]}]}
+[oer-s111] row: groups | oer-s111-ra | Unchanged | group properties match
+[oer-s111] row: groups | oer-s111-ra | Unchanged | member 'oer-s111-user1' already present
+[oer-s111] row: groups | oer-s111-ra | Skipped | member 'oer-s111-user2' not added: it is eligible for member access in PIM for Groups, and the apply engine never adds a standing membership for a principal PIM for Groups holds or makes eligible for the same access (our own guard, not a Graph rejection)
+[oer-s111] warnings: 1
+[oer-s111] warning: Sync-OERStructureGroup: member 'oer-s111-user2' is not added to group 'oer-s111-ra' as a standing member: it is eligible for member access in PIM for Groups, and the apply engine never turns that into a standing membership. Add it with Add-OERGroupMember if a standing membership is meant.
+[oer-s111] Invoke-OERStructure own errors: 0
+[oer-s111] plan: requests 8; writes 0; token requests 0
+[oer-s111] plan: oer-s111-ra: requests 5; assignment reads 1; eligibility reads 1
+[oer-s111] members of oer-s111-ra: oer-s111-user1
+RUNNER: check 6.1 exit code 0; started 2026-10-13T15:38:13Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
+
+### 6.2. The real run: nothing added, the members unchanged
+
+- [x] **6.2** The same document in a real run (`-Confirm:$false`) gives the same rows and warning, writes nothing, and the group's members are unchanged afterwards.
+
+```powershell
+Connect-OerLive -Arm
+Start-S111Fence
+$Doc = Save-S111Document -Name 'doc-ra-eligible-declared' -Groups @([ordered]@{ displayName = 'oer-s111-ra'; members = @($Upn['oer-s111-user1'], $Upn['oer-s111-user2']) })
+Invoke-S111Apply -Path $Doc -Groups 'oer-s111-ra'
+Write-OerLiveStep "members of oer-s111-ra: $((Get-S111Relation -Group 'oer-s111-ra' -Relation members) -join ', ')"
+Disconnect-OerLive
+```
+
+**Expect:** the three rows of 6.1, `warnings: 1`, `writes 0`, no own error; members of `oer-s111-ra`:
+`oer-s111-user1` only.
+**Failure looks like:** user2 added (a POST to the group's `members/$ref`), or any other write.
+
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The real run gives the same three rows and the same warning, writes nothing, raises no own error, and the group's members are unchanged afterwards (oer-s111-user1 only).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 6.2 ===
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+[oer-s111] document doc-ra-eligible-declared: {"version":"1.0","groups":[{"displayName":"oer-s111-ra","members":["oer-s111-user1","oer-s111-user2"]}]}
+[oer-s111] row: groups | oer-s111-ra | Unchanged | group properties match
+[oer-s111] row: groups | oer-s111-ra | Unchanged | member 'oer-s111-user1' already present
+[oer-s111] row: groups | oer-s111-ra | Skipped | member 'oer-s111-user2' not added: it is eligible for member access in PIM for Groups, and the apply engine never adds a standing membership for a principal PIM for Groups holds or makes eligible for the same access (our own guard, not a Graph rejection)
+[oer-s111] warnings: 1
+[oer-s111] warning: Sync-OERStructureGroup: member 'oer-s111-user2' is not added to group 'oer-s111-ra' as a standing member: it is eligible for member access in PIM for Groups, and the apply engine never turns that into a standing membership. Add it with Add-OERGroupMember if a standing membership is meant.
+[oer-s111] Invoke-OERStructure own errors: 0
+[oer-s111] run: requests 8; writes 0; token requests 0
+[oer-s111] run: oer-s111-ra: requests 5; assignment reads 1; eligibility reads 1
+[oer-s111] members of oer-s111-ra: oer-s111-user1
+RUNNER: check 6.2 exit code 0; started 2026-10-13T15:38:20Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
+
+### 6.3. The plan with -Prune: a member who is also eligible is withheld
+
+- [x] **6.3** A document declaring `oer-s111-ra` with no members (`members: []`; `oer-s111-user1` is its standing member and eligible): `Invoke-OERStructure -Prune -WhatIf` withholds the prune of user1 and writes nothing.
+
+```powershell
+Connect-OerLive -Arm
+Start-S111Fence
+$Doc = Save-S111Document -Name 'doc-ra-prune-eligible' -Groups @([ordered]@{ displayName = 'oer-s111-ra'; members = @() })
+Invoke-S111Apply -Path $Doc -Prune -Plan -Groups 'oer-s111-ra'
+Write-OerLiveStep "members of oer-s111-ra: $((Get-S111Relation -Group 'oer-s111-ra' -Relation members) -join ', ')"
+Disconnect-OerLive
+```
+
+**Expect:** rows `groups | oer-s111-ra | Unchanged | group properties match` and `... | Skipped | prune
+withheld: undeclared member 'oer-s111-user1' is eligible for member access in PIM for Groups, and -Prune
+never removes a member or owner whose access PIM for Groups holds or makes eligible; it is left in place
+(our own guard, not a Graph rejection). Manage that access in PIM for Groups if it is meant to go.`;
+`warnings: 0`; no `What if:` line; `writes 0`; `assignment reads 1; eligibility reads 1`; members
+`oer-s111-user1`.
+**Failure looks like:** a `would remove undeclared member` row or warning, a withheld row saying the PIM
+state could not be read (the step 1 behaviour without the permission), or any write.
+
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With -Prune -WhatIf and members [] for oer-s111-ra, its standing member oer-s111-user1, who is also eligible, is withheld as eligible (prune withheld: ... is eligible for member access in PIM for Groups ...), not for an unread PIM state as step 1 would have; no would-remove warning, no What if line, no write; one assignment read and one eligibility read; the member stays.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 6.3 ===
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+[oer-s111] document doc-ra-prune-eligible: {"version":"1.0","groups":[{"displayName":"oer-s111-ra","members":[]}]}
+[oer-s111] row: groups | oer-s111-ra | Unchanged | group properties match
+[oer-s111] row: groups | oer-s111-ra | Skipped | prune withheld: undeclared member 'oer-s111-user1' is eligible for member access in PIM for Groups, and -Prune never removes a member or owner whose access PIM for Groups holds or makes eligible; it is left in place (our own guard, not a Graph rejection). Manage that access in PIM for Groups if it is meant to go.
+[oer-s111] warnings: 0
+[oer-s111] Invoke-OERStructure own errors: 0
+[oer-s111] plan: requests 6; writes 0; token requests 0
+[oer-s111] plan: oer-s111-ra: requests 5; assignment reads 1; eligibility reads 1
+[oer-s111] members of oer-s111-ra: oer-s111-user1
+RUNNER: check 6.3 exit code 0; started 2026-10-13T15:38:33Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
+
+### 6.4. The real -Prune: the member stays
+
+- [x] **6.4** The same document in a real `-Prune` run gives the same rows, writes nothing, and `oer-s111-user1` is still the member afterwards.
+
+```powershell
+Connect-OerLive -Arm
+Start-S111Fence
+$Doc = Save-S111Document -Name 'doc-ra-prune-eligible' -Groups @([ordered]@{ displayName = 'oer-s111-ra'; members = @() })
+Invoke-S111Apply -Path $Doc -Prune -Groups 'oer-s111-ra'
+Write-OerLiveStep "members of oer-s111-ra: $((Get-S111Relation -Group 'oer-s111-ra' -Relation members) -join ', ')"
+Disconnect-OerLive
+```
+
+**Expect:** the two rows of 6.3, `warnings: 0`, `writes 0`, no own error; members `oer-s111-user1`.
+**Failure looks like:** a DELETE of the group's `members/<id>/$ref`, or user1 gone.
+
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The real -Prune run gives the same rows, writes nothing, raises no own error, and oer-s111-user1 is still the member afterwards.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 6.4 ===
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+[oer-s111] document doc-ra-prune-eligible: {"version":"1.0","groups":[{"displayName":"oer-s111-ra","members":[]}]}
+[oer-s111] row: groups | oer-s111-ra | Unchanged | group properties match
+[oer-s111] row: groups | oer-s111-ra | Skipped | prune withheld: undeclared member 'oer-s111-user1' is eligible for member access in PIM for Groups, and -Prune never removes a member or owner whose access PIM for Groups holds or makes eligible; it is left in place (our own guard, not a Graph rejection). Manage that access in PIM for Groups if it is meant to go.
+[oer-s111] warnings: 0
+[oer-s111] Invoke-OERStructure own errors: 0
+[oer-s111] run: requests 6; writes 0; token requests 0
+[oer-s111] run: oer-s111-ra: requests 5; assignment reads 1; eligibility reads 1
+[oer-s111] members of oer-s111-ra: oer-s111-user1
+RUNNER: check 6.4 exit code 0; started 2026-10-13T15:38:40Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
+
+### 6.5. The same document twice: Unchanged, no write, no PIM read (G8)
+
+- [x] **6.5** A document declaring `oer-s111-ra` as it stands (members and owners `oer-s111-user1`), run twice with `-Prune`, gives only `Unchanged`, writes nothing, and reads no PIM state (nothing to add and nothing to prune).
+
+```powershell
+Connect-OerLive -Arm
+Start-S111Fence
+$null = Wait-OerLiveConverged -Activity 'three steady reads of the members and owners of oer-s111-ra' -Read { , @(@(1..3) | ForEach-Object { Start-Sleep -Seconds 5; ((Get-S111Relation -Group 'oer-s111-ra' -Relation members) -join ',') + '|' + ((Get-S111Relation -Group 'oer-s111-ra' -Relation owners) -join ',') }) } -Test { @($args[0] | Select-Object -Unique).Count -eq 1 -and @($args[0])[0] -eq 'oer-s111-user1|oer-s111-user1' }
+$Doc = Save-S111Document -Name 'doc-ra-converged' -Groups @([ordered]@{ displayName = 'oer-s111-ra'; members = @($Upn['oer-s111-user1']); owners = @($Upn['oer-s111-user1']) })
+foreach ($Pass in 1, 2) { Write-OerLiveStep "pass $Pass"; Invoke-S111Apply -Path $Doc -Prune -Groups 'oer-s111-ra' }
+Disconnect-OerLive
+```
+
+**Expect:** in both passes rows `... | Unchanged | group properties match`, `... | Unchanged | member
+'oer-s111-user1' already present` and `... | Unchanged | owner 'oer-s111-user1' already present` only;
+`warnings: 0`; `writes 0`; for `oer-s111-ra` `assignment reads 0; eligibility reads 0`.
+**Failure looks like:** any row other than `Unchanged`, a write, or a PIM read for a converged item.
+
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (G8). After three steady reads of the members and owners (oer-s111-user1 both), the document declaring oer-s111-ra as it stands, run twice with -Prune, gives only Unchanged (group properties match, member ... already present, owner ... already present), no warning, no own error, no write, and no PIM read for the converged item (assignment reads 0, eligibility reads 0).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 6.5 ===
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] fences in place (Get-AzToken is the proxy, the Graph wrapper records): True
+[oer-s111] three steady reads of the members and owners of oer-s111-ra: converged after 1 read(s), 15.6 s.
+[oer-s111] document doc-ra-converged: {"version":"1.0","groups":[{"displayName":"oer-s111-ra","members":["oer-s111-user1"],"owners":["oer-s111-user1"]}]}
+[oer-s111] pass 1
+[oer-s111] row: groups | oer-s111-ra | Unchanged | group properties match
+[oer-s111] row: groups | oer-s111-ra | Unchanged | member 'oer-s111-user1' already present
+[oer-s111] row: groups | oer-s111-ra | Unchanged | owner 'oer-s111-user1' already present
+[oer-s111] warnings: 0
+[oer-s111] Invoke-OERStructure own errors: 0
+[oer-s111] run: requests 8; writes 0; token requests 0
+[oer-s111] run: oer-s111-ra: requests 5; assignment reads 0; eligibility reads 0
+[oer-s111] pass 2
+[oer-s111] row: groups | oer-s111-ra | Unchanged | group properties match
+[oer-s111] row: groups | oer-s111-ra | Unchanged | member 'oer-s111-user1' already present
+[oer-s111] row: groups | oer-s111-ra | Unchanged | owner 'oer-s111-user1' already present
+[oer-s111] warnings: 0
+[oer-s111] Invoke-OERStructure own errors: 0
+[oer-s111] run: requests 8; writes 0; token requests 0
+[oer-s111] run: oer-s111-ra: requests 5; assignment reads 0; eligibility reads 0
+RUNNER: check 6.5 exit code 0; started 2026-10-13T15:38:53Z; took 22 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
+
 ## B. Proved offline (class B)
 
 Each item names the unit tests that prove it; their names are in the step's report. None can be
@@ -1409,9 +2234,10 @@ produced live here, for the reason given.
 - **B.1 The reserve and the partial signal.** A failed assignment read leaves out a member or owner
   that is eligible for the same access, names `groups/<name>/pimAssignments` in `IncompleteReads`
   and the `InventoryPartial` message, and, when the eligibility was not read either, writes
-  `members: null` and omits `owners`. Seen live in 1.4 for a refused read with nobody eligible
-  (the members written, `groups/oer-s111-ra/pimAssignments` named, `InventoryPartial`); a member left
-  out on the eligibility basis, and the undecided null, are proved offline only. Tests: the
+  `members: null` and omits `owners`. Seen live in step 1's run of 1.4, before the grant, for a refused
+  read with nobody eligible (the members written, `groups/oer-s111-ra/pimAssignments` named,
+  `InventoryPartial`); a member left out on the eligibility basis, and the undecided null, are proved
+  offline only. Tests: the
   `a PIM activation is never a standing membership (BL-125, A3)` context of
   `tests/Unit/Private/Get-OERInventoryGroup.Tests.ps1` and the export tests in
   `tests/Unit/Public/Export-OERInventory.Tests.ps1`. Recorded answer: 1.1.
@@ -1438,7 +2264,7 @@ produced live here, for the reason given.
 
 ### T.1. The objects removed, nothing left
 
-- [x] **T.1** `Initialize-OerS111Prereq.ps1 -Teardown -Unattended` removes the eligibilities and assignments, the four groups and the two users; the sweep finds nothing with the prefix and no unread collection; the counts equal the baseline.
+- [x] **T.1** `Initialize-OerS111Prereq.ps1 -Teardown -Unattended` removes the eligibilities and assignments, the six groups and the two users; the sweep finds nothing with the prefix and no unread collection; the counts equal the baseline.
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS111Prereq.ps1'
@@ -1450,9 +2276,78 @@ Write-OerLiveStep "teardown exit code: $LASTEXITCODE"
 that the next read-back clears (a user DELETE refused for minutes is residue, exit code 3).
 **Failure looks like:** an object left without a residue row, an unread collection, or a stop.
 
-Result: 2026-10-13 13:09 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
+Verdict: PASS, with the residue cleared in T.2. The teardown removed 16 items (the four member eligibilities -- in oer-s111-both, oer-s111-pim and two in oer-s111-ra --, the standing member assignments of oer-s111-both, oer-s111-nopim and oer-s111-pim, the member of oer-s111-ra, the six groups and both users) and left 4 residue rows, each with its reason: the PIM-for-Groups owner assignments of oer-s111-pim and oer-s111-nopim (400 CannotDeleteLastAdminAssignment, as in step 1), and the member and owner assignments of oer-s111-ra (403 PermissionScopeNotGranted: removing a PIM-for-Groups assignment needs PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup, which oer-live-cc does not hold; since the grant the teardown can list that group's assignments, which step 1 could not). All four belonged to groups the teardown then deleted. Both users were deleted (204), oer-s111-user1 1.1 s after it left the role-assignable group (step 1's DELETE at 1.3 s was refused with 403 and succeeded minutes later: the refusal is not certain). Counts equal the baseline (users 22, groups 97). The sweep right after the convergence still listed three deleted groups -- the listing lag after a DELETE; T.2 reads back.
+
+=== Round 1 run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s111] Transcript (redacted): raw\s111\teardown-20261013-153956Z.log; OerLive 1.0.3.
+[oer-s111] Mode: REMOVE. Prefix 'oer-s111-'. Objects (fixed): oer-s111-user1, oer-s111-user2 (disabled users), oer-s111-pim, oer-s111-both, oer-s111-nopim, oer-s111-plain (plain security groups), oer-s111-ra (role-assignable), oer-s111-dyn (dynamic). OerLive 1.0.3.
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s111] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s111] Teardown of 'oer-s111-': users 2, groups 6, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s111] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s111] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s111] Removed: oer-s111-both: PIM for Groups member eligibility of a principal (201).
+[oer-s111] Removed: oer-s111-both: PIM for Groups member assignment of a principal (201).
+[oer-s111] RESIDUE: PIM for Groups assignment 'oer-s111-nopim: PIM for Groups owner assignment of a principal' is left, with a row in raw\residue.json: 400 CannotDeleteLastAdminAssignment Cannot delete the last admin assignment.
+[oer-s111] Removed: oer-s111-nopim: PIM for Groups member assignment of a principal (201).
+[oer-s111] Removed: oer-s111-pim: PIM for Groups member eligibility of a principal (201).
+[oer-s111] RESIDUE: PIM for Groups assignment 'oer-s111-pim: PIM for Groups owner assignment of a principal' is left, with a row in raw\residue.json: 400 CannotDeleteLastAdminAssignment Cannot delete the last admin assignment.
+[oer-s111] Removed: oer-s111-pim: PIM for Groups member assignment of a principal (201).
+[oer-s111] Removed: oer-s111-ra: PIM for Groups member eligibility of a principal (201).
+[oer-s111] Removed: oer-s111-ra: PIM for Groups member eligibility of a principal (201).
+[oer-s111] RESIDUE: PIM for Groups assignment 'oer-s111-ra: PIM for Groups owner assignment of a principal' is left, with a row in raw\residue.json: 403 UnauthorizedAccessException {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup,PrivilegedAccess.ReadWrite.AzureADGroup,PrivilegedAssignmentSchedule.Remove.AzureADGroup.","instanceAnnotations":[]}
+[oer-s111] RESIDUE: PIM for Groups assignment 'oer-s111-ra: PIM for Groups member assignment of a principal' is left, with a row in raw\residue.json: 403 UnauthorizedAccessException {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup,PrivilegedAccess.ReadWrite.AzureADGroup,PrivilegedAssignmentSchedule.Remove.AzureADGroup.","instanceAnnotations":[]}
+[oer-s111] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s111] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s111] Removed: oer-s111-user1 from oer-s111-ra (204).
+[oer-s111] Teardown 5/6: the prefixed groups.
+[oer-s111] Deleted: group oer-s111-both (204).
+[oer-s111] Deleted: group oer-s111-dyn (204).
+[oer-s111] Deleted: group oer-s111-nopim (204).
+[oer-s111] Deleted: group oer-s111-pim (204).
+[oer-s111] Deleted: group oer-s111-plain (204).
+[oer-s111] Deleted: group oer-s111-ra (204).
+[oer-s111] Teardown 6/6: the prefixed users.
+[oer-s111] DELETE user oer-s111-user1@example.com: 204  after 1 attempt(s), 0.2 s; first attempt 1.1 s after its group membership was removed.
+[oer-s111] DELETE user oer-s111-user2@example.com: 204  after 1 attempt(s), 0.3 s; first attempt no membership removed in this run.
+[oer-s111] Teardown of 'oer-s111-': removed 16, residue 4, unreadable 0.
+[oer-s111] no 'oer-s111-' object is listed but the residue: not yet (read 1, 0.6 s, likely replication delay) -- reading again in 2 s.
+[oer-s111] no 'oer-s111-' object is listed but the residue: not yet (read 2, 3.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s111] no 'oer-s111-' object is listed but the residue: not yet (read 3, 7.8 s, likely replication delay) -- reading again in 8 s.
+[oer-s111] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s111-' is left.
+[oer-s111] no 'oer-s111-' object is listed but the residue: converged after 4 read(s), 16.2 s.
+[oer-s111] Sweep: group 'oer-s111-both' (00000000-0000-0000-0000-000000000003) carries the prefix.
+[oer-s111] Sweep: group 'oer-s111-dyn' (00000000-0000-0000-0000-000000000004) carries the prefix.
+[oer-s111] Sweep: group 'oer-s111-pim' (00000000-0000-0000-0000-000000000005) carries the prefix.
+[oer-s111] Counts: users now 22, at the baseline 22; equal: True. Groups now 97, at the baseline 97; equal: True
+[oer-s111] Removed the recorded ids.
+[oer-s111] Done, with 4 residue item(s): see the RESIDUE lines and raw\residue.json.
+[oer-s111] Done.
+[oer-s111] teardown exit code: 3
+RUNNER: check T.1 exit code 0; started 2026-10-13T15:39:54Z; took 54 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Step 1 run (kept) ===
 Verdict: PASS, with residue cleared. The teardown removed 14 items (the eligibilities, the members' standing assignments, the member of oer-s111-ra, all six groups, oer-s111-user2) and left 3 residue rows, each with its reason: the two PIM-for-Groups owner assignments of oer-s111-pim and oer-s111-nopim (400 CannotDeleteLastAdminAssignment; they went with their groups, which were then deleted) and oer-s111-user1 (DELETE 403 Authorization_RequestDenied 1.3 s after it left the role-assignable group; disabled). The PIM assignment schedules of oer-s111-ra were reported unreadable for this identity (PermissionScopeNotGranted, as in 1.3). Groups 97 = baseline. About 4.5 minutes later the prerequisite script's -ClearOwnResidue (own prefix only) dropped both assignment rows (groups deleted) and deleted oer-s111-user1 (204); rows of other prefixes were left untouched. The residue run is appended below the teardown run.
 
 [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
@@ -1545,22 +2440,90 @@ LEAK CHECK: psd1 values surviving redaction: 0
 
 ### T.2. Read-back once the listings have settled
 
-- [x] **T.2** At least a minute after T.1, the sweep lists nothing with the prefix and no unread collection, and the tenant lists as many users and groups as the baseline recorded; `raw\s111\` is deleted after the results are written.
+- [x] **T.2** At least a minute after T.1 (some minutes when T.1 left a user as residue), `-ClearOwnResidue` retries this prefix's own residue rows only; then the sweep lists nothing with the prefix and no unread collection, and the tenant lists as many users and groups as the baseline recorded; `raw\s111\` is deleted after the results are written.
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS111Prereq.ps1'
-& pwsh -NoProfile -NonInteractive -File $Script -ReadBack 2>&1 | ForEach-Object { "$_" }
-Write-OerLiveStep "read-back exit code: $LASTEXITCODE"
+foreach ($Run in @(@('-ClearOwnResidue', '-Unattended'), @('-ReadBack'))) {
+    Write-OerLiveStep "prereq run: $($Run -join ' ')"
+    & pwsh -NoProfile -NonInteractive -File $Script @Run 2>&1 | ForEach-Object { "$_" }
+    Write-OerLiveStep "prereq exit code: $LASTEXITCODE"
+}
 ```
 
-**Expect:** 0 objects, 0 unread collections; users and groups equal to the baseline counts; 0
-residue rows of this prefix.
-**Failure looks like:** a step object still listed after several minutes (read back again later
-before treating it as residue).
+**Expect:** the residue run drops every row of this prefix (`left 0`, exit code 0) and leaves the rows
+of other prefixes untouched; the read-back lists 0 objects, 0 unread collections, users and groups
+equal to the baseline counts, and 0 residue rows of this prefix.
+**Failure looks like:** a user DELETE still refused (exit code 3: run T.2 again some minutes later), or
+a step object still listed after several minutes (read back again later before treating it as
+residue).
 
-Result: 2026-10-13 13:09 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-13 15:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
+Verdict: PASS (round 1). About three minutes after T.1, the residue run (own prefix only) found 4 rows of this prefix -- the four PIM-for-Groups assignment rows T.1 left -- and dropped all 4, each because its group reads as deleted, leaving 0; the 5 rows of other prefixes were left untouched; exit 0. The read-back then lists nothing with the prefix and no unread collection, the tenant lists as many users and groups as the baseline (22 users, 97 groups), and no residue row of this prefix is left.
+
+=== Round 1 run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.2 ===
+[oer-s111] prereq run: -ClearOwnResidue -Unattended
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s111] Transcript (redacted): raw\s111\residue-20261013-154339Z.log; OerLive 1.0.3.
+[oer-s111] Mode: CLEAR OWN RESIDUE. Prefix 'oer-s111-'. Objects (fixed): oer-s111-user1, oer-s111-user2 (disabled users), oer-s111-pim, oer-s111-both, oer-s111-nopim, oer-s111-plain (plain security groups), oer-s111-ra (role-assignable), oer-s111-dyn (dynamic). OerLive 1.0.3.
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s111] Residue: raw\residue.json holds 9 row(s), 4 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s111] Own residue: PIM for Groups assignment 'oer-s111-nopim: PIM for Groups owner assignment of a principal' -- its group is deleted, so the assignment is gone; row dropped.
+[oer-s111] Own residue: PIM for Groups assignment 'oer-s111-pim: PIM for Groups owner assignment of a principal' -- its group is deleted, so the assignment is gone; row dropped.
+[oer-s111] Own residue: PIM for Groups assignment 'oer-s111-ra: PIM for Groups owner assignment of a principal' -- its group is deleted, so the assignment is gone; row dropped.
+[oer-s111] Own residue: PIM for Groups assignment 'oer-s111-ra: PIM for Groups member assignment of a principal' -- its group is deleted, so the assignment is gone; row dropped.
+[oer-s111] Own residue: rows of this prefix 4, dropped 4, left 0; rows of other prefixes left untouched: 5.
+[oer-s111] Counts: users now 22, at the baseline 22; equal: True. Groups now 97, at the baseline 97; equal: True
+[oer-s111] Done.
+[oer-s111] prereq exit code: 0
+[oer-s111] prereq run: -ReadBack
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s111] Transcript (redacted): raw\s111\readback-20261013-154344Z.log; OerLive 1.0.3.
+[oer-s111] Mode: READ BACK. Prefix 'oer-s111-'. Objects (fixed): oer-s111-user1, oer-s111-user2 (disabled users), oer-s111-pim, oer-s111-both, oer-s111-nopim, oer-s111-plain (plain security groups), oer-s111-ra (role-assignable), oer-s111-dyn (dynamic). OerLive 1.0.3.
+[oer-s111] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg1-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s111] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s111] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s111] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s111-' is left.
+[oer-s111] Counts: users now 22, at the baseline 22; equal: True. Groups now 97, at the baseline 97; equal: True
+[oer-s111] Read-back: residue row: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:09Z, attempts 3: 404 SubjectNotFound The subject is not found.; read back: still listed -- OerLive: Residue: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal': read back after the 'does not exist' answer -- not converged within budget (180 s, 10 reads).
+[oer-s111] Read-back: residue row: PIM for Groups assignment 'opim-s1-grp: PIM for Groups owner assignment of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:12Z, attempts 3: 403 UnauthorizedAccessException {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup,PrivilegedAccess.ReadWrite.AzureADGroup,PrivilegedAssignmentSchedule.Remove.AzureADGroup.","instanceAnnotations":[]}
+[oer-s111] Read-back: residue row: PIM for Groups eligibility 'opim-s2-grp: PIM for Groups member eligibility of a principal' (prefix opim-s2-), first refused 2026-10-10T23:39:01Z, attempts 1: 400 BadRequest {"error":{"code":"Request_BadRequest","message":"The source resource object or one of the objects being referenced do not exist.","innerError":{"date":"2026-10-10T23:39:01","request-id":"00000000-0000-0000-0000-000000000006","client-request-id":"00000000-0000-0000-0000-000000000007"}}}
+[oer-s111] Read-back: residue row: user 'opim-s2-live-user@example.com' (prefix opim-s2-), first refused 2026-10-10T23:39:02Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s111] Read-back: residue row: user 'opim-s2-live-user@example.com' (prefix opim-s2-), first refused 2026-10-11T14:55:13Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s111] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 5.
+[oer-s111] Done.
+[oer-s111] prereq exit code: 0
+RUNNER: check T.2 exit code 0; started 2026-10-13T15:43:36Z; took 11 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Step 1 run (kept) ===
 Verdict: PASS. At least a minute after the residue was cleared, the sweep lists nothing with the prefix and no unread collection, and the tenant lists as many users and groups as the baseline (22 users, 97 groups); no residue row of this prefix is left.
 
 [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
@@ -1587,7 +2550,7 @@ Verdict: PASS. At least a minute after the residue was cleared, the sweep lists 
 [oer-s111] Counts: users now 22, at the baseline 22; equal: True. Groups now 97, at the baseline 97; equal: True
 [oer-s111] Read-back: residue row: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:09Z, attempts 3: 404 SubjectNotFound The subject is not found.; read back: still listed -- OerLive: Residue: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal': read back after the 'does not exist' answer -- not converged within budget (180 s, 10 reads).
 [oer-s111] Read-back: residue row: PIM for Groups assignment 'opim-s1-grp: PIM for Groups owner assignment of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:12Z, attempts 3: 403 UnauthorizedAccessException {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup,PrivilegedAccess.ReadWrite.AzureADGroup,PrivilegedAssignmentSchedule.Remove.AzureADGroup.","instanceAnnotations":[]}
-[oer-s111] Read-back: residue row: PIM for Groups eligibility 'opim-s2-grp: PIM for Groups member eligibility of a principal' (prefix opim-s2-), first refused 2026-10-10T23:39:01Z, attempts 1: 400 BadRequest {"error":{"code":"Request_BadRequest","message":"The source resource object or one of the objects being referenced do not exist.","innerError":{"date":"2026-10-10T23:39:01","request-id":"00000000-0000-0000-0000-000000000003","client-request-id":"00000000-0000-0000-0000-000000000004"}}}
+[oer-s111] Read-back: residue row: PIM for Groups eligibility 'opim-s2-grp: PIM for Groups member eligibility of a principal' (prefix opim-s2-), first refused 2026-10-10T23:39:01Z, attempts 1: 400 BadRequest {"error":{"code":"Request_BadRequest","message":"The source resource object or one of the objects being referenced do not exist.","innerError":{"date":"2026-10-10T23:39:01","request-id":"00000000-0000-0000-0000-000000000006","client-request-id":"00000000-0000-0000-0000-000000000007"}}}
 [oer-s111] Read-back: residue row: user 'opim-s2-live-user@example.com' (prefix opim-s2-), first refused 2026-10-10T23:39:02Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
 [oer-s111] Read-back: residue row: user 'opim-s2-live-user@example.com' (prefix opim-s2-), first refused 2026-10-11T14:55:13Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
 [oer-s111] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 5.
