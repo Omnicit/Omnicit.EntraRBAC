@@ -306,8 +306,10 @@ function Sync-OERStructureGroup {
       withheld:', with or without -Prune (ConvertTo-OERPruneWithheldResult -PimUnread), and one
       warning for the item names the cause. The item is not Failed: what already matches stays
       Unchanged, and the eligibility and pimPolicy steps run as before. In a tenant where either PIM
-      for Groups read is refused, no standing member or owner is added or removed by the apply
-      engine until it can be read.
+      for Groups read is refused, the apply engine adds no standing member or owner to a group that
+      already existed when the item looked it up, and removes none from it, until it can be read. A
+      group New-OERGroup returns in the run -- created, or found already existing after that lookup
+      missed it -- is never read (see above).
 
     Withheld prune: members, owners and eligibility each withhold their OWN prune when one of their
     declared entries cannot be resolved (Resolve-OERStructurePrincipal gives no object id). Such an
@@ -455,7 +457,8 @@ function Sync-OERStructureGroup {
         # carries no PIM state yet and is never read.
         $PimHoldState = @{ Decided = $false; Hold = $null; Warned = $false }
         function Get-PimHoldReason {
-            # Returns '' when not held, the reason when held, $null when the state could not be read.
+            # Returns '' when not held, the reason when held (never empty), $null when the state could
+            # not be read.
             param([string]$PrincipalId, [string]$AccessType)
             if (-not $PimHoldState.Decided) {
                 $PimHoldState.Decided = $true
@@ -469,7 +472,13 @@ function Sync-OERStructureGroup {
             }
             if (-not $PimHoldState.Hold.Read) { return $null }
             $Key = ('{0}|{1}' -f $PrincipalId, $AccessType).ToLowerInvariant()
-            if ($PimHoldState.Hold.Held.ContainsKey($Key)) { return [string]$PimHoldState.Hold.Held[$Key] }
+            if ($PimHoldState.Hold.Held.ContainsKey($Key)) {
+                # A held key decides "held" whatever its value: '' means "not held" to the callers, so
+                # a reason that arrived empty would let the add or the prune through. Fail closed.
+                $HeldReason = [string]$PimHoldState.Hold.Held[$Key]
+                if ([string]::IsNullOrEmpty($HeldReason)) { $HeldReason = "holds or is eligible for $AccessType access in PIM for Groups" }
+                return $HeldReason
+            }
             ''
         }
         function Write-PimUnreadWarning {

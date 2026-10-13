@@ -8544,6 +8544,47 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
             Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 4 -Exactly -Scope It
         }
 
+        It 'fails closed on a held key whose reason is empty or null: the add is Skipped and the prune withheld, for members and owners' {
+            # A key in Held decides "held" whatever its value. An empty reason must not read as the
+            # handler's own "not held" (''), so the rows carry a reason of the handler's own.
+            $script:PimLiveMembers = @(New-PimLive 'id-kept@example.com', 'u-x')
+            $script:PimLiveOwners = @(New-PimLive 'id-owner@example.com', 'o-x')
+            $script:PimHold = New-PimHold -Held @{
+                'id-new@example.com|member'  = ''
+                'u-x|member'                 = ''
+                'id-o-new@example.com|owner' = $null
+                'o-x|owner'                  = $null
+            }
+            $Item = [PSCustomObject]@{
+                displayName = 'grp-pim'
+                members     = @('kept@example.com', 'new@example.com')
+                owners      = @('owner@example.com', 'o-new@example.com')
+            }
+            $MemberReason = 'holds or is eligible for member access in PIM for Groups'
+            $OwnerReason = 'holds or is eligible for owner access in PIM for Groups'
+            foreach ($AsPlan in $true, $false) {
+                $Out = Invoke-PimHoldRun -Items @($Item) -Prune -Plan:$AsPlan
+                @($Out.Errors).Count | Should -Be 0
+                @($Out.Warnings) | Should -Be @(
+                    (Get-PimAddWarning -Access member -Ref 'new@example.com' -Reason $MemberReason)
+                    (Get-PimAddWarning -Access owner -Ref 'o-new@example.com' -Reason $OwnerReason)
+                )
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimAddSkipped -Access member -Ref 'new@example.com' -Reason $MemberReason) | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimAddSkipped -Access owner -Ref 'o-new@example.com' -Reason $OwnerReason) | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared member 'u-x'" -Reason $MemberReason) | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared owner 'o-x'" -Reason $OwnerReason) | Should -Be 1
+                @($Out.Rows).Count | Should -Be 7
+            }
+            foreach ($AsPlan in $true, $false) {
+                $Out = Invoke-PimHoldRun -Items @($Item) -Plan:$AsPlan
+                @($Out.Errors).Count | Should -Be 0
+                Get-PimRowCount -Rows $Out.Rows -Action 'Extra' -Detail (Get-PimExtraHeld -Candidate "undeclared member 'u-x'" -Reason $MemberReason) | Should -Be 1
+                Get-PimRowCount -Rows $Out.Rows -Action 'Extra' -Detail (Get-PimExtraHeld -Candidate "undeclared owner 'o-x'" -Reason $OwnerReason) | Should -Be 1
+            }
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Scope It
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Scope It
+        }
+
         It 'does not add a declared owner PIM for Groups makes eligible, and adds an unheld owner as before' {
             $script:PimHold = New-PimHold -Held @{ 'id-o-elig@example.com|owner' = $script:PimEligOwner }
             $Item = [PSCustomObject]@{ displayName = 'grp-pim'; members = $null; owners = @('owner@example.com', 'o-elig@example.com', 'o-new@example.com') }

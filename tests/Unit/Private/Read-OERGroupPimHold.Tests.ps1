@@ -18,7 +18,11 @@ AfterAll {
 Describe 'Read-OERGroupPimHold' {
     BeforeAll {
         $script:AssignmentFailure = 'Could not read the PIM for Groups assignments of group g-1: Forbidden.'
-        $script:EligibilityFailure = 'Could not read PIM eligibility for group g-1: Forbidden. The PimEligibility property is omitted rather than reported as empty.'
+        # The eligibility reader's message, as Read-OERGroupCollection words it, and the cause this
+        # function gives for it: the closing sentence about the property Get-OERGroup omits is cut,
+        # since it says nothing true in the apply engine's warning and row.
+        $script:EligibilityMessage = 'Could not read PIM eligibility for group g-1: Forbidden. The PimEligibility property is omitted rather than reported as empty.'
+        $script:EligibilityFailure = 'Could not read PIM eligibility for group g-1: Forbidden.'
     }
 
     Context 'both reads succeed' {
@@ -140,15 +144,16 @@ Describe 'Read-OERGroupPimHold' {
             Should -Invoke -ModuleName $script:moduleName Read-OERGroupCollection -Times 1 -Exactly -Scope It -ParameterFilter { $Collection -eq 'PimEligibility' }
         }
 
-        It 'is not read when the eligibility read fails, and the cause is that read''s message' {
+        It 'is not read when the eligibility read fails, and the cause is that read''s message without the omitted-property sentence' {
             Mock -ModuleName $script:moduleName Read-OERGroupCollection {
                 [PSCustomObject]@{ Collection = 'PimEligibility'; Read = $false; Value = $null; ErrorId = 'GroupPimEligibilityReadFailed'
-                    Message = 'Could not read PIM eligibility for group g-1: Forbidden. The PimEligibility property is omitted rather than reported as empty.'
+                    Message = $script:EligibilityMessage
                     Exception = [System.Exception]::new('Forbidden') }
             }
             $Hold = InModuleScope $script:moduleName { Read-OERGroupPimHold -GroupId 'g-1' }
             $Hold.Read | Should -BeFalse
             $Hold.Cause | Should -BeExactly $script:EligibilityFailure
+            $Hold.Cause | Should -Not -Match 'property is omitted'
             $Hold.Held.Count | Should -Be 0
             Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimAssignment -Times 1 -Exactly -Scope It
         }
@@ -159,13 +164,23 @@ Describe 'Read-OERGroupPimHold' {
             }
             Mock -ModuleName $script:moduleName Read-OERGroupCollection {
                 [PSCustomObject]@{ Collection = 'PimEligibility'; Read = $false; Value = $null; ErrorId = 'GroupPimEligibilityReadFailed'
-                    Message = 'Could not read PIM eligibility for group g-1: Forbidden. The PimEligibility property is omitted rather than reported as empty.'
+                    Message = $script:EligibilityMessage
                     Exception = [System.Exception]::new('Forbidden') }
             }
             $Hold = InModuleScope $script:moduleName { Read-OERGroupPimHold -GroupId 'g-1' }
             $Hold.Read | Should -BeFalse
             $Hold.Cause | Should -BeExactly ($script:AssignmentFailure + '; ' + $script:EligibilityFailure)
             $Hold.Held.Count | Should -Be 0
+        }
+
+        It 'keeps an eligibility message that does not end with the omitted-property sentence as it is' {
+            Mock -ModuleName $script:moduleName Read-OERGroupCollection {
+                [PSCustomObject]@{ Collection = 'PimEligibility'; Read = $false; Value = $null; ErrorId = 'GroupPimEligibilityReadFailed'
+                    Message = 'Could not read PIM eligibility for group g-1: Forbidden.'; Exception = [System.Exception]::new('Forbidden') }
+            }
+            $Hold = InModuleScope $script:moduleName { Read-OERGroupPimHold -GroupId 'g-1' }
+            $Hold.Read | Should -BeFalse
+            $Hold.Cause | Should -BeExactly 'Could not read PIM eligibility for group g-1: Forbidden.'
         }
 
         It 'with -EligibilityRead is not read when the assignment read fails, naming only that read' {
@@ -177,6 +192,27 @@ Describe 'Read-OERGroupPimHold' {
             $Hold.Cause | Should -BeExactly $script:AssignmentFailure
             $Hold.Held.Count | Should -Be 0
             Should -Invoke -ModuleName $script:moduleName Read-OERGroupCollection -Times 0 -Scope It
+        }
+    }
+
+    Context 'the eligibility read fails in the real eligibility reader' {
+        # Read-OERGroupCollection runs for real here, so a change to the words it closes its failure
+        # with turns this red rather than letting the sentence back into the apply engine's cause.
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment {
+                [PSCustomObject]@{ Read = $true; Value = @(); Message = $null; Exception = $null }
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw [System.Exception]::new('Insufficient privileges (403)') }
+        }
+
+        It 'cuts the omitted-property sentence from the reader''s own message and keeps the rest' {
+            $Hold = InModuleScope $script:moduleName { Read-OERGroupPimHold -GroupId 'g-1' }
+            # Reach proof: the reader sent the eligibility request.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -Scope It -ParameterFilter { $Uri -like '*eligibilityScheduleInstances*' }
+            $Hold.Read | Should -BeFalse
+            $Hold.Cause | Should -BeExactly 'Could not read PIM eligibility for group g-1: Insufficient privileges (403).'
+            $Hold.Cause | Should -Not -Match 'property is omitted'
         }
     }
 }

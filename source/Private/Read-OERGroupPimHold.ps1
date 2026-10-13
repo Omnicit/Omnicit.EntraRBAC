@@ -34,7 +34,9 @@ function Read-OERGroupPimHold {
       and access type it does not hold -- a standing member or owner, or one not named at all -- is
       not a key. Empty when Read is false: a lookup that was not read decides nothing.
     - Cause: null when Read is true; otherwise the message of each failed read, the assignment read
-      first, joined with '; '.
+      first, joined with '; '. The eligibility read's message is given without its closing sentence
+      that the PimEligibility property is omitted, which describes Get-OERGroup's output and not the
+      apply engine's.
 
     It makes no sign-in of its own; the calling command must already have signed in
     (Initialize-OERAuth).
@@ -95,7 +97,15 @@ function Read-OERGroupPimHold {
         if ($EligibilityReadResult.Read) {
             $EligibilityInstances = @($EligibilityReadResult.Value)
         } else {
-            $Causes.Add([string]$EligibilityReadResult.Message)
+            # The reader's message ends with a sentence about Get-OERGroup's own output (the property
+            # it omits), which says nothing true in the apply engine's warning and row. That sentence
+            # is cut; the rest of the message, which the reader alone words, is kept as it is.
+            $EligibilityCause = [string]$EligibilityReadResult.Message
+            $OmittedSentence = ' The PimEligibility property is omitted rather than reported as empty.'
+            if ($EligibilityCause.EndsWith($OmittedSentence, [System.StringComparison]::Ordinal)) {
+                $EligibilityCause = $EligibilityCause.Substring(0, $EligibilityCause.Length - $OmittedSentence.Length)
+            }
+            $Causes.Add($EligibilityCause)
         }
     }
 
