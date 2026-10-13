@@ -1946,6 +1946,64 @@ Describe 'Export-OERInventory (members and owners left out as PIM for Groups acc
         @(($Inv.Groups | Where-Object { $_.displayName -eq 'role_sec_pim' }).members) | Should -Be @('person1@contoso.com', 'person2@contoso.com')
     }
 
+    Context 'a group read in full that inventory.json does not keep' {
+        # The reader reads a group in full when its relevance could not be read, and the export's keep
+        # filter then drops it from inventory.json. Its PimLeftOut entry is about a group the document
+        # does not hold, so the README does not list it; the roster's memberCount still counts the
+        # member left out, since it is the live count of every group read in full.
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{ Id = 'g-pim'; DisplayName = 'role_sec_pim'; GroupType = 'Assigned'; IsAssignableToRole = $true }
+                [PSCustomObject]@{ Id = 'g-drop'; DisplayName = 'sec_unjudged'; GroupType = 'Assigned'; IsAssignableToRole = $false }
+            }
+            $script:KeptLeftOut = @()
+            Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+                param($IncludeId)
+                # g-pim is kept (role-assignable); g-drop is neither role-assignable nor eligible and
+                # carries no pimPolicy, so the keep filter drops it. g-drop had one member left out.
+                $G1 = [PSCustomObject]@{ displayName = 'role_sec_pim'; roleAssignable = $true; dynamic = $false; description = $null; members = @('person1@contoso.com'); eligibility = @() }
+                $G2 = [PSCustomObject]@{ displayName = 'sec_unjudged'; roleAssignable = $false; dynamic = $false; description = $null; members = @('person3@contoso.com'); eligibility = @() }
+                if ($IncludeId) {
+                    $G1 | Add-Member -NotePropertyName id -NotePropertyValue 'g-pim' -Force
+                    $G2 | Add-Member -NotePropertyName id -NotePropertyValue 'g-drop' -Force
+                }
+                [PSCustomObject]@{
+                    Groups     = @($G1, $G2)
+                    Unread     = @()
+                    Causes     = @()
+                    PimLeftOut = @($script:KeptLeftOut) + @([PSCustomObject]@{ GroupId = 'g-drop'; Group = 'sec_unjudged'; Members = 1; Owners = 0; Basis = 'Assignments' })
+                }
+            }
+        }
+
+        It 'writes no README bullet for it beside a kept group''s bullet, and still counts its left-out member in the roster' {
+            $script:KeptLeftOut = @([PSCustomObject]@{ GroupId = 'g-pim'; Group = 'role_sec_pim'; Members = 1; Owners = 0; Basis = 'Assignments' })
+            $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'pim-dropped-mixed') -Include Groups `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            # Reach proof: the keep filter dropped the group from inventory.json.
+            $Inv = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+            @($Inv.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_pim')
+            ((Get-SectionBullets -Section (Get-ReadmePimSection -BundlePath $Bundle.BundlePath)) -join "`n") |
+                Should -BeExactly '- `role_sec_pim`: 1 member(s) and 0 owner(s) left out -- an activation, or another active assignment that is not standing, such as a time-bound one, in PIM for Groups'
+            (Get-ReadmePimSection -BundlePath $Bundle.BundlePath) | Should -Not -Match 'sec_unjudged'
+            $Roster = @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
+            ($Roster | Where-Object { $_.displayName -eq 'sec_unjudged' }).memberCount | Should -Be 2
+            ($Roster | Where-Object { $_.displayName -eq 'role_sec_pim' }).memberCount | Should -Be 2
+        }
+
+        It 'says in the README that none was left out when it is the only group that left one out' {
+            $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'pim-dropped-only') -Include Groups `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            $Section = Get-ReadmePimSection -BundlePath $Bundle.BundlePath
+            ($Section -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. This export left no member or owner out as PIM for Groups access.'))
+            @(Get-SectionBullets -Section $Section).Count | Should -Be 0
+            $Section | Should -Not -Match 'sec_unjudged'
+            $Roster = @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
+            ($Roster | Where-Object { $_.displayName -eq 'sec_unjudged' }).memberCount | Should -Be 2
+            ($Roster | Where-Object { $_.displayName -eq 'role_sec_pim' }).memberCount | Should -Be 1
+        }
+    }
+
     It 'says in the README that none was left out when the reader left nobody out, also for a reader result without the list' {
         Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
             [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() }

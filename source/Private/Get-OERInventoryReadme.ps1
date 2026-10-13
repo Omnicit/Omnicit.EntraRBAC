@@ -52,9 +52,9 @@ function Get-OERInventoryReadme {
 
     .PARAMETER PimLeftOut
     The groups that left members or owners out as PIM for Groups access (the PimLeftOut list of
-    Get-OERInventoryGroup): one object per group with Group (the display name), Members and Owners
-    (how many were left out) and Basis ('Assignments' or 'Eligibility'). Pass an empty array when
-    there are none.
+    Get-OERInventoryGroup, which Export-OERInventory narrows to the groups inventory.json writes):
+    one object per group with Group (the display name), Members and Owners (how many were left out)
+    and Basis ('Assignments' or 'Eligibility'). Pass an empty array when there are none.
 
     .EXAMPLE
     Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @()

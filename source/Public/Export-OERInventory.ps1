@@ -68,11 +68,12 @@ function Export-OERInventory {
     either, a members collection that holds entries is written as an explicit null and an owners
     collection that holds entries is left out, both named in IncompleteReads, and the roster's
     memberCount is null for a group whose members are written as null. The generated README.md names
-    the groups concerned in a section "Members and owners left out as PIM for Groups access": for
-    each group, by name and never by principal, how many members and owners were left out and on
-    which basis, or the statement that none was. Leaving a member or owner out of the export changes
-    nothing in the tenant. The roster's memberCount counts the members written plus the members left
-    out, so it keeps meaning the group's live member count. The read needs the Microsoft Graph
+    the groups concerned that inventory.json writes in a section "Members and owners left out as PIM
+    for Groups access": for each group, by name and never by principal, how many members and owners
+    were left out and on which basis, or the statement that none was. Leaving a member or owner out
+    of the export changes nothing in the tenant. The roster's memberCount counts the members read,
+    the ones left out included, so it keeps meaning the group's live member count, also for a group
+    read in full that inventory.json does not keep. The read needs the Microsoft Graph
     permission PrivilegedAssignmentSchedule.Read.AzureADGroup (Get-OERRequiredScope lists it).
 
     Azure coverage is reported, not assumed. ScopesEnumerated is how many ARM scopes the walk found,
@@ -751,6 +752,18 @@ function Export-OERInventory {
                 $CountById[$LeftOutId] += [int]$LeftOut.Members
             }
         }
+        # The README counts what was left out of inventory.json, so it names only the groups
+        # inventory.json writes ($DetailedGroups). A group the reader read in full and the filter
+        # above did not keep -- one read in full only because its relevance could not be read, say --
+        # is not in the document, and listing it would say members were left out of a group the
+        # document does not hold. The roster join above keeps the unfiltered list on purpose: a
+        # roster row's memberCount is the live count of every group read in full. The ids are taken
+        # here, before the strip below removes them.
+        $KeptGroupIds = @{}
+        foreach ($KeptGroup in $DetailedGroups) {
+            if ($KeptGroup.PSObject.Properties.Name -contains 'id' -and $KeptGroup.id) { $KeptGroupIds[[string]$KeptGroup.id] = $true }
+        }
+        $ReadmePimLeftOut = @($PimLeftOut | Where-Object { $KeptGroupIds.ContainsKey([string]$_.GroupId) })
 
         # inventory.json staying id-free is a documented portability property of the export
         # (Get-OERInventory's own .DESCRIPTION) -- the reader's -IncludeId above exists purely to key
@@ -902,8 +915,8 @@ function Export-OERInventory {
             # mandatory, so a README that claims a complete read cannot be written by forgetting one.
             # The role policy selection's entries follow the Entra ID entries, as in the output object.
             # The members and owners the group reader left out as PIM for Groups access go into the
-            # README alone too, per group by name (BL-125).
-            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $PimLeftOut) |
+            # README alone too, per group by name, for the groups inventory.json writes (BL-125).
+            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut) |
                 Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
         }
         $WrittenFiles.Add('README.md')
