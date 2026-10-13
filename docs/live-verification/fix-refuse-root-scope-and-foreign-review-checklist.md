@@ -249,7 +249,7 @@ function Get-S112ReviewShape {
     }
     [PSCustomObject]@{
         Text            = ConvertTo-Json -InputObject $Shape -Depth 5 -Compress
-        ReviewsTheGroup = ($Shape.scopeQuery -ceq "/groups/$($Ids.GroupId)/transitiveMembers")
+        ReviewsTheGroup = ($Shape.scopeQuery -cmatch ('^(/(v1\.0|beta))?/groups/' + [regex]::Escape($Ids.GroupId) + '/transitiveMembers$'))
         ReviewsPackage  = ($Shape.scopeQuery -match [regex]::Escape($Ids.PackageId)) -and ($Shape.scopeQuery -match [regex]::Escape($Ids.PolicyId))
         Description     = $Shape.descriptionForAdmins
         LastModified    = $Shape.lastModifiedDateTime
@@ -411,6 +411,7 @@ $D = Get-S112Definition -Name $Review
 $S = Get-S112ReviewShape -Definition $D -Ids $Ids
 [System.IO.File]::WriteAllText((Join-Path $Raw 'review-before.json'), $S.Text, [System.Text.UTF8Encoding]::new($false))
 Write-OerLiveStep "1.1 $Review exists: $($null -ne $D); reviews the members of $($GroupName): $($S.ReviewsTheGroup); reviews $($Package): $($S.ReviewsPackage)"
+Write-OerLiveStep "1.1 scope query as Microsoft Graph reads it back: $([string]$D['scope']['query'])"
 Write-OerLiveStep "1.1 description: $($S.Description)"
 Write-OerLiveStep "1.1 state recorded under raw\s112 (lastModifiedDateTime present: $([bool]$S.LastModified))"
 Disconnect-OerLive
@@ -434,8 +435,8 @@ Disconnect-OerLive
 ```
 
 **Expect:** one row `accessReviews | oer-s112-review | Failed | Access review 'oer-s112-review' in the
-tenant does not review an access package (its scope is '/groups/` + the group's id +
-`/transitiveMembers'), so it is not the review this entry declares for access package 'oer-s112-ap'
+tenant does not review an access package (its scope is '` + the group's member query as 1.1 printed
+it + `'), so it is not the review this entry declares for access package 'oer-s112-ap'
 and assignment policy 'oer-s112-policy'. Nothing was written. Access review display names are not
 unique: give the entry or the review in the tenant another display name.`; `1.2 plan error:
 AccessReviewScopeMismatch,Invoke-OERStructure:` with the same message; `errors of
