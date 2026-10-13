@@ -346,7 +346,7 @@ function Invoke-S112Apply {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -369,13 +369,31 @@ lines.
 clone; a `False` on the last two lines -- build the worktree first (`./build.ps1 -Tasks build`), never
 while the gate runs.
 
-Result:
+Result: 2026-10-13 20:16 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree was on this branch at d6fb45f with 0 tracked changes, and its build (built from 9216e8b, the last commit under source/) carries every mark of A and B. The later commits of the branch change only this checklist.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s112] The module loads from a worktree that is not the main clone: True
+[oer-s112] Main clone: branch main; HEAD 491e72e
+[oer-s112] Worktree: branch fix/refuse-root-scope-and-foreign-review; HEAD d6fb45f docs: add the live checklist for the root scope and a review of another package; tracked changes: 0
+[oer-s112] The worktree's build carries A: root predicate True; information tag True; README section True; URI spelling check True
+[oer-s112] The worktree's build carries B: target check True; refusal id True; policy lookup True
+RUNNER: check S.1 exit code 0; started 2026-10-13T20:05:51Z; took 3 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -389,11 +407,35 @@ Disconnect-OerLive
 build: True`.
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), or `False`.
 
-Result:
+Result: 2026-10-13 20:16 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only, certificate); identity check passed; the module is the worktree's build (1.2.1).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] The module is the worktree's build: True; version 1.2.1
+RUNNER: check 0.1 exit code 0; started 2026-10-13T20:06:03Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 0.2. The permissions this file needs
 
-- [ ] **0.2** `oer-live-cc` holds both Microsoft Graph permissions; otherwise the run stops here.
+- [x] **0.2** `oer-live-cc` holds both Microsoft Graph permissions; otherwise the run stops here.
 
 ```powershell
 Connect-OerLive -Arm
@@ -408,11 +450,36 @@ Disconnect-OerLive
 **Expect:** `oer-live-cc holds AccessReview.ReadWrite.All: True` and `... EntitlementManagement.ReadWrite.All: True`.
 **Failure looks like:** a `False` and the STOP line -- stop the run; nothing has been written.
 
-Result:
+Result: 2026-10-13 20:16 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. oer-live-cc holds AccessReview.ReadWrite.All and EntitlementManagement.ReadWrite.All; no permission was added or removed.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.2 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+RUNNER: check 0.2 exit code 0; started 2026-10-13T20:06:11Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 0.3. The prerequisite objects
 
-- [ ] **0.3** The plan writes nothing; the first run creates the six objects; a second run writes nothing.
+- [x] **0.3** The plan writes nothing; the first run creates the six objects; a second run writes nothing.
 
 ```powershell
 $Script = Join-Path $env:OER_LIVE_DIR 'Initialize-OerS112Prereq.ps1'
@@ -430,13 +497,394 @@ second finds all six (`... present`) and writes nothing (`written to the tenant:
 **Failure looks like:** a `Refusing to run:` line or exit code 1 -- read the reason; nothing past it
 was written.
 
-Result:
+Result: 2026-10-13 20:16 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, after two fixes to the prerequisite script, both refusals before any write. Run 1: the plan wrote nothing; the first -Unattended run wrote the baseline and created the six objects (written to the tenant: True); the second refused, since the script expected the group review's scope query as it wrote it, while Microsoft Graph reads it back as /v1.0/groups/ + id + /transitiveMembers/microsoft.graph.user (measured in 1.1). Runs 2 and 3: the same refusal until the script and the checklist accepted the version prefix and the type cast; then a refusal for 1 role assignment exactly at oer-s112-rg, which the read-only diagnosis D.1 shows does not exist (every assignment listed there is inherited from the subscription or a management group): the script's reader returned a wrapped empty list that its caller wrapped again, so @(@()).Count read 1. Run 4, with the reader returning unwrapped rows: all three runs find the six objects and write nothing (written to the tenant: False), exit code 0. No object outside the prefix was touched.
+
+=== Run 1 (creation; the second -Unattended run refused on the scope query) ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.3 ===
+[oer-s112] === Initialize-OerS112Prereq.ps1 -WhatIf ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s112\prereq-20261013-200627Z.log".
+[oer-s112] Mode: CREATE or complete. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s112-' is left.
+[oer-s112] Found: oer-s112-group False; oer-s112-catalog False; oer-s112-ap False; oer-s112-policy False; oer-s112-rg False; oer-s112-review False; prefixed access reviews: 0.
+[oer-s112] No baseline yet: it is written now, before the first write to the tenant (groups 97, catalogs 5, access packages 6, access review definitions 6; oer-s112-rg exists: False).
+What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s112\baseline-s112.json".
+What if: Performing the operation "Create a security group with no member (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s112-group".
+What if: Performing the operation "Create a catalog (Graph v1.0 POST entitlementManagement/catalogs: published, not visible to external users)" on target "oer-s112-catalog".
+What if: Performing the operation "Create a hidden access package (Graph v1.0 POST entitlementManagement/accessPackages: isHidden, no resource role)" on target "oer-s112-ap".
+What if: Performing the operation "Create an assignment policy through which only an administrator assigns (Graph v1.0 POST entitlementManagement/assignmentPolicies: allowedTargetScope notSpecified, no requestor, no approval, no expiration)" on target "oer-s112-policy".
+What if: Performing the operation "Create the resource group in the test subscription (Azure Resource Manager PUT, location 'swedencentral', tag purpose 'Omnicit.EntraRBAC live verification (oer-s112)')" on target "oer-s112-rg".
+What if: Performing the operation "Create an access review of the members of oer-s112-group (Graph v1.0 POST accessReviews/definitions: self review, quarterly from 14 days after the run, 1-day instances)" on target "oer-s112-review".
+[oer-s112] Summary: oer-s112-group absent; oer-s112-catalog absent; oer-s112-ap absent; oer-s112-policy absent; oer-s112-rg absent; oer-s112-review absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s112] WhatIf: nothing was created, removed or written.
+[oer-s112] Done.
+[oer-s112] exit code: 0
+[oer-s112] === Initialize-OerS112Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s112] Transcript (redacted): raw\s112\prereq-20261013-200634Z.log; OerLive 1.0.3.
+[oer-s112] Mode: CREATE or complete. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s112-' is left.
+[oer-s112] Found: oer-s112-group False; oer-s112-catalog False; oer-s112-ap False; oer-s112-policy False; oer-s112-rg False; oer-s112-review False; prefixed access reviews: 0.
+[oer-s112] No baseline yet: it is written now, before the first write to the tenant (groups 97, catalogs 5, access packages 6, access review definitions 6; oer-s112-rg exists: False).
+[oer-s112] Wrote the baseline raw\s112\baseline-s112.json and read it back.
+[oer-s112] Created group oer-s112-group: 201.
+[oer-s112] Recorded the id of oer-s112-group under raw\s112 (not printed).
+[oer-s112] oer-s112-group resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s112] oer-s112-group resolves by its display name: converged after 2 read(s), 2.2 s.
+[oer-s112] Created catalog oer-s112-catalog: 201.
+[oer-s112] oer-s112-catalog is readable by its id: converged after 1 read(s), 0.1 s.
+[oer-s112] Created access package oer-s112-ap: 201 after 1 attempt(s).
+[oer-s112] oer-s112-ap is readable by its id: converged after 1 read(s), 0.1 s.
+[oer-s112] Created policy oer-s112-policy: 201 after 1 attempt(s).
+[oer-s112] oer-s112-policy is listed on oer-s112-ap: converged after 1 read(s), 0.1 s.
+[oer-s112] Created resource group oer-s112-rg.
+[oer-s112] Recorded the id of oer-s112-review under raw\s112 (not printed).
+[oer-s112] Created access review oer-s112-review: 201 after 1 attempt(s).
+[oer-s112] oer-s112-review is listed: converged after 1 read(s), 0.5 s.
+[oer-s112] Summary: oer-s112-group present; oer-s112-catalog present; oer-s112-ap present; oer-s112-policy present; oer-s112-rg present; oer-s112-review present; written to the tenant: True.
+[oer-s112] Done.
+[oer-s112] exit code: 0
+[oer-s112] === Initialize-OerS112Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s112] Transcript (redacted): raw\s112\prereq-20261013-200647Z.log; OerLive 1.0.3.
+[oer-s112] Mode: CREATE or complete. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] Refusing to run: oer-s112-review exists but does not review the members of oer-s112-group. Nothing was written.
+[oer-s112] exit code: 1
+RUNNER: check 0.3 exit code 0; started 2026-10-13T20:06:24Z; took 29 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Run 2 (version prefix accepted; refused on the type cast) ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.3 ===
+[oer-s112] === Initialize-OerS112Prereq.ps1 -WhatIf ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s112\prereq-20261013-200815Z.log".
+[oer-s112] Mode: CREATE or complete. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] Refusing to run: oer-s112-review exists but does not review the members of oer-s112-group. Nothing was written.
+[oer-s112] exit code: 1
+[oer-s112] === Initialize-OerS112Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s112] Transcript (redacted): raw\s112\prereq-20261013-200822Z.log; OerLive 1.0.3.
+[oer-s112] Mode: CREATE or complete. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] Refusing to run: oer-s112-review exists but does not review the members of oer-s112-group. Nothing was written.
+[oer-s112] exit code: 1
+[oer-s112] === Initialize-OerS112Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s112] Transcript (redacted): raw\s112\prereq-20261013-200831Z.log; OerLive 1.0.3.
+[oer-s112] Mode: CREATE or complete. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] Refusing to run: oer-s112-review exists but does not review the members of oer-s112-group. Nothing was written.
+[oer-s112] exit code: 1
+RUNNER: check 0.3 exit code 0; started 2026-10-13T20:08:13Z; took 24 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Run 3 (type cast accepted; refused on the wrapped empty list) ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.3 ===
+[oer-s112] === Initialize-OerS112Prereq.ps1 -WhatIf ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s112\prereq-20261013-200919Z.log".
+[oer-s112] Mode: CREATE or complete. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] Found: oer-s112-group True; oer-s112-catalog True; oer-s112-ap True; oer-s112-policy True; oer-s112-rg True; oer-s112-review True; prefixed access reviews: 1.
+[oer-s112] Refusing to run: 1 role assignment(s) exist exactly at oer-s112-rg (an earlier run's leftovers, or not this step's); run -Teardown first. Nothing was written.
+[oer-s112] exit code: 1
+[oer-s112] === Initialize-OerS112Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s112] Transcript (redacted): raw\s112\prereq-20261013-200926Z.log; OerLive 1.0.3.
+[oer-s112] Mode: CREATE or complete. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] Found: oer-s112-group True; oer-s112-catalog True; oer-s112-ap True; oer-s112-policy True; oer-s112-rg True; oer-s112-review True; prefixed access reviews: 1.
+[oer-s112] Refusing to run: 1 role assignment(s) exist exactly at oer-s112-rg (an earlier run's leftovers, or not this step's); run -Teardown first. Nothing was written.
+[oer-s112] exit code: 1
+[oer-s112] === Initialize-OerS112Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s112] Transcript (redacted): raw\s112\prereq-20261013-200933Z.log; OerLive 1.0.3.
+[oer-s112] Mode: CREATE or complete. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] Found: oer-s112-group True; oer-s112-catalog True; oer-s112-ap True; oer-s112-policy True; oer-s112-rg True; oer-s112-review True; prefixed access reviews: 1.
+[oer-s112] Refusing to run: 1 role assignment(s) exist exactly at oer-s112-rg (an earlier run's leftovers, or not this step's); run -Teardown first. Nothing was written.
+[oer-s112] exit code: 1
+RUNNER: check 0.3 exit code 0; started 2026-10-13T20:09:17Z; took 22 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Diagnosis D.1 (read only): the role assignments listed at oer-s112-rg ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK D.1 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] D.1 assignment: exactly at the resource group: False; scope depth: 2; role: Reader; principalType: Group; principal is oer-live-cc: False; principal is oer-s112-group: False; created by oer-live-cc: False; createdOn: 06/22/2026 20:55:27; description: TEst
+[oer-s112] D.1 assignment: exactly at the resource group: False; scope depth: 2; role: Storage Blob Data Contributor; principalType: User; principal is oer-live-cc: False; principal is oer-s112-group: False; created by oer-live-cc: False; createdOn: 08/12/2026 07:27:35; description: probe
+[oer-s112] D.1 assignment: exactly at the resource group: False; scope depth: 2; role: Owner; principalType: ServicePrincipal; principal is oer-live-cc: True; principal is oer-s112-group: False; created by oer-live-cc: False; createdOn: 09/28/2026 07:56:52; description: Omnicit.EntraRBAC live verification: Claude Code identity (Initialize-OerCcIdentity.ps1)
+[oer-s112] D.1 assignment: exactly at the resource group: False; scope depth: 2; role: Owner; principalType: User; principal is oer-live-cc: False; principal is oer-s112-group: False; created by oer-live-cc: False; createdOn: 12/13/2019 13:09:25; description: 
+[oer-s112] D.1 assignment: exactly at the resource group: False; scope depth: 2; role: Owner; principalType: User; principal is oer-live-cc: False; principal is oer-s112-group: False; created by oer-live-cc: False; createdOn: 12/13/2019 13:09:25; description: 
+[oer-s112] D.1 assignment: exactly at the resource group: False; scope depth: 2; role: Reader; principalType: ServicePrincipal; principal is oer-live-cc: False; principal is oer-s112-group: False; created by oer-live-cc: False; createdOn: 10/15/2019 08:25:03; description: 
+[oer-s112] D.1 assignment: exactly at the resource group: False; scope depth: 4; role: Owner; principalType: User; principal is oer-live-cc: False; principal is oer-s112-group: False; created by oer-live-cc: False; createdOn: 05/29/2020 06:22:37; description: 
+[oer-s112] D.1 assignment: exactly at the resource group: False; scope depth: 4; role: Owner; principalType: User; principal is oer-live-cc: False; principal is oer-s112-group: False; created by oer-live-cc: False; createdOn: 05/29/2020 06:24:05; description: 
+[oer-s112] D.1 assignment: exactly at the resource group: False; scope depth: 4; role: User Access Administrator; principalType: User; principal is oer-live-cc: False; principal is oer-s112-group: False; created by oer-live-cc: False; createdOn: 05/29/2020 06:21:43; description: pr 7 live test
+[oer-s112] D.1 assignment: exactly at the resource group: False; scope depth: 4; role: User Access Administrator; principalType: User; principal is oer-live-cc: False; principal is oer-s112-group: False; created by oer-live-cc: False; createdOn: 05/29/2020 06:21:43; description: 
+[oer-s112] D.1 assignment: exactly at the resource group: False; scope depth: 4; role: User Access Administrator; principalType: User; principal is oer-live-cc: False; principal is oer-s112-group: False; created by oer-live-cc: False; createdOn: 05/29/2020 06:21:42; description: 
+[oer-s112] D.1 assignment: exactly at the resource group: False; scope depth: 4; role: Log Analytics Contributor; principalType: ServicePrincipal; principal is oer-live-cc: False; principal is oer-s112-group: False; created by oer-live-cc: False; createdOn: 05/15/2026 18:47:59; description:
+RUNNER: check D.1 exit code 0; started 2026-10-13T20:10:06Z; took 10 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Run 4 (pass) ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.3 ===
+[oer-s112] === Initialize-OerS112Prereq.ps1 -WhatIf ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s112\prereq-20261013-201044Z.log".
+[oer-s112] Mode: CREATE or complete. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] Found: oer-s112-group True; oer-s112-catalog True; oer-s112-ap True; oer-s112-policy True; oer-s112-rg True; oer-s112-review True; prefixed access reviews: 1.
+[oer-s112] The baseline exists (groups 97, catalogs 5, access packages 6, access review definitions 6 when it was written).
+[oer-s112] Group oer-s112-group exists.
+[oer-s112] Catalog oer-s112-catalog exists.
+[oer-s112] Access package oer-s112-ap exists.
+[oer-s112] Policy oer-s112-policy exists.
+[oer-s112] Resource group oer-s112-rg exists.
+[oer-s112] Access review oer-s112-review (a group review of oer-s112-group) exists.
+[oer-s112] Summary: oer-s112-group present; oer-s112-catalog present; oer-s112-ap present; oer-s112-policy present; oer-s112-rg present; oer-s112-review present; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s112] WhatIf: nothing was created, removed or written.
+[oer-s112] Done.
+[oer-s112] exit code: 0
+[oer-s112] === Initialize-OerS112Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s112] Transcript (redacted): raw\s112\prereq-20261013-201050Z.log; OerLive 1.0.3.
+[oer-s112] Mode: CREATE or complete. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] Found: oer-s112-group True; oer-s112-catalog True; oer-s112-ap True; oer-s112-policy True; oer-s112-rg True; oer-s112-review True; prefixed access reviews: 1.
+[oer-s112] The baseline exists (groups 97, catalogs 5, access packages 6, access review definitions 6 when it was written).
+[oer-s112] Group oer-s112-group exists.
+[oer-s112] Catalog oer-s112-catalog exists.
+[oer-s112] Access package oer-s112-ap exists.
+[oer-s112] Policy oer-s112-policy exists.
+[oer-s112] Resource group oer-s112-rg exists.
+[oer-s112] Access review oer-s112-review (a group review of oer-s112-group) exists.
+[oer-s112] Summary: oer-s112-group present; oer-s112-catalog present; oer-s112-ap present; oer-s112-policy present; oer-s112-rg present; oer-s112-review present; written to the tenant: False.
+[oer-s112] Done.
+[oer-s112] exit code: 0
+[oer-s112] === Initialize-OerS112Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s112] Transcript (redacted): raw\s112\prereq-20261013-201057Z.log; OerLive 1.0.3.
+[oer-s112] Mode: CREATE or complete. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] Found: oer-s112-group True; oer-s112-catalog True; oer-s112-ap True; oer-s112-policy True; oer-s112-rg True; oer-s112-review True; prefixed access reviews: 1.
+[oer-s112] The baseline exists (groups 97, catalogs 5, access packages 6, access review definitions 6 when it was written).
+[oer-s112] Group oer-s112-group exists.
+[oer-s112] Catalog oer-s112-catalog exists.
+[oer-s112] Access package oer-s112-ap exists.
+[oer-s112] Policy oer-s112-policy exists.
+[oer-s112] Resource group oer-s112-rg exists.
+[oer-s112] Access review oer-s112-review (a group review of oer-s112-group) exists.
+[oer-s112] Summary: oer-s112-group present; oer-s112-catalog present; oer-s112-ap present; oer-s112-policy present; oer-s112-rg present; oer-s112-review present; written to the tenant: False.
+[oer-s112] Done.
+[oer-s112] exit code: 0
+RUNNER: check 0.3 exit code 0; started 2026-10-13T20:10:41Z; took 21 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 1. A group review that carries a package review's name is refused
 
 ### 1.1. The group review before
 
-- [ ] **1.1** `oer-s112-review` exists and reviews the members of `oer-s112-group`; its state is recorded.
+- [x] **1.1** `oer-s112-review` exists and reviews the members of `oer-s112-group`; its state is recorded.
 
 ```powershell
 Connect-OerLive -Arm
@@ -455,11 +903,38 @@ Disconnect-OerLive
 **Expect:** `exists: True; reviews the members of oer-s112-group: True; reviews oer-s112-ap: False`.
 **Failure looks like:** `False` on the first two -- run 0.3 again.
 
-Result:
+Result: 2026-10-13 20:16 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. oer-s112-review exists, reviews the members of oer-s112-group and not oer-s112-ap; Microsoft Graph reads its scope query back as /v1.0/groups/ + the group's id + /transitiveMembers/microsoft.graph.user; its state was recorded under raw\s112 before 1.2. (A first read-only run, tagged diag, printed 'reviews the members of oer-s112-group: False' before the checklist accepted that form; it wrote nothing to the tenant, and this run's record replaced its own.)
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 1.1 oer-s112-review exists: True; reviews the members of oer-s112-group: True; reviews oer-s112-ap: False
+[oer-s112] 1.1 scope query as Microsoft Graph reads it back: /v1.0/groups/00000000-0000-0000-0000-000000000001/transitiveMembers/microsoft.graph.user
+[oer-s112] 1.1 description: Omnicit.EntraRBAC live verification (oer-s112-): a group review that carries the display name of a package review in the checklist's document.
+[oer-s112] 1.1 state recorded under raw\s112 (lastModifiedDateTime present: True)
+RUNNER: check 1.1 exit code 0; started 2026-10-13T20:11:11Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.2. The plan refuses it
 
-- [ ] **1.2** A document declaring a PACKAGE review named `oer-s112-review` plans `Failed` with `AccessReviewScopeMismatch`, and sends no write.
+- [x] **1.2** A document declaring a PACKAGE review named `oer-s112-review` plans `Failed` with `AccessReviewScopeMismatch`, and sends no write.
 
 ```powershell
 Connect-OerLive -Arm
@@ -479,11 +954,40 @@ Invoke-OERStructure: 1`; `Microsoft Graph requests: N, writes: 0`; no `What if:`
 **Failure looks like:** `Skipped | would update access review` -- the branch's check did not run; or
 any Graph write.
 
-Result:
+Result: 2026-10-13 20:16 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The plan reports one Failed row with the refusal text, the error AccessReviewScopeMismatch,Invoke-OERStructure, no What if line and no warning; one Microsoft Graph request (the definition listing) and no write -- the group review is refused before any package, policy or reviewer lookup.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 1.2 plan rows: 1
+[oer-s112] 1.2 plan row: accessReviews | oer-s112-review | Failed | Access review 'oer-s112-review' in the tenant does not review an access package (its scope is '/v1.0/groups/00000000-0000-0000-0000-000000000001/transitiveMembers/microsoft.graph.user'), so it is not the review this entry declares for access package 'oer-s112-ap' and assignment policy 'oer-s112-policy'. Nothing was written. Access review display names are not unique: give the entry or the review in the tenant another display name.
+[oer-s112] 1.2 plan warnings: 0
+[oer-s112] 1.2 plan error: AccessReviewScopeMismatch,Invoke-OERStructure: Access review 'oer-s112-review' in the tenant does not review an access package (its scope is '/v1.0/groups/00000000-0000-0000-0000-000000000001/transitiveMembers/microsoft.graph.user'), so it is not the review this entry declares for access package 'oer-s112-ap' and assignment policy 'oer-s112-policy'. Nothing was written. Access review display names are not unique: give the entry or the review in the tenant another display name.
+[oer-s112] 1.2 plan errors of Invoke-OERStructure: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 1.2 plan sent: token requests: 0; Microsoft Graph requests: 1, writes: 0; Azure Resource Manager requests: 0, writes: 0, at the root scope: 0
+RUNNER: check 1.2 exit code 0; started 2026-10-13T20:11:18Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.3. The run refuses it and writes nothing
 
-- [ ] **1.3** The same document, applied, is `Failed` with `AccessReviewScopeMismatch`, and sends no write.
+- [x] **1.3** The same document, applied, is `Failed` with `AccessReviewScopeMismatch`, and sends no write.
 
 ```powershell
 Connect-OerLive -Arm
@@ -496,11 +1000,40 @@ Disconnect-OerLive
 **Expect:** the same row and error as 1.2; `writes: 0` for Microsoft Graph.
 **Failure looks like:** `Updated`, or a `PUT` among the writes -- the defect this branch fixes (BL-127).
 
-Result:
+Result: 2026-10-13 20:16 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The run gives the same Failed row and error as the plan, one Microsoft Graph request and no write.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.3 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 1.3 run rows: 1
+[oer-s112] 1.3 run row: accessReviews | oer-s112-review | Failed | Access review 'oer-s112-review' in the tenant does not review an access package (its scope is '/v1.0/groups/00000000-0000-0000-0000-000000000001/transitiveMembers/microsoft.graph.user'), so it is not the review this entry declares for access package 'oer-s112-ap' and assignment policy 'oer-s112-policy'. Nothing was written. Access review display names are not unique: give the entry or the review in the tenant another display name.
+[oer-s112] 1.3 run warnings: 0
+[oer-s112] 1.3 run error: AccessReviewScopeMismatch,Invoke-OERStructure: Access review 'oer-s112-review' in the tenant does not review an access package (its scope is '/v1.0/groups/00000000-0000-0000-0000-000000000001/transitiveMembers/microsoft.graph.user'), so it is not the review this entry declares for access package 'oer-s112-ap' and assignment policy 'oer-s112-policy'. Nothing was written. Access review display names are not unique: give the entry or the review in the tenant another display name.
+[oer-s112] 1.3 run errors of Invoke-OERStructure: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 1.3 run sent: token requests: 0; Microsoft Graph requests: 1, writes: 0; Azure Resource Manager requests: 0, writes: 0, at the root scope: 0
+RUNNER: check 1.3 exit code 0; started 2026-10-13T20:11:25Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.4. The group review is unchanged
 
-- [ ] **1.4** Read back, `oer-s112-review` is exactly as 1.1 recorded it.
+- [x] **1.4** Read back, `oer-s112-review` is exactly as 1.1 recorded it.
 
 ```powershell
 Connect-OerLive -Arm
@@ -517,13 +1050,93 @@ Disconnect-OerLive
 **Expect:** `reviews the members of oer-s112-group: True`, the description of 1.1, every field `equal True` (settings and reviewers compared with their keys in one order) and `equal to 1.1: True`.
 **Failure looks like:** `False` -- a write reached the group review.
 
-Result:
+Result: 2026-10-13 20:16 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, after a fix to the checklist's comparison. The first run reported 'equal to 1.1: False' with no write in 1.2 and 1.3; the read-only diagnosis D.2 showed every field equal, lastModifiedDateTime unchanged, and the settings holding the same values with their keys in another order: Microsoft Graph's answer is a hashtable whose keys enumerate in no fixed order. The checklist now compares field by field, settings and reviewers with their keys in one order, against 1.1's own record (not recorded again): every field equal, the group review unchanged.
+
+=== Run 1 (whole-string comparison) ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.4 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 1.4 reviews the members of oer-s112-group: True; description: Omnicit.EntraRBAC live verification (oer-s112-): a group review that carries the display name of a package review in the checklist's document.
+[oer-s112] 1.4 descriptions, scope, reviewers, settings and lastModifiedDateTime equal to 1.1: False
+RUNNER: check 1.4 exit code 0; started 2026-10-13T20:11:32Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Diagnosis D.2 (read only): which field differs ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK D.2 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] D.2 descriptionForAdmins: equal True
+[oer-s112] D.2 descriptionForReviewers: equal True
+[oer-s112] D.2 scopeQuery: equal True
+[oer-s112] D.2 reviewers: equal True
+[oer-s112] D.2 settings: equal False
+[oer-s112] D.2 lastModifiedDateTime: equal True
+[oer-s112] D.2 lastModifiedDateTime at 1.1: 10/13/2026 20:06:46; now: 10/13/2026 20:06:46
+[oer-s112] D.2 settings at 1.1: {"decisionHistoriesForReviewersEnabled":false,"recurrence":{"pattern":{"dayOfMonth":0,"index":"first","daysOfWeek":[],"interval":3,"firstDayOfWeek":"sunday","month":0,"type":"absoluteMonthly"},"range":{"numberOfOccurrences":0,"recurrenceTimeZone":null,"startDate":"2026-10-27","type":"noEnd","endDate":"9999-12-31"}},"justificationRequiredOnApproval":false,"mailNotificationsEnabled":false,"recommendationsEnabled":false,"instanceDurationInDays":1,"reminderNotificationsEnabled":false,"autoApplyDecisionsEnabled":false,"defaultDecisionEnabled":false,"recommendationInsightSettings":[],"applyActions":[{"@odata.type":"#microsoft.graph.removeAccessApplyAction"}],"recommendationLookBackDuration":null,"defaultDecision":"None"}
+[oer-s112] D.2 settings now: {"defaultDecisionEnabled":false,"applyActions":[{"@odata.type":"#microsoft.graph.removeAccessApplyAction"}],"justificationRequiredOnApproval":false,"recommendationInsightSettings":[],"defaultDecision":"None","autoApplyDecisionsEnabled":false,"recurrence":{"range":{"type":"noEnd","endDate":"9999-12-31","recurrenceTimeZone":null,"startDate":"2026-10-27","numberOfOccurrences":0},"pattern":{"daysOfWeek":[],"type":"absoluteMonthly","index":"first","month":0,"interval":3,"dayOfMonth":0,"firstDayOfWeek":"sunday"}},"recommendationLookBackDuration":null,"mailNotificationsEnabled":false,"recommendationsEnabled":false,"instanceDurationInDays":1,"reminderNotificationsEnabled":false,"decisionHistoriesForReviewersEnabled":false}
+RUNNER: check D.2 exit code 0; started 2026-10-13T20:11:56Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Run 2 (field by field, keys in one order) ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.4 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 1.4 reviews the members of oer-s112-group: True; description: Omnicit.EntraRBAC live verification (oer-s112-): a group review that carries the display name of a package review in the checklist's document.
+[oer-s112] 1.4 descriptionForAdmins: equal True
+[oer-s112] 1.4 descriptionForReviewers: equal True
+[oer-s112] 1.4 scopeQuery: equal True
+[oer-s112] 1.4 reviewers: equal True
+[oer-s112] 1.4 settings: equal True
+[oer-s112] 1.4 lastModifiedDateTime: equal True
+[oer-s112] 1.4 descriptions, scope, reviewers, settings and lastModifiedDateTime equal to 1.1: True
+RUNNER: check 1.4 exit code 0; started 2026-10-13T20:12:59Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 2. A package review with the right package is updated as before
 
 ### 2.1. The package review is created through the document
 
-- [ ] **2.1** A document declaring `oer-s112-review-pkg` for `oer-s112-ap` and `oer-s112-policy` creates it: `Created`, one POST.
+- [x] **2.1** A document declaring `oer-s112-review-pkg` for `oer-s112-ap` and `oer-s112-policy` creates it: `Created`, one POST.
 
 ```powershell
 Connect-OerLive -Arm
@@ -540,11 +1153,41 @@ Disconnect-OerLive
 **Expect:** `accessReviews | oer-s112-review-pkg | Created`; Graph writes 1 (`POST`); `reviews oer-s112-ap and oer-s112-policy: True`.
 **Failure looks like:** `Failed` -- read the Detail.
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Created, with one Microsoft Graph POST; the new review reviews oer-s112-ap and oer-s112-policy; description version 1.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 2.1 run rows: 1
+[oer-s112] 2.1 run row: accessReviews | oer-s112-review-pkg | Created | created access review 'oer-s112-review-pkg' (recurrence: Quarterly)
+[oer-s112] 2.1 run warnings: 0
+[oer-s112] 2.1 run errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 2.1 run sent: token requests: 0; Microsoft Graph requests: 5, writes: 1 (POST); Azure Resource Manager requests: 0, writes: 0, at the root scope: 0
+[oer-s112] oer-s112-review-pkg is listed: converged after 1 read(s), 0.5 s.
+[oer-s112] 2.1 oer-s112-review-pkg reviews oer-s112-ap and oer-s112-policy: True; description: Omnicit.EntraRBAC live verification (oer-s112-): version 1.
+RUNNER: check 2.1 exit code 0; started 2026-10-13T20:13:14Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.2. A change of description, by name: planned, then Updated
 
-- [ ] **2.2** With the package and policy given by NAME, a changed description plans an update (no write) and the run updates it (one PUT).
+- [x] **2.2** With the package and policy given by NAME, a changed description plans an update (no write) and the run updates it (one PUT).
 
 ```powershell
 Connect-OerLive -Arm
@@ -565,11 +1208,47 @@ run `Updated | updated access review 'oer-s112-review-pkg' (descriptionForAdmins
 **Failure looks like:** `Failed` with `AccessReviewScopeMismatch` -- the check refused the review it should
 accept.
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With the package and policy given by name, the plan reports Skipped 'would update ... (descriptionForAdmins=... version 2.)' with no write, and the run Updated with one PUT; read back, the description is version 2. Updated as before for the review of the declared package and policy.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.2 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Update access review definition" on target "oer-s112-review-pkg".
+[oer-s112] 2.2 plan rows: 1
+[oer-s112] 2.2 plan row: accessReviews | oer-s112-review-pkg | Skipped | would update access review 'oer-s112-review-pkg' (descriptionForAdmins=Omnicit.EntraRBAC live verification (oer-s112-): version 2.)
+[oer-s112] 2.2 plan warnings: 0
+[oer-s112] 2.2 plan errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 2.2 plan sent: token requests: 0; Microsoft Graph requests: 3, writes: 0; Azure Resource Manager requests: 0, writes: 0, at the root scope: 0
+[oer-s112] 2.2 run rows: 1
+[oer-s112] 2.2 run row: accessReviews | oer-s112-review-pkg | Updated | updated access review 'oer-s112-review-pkg' (descriptionForAdmins=Omnicit.EntraRBAC live verification (oer-s112-): version 2.)
+[oer-s112] 2.2 run warnings: 0
+[oer-s112] 2.2 run errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 2.2 run sent: token requests: 0; Microsoft Graph requests: 6, writes: 1 (PUT); Azure Resource Manager requests: 0, writes: 0, at the root scope: 0
+[oer-s112] oer-s112-review-pkg carries version 2: converged after 1 read(s), 0.8 s.
+[oer-s112] 2.2 after the run: description: Omnicit.EntraRBAC live verification (oer-s112-): version 2.
+RUNNER: check 2.2 exit code 0; started 2026-10-13T20:13:23Z; took 8 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.3. The same document twice more: only Unchanged (G8)
 
-- [ ] **2.3** Two more runs of 2.2's document report `Unchanged` and write nothing.
+- [x] **2.3** Two more runs of 2.2's document report `Unchanged` and write nothing.
 
 ```powershell
 Connect-OerLive -Arm
@@ -583,11 +1262,44 @@ Disconnect-OerLive
 **Expect:** each run one row `Unchanged | access review 'oer-s112-review-pkg' already matches`, writes 0.
 **Failure looks like:** `Updated` on a run -- no convergence.
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (G8). Two more runs: Unchanged, no write each.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.3 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 2.3 run 1 rows: 1
+[oer-s112] 2.3 run 1 row: accessReviews | oer-s112-review-pkg | Unchanged | access review 'oer-s112-review-pkg' already matches
+[oer-s112] 2.3 run 1 warnings: 0
+[oer-s112] 2.3 run 1 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 2.3 run 1 sent: token requests: 0; Microsoft Graph requests: 3, writes: 0; Azure Resource Manager requests: 0, writes: 0, at the root scope: 0
+[oer-s112] 2.3 run 2 rows: 1
+[oer-s112] 2.3 run 2 row: accessReviews | oer-s112-review-pkg | Unchanged | access review 'oer-s112-review-pkg' already matches
+[oer-s112] 2.3 run 2 warnings: 0
+[oer-s112] 2.3 run 2 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 2.3 run 2 sent: token requests: 0; Microsoft Graph requests: 3, writes: 0; Azure Resource Manager requests: 0, writes: 0, at the root scope: 0
+RUNNER: check 2.3 exit code 0; started 2026-10-13T20:13:33Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.4. The package and the policy by their ids: Unchanged
 
-- [ ] **2.4** The same entry with `accessPackage` and `assignmentPolicy` given as their GUIDs is `Unchanged`, with no write.
+- [x] **2.4** The same entry with `accessPackage` and `assignmentPolicy` given as their GUIDs is `Unchanged`, with no write.
 
 ```powershell
 Connect-OerLive -Arm
@@ -601,11 +1313,39 @@ Disconnect-OerLive
 **Expect:** one row `Unchanged`, writes 0.
 **Failure looks like:** `Failed` -- the GUID comparison does not match the live ids.
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With the package and policy given as their GUIDs: Unchanged, no write, and one Microsoft Graph request (the listing) -- an id is compared as written, with no lookup.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.4 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 2.4 run rows: 1
+[oer-s112] 2.4 run row: accessReviews | oer-s112-review-pkg | Unchanged | access review 'oer-s112-review-pkg' already matches
+[oer-s112] 2.4 run warnings: 0
+[oer-s112] 2.4 run errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 2.4 run sent: token requests: 0; Microsoft Graph requests: 1, writes: 0; Azure Resource Manager requests: 0, writes: 0, at the root scope: 0
+RUNNER: check 2.4 exit code 0; started 2026-10-13T20:13:41Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.5. Another package by GUID: refused, nothing written
 
-- [ ] **2.5** The same entry naming a package id that is not the review's (the register's non-existent `...099`) is `Failed` with `AccessReviewScopeMismatch`, and the description stays.
+- [x] **2.5** The same entry naming a package id that is not the review's (the register's non-existent `...099`) is `Failed` with `AccessReviewScopeMismatch`, and the description stays.
 
 ```powershell
 Connect-OerLive -Arm
@@ -627,13 +1367,43 @@ compared as written); the description still ends `version 2.`.
 **Failure looks like:** `Updated`, or a `PUT` -- before this branch, a different GUID was only noted while
 the other changes were written.
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Naming the register's non-existent package id (...099): Failed with AccessReviewScopeMismatch naming both package ids, one Microsoft Graph request (no lookup of the id) and no write; the description is still version 2.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.5 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 2.5 run rows: 1
+[oer-s112] 2.5 run row: accessReviews | oer-s112-review-pkg | Failed | Access review 'oer-s112-review-pkg' in the tenant reviews access package '00000000-0000-0000-0000-000000000002', not the access package '00000000-0000-0000-0000-000000000099' this entry declares, so it is not the review this entry declares. Nothing was written. Access review display names are not unique: give the entry or the review in the tenant another display name.
+[oer-s112] 2.5 run warnings: 0
+[oer-s112] 2.5 run error: AccessReviewScopeMismatch,Invoke-OERStructure: Access review 'oer-s112-review-pkg' in the tenant reviews access package '00000000-0000-0000-0000-000000000002', not the access package '00000000-0000-0000-0000-000000000099' this entry declares, so it is not the review this entry declares. Nothing was written. Access review display names are not unique: give the entry or the review in the tenant another display name.
+[oer-s112] 2.5 run errors of Invoke-OERStructure: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 2.5 run sent: token requests: 0; Microsoft Graph requests: 1, writes: 0; Azure Resource Manager requests: 0, writes: 0, at the root scope: 0
+[oer-s112] 2.5 after the run: description: Omnicit.EntraRBAC live verification (oer-s112-): version 2.
+RUNNER: check 2.5 exit code 0; started 2026-10-13T20:13:48Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 3. A role assignment at the root scope is never read, written or pruned
 
 ### 3.1. The validator flags it
 
-- [ ] **3.1** `Test-OERStructure` reports the entries at `/` and `/.` as Warnings at `roleAssignments[0].scope` and `roleAssignments[1].scope`; the document stays valid.
+- [x] **3.1** `Test-OERStructure` reports the entries at `/` and `/.` as Warnings at `roleAssignments[0].scope` and `roleAssignments[1].scope`; the document stays valid.
 
 ```powershell
 Connect-OerLive -Arm
@@ -658,11 +1428,37 @@ and manage elevated access outside the document.`, and the same Warning at `role
 **Failure looks like:** no finding for one of the two (the validator accepted `/` silently before the
 branch, and `/.` before its final fix), or an `Error`.
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. valid: True with two Warnings, one at roleAssignments[0].scope for / and one at roleAssignments[1].scope for /., with the text the checklist expects; no Error.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.1 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 3.1 valid: True; findings: 2
+[oer-s112] 3.1 finding: Warning | roleAssignments[0].scope | 'scope' at roleAssignments[0] is the root scope '/', which grants access over every management group and subscription in the tenant (elevated access). Invoke-OERStructure never creates or removes a role assignment there: the entry is reported Skipped and the root scope is never pruned. Remove the entry and manage elevated access outside the document.
+[oer-s112] 3.1 finding: Warning | roleAssignments[1].scope | 'scope' at roleAssignments[1] is the root scope '/', which grants access over every management group and subscription in the tenant (elevated access). Invoke-OERStructure never creates or removes a role assignment there: the entry is reported Skipped and the root scope is never pruned. Remove the entry and manage elevated access outside the document.
+RUNNER: check 3.1 exit code 0; started 2026-10-13T20:14:03Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.2. The plan with -Prune: Skipped, and no request at the root scope
 
-- [ ] **3.2** `Invoke-OERStructure -Prune -WhatIf` reports the two root entries (`/` and `/.`) `Skipped` with their reason and sends no Azure Resource Manager request at the root, while it plans the resource group's assignment.
+- [x] **3.2** `Invoke-OERStructure -Prune -WhatIf` reports the two root entries (`/` and `/.`) `Skipped` with their reason and sends no Azure Resource Manager request at the root, while it plans the resource group's assignment.
 
 ```powershell
 Connect-OerLive -Arm
@@ -689,11 +1485,44 @@ counts as the root).
 **Failure looks like:** `at the root scope:` above 0 -- a lookup or read at the root was sent; or a row
 `would create ... at '/'` or `at '/.'`.
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. -Prune -WhatIf: both root entries (/ and /.) Skipped with the reason and one warning each; the resource group's entry 'would create' (the one What if line); 3 Azure Resource Manager requests, all under the resource group, no write and 0 at the root scope (each path read after the URI normalisation).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.2 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Create role assignment 'Reader' for 'oer-s112-group'" on target "/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s112-rg".
+[oer-s112] 3.2 plan rows: 3
+[oer-s112] 3.2 plan row: roleAssignments | Reader -> oer-s112-group @ / | Skipped | the root scope '/' grants access over every management group and subscription in the tenant (elevated access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or written for this entry
+[oer-s112] 3.2 plan row: roleAssignments | Reader -> oer-s112-group @ /. | Skipped | the root scope '/' grants access over every management group and subscription in the tenant (elevated access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or written for this entry
+[oer-s112] 3.2 plan row: roleAssignments | Reader -> oer-s112-group @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s112-rg | Skipped | would create role assignment 'Reader' for 'oer-s112-group' at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s112-rg'
+[oer-s112] 3.2 plan warnings: 2
+[oer-s112] 3.2 plan warning: Sync-OERStructureRoleAssignment: 'Reader' for 'oer-s112-group' names the root scope '/' (elevated access); the apply engine never creates or removes a role assignment there. Nothing was read or written for this entry.
+[oer-s112] 3.2 plan warning: Sync-OERStructureRoleAssignment: 'Reader' for 'oer-s112-group' names the root scope '/' (elevated access); the apply engine never creates or removes a role assignment there. Nothing was read or written for this entry.
+[oer-s112] 3.2 plan errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 3.2 plan sent: token requests: 0; Microsoft Graph requests: 2, writes: 0; Azure Resource Manager requests: 3, writes: 0, at the root scope: 0
+RUNNER: check 3.2 exit code 0; started 2026-10-13T20:14:09Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.3. The run with -Prune: Skipped at the root, Created at the resource group
 
-- [ ] **3.3** The same document, applied with `-Prune`, skips the two root entries and creates the resource group's assignment, with no request at the root.
+- [x] **3.3** The same document, applied with `-Prune`, skips the two root entries and creates the resource group's assignment, with no request at the root.
 
 ```powershell
 Connect-OerLive -Arm
@@ -712,11 +1541,43 @@ assignment 'Reader' for 'oer-s112-group' at ...`, ARM `writes: 1 (PUT)`, `at the
 **Failure looks like:** `at the root scope:` above 0, or the resource group's entry `Failed`
 (`PrincipalNotFound` right after the group was created: run 3.3 again).
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. -Prune: both root entries Skipped; the resource group's assignment Created with one PUT; 0 requests at the root scope; no Removed row.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.3 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 3.3 run rows: 3
+[oer-s112] 3.3 run row: roleAssignments | Reader -> oer-s112-group @ / | Skipped | the root scope '/' grants access over every management group and subscription in the tenant (elevated access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or written for this entry
+[oer-s112] 3.3 run row: roleAssignments | Reader -> oer-s112-group @ /. | Skipped | the root scope '/' grants access over every management group and subscription in the tenant (elevated access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or written for this entry
+[oer-s112] 3.3 run row: roleAssignments | Reader -> oer-s112-group @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s112-rg | Created | created role assignment 'Reader' for 'oer-s112-group' at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s112-rg'
+[oer-s112] 3.3 run warnings: 2
+[oer-s112] 3.3 run warning: Sync-OERStructureRoleAssignment: 'Reader' for 'oer-s112-group' names the root scope '/' (elevated access); the apply engine never creates or removes a role assignment there. Nothing was read or written for this entry.
+[oer-s112] 3.3 run warning: Sync-OERStructureRoleAssignment: 'Reader' for 'oer-s112-group' names the root scope '/' (elevated access); the apply engine never creates or removes a role assignment there. Nothing was read or written for this entry.
+[oer-s112] 3.3 run errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 3.3 run sent: token requests: 0; Microsoft Graph requests: 3, writes: 0; Azure Resource Manager requests: 5, writes: 1 (PUT), at the root scope: 0
+RUNNER: check 3.3 exit code 0; started 2026-10-13T20:14:17Z; took 8 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.4. Twice more, with and without -Prune: only Skipped and Unchanged (G8)
 
-- [ ] **3.4** Two more runs (`-Prune`, then without) report the two root entries `Skipped` and the resource group's `Unchanged`, with no write and no request at the root.
+- [x] **3.4** Two more runs (`-Prune`, then without) report the two root entries `Skipped` and the resource group's `Unchanged`, with no write and no request at the root.
 
 ```powershell
 Connect-OerLive -Arm
@@ -735,13 +1596,54 @@ Disconnect-OerLive
 for the resource group; ARM `writes: 0`, `at the root scope: 0`; no `Extra` and no `Removed` row.
 **Failure looks like:** a write, a request at the root scope, or a `Removed` row.
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (G8). With -Prune and without: both root entries Skipped, the resource group's Unchanged, no write, 0 requests at the root scope, no Extra and no Removed row.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.4 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 3.4 run 1 (-Prune) rows: 3
+[oer-s112] 3.4 run 1 (-Prune) row: roleAssignments | Reader -> oer-s112-group @ / | Skipped | the root scope '/' grants access over every management group and subscription in the tenant (elevated access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or written for this entry
+[oer-s112] 3.4 run 1 (-Prune) row: roleAssignments | Reader -> oer-s112-group @ /. | Skipped | the root scope '/' grants access over every management group and subscription in the tenant (elevated access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or written for this entry
+[oer-s112] 3.4 run 1 (-Prune) row: roleAssignments | Reader -> oer-s112-group @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s112-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s112-rg'
+[oer-s112] 3.4 run 1 (-Prune) warnings: 2
+[oer-s112] 3.4 run 1 (-Prune) warning: Sync-OERStructureRoleAssignment: 'Reader' for 'oer-s112-group' names the root scope '/' (elevated access); the apply engine never creates or removes a role assignment there. Nothing was read or written for this entry.
+[oer-s112] 3.4 run 1 (-Prune) warning: Sync-OERStructureRoleAssignment: 'Reader' for 'oer-s112-group' names the root scope '/' (elevated access); the apply engine never creates or removes a role assignment there. Nothing was read or written for this entry.
+[oer-s112] 3.4 run 1 (-Prune) errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 3.4 run 1 (-Prune) sent: token requests: 0; Microsoft Graph requests: 2, writes: 0; Azure Resource Manager requests: 3, writes: 0, at the root scope: 0
+[oer-s112] 3.4 run 2 rows: 3
+[oer-s112] 3.4 run 2 row: roleAssignments | Reader -> oer-s112-group @ / | Skipped | the root scope '/' grants access over every management group and subscription in the tenant (elevated access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or written for this entry
+[oer-s112] 3.4 run 2 row: roleAssignments | Reader -> oer-s112-group @ /. | Skipped | the root scope '/' grants access over every management group and subscription in the tenant (elevated access), and the apply engine never creates or removes a role assignment there, and never prunes it. Nothing was read or written for this entry
+[oer-s112] 3.4 run 2 row: roleAssignments | Reader -> oer-s112-group @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s112-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s112-rg'
+[oer-s112] 3.4 run 2 warnings: 2
+[oer-s112] 3.4 run 2 warning: Sync-OERStructureRoleAssignment: 'Reader' for 'oer-s112-group' names the root scope '/' (elevated access); the apply engine never creates or removes a role assignment there. Nothing was read or written for this entry.
+[oer-s112] 3.4 run 2 warning: Sync-OERStructureRoleAssignment: 'Reader' for 'oer-s112-group' names the root scope '/' (elevated access); the apply engine never creates or removes a role assignment there. Nothing was read or written for this entry.
+[oer-s112] 3.4 run 2 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s112] 3.4 run 2 sent: token requests: 0; Microsoft Graph requests: 2, writes: 0; Azure Resource Manager requests: 3, writes: 0, at the root scope: 0
+RUNNER: check 3.4 exit code 0; started 2026-10-13T20:14:26Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 4. An export of the test subscription carries no row at the root scope
 
 ### 4.1. Get-OERInventory at the subscription
 
-- [ ] **4.1** The document holds no role assignment at `/`; any read at `/` is named in one warning and handed on the information stream.
+- [x] **4.1** The document holds no role assignment at `/`; any read at `/` is named in one warning and handed on the information stream.
 
 ```powershell
 Connect-OerLive -Arm
@@ -773,11 +1675,39 @@ that this read lists: one notice, the rows named with role and principal, and on
 notices and no such warning, and the finding half is class B (section B).
 **Failure looks like:** a row at `/` in the document; a notice without its warning, or the reverse.
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS for what the test tenant holds. Get-OERInventory at the test subscription: 14 role assignments, none at the root scope; no root-scope notice and no root-scope warning, since the read lists no assignment at / (D.1 shows the same: every assignment above the resource group sits at the subscription or a management group). The finding half -- a row at / named in a warning and handed on the information stream -- is therefore class B (section B). The two Microsoft Graph POSTs are the directoryObjects/getByIds name lookups (Resolve-OERPrincipalName), reads sent as POST; nothing was written.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 4.1 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 4.1 role assignments in the document: 14; at the root scope: 0
+[oer-s112] 4.1 root-scope notices on the information stream: 0; role assignments at the root scope they name: 0
+[oer-s112] 4.1 warnings: 0; about the root scope: 0
+[oer-s112] 4.1 errors: 0
+[oer-s112] 4.1 sent: token requests: 0; Microsoft Graph requests: 2, writes: 2 (POST, POST); Azure Resource Manager requests: 7, writes: 0, at the root scope: 0
+RUNNER: check 4.1 exit code 0; started 2026-10-13T20:14:43Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 4.2. Export-OERInventory of the subscription
 
-- [ ] **4.2** `inventory.json` and `roleAssignments.json` hold no row at `/`; the README has the section "Role assignments at the root scope (elevated access)", listing what 4.1 named or saying none; Export shows at most one root warning, its own.
+- [x] **4.2** `inventory.json` and `roleAssignments.json` hold no row at `/`; the README has the section "Role assignments at the root scope (elevated access)", listing what 4.1 named or saying none; Export shows at most one root warning, its own.
 
 ```powershell
 Connect-OerLive -Arm
@@ -814,13 +1744,42 @@ branch and is reported, not failed.
 **Failure looks like:** a row at `/` in either file; no section; a `Get-OERInventory: left out` warning
 shown by the export.
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS for what the test tenant holds. inventory.json and roleAssignments.json each hold 14 rows, none at the root scope; the README has the section 'Role assignments at the root scope (elevated access)', which says None; no warning was shown, and no Get-OERInventory root-scope warning; no error. The listing of named rows is class B, as in 4.1. The two Microsoft Graph POSTs are the getByIds name lookups.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 4.2 ===
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] 4.2 inventory.json role assignments: 14, at the root scope: 0; roleAssignments.json rows: 14, at the root scope: 0
+[oer-s112] 4.2 README has the section: True
+[oer-s112] 4.2 README: None. No role assignment this export read is at the root scope `/`. Role assignments are read only
+[oer-s112] 4.2 warnings shown: 0; Export's root-scope warning: 0; Get-OERInventory's root-scope warning: 0
+[oer-s112] 4.2 errors: 0
+[oer-s112] 4.2 sent: token requests: 0; Microsoft Graph requests: 2, writes: 2 (POST, POST); Azure Resource Manager requests: 8, writes: 0, at the root scope: 0
+RUNNER: check 4.2 exit code 0; started 2026-10-13T20:14:51Z; took 8 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## T. Teardown
 
 ### T.1. Remove every oer-s112- object
 
-- [ ] **T.1** The teardown deletes the two reviews, the role assignment at the resource group, the policy, the package, the catalog, the group and the resource group; the sweep finds nothing; the counts equal the baseline.
+- [x] **T.1** The teardown deletes the two reviews, the role assignment at the resource group, the policy, the package, the catalog, the group and the resource group; the sweep finds nothing; the counts equal the baseline.
 
 ```powershell
 & pwsh -NoProfile -NonInteractive -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS112Prereq.ps1') -Teardown -Unattended
@@ -833,11 +1792,78 @@ removal of the policy, the package, the catalog and the group; `Teardown D: dele
 `Access reviews with the prefix after the teardown: 0`; every `Counts:` line `equal: True`; exit code 0.
 **Failure looks like:** a `RESIDUE` line or exit code 3 -- record each residue row here.
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Both access reviews deleted and read gone; the role assignment at oer-s112-rg deleted (200); the policy, the package, the catalog and the group removed by the library (removed 4, residue 0, unreadable 0); oer-s112-rg deleted; the sweep finds nothing; every count equal to the baseline; exit code 0.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s112] Transcript (redacted): raw\s112\teardown-20261013-201517Z.log; OerLive 1.0.3.
+[oer-s112] Mode: REMOVE. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] oer-live-cc holds AccessReview.ReadWrite.All: True
+[oer-s112] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s112] oer-s112-review-pkg is gone: converged after 1 read(s), 0.6 s.
+[oer-s112] Teardown A: deleted access review oer-s112-review-pkg.
+[oer-s112] oer-s112-review is gone: converged after 1 read(s), 0.4 s.
+[oer-s112] Teardown A: deleted access review oer-s112-review.
+[oer-s112] Teardown B: DELETE of a role assignment at oer-s112-rg for oer-s112-group: 200 .
+[oer-s112] no role assignment of oer-s112-group is listed at oer-s112-rg: converged after 1 read(s), 0.4 s.
+[oer-s112] Teardown of 'oer-s112-': users 0, groups 1, access packages 1, catalogs 1; administrative units 0 and app registrations 0 are reported only.
+[oer-s112] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s112] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s112] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s112] Deleted: oer-s112-ap: assignment policy 'oer-s112-policy' (204).
+[oer-s112] Deleted: access package oer-s112-ap (204, 1 attempt(s)).
+[oer-s112] Deleted: catalog oer-s112-catalog (204, 1 attempt(s)).
+[oer-s112] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s112] Teardown 5/6: the prefixed groups.
+[oer-s112] Deleted: group oer-s112-group (204).
+[oer-s112] Teardown 6/6: the prefixed users.
+[oer-s112] Teardown of 'oer-s112-': removed 4, residue 0, unreadable 0.
+[oer-s112] oer-s112-rg is gone: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s112] oer-s112-rg is gone: converged after 2 read(s), 2.7 s.
+[oer-s112] Teardown D: deleted oer-s112-rg.
+[oer-s112] no 'oer-s112-' object is listed: not yet (read 1, 0.5 s, likely replication delay) -- reading again in 2 s.
+[oer-s112] no 'oer-s112-' object is listed: not yet (read 2, 2.9 s, likely replication delay) -- reading again in 4 s.
+[oer-s112] no 'oer-s112-' object is listed: not yet (read 3, 7.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s112] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s112-' is left.
+[oer-s112] no 'oer-s112-' object is listed: converged after 4 read(s), 15.6 s.
+[oer-s112] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s112-' is left.
+[oer-s112] Access reviews with the prefix after the teardown: 0
+[oer-s112] Resource group oer-s112-rg exists after the teardown: False
+[oer-s112] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s112] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s112] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s112] Counts: accessReviewDefinitions now 6, at the baseline 6; equal: True
+[oer-s112] Removed the recorded ids.
+[oer-s112] Done.
+[oer-s112] exit code: 0
+RUNNER: check T.1 exit code 0; started 2026-10-13T20:15:15Z; took 37 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### T.2. Read back
 
-- [ ] **T.2** Nothing with the prefix is left, and the counts equal the baseline.
+- [x] **T.2** Nothing with the prefix is left, and the counts equal the baseline.
 
 ```powershell
 & pwsh -NoProfile -NonInteractive -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS112Prereq.ps1') -ReadBack
@@ -849,7 +1875,50 @@ Write-OerLiveStep "exit code: $LASTEXITCODE"
 this step's prefix.
 **Failure looks like:** anything left with the prefix.
 
-Result:
+Result: 2026-10-13 20:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. No access review and no object with the prefix, no resource group, every count equal to the baseline, no unread collection; raw\residue.json holds 5 rows of other prefixes (opim-s1-, opim-s2-), none of this step's, untouched.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.2 ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s112] Transcript (redacted): raw\s112\readback-20261013-201602Z.log; OerLive 1.0.3.
+[oer-s112] Mode: READ BACK. Prefix 'oer-s112-'. Objects (fixed): oer-s112-group (security group, no member); oer-s112-catalog (catalog, no resource); oer-s112-ap (hidden access package, no resource role); oer-s112-policy (administrator assignments only); oer-s112-rg (tagged, empty); oer-s112-review (a self review of the members of oer-s112-group, quarterly from 14 days after the run, 1-day instances). The checklist's own objects: the package review oer-s112-review-pkg and a role assignment at oer-s112-rg for oer-s112-group. OerLive 1.0.3.
+[oer-s112] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s112] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s112] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s112] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s112-' is left.
+[oer-s112] Read-back: access reviews with the prefix: 0
+[oer-s112] Read-back: resource group oer-s112-rg exists: False
+[oer-s112] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s112] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s112] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s112] Counts: accessReviewDefinitions now 6, at the baseline 6; equal: True
+[oer-s112] Read-back: residue row: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:09Z, attempts 3: 404 SubjectNotFound The subject is not found.; read back: still listed -- OerLive: Residue: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal': read back after the 'does not exist' answer -- not converged within budget (180 s, 10 reads).
+[oer-s112] Read-back: residue row: PIM for Groups assignment 'opim-s1-grp: PIM for Groups owner assignment of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:12Z, attempts 3: 403 UnauthorizedAccessException {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup,PrivilegedAccess.ReadWrite.AzureADGroup,PrivilegedAssignmentSchedule.Remove.AzureADGroup.","instanceAnnotations":[]}
+[oer-s112] Read-back: residue row: PIM for Groups eligibility 'opim-s2-grp: PIM for Groups member eligibility of a principal' (prefix opim-s2-), first refused 2026-10-10T23:39:01Z, attempts 1: 400 BadRequest {"error":{"code":"Request_BadRequest","message":"The source resource object or one of the objects being referenced do not exist.","innerError":{"date":"2026-10-10T23:39:01","request-id":"00000000-0000-0000-0000-000000000004","client-request-id":"00000000-0000-0000-0000-000000000005"}}}
+[oer-s112] Read-back: residue row: user 'opim-s2-live-user@example.com' (prefix opim-s2-), first refused 2026-10-10T23:39:02Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s112] Read-back: residue row: user 'opim-s2-live-user@example.com' (prefix opim-s2-), first refused 2026-10-11T14:55:13Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s112] Read-back: prefixed objects left: 0; unread collections: 0; access reviews with the prefix: 0; residue rows: 5, of them with this step's prefix: 0.
+[oer-s112] Done.
+[oer-s112] exit code: 0
+RUNNER: check T.2 exit code 0; started 2026-10-13T20:16:00Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## B. Proved offline only (class B)
 
