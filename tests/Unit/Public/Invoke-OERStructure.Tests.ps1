@@ -4,6 +4,11 @@ BeforeAll {
     Import-Module $script:moduleName -Force -ErrorAction Stop
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    # BL-125: the group handler asks Read-OERGroupPimHold whether PIM for Groups holds a member or
+    # owner before it adds or prunes one. Answered "read, nothing held" for every test in this file,
+    # so a fixture that adds or prunes a member never reaches the real reader (and through it the
+    # transport) and keeps its meaning. Sync-OERStructureGroup.Tests.ps1 tests the hold itself.
+    Mock -ModuleName $script:moduleName Read-OERGroupPimHold { [PSCustomObject]@{ Read = $true; Held = @{}; Cause = $null } }
 }
 
 AfterAll {

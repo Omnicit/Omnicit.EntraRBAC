@@ -350,4 +350,124 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
             }
         }
     }
+
+    # A seventh and an eighth kind (BL-125, A3): a LIVE group member or owner whose access PIM for
+    # Groups holds or makes eligible (an activation, a time-bound active assignment, an active
+    # assignment that is not a standing one, or an eligibility), and one for which that could not be
+    # read. The group prune never removes either. The caller decides the hold
+    # (Read-OERGroupPimHold, Get-OERGroupPimHeldAccess owns the rule and the reason text); this helper
+    # owns the two record texts.
+    Context 'the PimHeld and PimUnread forms (BL-125)' {
+        BeforeAll {
+            $script:PimHeldDetail = "prune withheld: undeclared member 'u-1' holds member access through an activation in PIM for Groups, " +
+                'and -Prune never removes a member or owner whose access PIM for Groups holds or makes eligible; it is left in place ' +
+                '(our own guard, not a Graph rejection). Manage that access in PIM for Groups if it is meant to go.'
+            $script:PimUnreadDetail = "prune withheld: whether PIM for Groups holds undeclared owner 'o-1' or makes it eligible could not be read " +
+                '(Could not read the PIM for Groups assignments of group g-1: 403.), so it is left in place (our own guard, not a Graph rejection). ' +
+                "Apply again once the group's PIM for Groups assignments and eligibility can be read."
+        }
+
+        It 'with -PimHeldReason and -Prune returns one Skipped record that starts prune withheld: and carries the reason' {
+            InModuleScope $script:moduleName -Parameters @{ Expected = $script:PimHeldDetail } {
+                param($Expected)
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'grp-pim' -Candidate "undeclared member 'u-1'" `
+                        -PimHeldReason 'holds member access through an activation in PIM for Groups' -Prune)
+                $R.Count | Should -Be 1
+                $R[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureResult'
+                $R[0].Section | Should -BeExactly 'groups'
+                $R[0].Item | Should -BeExactly 'grp-pim'
+                $R[0].Error | Should -BeNullOrEmpty
+                $R[0].Action | Should -BeExactly 'Skipped'
+                $R[0].Detail | Should -BeExactly $Expected
+            }
+        }
+
+        It 'with -PimHeldReason and without -Prune returns one Extra record whose hint says -Prune leaves it in place' {
+            InModuleScope $script:moduleName {
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'grp-pim' -Candidate "undeclared owner 'o-1'" `
+                        -PimHeldReason 'is eligible for owner access in PIM for Groups')
+                $R.Count | Should -Be 1
+                $R[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureResult'
+                $R[0].Section | Should -BeExactly 'groups'
+                $R[0].Item | Should -BeExactly 'grp-pim'
+                $R[0].Error | Should -BeNullOrEmpty
+                $R[0].Action | Should -BeExactly 'Extra'
+                $R[0].Detail | Should -BeExactly "undeclared owner 'o-1' (is eligible for owner access in PIM for Groups, so -Prune leaves it in place)"
+                # -Prune:$false, as the handler passes it, is the same call.
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'grp-pim' -Candidate "undeclared member 'u-2'" `
+                        -PimHeldReason 'holds member access through a time-bound active assignment in PIM for Groups' -Prune:$false)
+                $R.Count | Should -Be 1
+                $R[0].Action | Should -BeExactly 'Extra'
+                $R[0].Detail | Should -BeExactly "undeclared member 'u-2' (holds member access through a time-bound active assignment in PIM for Groups, so -Prune leaves it in place)"
+            }
+        }
+
+        It 'with -PimUnread always returns one Skipped record naming the cause' {
+            InModuleScope $script:moduleName -Parameters @{ Expected = $script:PimUnreadDetail } {
+                param($Expected)
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'grp-pim' -Candidate "undeclared owner 'o-1'" `
+                        -PimUnread 'Could not read the PIM for Groups assignments of group g-1: 403.')
+                $R.Count | Should -Be 1
+                $R[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureResult'
+                $R[0].Section | Should -BeExactly 'groups'
+                $R[0].Item | Should -BeExactly 'grp-pim'
+                $R[0].Error | Should -BeNullOrEmpty
+                $R[0].Action | Should -BeExactly 'Skipped'
+                $R[0].Detail | Should -BeExactly $Expected
+            }
+        }
+
+        It 'with -PimUnread returns the Skipped record for an empty cause instead of a binding error' {
+            InModuleScope $script:moduleName {
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'grp-pim' -Candidate "undeclared member 'u-1'" -PimUnread '' -ErrorAction Stop)
+                $R.Count | Should -Be 1
+                $R[0].Action | Should -BeExactly 'Skipped'
+                $R[0].Detail | Should -BeLike "prune withheld: whether PIM for Groups holds undeclared member 'u-1' or makes it eligible could not be read (), *"
+            }
+        }
+
+        It 'declares -Candidate mandatory in both forms, and -Prune in the PimHeld form only' {
+            InModuleScope $script:moduleName {
+                $Command = Get-Command ConvertTo-OERPruneWithheldResult
+                foreach ($Set in 'PimHeld', 'PimUnread') {
+                    $Command.Parameters['Candidate'].ParameterSets[$Set].IsMandatory | Should -BeTrue -Because "-Candidate is mandatory in the $Set form"
+                }
+                $Command.Parameters['PimHeldReason'].ParameterSets.Keys | Should -Be @('PimHeld')
+                $Command.Parameters['PimHeldReason'].ParameterSets['PimHeld'].IsMandatory | Should -BeTrue
+                $Command.Parameters['PimUnread'].ParameterSets.Keys | Should -Be @('PimUnread')
+                $Command.Parameters['PimUnread'].ParameterSets['PimUnread'].IsMandatory | Should -BeTrue
+                @($Command.Parameters['Prune'].ParameterSets.Keys) -contains 'PimHeld' | Should -BeTrue
+                @($Command.Parameters['Prune'].ParameterSets.Keys) -contains 'PimUnread' | Should -BeFalse
+            }
+        }
+
+        It 'keeps every earlier parameter set and the default one' {
+            InModuleScope $script:moduleName {
+                $Command = Get-Command ConvertTo-OERPruneWithheldResult
+                $Command.DefaultParameterSet | Should -BeExactly 'Unresolved'
+                @($Command.ParameterSets.Name | Sort-Object) |
+                    Should -Be @('CreatedGroup', 'ObjectType', 'PimHeld', 'PimUnread', 'SyncedGroup', 'UnreadRoleName', 'Unresolved')
+                # The default form still binds and words its record as before.
+                $R = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'g1' -Unresolved @('x') -Candidate "undeclared member 'u-1'"
+                $R.Detail | Should -BeExactly "prune withheld: declared entry 'x' could not be resolved, so undeclared member 'u-1' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this collection."
+            }
+        }
+
+        It 'refuses a call that combines -PimHeldReason or -PimUnread with another form' {
+            InModuleScope $script:moduleName {
+                { ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'x' -Candidate 'c' -PimHeldReason 'r' -Unresolved @('a') -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+                { ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'x' -Candidate 'c' -PimHeldReason 'r' -ObjectType 'user' -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+                { ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'x' -Candidate 'c' -PimHeldReason 'r' -SyncedGroup 'x' -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+                { ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'x' -Candidate 'c' -PimHeldReason 'r' -PimUnread 'u' -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+                { ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'x' -Candidate 'c' -PimUnread 'u' -Unresolved @('a') -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+                { ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'x' -Candidate 'c' -PimUnread 'u' -Prune -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+            }
+        }
+    }
 }

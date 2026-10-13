@@ -55,7 +55,8 @@ function Sync-OERStructureGroup {
        Unchanged for the same group.
     2. Reconcile declared members (add missing; emit Extra or prune undeclared with -Prune, or report
        them Skipped while a declared member cannot be resolved -- see "Withheld prune" below; a
-       service principal is never pruned -- see "Service principals" below) -- UNLESS
+       service principal is never pruned -- see "Service principals" below; a member PIM for Groups
+       holds or makes eligible is neither added nor pruned -- see "PIM for Groups" below) -- UNLESS
        the group is dynamic (already dynamic, or declared dynamic=true in the document). Microsoft Learn
        is explicit that a member of a dynamic membership group cannot be added or removed manually, so
        every declared member is reported as a Skipped record instead, nothing is added, and the
@@ -63,13 +64,14 @@ function Sync-OERStructureGroup {
        one summary Skipped record so the inaction is visible under -Prune too).
     2b. Reconcile declared owners (add missing; emit Extra or prune undeclared with -Prune, or report
         them Skipped while a declared owner cannot be resolved -- see "Withheld prune" below; a
-        service principal is never pruned -- see "Service principals" below), gated on
+        service principal is never pruned -- see "Service principals" below; an owner PIM for Groups
+        holds or makes eligible is neither added nor pruned -- see "PIM for Groups" below), gated on
         the document's owners key being DECLARED (present and non-null) -- an omitted owners key never
         reconciles or prunes, unlike members. Owners are not rule-derived, so this step runs even on a
         dynamic group. Microsoft Learn states a group's last (user) owner cannot be removed; a -Prune
         run that would remove the last remaining owner reports a Skipped record instead of firing a
-        call Microsoft Graph rejects. A service principal owner is withheld before that guard and
-        counts as an owner still standing.
+        call Microsoft Graph rejects. A service principal owner, and an owner PIM for Groups holds or
+        makes eligible, is withheld before that guard and counts as an owner still standing.
     3. Reconcile time-bound eligibility entries (those with durationDays) -- the first eligibility
        request onboards the group to PIM for Groups if it was not onboarded yet. Each entry is matched
        on the (principal, accessType) pair and its declared window is diffed against the live schedule
@@ -273,6 +275,40 @@ function Sync-OERStructureGroup {
     assignment, an administrative unit membership, an access package resource role) is another
     section's and unchanged.
 
+    PIM for Groups (BL-125, decision A3): a principal whose membership or ownership PIM for Groups
+    grants -- an activation, or a time-bound active assignment -- is a member or owner of the group
+    like a standing one, and an eligible principal can activate at any time. The handler therefore
+    never adds a standing member or owner for a principal PIM for Groups holds or makes eligible, and
+    never prunes one, for the same access type: a hold for member access never protects an owner, and
+    the other way round. Read-OERGroupPimHold reads the hold -- the group's PIM for Groups assignment
+    schedule instances, and its eligibility, which is the item's own read when the entry declares
+    eligibility and one more read otherwise -- and Get-OERGroupPimHeldAccess owns the rule that tells
+    a standing member or owner from a held one. The hold is read at most once per item, and only when
+    a member or owner to add, or an undeclared one, reaches this check: never for an item whose
+    members and owners already match (no request at all), never for a group this run created (it
+    carries no PIM state yet), and never for a group synchronized from on-premises (its own rule
+    decides first). The owners of a dynamic group are checked; its members step does not run.
+    - A declared member or owner that is not present and that PIM for Groups holds or makes eligible
+      for that access is not added: one warning per such entry and a Skipped row naming the reason,
+      with no ShouldProcess call, so -WhatIf and a real run report the same row and the same
+      warning. A declared principal that is present, an activation in force included, is Unchanged
+      as before. A standing membership or ownership that is really meant is added with
+      Add-OERGroupMember.
+    - An undeclared member or owner that PIM for Groups holds or makes eligible is never removed:
+      with -Prune it is Skipped, its Detail starting 'prune withheld:', and without -Prune it is
+      Extra with a hint that -Prune leaves it in place (ConvertTo-OERPruneWithheldResult
+      -PimHeldReason); no warning and no ShouldProcess call. The check comes after the
+      unresolved-entry, service-principal and synchronized-group rules and, for owners, before the
+      last-owner guard.
+    - When the hold could not be read (either read failed), nothing is added to or removed from the
+      group's members and owners in that item: each declared member or owner that is not present is
+      Skipped naming the cause, each undeclared one is Skipped with a Detail starting 'prune
+      withheld:', with or without -Prune (ConvertTo-OERPruneWithheldResult -PimUnread), and one
+      warning for the item names the cause. The item is not Failed: what already matches stays
+      Unchanged, and the eligibility and pimPolicy steps run as before. In a tenant where either PIM
+      for Groups read is refused, no standing member or owner is added or removed by the apply
+      engine until it can be read.
+
     Withheld prune: members, owners and eligibility each withhold their OWN prune when one of their
     declared entries cannot be resolved (Resolve-OERStructurePrincipal gives no object id). Such an
     entry carries no id, so the pass cannot tell which live entry it names, and its live counterpart
@@ -336,7 +372,10 @@ function Sync-OERStructureGroup {
     A service principal member or owner is never removed: with this switch it is reported Skipped
     ("prune withheld:"), without it Extra. Nothing is removed from a group synchronized from
     on-premises: with this switch each candidate is reported Skipped ('prune withheld:'), without it
-    Extra.
+    Extra. A member or owner whose access PIM for Groups holds or makes eligible is never removed:
+    with this switch it is reported Skipped ('prune withheld:'), without it Extra. While whether PIM
+    for Groups holds the group's members and owners cannot be read, no member or owner is removed:
+    each undeclared one is reported Skipped ('prune withheld:'), with or without this switch.
 
     .PARAMETER TenantAlias
     Optional Tenant Profile alias, accepted only for call-site uniformity with the other
@@ -408,6 +447,35 @@ function Sync-OERStructureGroup {
             Write-SyncedGroupWarning
             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
                 -Detail "${What}: group '$SyncedGroupName' is synchronized from on-premises and is managed there (onPremisesSyncEnabled), so the apply engine writes nothing to it"
+        }
+
+        # BL-125 (A3): whether PIM for Groups holds a member or owner -- an eligibility, an activation
+        # or a time-bound active assignment -- read once per item and only when a candidate needs it
+        # (Read-OERGroupPimHold; Get-OERGroupPimHeldAccess owns the rule). A group this run created
+        # carries no PIM state yet and is never read.
+        $PimHoldState = @{ Decided = $false; Hold = $null; Warned = $false }
+        function Get-PimHoldReason {
+            # Returns '' when not held, the reason when held, $null when the state could not be read.
+            param([string]$PrincipalId, [string]$AccessType)
+            if (-not $PimHoldState.Decided) {
+                $PimHoldState.Decided = $true
+                $PimHoldState.Hold = if ($CreatedThisRun) {
+                    [PSCustomObject]@{ Read = $true; Held = @{}; Cause = $null }
+                } elseif ($NeedElig) {
+                    Read-OERGroupPimHold -GroupId $Gid -Eligibility @($CurrentEligibles) -EligibilityRead
+                } else {
+                    Read-OERGroupPimHold -GroupId $Gid
+                }
+            }
+            if (-not $PimHoldState.Hold.Read) { return $null }
+            $Key = ('{0}|{1}' -f $PrincipalId, $AccessType).ToLowerInvariant()
+            if ($PimHoldState.Hold.Held.ContainsKey($Key)) { return [string]$PimHoldState.Hold.Held[$Key] }
+            ''
+        }
+        function Write-PimUnreadWarning {
+            if ($PimHoldState.Warned) { return }
+            $PimHoldState.Warned = $true
+            Write-Warning "Sync-OERStructureGroup: could not read whether PIM for Groups holds any member or owner of group '$Name' ($($PimHoldState.Hold.Cause)); the apply engine adds no standing member or owner to it and removes none from it in this run."
         }
 
         # -- Check existence ----------------------------------------------------------------
@@ -789,9 +857,22 @@ function Sync-OERStructureGroup {
                     $AlreadyMember = $CurrentMembers | Where-Object { $_.id -eq $Mid }
                     if ($AlreadyMember) {
                         ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Unchanged' -Detail "member '$MRef' already present"
+                    } elseif ($GroupSynced) {
+                        Write-SyncedGroupSkip -What "member '$MRef' not added"
                     } else {
-                        if ($GroupSynced) {
-                            Write-SyncedGroupSkip -What "member '$MRef' not added"
+                        # BL-125 (A3): a principal PIM for Groups holds or makes eligible for member access
+                        # is never added as a standing member, and nothing is added while that is unknown.
+                        # Decided before any ShouldProcess call, so -WhatIf and a real run report the same
+                        # row and the same warning.
+                        $Reason = Get-PimHoldReason -PrincipalId $Mid -AccessType member
+                        if ($null -eq $Reason) {
+                            Write-PimUnreadWarning
+                            ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                                -Detail "member '$MRef' not added: whether PIM for Groups holds it or makes it eligible for member access in group '$Name' could not be read ($($PimHoldState.Hold.Cause)), and the apply engine never adds a standing membership while that is unknown (our own guard, not a Graph rejection)"
+                        } elseif ($Reason) {
+                            Write-Warning "Sync-OERStructureGroup: member '$MRef' is not added to group '$Name' as a standing member: it $Reason, and the apply engine never turns that into a standing membership. Add it with Add-OERGroupMember if a standing membership is meant."
+                            ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                                -Detail "member '$MRef' not added: it $Reason, and the apply engine never adds a standing membership for a principal PIM for Groups holds or makes eligible for the same access (our own guard, not a Graph rejection)"
                         } elseif ($Caller.ShouldProcess($Name, "Add member '$Mid'")) {
                             try {
                                 Add-OERGroupMember -Id $Gid -PrincipalId $Mid -Confirm:$false -ErrorAction Stop
@@ -829,6 +910,19 @@ function Sync-OERStructureGroup {
                         if ($GroupSynced) {
                             if ($Prune) { Write-SyncedGroupWarning }
                             ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Candidate "undeclared member '$CurId'" -SyncedGroup $SyncedGroupName -Prune:$Prune
+                            continue
+                        }
+                        # BL-125 (A3): a member whose membership PIM for Groups holds or makes eligible is
+                        # never removed, and nothing is removed while that is unknown (the item's one
+                        # warning names the cause). No ShouldProcess call for either.
+                        $Reason = Get-PimHoldReason -PrincipalId $CurId -AccessType member
+                        if ($null -eq $Reason) {
+                            Write-PimUnreadWarning
+                            ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Candidate "undeclared member '$CurId'" -PimUnread $PimHoldState.Hold.Cause
+                            continue
+                        }
+                        if ($Reason) {
+                            ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Candidate "undeclared member '$CurId'" -PimHeldReason $Reason -Prune:$Prune
                             continue
                         }
                         if ($Prune) {
@@ -886,9 +980,21 @@ function Sync-OERStructureGroup {
                 $AlreadyOwner = $CurrentOwners | Where-Object { $_.id -eq $Oid }
                 if ($AlreadyOwner) {
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Unchanged' -Detail "owner '$ORef' already present"
+                } elseif ($GroupSynced) {
+                    Write-SyncedGroupSkip -What "owner '$ORef' not added"
                 } else {
-                    if ($GroupSynced) {
-                        Write-SyncedGroupSkip -What "owner '$ORef' not added"
+                    # BL-125 (A3), as for members: a principal PIM for Groups holds or makes eligible for
+                    # OWNER access is never added as a standing owner, and nothing is added while that is
+                    # unknown. Decided before any ShouldProcess call.
+                    $Reason = Get-PimHoldReason -PrincipalId $Oid -AccessType owner
+                    if ($null -eq $Reason) {
+                        Write-PimUnreadWarning
+                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                            -Detail "owner '$ORef' not added: whether PIM for Groups holds it or makes it eligible for owner access in group '$Name' could not be read ($($PimHoldState.Hold.Cause)), and the apply engine never adds a standing ownership while that is unknown (our own guard, not a Graph rejection)"
+                    } elseif ($Reason) {
+                        Write-Warning "Sync-OERStructureGroup: owner '$ORef' is not added to group '$Name' as a standing owner: it $Reason, and the apply engine never turns that into a standing ownership. Add it with Add-OERGroupMember -AccessType owner if a standing ownership is meant."
+                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                            -Detail "owner '$ORef' not added: it $Reason, and the apply engine never adds a standing ownership for a principal PIM for Groups holds or makes eligible for the same access (our own guard, not a Graph rejection)"
                     } elseif ($Caller.ShouldProcess($Name, "Add owner '$Oid'")) {
                         try {
                             Add-OERGroupMember -Id $Gid -PrincipalId $Oid -AccessType owner -Confirm:$false -ErrorAction Stop
@@ -917,8 +1023,9 @@ function Sync-OERStructureGroup {
             # number of owners still standing is tracked as removals are applied, and the removal that
             # would leave none is refused with a Skipped record instead of firing a call that may fail.
             # Since A9 an owner the read types servicePrincipal is withheld before this guard and never
-            # removed, so the guard decides only for owners of other types or of no type, and a
-            # withheld service principal owner counts as one still standing.
+            # removed, and since BL-125 so is an owner PIM for Groups holds or makes eligible (and every
+            # owner while that cannot be read), so the guard decides only for the other owners, and a
+            # withheld owner counts as one still standing.
             $RemainingOwnerCount = $CurrentOwners.Count
             foreach ($CurOwner in $CurrentOwners) {
                 $CurId = $CurOwner.id
@@ -934,6 +1041,19 @@ function Sync-OERStructureGroup {
                     if ($GroupSynced) {
                         if ($Prune) { Write-SyncedGroupWarning }
                         ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Candidate "undeclared owner '$CurId'" -SyncedGroup $SyncedGroupName -Prune:$Prune
+                        continue
+                    }
+                    # BL-125 (A3), as for members, and before the last-owner guard: an owner whose
+                    # ownership PIM for Groups holds or makes eligible is never removed, nor any owner
+                    # while that is unknown, so a withheld owner stays in $RemainingOwnerCount.
+                    $Reason = Get-PimHoldReason -PrincipalId $CurId -AccessType owner
+                    if ($null -eq $Reason) {
+                        Write-PimUnreadWarning
+                        ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Candidate "undeclared owner '$CurId'" -PimUnread $PimHoldState.Hold.Cause
+                        continue
+                    }
+                    if ($Reason) {
+                        ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Candidate "undeclared owner '$CurId'" -PimHeldReason $Reason -Prune:$Prune
                         continue
                     }
                     if ($Prune) {
