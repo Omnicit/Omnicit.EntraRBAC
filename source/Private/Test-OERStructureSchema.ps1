@@ -180,7 +180,16 @@ function Test-OERStructureSchema {
     is a Warning at accessReviews[i].assignmentPolicy: once the rename is applied no policy of the
     package carries the old name, so the review's target check fails, and the Warning says to name the
     policy by its new name or its object id. The first policy entry that renames from the name is the
-    one named. A second top-level entry
+    one named. An accessReviews[] entry whose accessPackage is a string that is not an object id, and
+    that equals, ignoring case, the displayName or the previousDisplayName (read as Rule 14 reads it: a
+    non-empty string that differs from the entry's displayName ignoring case) of two or more
+    accessPackages[] entries, at least one of which renames its package through previousDisplayName, is
+    an Error at accessReviews[i].accessPackage naming those entries (Rule 15, Sprint 11 step 4b): the
+    same name in two catalogs is two packages, but the run's rename map keys a package, and the policies
+    within it, by the package's name alone, so the run cannot tell which package the review means; the
+    Error says to name the access package by its object id. When none of those entries declares such a
+    previousDisplayName nothing is reported, and the apply-time lookup refuses the ambiguous name as
+    before. A second top-level entry
     whose key matches an earlier one, compared without regard to letter case, is an Error at the later
     entry's path that names the earlier entry's index, since the two describe one live object and
     applying both makes each undo the other, or through a child collection removes what the other
@@ -2446,6 +2455,56 @@ function Test-OERStructureSchema {
                     "accessPackages[$($PolRefHit.Package)].assignmentPolicies[$($PolRefHit.Index)], which renames that assignment policy to '$($PolRefHit.DisplayName)'. " +
                     "Name the assignment policy by its new name '$($PolRefHit.DisplayName)' or its object id: once the rename is applied no assignment policy of the " +
                     "access package carries '$PolRefPolicy', and the review's target check fails.")
+        }
+    }
+
+    # Rule 15 (Sprint 11 step 4b): a review that names by display name a package two or more
+    # accessPackages entries declare, while one of them renames its package. A package is identified by its
+    # catalog together with its name, so the same name in two catalogs is two packages (the duplicate
+    # check above does not refuse it), but Invoke-OERStructure's run-scoped rename map keys a package --
+    # and a policy within it -- by the package's name alone ('accessPackages|<name>',
+    # 'assignmentPolicies|<package name>|<policy>'). A review reads that map for a package name that is not
+    # an object id, so it would reach whichever entry registered the name last, where the tenant-wide
+    # lookup the review otherwise makes refuses an ambiguous name; and one entry's mark or decision would
+    # overwrite another's refusal. The run cannot tell which package the review means, so the document is
+    # refused offline: an Error at the review's accessPackage, naming every entry that declares the name as
+    # its displayName or (Get-RenameDeclaration, Rename state) its previousDisplayName, when there are two
+    # or more and at least one of them is in the Rename state. Without such a rename the map holds no
+    # package for the name, and the review's apply-time lookup of the package refuses the ambiguous name as
+    # before, so nothing is reported. A reference that is an object id is never read in the map, so it is
+    # never reported either.
+    if ((Test-HasProp -Node $Document -Name 'accessPackages') -and
+        ($Document.accessPackages -is [System.Collections.IEnumerable]) -and
+        ($Document.accessPackages -isnot [string]) -and
+        (Test-HasProp -Node $Document -Name 'accessReviews') -and
+        ($Document.accessReviews -is [System.Collections.IEnumerable]) -and
+        ($Document.accessReviews -isnot [string])) {
+        $AmbPackages = @($Document.accessPackages)
+        $AmbReviews = @($Document.accessReviews)
+        for ($I = 0; $I -lt $AmbReviews.Count; $I++) {
+            if (-not (Test-HasProp -Node $AmbReviews[$I] -Name 'accessPackage')) { continue }
+            $AmbRef = $AmbReviews[$I].accessPackage
+            if ($AmbRef -isnot [string] -or (Test-OERGuid -Value $AmbRef)) { continue }
+
+            $AmbPaths = [System.Collections.Generic.List[string]]::new()
+            $AmbRenamed = $false
+            for ($P = 0; $P -lt $AmbPackages.Count; $P++) {
+                $AmbRename = Get-RenameDeclaration -Node $AmbPackages[$P]
+                $AmbByName = (Test-HasProp -Node $AmbPackages[$P] -Name 'displayName') -and ([string]$AmbPackages[$P].displayName -ieq $AmbRef)
+                # Previous is set in the Rename state only, so this compares a rename's previous name alone.
+                $AmbByPrevious = $AmbRename.Previous -ieq $AmbRef
+                if (-not ($AmbByName -or $AmbByPrevious)) { continue }
+                $AmbPaths.Add("accessPackages[$P]")
+                if ($AmbRename.State -eq 'Rename') { $AmbRenamed = $true }
+            }
+            if ($AmbPaths.Count -lt 2 -or -not $AmbRenamed) { continue }
+
+            $AmbReviewName = if (Test-HasProp -Node $AmbReviews[$I] -Name 'displayName') { [string]$AmbReviews[$I].displayName } else { "accessReviews[$I]" }
+            Add-Finding -Section 'accessReviews' -Item $AmbReviewName -Path "accessReviews[$I].accessPackage" `
+                -Message ("Access review '$AmbReviewName' at accessReviews[$I] declares accessPackage '$AmbRef', which $($AmbPaths.Count) " +
+                    "accessPackages entries declare as displayName or previousDisplayName ($($AmbPaths -join ', ')) while at least one of " +
+                    'them is renamed through previousDisplayName, so the run cannot tell which access package the review means. ' +
+                    'Name the access package by its object id.')
         }
     }
 

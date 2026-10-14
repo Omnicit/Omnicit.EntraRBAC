@@ -4720,6 +4720,197 @@ Describe 'Test-OERStructureSchema renames of assignment policies (BL-128, Sprint
     }
 }
 
+Describe 'Test-OERStructureSchema refuses a review naming an access package that several entries declare while one renames it (Rule 15, Sprint 11 step 4b)' {
+    # The run's rename map keys a package, and the policies within it, by the package's name alone, while
+    # the same name in two catalogs is two packages. A review that names such a name, not an object id,
+    # while one of the entries declaring it is renamed through previousDisplayName, could reach either
+    # package, so the document is refused offline with an Error at the review's accessPackage. Without a
+    # rename among those entries nothing is reported (the apply-time lookup refuses the ambiguous name).
+    BeforeAll {
+        function Invoke-AmbValidation {
+            param([object]$Doc)
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        # Two catalogs, the given package entries (JSON objects without the trailing collections), and one
+        # review named rev_one of the given accessPackage (JSON value). Every entry is otherwise complete, so
+        # the findings a case provokes are the ones it is about.
+        function New-AmbDoc {
+            param([string[]]$PackageJson, [string]$ReviewPackageJson = '"ap-x"')
+            $Packages = @($PackageJson | ForEach-Object { ($_ -replace '\s*\}\s*$', '') + ', "resourceRoles": null }' })
+            ('{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null }, { "displayName": "cat-y", "resources": null } ], ' +
+                '"accessPackages": [ ' + ($Packages -join ', ') + ' ], ' +
+                '"accessReviews": [ { "displayName": "rev_one", "accessPackage": ' + $ReviewPackageJson + ', "assignmentPolicy": "pol_one", "reviewers": [ "self" ] } ] }') | ConvertFrom-Json
+        }
+        function Get-AmbFinding {
+            param([object]$Validation, [string]$Path = 'accessReviews[0].accessPackage')
+            @($Validation.Errors | Where-Object { $_.Path -eq $Path -and $_.Severity -eq 'Error' })
+        }
+        $script:AmbMessage = "Access review '{0}' at accessReviews[{1}] declares accessPackage '{2}', which {3} accessPackages entries declare as displayName " +
+            'or previousDisplayName ({4}) while at least one of them is renamed through previousDisplayName, so the run cannot tell which access ' +
+            'package the review means. Name the access package by its object id.'
+    }
+
+    It 'refuses two entries of different catalogs that share the displayName the review names, one of them renamed' {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -PackageJson @(
+                '{ "displayName": "ap-x", "previousDisplayName": "ap-old", "catalog": "cat-x" }'
+                '{ "displayName": "ap-x", "catalog": "cat-y" }'
+            ))
+        $Hit = @(Get-AmbFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Section | Should -BeExactly 'accessReviews'
+        $Hit[0].Item | Should -BeExactly 'rev_one'
+        $Hit[0].Path | Should -BeExactly 'accessReviews[0].accessPackage'
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Message | Should -BeExactly ($script:AmbMessage -f 'rev_one', 0, 'ap-x', 2, 'accessPackages[0], accessPackages[1]')
+        # It is the only finding of the document, and it refuses it.
+        @($V.Errors).Count | Should -Be 1
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses a displayName of one entry that equals the previousDisplayName of another, naming the reference as written' {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -ReviewPackageJson '"AP-X"' -PackageJson @(
+                '{ "displayName": "ap-x", "catalog": "cat-x" }'
+                '{ "displayName": "ap-new", "previousDisplayName": "ap-x", "catalog": "cat-y" }'
+            ))
+        $Hit = @(Get-AmbFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeExactly ($script:AmbMessage -f 'rev_one', 0, 'AP-X', 2, 'accessPackages[0], accessPackages[1]')
+        # Rule 14 also warns that the review still names a renamed package by its previous name.
+        $Warn = @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].accessPackage' -and $_.Severity -eq 'Warning' })
+        $Warn.Count | Should -Be 1
+        @($V.Errors).Count | Should -Be 2
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'names every entry that declares the name, in document order, and refuses each review that names it' {
+        $Doc = New-AmbDoc -PackageJson @(
+            '{ "displayName": "ap-x", "catalog": "cat-x" }'
+            '{ "displayName": "ap-other", "catalog": "cat-x" }'
+            '{ "displayName": "AP-X", "catalog": "cat-y" }'
+            '{ "displayName": "ap-z", "previousDisplayName": "Ap-X", "catalog": "cat-x" }'
+        )
+        $Doc.accessReviews += [PSCustomObject]@{ displayName = 'rev_two'; accessPackage = 'ap-other'; assignmentPolicy = 'pol_one'; reviewers = @('self') }
+        $Doc.accessReviews += [PSCustomObject]@{ displayName = 'rev_three'; accessPackage = 'ap-X'; assignmentPolicy = 'pol_one'; reviewers = @('self') }
+        $V = Invoke-AmbValidation -Doc $Doc
+        $First = @(Get-AmbFinding -Validation $V)
+        $First.Count | Should -Be 1
+        $First[0].Message | Should -BeExactly ($script:AmbMessage -f 'rev_one', 0, 'ap-x', 3, 'accessPackages[0], accessPackages[2], accessPackages[3]')
+        @(Get-AmbFinding -Validation $V -Path 'accessReviews[1].accessPackage') | Should -BeNullOrEmpty
+        $Third = @(Get-AmbFinding -Validation $V -Path 'accessReviews[2].accessPackage')
+        $Third.Count | Should -Be 1
+        $Third[0].Item | Should -BeExactly 'rev_three'
+        $Third[0].Message | Should -BeExactly ($script:AmbMessage -f 'rev_three', 2, 'ap-X', 3, 'accessPackages[0], accessPackages[2], accessPackages[3]')
+    }
+
+    It 'does not report the shared name when no entry that declares it renames its package' {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -PackageJson @(
+                '{ "displayName": "ap-x", "catalog": "cat-x" }'
+                '{ "displayName": "ap-x", "catalog": "cat-y" }'
+                '{ "displayName": "ap-y", "previousDisplayName": "ap-old", "catalog": "cat-x" }'
+            ))
+        @($V.Errors) | Should -BeNullOrEmpty
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'does not report the shared name when the previousDisplayName of an entry that declares it renames nothing (<Case>)' -ForEach @(
+        @{ Case = 'it equals the displayName ignoring case'; Prev = '"AP-X"'; Finding = 'Warning' }
+        @{ Case = 'it is not a non-empty string'; Prev = '5'; Finding = 'Error' }
+    ) {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -PackageJson @(
+                '{ "displayName": "ap-x", "previousDisplayName": ' + $Prev + ', "catalog": "cat-x" }'
+                '{ "displayName": "ap-x", "catalog": "cat-y" }'
+            ))
+        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].accessPackage' }) | Should -BeNullOrEmpty
+        # The finding of the previousDisplayName itself proves the entry was reached.
+        $Own = @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].previousDisplayName' })
+        $Own.Count | Should -Be 1
+        $Own[0].Severity | Should -BeExactly $Finding
+        @($V.Errors).Count | Should -Be 1
+    }
+
+    It 'does not report a review that names the package by its object id, even when two entries rename from that id' {
+        $Id = '11111111-1111-1111-1111-111111111111'
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -ReviewPackageJson ('"' + $Id + '"') -PackageJson @(
+                '{ "displayName": "ap-new", "previousDisplayName": "' + $Id + '", "catalog": "cat-x" }'
+                '{ "displayName": "ap-other", "previousDisplayName": "' + $Id + '", "catalog": "cat-y" }'
+            ))
+        @($V.Errors) | Should -BeNullOrEmpty
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'does not report a name that only one entry declares' {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -PackageJson @(
+                '{ "displayName": "ap-x", "previousDisplayName": "ap-old", "catalog": "cat-x" }'
+                '{ "displayName": "ap-y", "catalog": "cat-y" }'
+            ))
+        @($V.Errors) | Should -BeNullOrEmpty
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'does not read a reference that is not a string, even when its text matches two entries one of which is renamed' {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -ReviewPackageJson '5' -PackageJson @(
+                '{ "displayName": "5", "previousDisplayName": "ap-old", "catalog": "cat-x" }'
+                '{ "displayName": "5", "catalog": "cat-y" }'
+            ))
+        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].accessPackage' }) | Should -BeNullOrEmpty
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'does not count an entry without a displayName as declaring one' {
+        # An empty reference equals the empty text an absent displayName converts to; the entries' missing
+        # displayNames are Errors of their own, which prove they were reached.
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -ReviewPackageJson '""' -PackageJson @(
+                '{ "previousDisplayName": "ap-old", "catalog": "cat-x" }'
+                '{ "catalog": "cat-y" }'
+            ))
+        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].accessPackage' }) | Should -BeNullOrEmpty
+        @($V.Errors | Where-Object { $_.Message -match "'displayName' is required at accessPackages\[(0|1)\]" }).Count | Should -Be 2
+    }
+
+    It 'names a review without a displayName by its path' {
+        $Doc = New-AmbDoc -PackageJson @(
+            '{ "displayName": "ap-x", "previousDisplayName": "ap-old", "catalog": "cat-x" }'
+            '{ "displayName": "ap-x", "catalog": "cat-y" }'
+        )
+        $Doc.accessReviews[0].PSObject.Properties.Remove('displayName')
+        $Hit = @(Get-AmbFinding -Validation (Invoke-AmbValidation -Doc $Doc))
+        $Hit.Count | Should -Be 1
+        $Hit[0].Item | Should -BeExactly 'accessReviews[0]'
+        $Hit[0].Message | Should -BeExactly ($script:AmbMessage -f 'accessReviews[0]', 0, 'ap-x', 2, 'accessPackages[0], accessPackages[1]')
+    }
+
+    It 'survives null elements in accessPackages and accessReviews, and names the real positions' {
+        $Doc = ('{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null }, { "displayName": "cat-y", "resources": null } ], ' +
+            '"accessPackages": [ null, { "displayName": "ap-x", "previousDisplayName": "ap-old", "catalog": "cat-x", "resourceRoles": null }, null, ' +
+            '{ "displayName": "ap-x", "catalog": "cat-y", "resourceRoles": null } ], ' +
+            '"accessReviews": [ null, { "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "pol_one", "reviewers": [ "self" ] } ] }') | ConvertFrom-Json
+        { Invoke-AmbValidation -Doc $Doc } | Should -Not -Throw
+        $V = Invoke-AmbValidation -Doc $Doc
+        $Hit = @(Get-AmbFinding -Validation $V -Path 'accessReviews[1].accessPackage')
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeExactly ($script:AmbMessage -f 'rev_one', 1, 'ap-x', 2, 'accessPackages[1], accessPackages[3]')
+        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].accessPackage' -and $_.Message -match 'which \d+ accessPackages entries' }) | Should -BeNullOrEmpty
+    }
+
+    It 'reads <Label> as no list of reviews: the one Error says it must be an array' -ForEach @(
+        @{ Label = 'an object-valued accessReviews'; Reviews = '{ "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "pol_one", "reviewers": [ "self" ] }' }
+        @{ Label = 'a string-valued accessReviews'; Reviews = '"ap-x"' }
+    ) {
+        # The positive control is the object itself: read as one review it WOULD name the shared package.
+        $Doc = ('{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null }, { "displayName": "cat-y", "resources": null } ], ' +
+            '"accessPackages": [ { "displayName": "ap-x", "previousDisplayName": "ap-old", "catalog": "cat-x", "resourceRoles": null }, ' +
+            '{ "displayName": "ap-x", "catalog": "cat-y", "resourceRoles": null } ], "accessReviews": ' + $Reviews + ' }') | ConvertFrom-Json
+        { Invoke-AmbValidation -Doc $Doc } | Should -Not -Throw
+        $V = Invoke-AmbValidation -Doc $Doc
+        @($V.Errors).Count | Should -Be 1
+        $V.Errors[0].Path | Should -BeExactly 'accessReviews'
+        $V.Errors[0].Message | Should -BeExactly "Section 'accessReviews' must be an array."
+    }
+}
+
 Describe 'Test-OERStructureSchema group mailNickname (BL-132)' {
     # Measured 2026-10-13 (PATCH on a security group, app-only): Microsoft Graph refuses a mailNickname
     # of 65 characters, the empty string, a space, a tab and each of @ ( ) \ [ ] " ; : < > , with
