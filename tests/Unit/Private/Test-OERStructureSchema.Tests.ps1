@@ -4741,7 +4741,7 @@ Describe 'Test-OERStructureSchema warns about a role assignment at the root scop
     It 'warns about <Scope> in roleAssignments, a spelling the ARM transport sends to the root, and refuses its spelling (A13)' -ForEach @(
         @{ Scope = '/.'; Needle = '*without a ''.'' or ''..'' segment*' }
         @{ Scope = '/..'; Needle = '*without a ''.'' or ''..'' segment*' }
-        @{ Scope = '/%2e'; Needle = '*without a ''%'' escape*' }
+        @{ Scope = '/%2e'; Needle = '*without a ''%'':*' }
     ) {
         # System.Uri removes the dot segment (and decodes '%2e' first), so a request for this scope reaches
         # the root scope's path; Test-OERAzureRootScope says so, and the validator warns as for '/'. Since
@@ -4786,18 +4786,20 @@ Describe 'Test-OERStructureSchema warns about a role assignment at the root scop
     }
 }
 
-Describe 'Test-OERStructureSchema refuses a dot segment, a percent escape or white space in an Azure scope (A13, BL-141)' {
-    # A scope written as an Azure Resource Manager path is sent as written, and the request URI
-    # resolves a '.' or '..' segment (with '/' or '\' as the separator, since System.Uri reads '\' as
-    # '/') and decodes an escape of an unreserved character (every '%' is refused). Such a spelling names
-    # another scope than the text says, while the engine groups entries on the text's canonical form, so
-    # two spellings of one scope would form two groups and each prune pass could remove what the other
-    # declares. White space is refused as a whole, as the safe direction, although an Azure resource name
-    # may hold a space; the message says so (the limit, decision A13). Each is an Error at the entry's
-    # scope path in roleAssignments and roleManagementPolicies. The mg:, sub: and
-    # subscription: forms are exempt: they name a management group or subscription by id, name or display
-    # name (which may hold spaces) and are resolved by a lookup, never sent as written. No id below is
-    # version-4 shaped.
+Describe 'Test-OERStructureSchema refuses a scope spelling the request reads as another scope (A13, BL-141)' {
+    # A scope written as an Azure Resource Manager path is sent as written, as part of a System.Uri: a
+    # '.' or '..' segment is removed (with '/' or '\' as the separator), a '\' is read as '/', a '?' or
+    # '#' ends the path, and an escape of an unreserved character is decoded (every '%' is refused).
+    # Such a spelling names another scope than the text says, while the engine groups entries on the
+    # text's canonical form, so two spellings of one scope would form two groups and each prune pass
+    # could remove what the other declares. White space at the start or end of the scope or of a
+    # segment, white space other than U+0020 and a control character are refused too, as the safe
+    # direction; one or more spaces BETWEEN other characters of a segment are accepted, since an Azure
+    # resource name can hold them (decision A13 as narrowed on 2026-10-14). Each rule is an Error of its
+    # own at the entry's scope path in roleAssignments and roleManagementPolicies. The mg:, sub: and
+    # subscription: forms are exempt: they name a management group or subscription by id, name or
+    # display name (which may hold spaces) and are resolved by a lookup, never sent as written. No id
+    # below is version-4 shaped.
     BeforeAll {
         function New-SegmentDoc {
             param([string]$Section, [string]$Scope)
@@ -4819,6 +4821,32 @@ Describe 'Test-OERStructureSchema refuses a dot segment, a percent escape or whi
             param([object]$Validation)
             @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' })
         }
+        # The exact messages, written out in full here rather than built the way the source builds them.
+        function Get-PercentText {
+            param([string]$Section, [string]$Scope)
+            "'scope' at $Section[0] must be written without a '%': an escape can let two spellings reach one resource, and the " +
+            "names of most Azure resource types hold no '%'. Got: '$Scope'. A resource whose name holds one cannot be declared in " +
+            'a document; remove the entry.'
+        }
+        function Get-BackslashText {
+            param([string]$Section, [string]$Scope)
+            "'scope' at $Section[0] must be written without a '\': the request reads it as '/', so the scope would be a second " +
+            "spelling of the one written with '/'. Got: '$Scope'. A resource whose name holds one cannot be declared in a " +
+            'document; remove the entry.'
+        }
+        function Get-PathEndText {
+            param([string]$Section, [string]$Scope)
+            "'scope' at $Section[0] must be written without a '?' or '#': either ends the path of the request, which would then " +
+            "name another scope than the one written. Got: '$Scope'. A resource whose name holds one cannot be declared in a " +
+            'document; remove the entry.'
+        }
+        function Get-WhiteSpaceText {
+            param([string]$Section, [string]$Scope, [string]$Named)
+            "'scope' at $Section[0] must be written without white space at the start or end of the scope or of a segment, white " +
+            "space other than a space (U+0020) or a control character; a space between other characters of a segment is " +
+            "accepted. Got: '$Scope'.$Named A resource whose name holds one of these cannot be declared in a document; remove " +
+            'the entry.'
+        }
         $script:SegmentRootWarning = "'scope' at roleAssignments[0] is the root scope '/', which grants access over every management group and " +
             'subscription in the tenant (elevated access). Invoke-OERStructure never creates or removes a role assignment there: the entry ' +
             'is reported Skipped and the root scope is never pruned. Remove the entry and manage elevated access outside the document.'
@@ -4830,7 +4858,6 @@ Describe 'Test-OERStructureSchema refuses a dot segment, a percent escape or whi
             @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/./resourceGroups/rg' }
             @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/..' }
             @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/.' }
-            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111\..\x' }
             @{ Section = $Section; Scope = '/.' }
             @{ Section = $Section; Scope = '/..' }
         }
@@ -4844,10 +4871,11 @@ Describe 'Test-OERStructureSchema refuses a dot segment, a percent escape or whi
         $V.Valid | Should -BeFalse
     }
 
-    It 'refuses <Scope> in <Section> as one percent escape Error at the entry''s scope path' -ForEach @(
+    It 'refuses <Scope> in <Section> as one percent Error at the entry''s scope path' -ForEach @(
         foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
             @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg%2Fx' }
             @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/%2e%2e' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg%' }
             @{ Section = $Section; Scope = '/%2e' }
         }
     ) {
@@ -4856,19 +4884,16 @@ Describe 'Test-OERStructureSchema refuses a dot segment, a percent escape or whi
         $Errs.Count | Should -Be 1
         $Errs[0].Section | Should -BeExactly $Section
         $Errs[0].Path | Should -BeExactly "$Section[0].scope"
-        $Errs[0].Message | Should -BeExactly "'scope' at $Section[0] must be written without a '%' escape: the request would decode it and name another scope than the one written. Got: '$Scope'."
+        $Errs[0].Message | Should -BeExactly (Get-PercentText -Section $Section -Scope $Scope)
         $V.Valid | Should -BeFalse
     }
 
-    It 'refuses a scope with white space in <Section> as one white space Error at the entry''s scope path (<Case>)' -ForEach @(
+    It 'refuses <Scope> in <Section> as one backslash Error at the entry''s scope path' -ForEach @(
         foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
-            @{ Section = $Section; Case = 'a space inside'; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/my rg' }
-            @{ Section = $Section; Case = 'a leading space'; Scope = ' /subscriptions/11111111-1111-1111-1111-111111111111' }
-            @{ Section = $Section; Case = 'a trailing tab'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111$([char]9)" }
-            @{ Section = $Section; Case = 'a line feed'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111$([char]10)" }
-            # The limit the message states: an Azure resource name may hold a space (Microsoft Learn lists, for
-            # example, Microsoft.Sql databases), and a role assignment at such a resource is refused too.
-            @{ Section = $Section; Case = 'a space in a resource name'; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Sql/servers/srv1/databases/my db' }
+            # System.Uri reads '\' as '/', so each is a second spelling of the path written with '/'.
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups\rg' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111\resourceGroups\rg' }
+            @{ Section = $Section; Scope = '\subscriptions\11111111-1111-1111-1111-111111111111' }
         }
     ) {
         $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
@@ -4876,23 +4901,86 @@ Describe 'Test-OERStructureSchema refuses a dot segment, a percent escape or whi
         $Errs.Count | Should -Be 1
         $Errs[0].Section | Should -BeExactly $Section
         $Errs[0].Path | Should -BeExactly "$Section[0].scope"
-        $Errs[0].Message | Should -BeExactly ("'scope' at $Section[0] must be written without white space. Got: '$Scope'. " +
-            'An Azure resource whose name holds white space cannot be declared in a document; remove the entry.')
+        $Errs[0].Message | Should -BeExactly (Get-BackslashText -Section $Section -Scope $Scope)
         $V.Valid | Should -BeFalse
     }
 
-    It 'reports a dot segment, a percent escape and white space in one scope as three separate Errors in <Section>' -ForEach @(
+    It 'refuses <Scope> in <Section> as one ''?'' or ''#'' Error at the entry''s scope path' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            # Either character ends the path of the request URI, so the rest never reaches it as a path.
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg?x' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg#x' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg?' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg#' }
+            # Both characters in one scope are one Error: the two share the rule and its reason.
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg?a#b' }
+        }
+    ) {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 1
+        $Errs[0].Section | Should -BeExactly $Section
+        $Errs[0].Path | Should -BeExactly "$Section[0].scope"
+        $Errs[0].Message | Should -BeExactly (Get-PathEndText -Section $Section -Scope $Scope)
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses a scope with misplaced white space in <Section> as one white space Error at the entry''s scope path (<Case>)' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            # A space (U+0020) where an Azure resource name cannot carry one: at either end of the scope
+            # or of a segment. The message names no code point for a plain space.
+            @{ Section = $Section; Case = 'a leading space'; Named = ''; Scope = ' /subscriptions/11111111-1111-1111-1111-111111111111' }
+            @{ Section = $Section; Case = 'a trailing space'; Named = ''; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg ' }
+            @{ Section = $Section; Case = 'a space at the start of a segment'; Named = ''; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/ rg' }
+            @{ Section = $Section; Case = 'a space at the end of a segment'; Named = ''; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg /providers/Microsoft.Sql/servers/srv1' }
+            @{ Section = $Section; Case = 'a segment of two spaces'; Named = ''; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/  /x' }
+            # White space other than U+0020 anywhere, and a control character anywhere, named by code point.
+            @{ Section = $Section; Case = 'a tab inside a segment'; Named = ' It contains U+0009.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/my$([char]9)rg" }
+            @{ Section = $Section; Case = 'a trailing tab'; Named = ' It contains U+0009.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111$([char]9)" }
+            @{ Section = $Section; Case = 'two tabs, named once'; Named = ' It contains U+0009.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/a$([char]9)b$([char]9)c" }
+            @{ Section = $Section; Case = 'a no-break space inside a segment'; Named = ' It contains U+00A0.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Sql/servers/srv1/databases/my$([char]0x00A0)db" }
+            @{ Section = $Section; Case = 'an em space inside a segment'; Named = ' It contains U+2003.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/my$([char]0x2003)rg" }
+            @{ Section = $Section; Case = 'a line feed at the end'; Named = ' It contains U+000A.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111$([char]10)" }
+            @{ Section = $Section; Case = 'a control character that is not white space'; Named = ' It contains U+0007.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/my$([char]7)rg" }
+            @{ Section = $Section; Case = 'a tab and a no-break space, in the order they appear'; Named = ' It contains U+0009, U+00A0.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/a$([char]9)b/c$([char]0x00A0)d" }
+        }
+    ) {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 1
+        $Errs[0].Section | Should -BeExactly $Section
+        $Errs[0].Path | Should -BeExactly "$Section[0].scope"
+        $Errs[0].Message | Should -BeExactly (Get-WhiteSpaceText -Section $Section -Scope $Scope -Named $Named)
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'reports every rule one scope breaks as a separate Error, in order, in <Section>' -ForEach @(
         @{ Section = 'roleAssignments' }
         @{ Section = 'roleManagementPolicies' }
     ) {
-        $Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/my rg/../%2e'
+        $Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/ rg/..\%2e?#'
         $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
         $Errs = Get-SegmentError -Validation $V
-        $Errs.Count | Should -Be 3
+        $Errs.Count | Should -Be 5
         @($Errs.Path | Select-Object -Unique) | Should -BeExactly @("$Section[0].scope")
         $Errs[0].Message | Should -BeLike "*without a '.' or '..' segment*"
-        $Errs[1].Message | Should -BeLike "*without a '%' escape*"
-        $Errs[2].Message | Should -BeLike '*without white space*'
+        $Errs[1].Message | Should -BeExactly (Get-PercentText -Section $Section -Scope $Scope)
+        $Errs[2].Message | Should -BeExactly (Get-BackslashText -Section $Section -Scope $Scope)
+        $Errs[3].Message | Should -BeExactly (Get-PathEndText -Section $Section -Scope $Scope)
+        $Errs[4].Message | Should -BeExactly (Get-WhiteSpaceText -Section $Section -Scope $Scope -Named '')
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'still refuses a dot segment written with backslashes, now with the backslash Error beside it, in <Section>' -ForEach @(
+        @{ Section = 'roleAssignments' }
+        @{ Section = 'roleManagementPolicies' }
+    ) {
+        $Scope = '/subscriptions/11111111-1111-1111-1111-111111111111\..\x'
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 2
+        $Errs[0].Message | Should -BeExactly "'scope' at $Section[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '$Scope'."
+        $Errs[1].Message | Should -BeExactly (Get-BackslashText -Section $Section -Scope $Scope)
         $V.Valid | Should -BeFalse
     }
 
@@ -4903,6 +4991,14 @@ Describe 'Test-OERStructureSchema refuses a dot segment, a percent escape or whi
             # Dots inside a segment are not a dot segment.
             @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Web/sites/a..b' }
             @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Web/sites/.hidden' }
+            # One or more spaces between other characters of a segment, as in a legal Azure resource name
+            # (Microsoft Learn: a Microsoft.Sql database, an Application Insights component, a Kusto database),
+            # and in two segments of one scope.
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Sql/servers/srv1/databases/my db' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Sql/servers/srv1/databases/my  db' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Insights/components/web app 1' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Kusto/clusters/kc1/databases/sales data' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Kusto/clusters/kc1/databases/sales data/dataConnections/event hub a' }
             # The friendly forms name a subscription or management group, which a lookup resolves; a display
             # name may hold spaces, and the prefix is read in any letter case.
             @{ Section = $Section; Scope = 'sub:Visual Studio Enterprise' }
@@ -4947,17 +5043,22 @@ Describe 'Test-OERStructureSchema refuses a dot segment, a percent escape or whi
     It 'exempts a scope as ConvertTo-OERScopeSplat reads it as a friendly form, and no other text that merely starts with the prefix' {
         # 'mg:' followed by a line feed names no management group (the splat's value needs a character that
         # is not a line break), so the text is sent as written like any other path and is refused twice:
-        # the line feed is white space and '..' is a dot segment.
-        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section 'roleManagementPolicies' -Scope "mg:$([char]10)/../x")
+        # '..' is a dot segment, and the line feed is white space other than a space at the end of a segment.
+        $Scope = "mg:$([char]10)/../x"
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section 'roleManagementPolicies' -Scope $Scope)
         $Errs = Get-SegmentError -Validation $V
         $Errs.Count | Should -Be 2
         $Errs[0].Message | Should -BeLike "*without a '.' or '..' segment*"
-        $Errs[1].Message | Should -BeLike '*without white space*'
+        $Errs[1].Message | Should -BeExactly (Get-WhiteSpaceText -Section 'roleManagementPolicies' -Scope $Scope -Named ' It contains U+000A.')
     }
 
-    It 'leaves a friendly form with a dot segment or a percent escape to its lookup, which never sends it as written' -ForEach @(
+    It 'leaves the friendly form <Scope> to its lookup, which never sends it as written' -ForEach @(
         @{ Scope = 'mg:a%20b' }
         @{ Scope = 'sub:/../x' }
+        @{ Scope = 'mg:a\b' }
+        @{ Scope = 'sub:x?y#z' }
+        @{ Scope = 'mg: Contoso Root ' }
+        @{ Scope = "subscription:My$([char]9)Sub" }
     ) {
         # The friendly forms are exempt as a whole (ruling R9): the value is looked up by id, name or
         # display name, and a management group name is escaped as one path segment before it is sent.

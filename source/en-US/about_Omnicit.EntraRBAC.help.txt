@@ -242,13 +242,17 @@ RENAMES, MAIL ALIASES AND SCOPE SPELLING
     empty or longer than 64 characters (DerivedMailNicknameInvalid), creating
     nothing: pass -MailNickname for such a name.
 
-    A roleAssignments or roleManagementPolicies scope written as a path with a
-    '.' or '..' segment, a '%' escape or white space is an Error too, beside
-    the existing rule against a trailing or doubled '/'. The mg:, sub: and
-    subscription: forms are resolved by a lookup and are not checked for those
-    three. A scope with white space is refused even where an Azure resource
-    name holds a space, so an export that holds a role assignment at such a
-    resource is refused until that entry is removed.
+    A roleAssignments or roleManagementPolicies scope written as a path is an
+    Error too, beside the existing rule against a trailing or doubled '/',
+    when it holds a '.' or '..' segment, a '%', a '\', a '?' or a '#', white
+    space at the start or end of the scope or of a segment, white space other
+    than a space, or a control character. The mg:, sub: and subscription:
+    forms are resolved by a lookup and are not checked for these. One or more
+    spaces between other characters of a segment are accepted, since an Azure
+    resource name can hold them, so an export that holds a role assignment at
+    such a resource applies. A resource whose name holds one of the refused
+    characters, which a few resource types allow, cannot be declared: remove
+    its entry.
 
     A -WhatIf plan reports an access package declared in a catalog the same
     document creates as 'would create access package' instead of Failed.

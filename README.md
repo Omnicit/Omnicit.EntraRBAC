@@ -826,10 +826,12 @@ longer than 64 characters or holds one of `@ ( ) \ [ ] " ; : < > ,`, a space or 
 since Microsoft Graph was measured to refuse each of them; the validator refuses any other white
 space or control character too, which was not measured. `New-OERGroup` refuses to derive an alias
 that would be empty or longer than 64 characters (`DerivedMailNicknameInvalid`). A scope written as
-a path with a `.` or `..` segment, a `%` escape or white space is an `Error` too (the `mg:`, `sub:`
-and `subscription:` forms are not checked for these three). A scope with white space is refused even
-where an Azure resource name holds a space, so an export that holds a role assignment at such a
-resource is refused until that entry is removed.
+a path is an `Error` too when it holds a `.` or `..` segment, a `%`, a `\`, a `?` or a `#`, white
+space at the start or end of the scope or of a segment, white space other than a space, or a control
+character (the `mg:`, `sub:` and `subscription:` forms are not checked for these). One or more spaces
+between other characters of a segment are accepted, since an Azure resource name can hold them, so an
+export that holds a role assignment at such a resource applies. A resource whose name holds one of
+the refused characters, which a few resource types allow, cannot be declared: remove its entry.
 
 `Set-OERAccessPackageAssignmentPolicy`, and `Invoke-OERStructure` through it, keeps a policy's
 custom extension stages, which Microsoft Graph removes on an update that does not send them, and,

@@ -1569,7 +1569,7 @@ Describe 'Invoke-OERStructure never reaches the root scope (BL-126)' {
         $Refused.Count | Should -Be 1
         $Refused[0].Exception.Message | Should -BeLike "*roleAssignments``[0``].scope: 'scope' at roleAssignments``[0``] must be written without a '.' or '..' segment*Got: '/.'.*"
         $Refused[0].Exception.Message | Should -BeLike "*roleAssignments``[1``].scope: 'scope' at roleAssignments``[1``] must be written without a '.' or '..' segment*Got: '/..'.*"
-        $Refused[0].Exception.Message | Should -BeLike "*roleAssignments``[2``].scope: 'scope' at roleAssignments``[2``] must be written without a '%' escape*Got: '/%2e'.*"
+        $Refused[0].Exception.Message | Should -BeLike "*roleAssignments``[2``].scope: 'scope' at roleAssignments``[2``] must be written without a '%':*Got: '/%2e'.*"
         $Refused[0].Exception.Message | Should -Not -BeLike "*roleAssignments``[3``]*"
         $script:RtArmLog.Count | Should -Be 0
         Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0

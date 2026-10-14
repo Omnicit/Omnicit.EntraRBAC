@@ -6929,22 +6929,75 @@ or the same. The root scope `/` itself, where `//` would have landed, is never a
 either since Sprint 11 step 2, and `//` draws that rule's `Warning` beside its `Error`: see
 [#root-scope-is-not-in-the-document](#root-scope-is-not-in-the-document).
 
-**A scope written with a dot segment, a percent escape or white space is refused (A13, BL-141).** The
-slash rule above leaves three more spellings. Two of them name another scope than the text says. A
-scope written as an Azure Resource Manager path is sent as written, and the request URI is a
-`System.Uri`, which removes a `.` or `..` segment (reading `\` as `/`) and decodes an escape of an
-unreserved character such as `%2e`; the rule refuses every `%` anyway, whatever it escapes. The third,
-white space, is refused as a whole and is NOT known to name another scope (see the limit below). So
-`/subscriptions/ID/resourceGroups/rg/../other` is sent as
-`/subscriptions/ID/resourceGroups/other`, while the engine groups entries on the canonical form of the
-TEXT, which keeps the segment. Two spellings of one scope then form two groups, and under `-Prune`
-each group's pass can remove what the other declares: the mechanism of BL-01.
-`Test-OERStructureSchema` therefore reports each of the three as an `Error` at the entry's scope path,
-in `roleAssignments` and `roleManagementPolicies` alike, and the whole document is refused before it
-signs in. The three tests are independent, so a scope that breaks all of them reports three `Error`s.
-The dot segment test splits the scope at `/` and at `\` and compares each piece ordinally, so `rg.name`,
-`a..b` and `.hidden` are not segments; the white space test is `[char]::IsWhiteSpace`, which includes
-a line feed.
+**A scope spelled so that the request names another scope is refused (A13, BL-141).** The slash rule
+above leaves more spellings. A scope written as an Azure Resource Manager path is sent as written: the
+transport puts it after the host and before the rest of the path, and `Invoke-WebRequest` reads the
+result as a `System.Uri`. Measured offline on 2026-10-14, with `System.Uri` alone and no request sent,
+for `https://management.azure.com` followed by a scope and
+`/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01`:
+
+- a `.` or `..` segment is removed, also with `\` as the separator;
+- a `\` is read as `/`;
+- a `?` starts the query and a `#` the fragment, so the rest of the scope never reaches the path (and
+  after a `#`, neither does the api-version);
+- an escape of an unreserved character, such as `%41` or `%2e`, is decoded, while `%2f` is kept;
+- a space is sent as `%20`, two spaces as `%20%20`, a no-break space as `%C2%A0` and a tab as `%09`.
+
+So `/subscriptions/ID/resourceGroups/rg/../other` is sent as `/subscriptions/ID/resourceGroups/other`,
+and `/subscriptions/ID\resourceGroups\rg` as `/subscriptions/ID/resourceGroups/rg`, while the engine
+groups entries on the canonical form of the TEXT, which keeps each spelling apart. Two spellings of one
+scope then form two groups, and under `-Prune` each group's pass can remove what the other declares: the
+mechanism of BL-01. `Test-OERStructureSchema` therefore reports, as an `Error` at the entry's scope
+path, in `roleAssignments` and `roleManagementPolicies` alike, a scope that holds:
+
+1. a `.` or `..` segment: the scope is split at `/` and at `\` and each piece compared ordinally, so
+   `rg.name`, `a..b` and `.hidden` are not segments;
+2. a `%`, whatever it escapes: an escape can let two spellings reach one resource, and `System.Uri`
+   decodes some escapes and keeps others, so the one spelling that is certain is the one without;
+3. a `\`;
+4. a `?` or a `#`, one `Error` for either or both;
+5. white space at the start or end of the scope or of a segment, white space other than U+0020
+   anywhere, or a control character anywhere. The ends are tested with `String.Trim()` on each
+   segment, which removes exactly the characters `[char]::IsWhiteSpace` reports (checked for every
+   character of the Basic Multilingual Plane); the first segment starts where the scope starts and the
+   last ends where it ends, so the scope's own ends are covered too. The message names each character
+   other than a space by its code point, since a no-break space looks like a space in `Got:`.
+
+The rules are independent, so one scope can draw five `Error`s, and the whole document is refused before
+it signs in.
+
+**A space between other characters of a segment is accepted (A13 as narrowed on 2026-10-14).** The rule
+first refused white space as a whole. Microsoft Learn ("Naming rules and restrictions for Azure
+resources") allows spaces in the names of several resource types: in so many words for `Microsoft.Kusto`
+`clusters/databases` and their data connections and for `Microsoft.StorageSync` services and sync
+groups, and through character lists that do not exclude the space for, among others, `Microsoft.Sql`
+`servers/databases` and `servers/elasticPools` and `Microsoft.Insights` `components`.
+`Get-OERInventory` reads role assignments at a subscription or a management group without `atScope()`,
+so an assignment at such a resource below it is exported with its scope as Azure Resource Manager
+returns it, space included, and the whole document was refused until that entry was removed. A space
+between other characters names no other scope: the request sends it as `%20`, there is one way to write
+it, and the canonical form keeps it. So one or more U+0020 between other characters of a segment are
+accepted, and such an export validates. What stays refused is white space that a hand-written document
+can carry without anyone seeing it: a space at either end of a segment (several resource types forbid a
+name that ends with one, and whether Azure Resource Manager trims one was not measured), a tab, a line
+break, a no-break space or any other white space, and a control character. That part is the safe
+direction, not a measured necessity.
+
+**`\`, `?` and `#` are refused too, and the limit that leaves.** `\` is a second spelling of `/` to
+`System.Uri`, and a `?` or `#` ends the path, so each makes the request name another scope than the text
+says: the same family as BL-141. They were refused in the same change. The premise that none of them,
+nor a `%`, occurs in an Azure resource name does not hold for every resource type: the same page
+excludes them for most types, but `Microsoft.Web` `certificates` exclude only `/`,
+`Microsoft.LoadTestService` `loadtests` allow `%` and `#`, and several types allow `#` (among them
+`Microsoft.Sql` databases, `Microsoft.Insights` `components` and the `Microsoft.Automation` resources),
+although the page itself says not to use `#` in a resource name, since it interferes with URL parsing
+during Azure Resource Manager requests. A role assignment at a resource whose name holds one of these
+characters, or white space where it is refused, cannot be declared in a document: its scope cannot be
+sent as written without naming another scope, and the module does not escape a scope's segments. Each
+of those `Error` messages ends by saying so and tells the operator to remove the entry, and README, the
+about topic and the schema descriptions state the same limit. If wrong: such an export is refused until
+the entry is removed, the safe direction; lifting the limit would take an escaping of the scope's
+segments in the transport, which no decision has asked for.
 
 The rule applies only to a scope NOT written in the `mg:`, `sub:` or `subscription:` form (R9). Those
 forms name a management group or a subscription by id, name or display name, and a display name may
@@ -6956,31 +7009,11 @@ checked. The two differ on degenerate text only -- `mg:` followed by a line brea
 after it, is no friendly form to the owner and is checked. The prefix is read in any letter case.
 The slash rule is not exempted: a trailing or doubled `/` is refused in every spelling, `mg:` included.
 
-**The limit of the white space rule: an Azure resource name can hold a space.** Microsoft Learn
-("Naming rules and restrictions for Azure resources") allows white space inside the name of several
-resource types and forbids only a name that ends with a space or a period: for example
-`Microsoft.Sql` `servers/databases` and `servers/elasticPools`, `Microsoft.Insights` `components` and
-`Microsoft.Kusto` `clusters/databases`. `Get-OERInventory` reads role assignments at a subscription or
-a management group without `atScope()`, so an assignment at such a resource below it is exported with
-its scope as Azure Resource Manager returns it, space included. `Test-OERStructure`, and so
-`Invoke-OERStructure`, then refuses the whole document until that entry is removed, and a resource
-whose name holds a space cannot be declared in a document at all. The rule stays as decided (A13): it
-errs in the safe direction, since the document is refused before anything is read or written. The
-white space `Error` message says so and tells the operator to remove the entry, and README, the about
-topic and the schema descriptions state the same limit. This replaces the earlier statement that no
-scope carries white space and that an exported document is not expected to be hit: it was wrong for
-white space, and for a `.` or `..` segment and a `%` escape it was an expectation, not a measurement.
-
-If wrong: a scope with a dot segment, a `%` or white space that an operator wrote on purpose stops
-applying until it is written plainly, and an export holding a role assignment at a resource whose name
-holds a space is refused until that entry is removed. Follow-up, recorded and not taken: narrow the
-rule to white space at the start or end of the scope or of a segment, white space other than U+0020,
-and control characters, which would let such an export pass the validator (what the request does with
-a space in a path was not measured). Known limit, outside A13: a lone `\`, a `?` and a `#` in a path
-are not refused. By URI syntax a backslash is read as `/`, and a `?` or `#` ends the path, so a scope holding one may name
-another scope than the text says too; that was not measured against Azure Resource Manager and is left
-as a finding. `/.`, `/..` and `/%2e` in `roleAssignments` now carry this `Error` beside the root scope
-`Warning` of [#root-scope-is-not-in-the-document](#root-scope-is-not-in-the-document).
+If wrong: a scope with one of these spellings that an operator wrote on purpose stops applying until it
+is written plainly, and a resource whose real name starts or ends with a space, if Azure Resource Manager accepts
+one, cannot be declared. `/.`, `/..` and `/%2e` in `roleAssignments` carry the dot segment or `%`
+`Error` beside the root scope `Warning` of
+[#root-scope-is-not-in-the-document](#root-scope-is-not-in-the-document).
 
 **A failed read of the assignments at a scope is `Failed`, never an empty list (A14).**
 `Get-OERRoleAssignment` reports a failed read, for instance a 403 at a management group, as a
@@ -7843,9 +7876,11 @@ other change. A dot segment, a `%` escape or white space in a scope that is NOT 
 written: that would have been a new validator rule outside decision A4, and it was left as a finding.
 It is refused now, as an `Error`, by the validator rule of Sprint 11 step 3 (BL-141, decision A13; see
 [#role-assignment-key](#role-assignment-key)), which also covers the root's own spellings `/.`, `/..`
-and `/%2e` and stands beside this rule's `Warning` for them. If wrong: a spelling that System.Uri
-leaves alone but Azure Resource Manager itself reads as the root (an escape System.Uri keeps encoded,
-such as `%2f` or `%5c`) would still slip through; that is not measured.
+and `/%2e` and stands beside this rule's `Warning` for them; since round 1 of that step it refuses
+white space only where a resource name cannot be expected to hold it, and refuses `\`, `?` and `#`
+too. If wrong: a spelling that System.Uri leaves alone but Azure Resource Manager itself reads as the
+root (an escape System.Uri keeps encoded, such as `%2f` or `%5c`) would still slip through this
+rule's `Warning`; that is not measured, and the A13 rule refuses every `%` as an `Error` anyway.
 
 **Rule 2 (the read; `Get-OERInventory`).** The root rows are taken out of the projected rows BEFORE
 the name-collision pass, so they never change how another row is named, and the document never

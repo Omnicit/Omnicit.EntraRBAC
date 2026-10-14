@@ -175,20 +175,22 @@ function Test-OERStructureSchema {
     '/' itself) or contains '//' is an Error at the entry's scope path: the canonical form would merge
     it with the scope written without the stray '/', so a scope written only that way would start to
     be pruned and '//' would become the root, and the document is refused instead. A roleAssignments
-    or roleManagementPolicies scope that is written as an Azure path and holds a '.' or '..' segment
-    (split at '/' and at '\', since the request URI reads '\' as '/'), a '%' escape or white space is
-    an Error at the entry's scope path for each of the three (A13, BL-141). The request URI resolves
-    a segment and decodes an escape of an unreserved character (such as %2e), so it names another
-    scope than the text says, while the engine groups entries on the text's canonical form, so two
-    spellings of one scope would each prune what the other declares; every '%' is refused, whatever it
-    escapes. White space is refused as a whole, as the safe direction, although an Azure resource name
-    can hold a space (a Microsoft.Sql database, for instance, per Microsoft Learn's naming rules): a
-    role assignment at such a resource, as Get-OERInventory exports it below a subscription or a
-    management group, is refused until that entry is removed, and a resource whose name holds a space
-    cannot be declared in a document. A scope in the mg:, sub: or subscription: form is exempt, as
-    ConvertTo-OERScopeSplat reads the form: it names a management group or subscription by id, name or
-    display name (a display name may contain spaces), a lookup resolves it, and it is never sent as
-    written. A lone '\', '?' and '#' are not refused by this rule. A roleAssignments
+    or roleManagementPolicies scope that is written as an Azure path is an Error at the entry's scope
+    path, once for each rule it breaks (A13, BL-141), when it holds a '.' or '..' segment (split at
+    '/' and at '\'), a '%', a '\', a '?' or a '#', white space at the start or end of the scope or of
+    a segment, white space other than a space (U+0020), or a control character. The request URI
+    removes a dot segment, reads '\' as '/', ends the path at a '?' or '#', and decodes an escape of an
+    unreserved character (such as %2e), so such a spelling names another scope than the text says,
+    while the engine groups entries on the text's canonical form, and two spellings of one scope would
+    each prune what the other declares. Every '%' is refused, whatever it escapes. Microsoft Learn's
+    naming rules exclude '%', '\', '?' and '#' for most resource types but not all, so a role assignment
+    at a resource whose name holds one cannot be declared, and the message says to remove the entry.
+    One or more spaces between other characters of a segment are accepted: an Azure resource name can
+    hold them (a Microsoft.Kusto or a Microsoft.Sql database, for instance, per Microsoft Learn's naming
+    rules), so a role assignment at such a resource, as Get-OERInventory exports it, is valid.
+    A scope in the mg:, sub: or subscription: form is exempt, as ConvertTo-OERScopeSplat reads the
+    form: it names a management group or subscription by id, name or display name (a display name may
+    contain spaces), a lookup resolves it, and it is never sent as written. A roleAssignments
     scope that is the Azure root scope '/' (Test-OERAzureRootScope decides, so '//' is reported this
     way too, beside its Error, and so is a spelling the Azure Resource Manager transport sends to the
     root, such as '/.' or '/%2e', beside its A13 Error) is a Warning at the entry's scope path (BL-126): a role assignment
@@ -1517,43 +1519,79 @@ function Test-OERStructureSchema {
         }
     }
 
-    # A13 (BL-141): a scope written as an Azure Resource Manager path is sent as written, and the request
-    # URI resolves a '.' or '..' segment (with '/' or '\' as the separator, since System.Uri reads '\' as
-    # '/') and decodes an escape of an unreserved character such as %2e (every '%' is refused here,
-    # whatever it escapes). Such a spelling names another scope than the text says, while the engine
-    # groups entries on the text's canonical form, so two spellings of one scope would form two groups
-    # and each prune pass could remove what the other declares (the mechanism of BL-01). White space is
-    # refused as a whole, as the safe direction, although it is NOT known to name another scope: an
-    # Azure resource name can hold a space (Microsoft Learn, "Naming rules and restrictions for Azure
-    # resources": Microsoft.Sql servers/databases and elasticPools, Microsoft.Insights components,
-    # Microsoft.Kusto databases), and Get-OERInventory reads role assignments at a subscription or a
-    # management group without atScope(), so a role assignment at such a resource is exported with its
-    # scope as Azure returns it and is refused here until that entry is removed. A resource whose name
-    # holds a space therefore cannot be declared in a document. Recorded option, not taken: narrow the
-    # white space rule to white space at the start or end of the scope or of a segment, white space other
-    # than U+0020, and control characters (docs/development/rationale.md#role-assignment-key).
-    # Refused as an Error, in the form of the slash rule above. The mg:, sub: and
-    # subscription: forms are exempt: they name a management group or subscription by id, name or
-    # display name (a display name may contain spaces) and are resolved by a lookup, never sent as
-    # written. ConvertTo-OERScopeSplat owns that syntax, so the exemption asks it: only a scope it
+    # A13 (BL-141, narrowed 2026-10-14): a scope written as an Azure Resource Manager path is sent as
+    # written, as part of a System.Uri, while the engine groups entries on the text's canonical form. A
+    # spelling the request reads as another scope would let two spellings of one scope form two groups,
+    # and each prune pass could remove what the other declares (the mechanism of BL-01). Each check below
+    # is an Error at the entry's scope path, in the form of the slash rule above, and they are
+    # independent, so one scope can draw several:
+    # - a '.' or '..' segment, with '/' or '\' as the separator: System.Uri removes it;
+    # - a '%': an escape can let two spellings reach one resource (System.Uri decodes an escape of an
+    #   unreserved character such as %2e and keeps one such as %2f), so every '%' is refused, whatever it
+    #   escapes;
+    # - a '\': System.Uri reads it as '/', so the text is a second spelling of the path written with '/';
+    # - a '?' or a '#': either ends the path of the request URI, so the rest of the scope never reaches
+    #   it as a path;
+    # - white space at the start or end of the scope or of a segment, white space other than a space
+    #   (U+0020) anywhere, and a control character. The first segment starts where the scope starts and
+    #   the last ends where it ends, so the segment test covers the scope's own start and end too. One
+    #   or more spaces BETWEEN other characters of a segment are accepted: an Azure resource name can
+    #   hold them (Microsoft Learn, "Naming rules and restrictions for Azure resources": Microsoft.Kusto
+    #   databases, and by its exclusion lists Microsoft.Sql servers/databases and elasticPools and
+    #   Microsoft.Insights components), the request sends each one as %20, and the export writes the
+    #   scope as Azure Resource Manager returns it, so a role assignment at such a resource, as
+    #   Get-OERInventory exports it, is valid (docs/development/rationale.md#role-assignment-key).
+    # The same page excludes '%', '\', '?' and '#' for most resource types, though not for all (a few
+    # allow '%', '\' or '?', and several allow '#', which it says not to use since it interferes with
+    # Azure Resource Manager requests), and not every type excludes a leading space: a role assignment
+    # at such a resource cannot be declared, and each message says to remove the entry.
+    # The mg:, sub: and subscription: forms are exempt: they name a management group or subscription by
+    # id, name or display name (a display name may contain spaces) and are resolved by a lookup, never
+    # sent as written. ConvertTo-OERScopeSplat owns that syntax, so the exemption asks it: only a scope it
     # returns as @{ Scope = ... } is the text that is sent as written, and the prefix pattern is never
-    # repeated here. A lone backslash, '?' and '#' are not refused by this rule.
+    # repeated here.
     function Add-ScopeSegmentFinding {
         param([object]$Node, [string]$Section, [string]$Item, [string]$Path)
         if (-not (Test-HasProp -Node $Node -Name 'scope')) { return }
         $ScopeText = [string]$Node.scope
         if (-not (ConvertTo-OERScopeSplat -Scope $ScopeText).ContainsKey('Scope')) { return }
-        if (@($ScopeText -split '[/\\]' | Where-Object { $_ -ceq '.' -or $_ -ceq '..' }).Count -gt 0) {
+        $Segments = @($ScopeText -split '[/\\]')
+        if (@($Segments | Where-Object { $_ -ceq '.' -or $_ -ceq '..' }).Count -gt 0) {
             Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
                 -Message "'scope' at $Path must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '$ScopeText'."
         }
         if ($ScopeText.Contains('%')) {
             Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message "'scope' at $Path must be written without a '%' escape: the request would decode it and name another scope than the one written. Got: '$ScopeText'."
+                -Message ("'scope' at $Path must be written without a '%': an escape can let two spellings reach one resource, and the " +
+                    "names of most Azure resource types hold no '%'. Got: '$ScopeText'. A resource whose name holds one cannot be " +
+                    'declared in a document; remove the entry.')
         }
-        if (@($ScopeText.ToCharArray() | Where-Object { [char]::IsWhiteSpace($_) }).Count -gt 0) {
+        if ($ScopeText.Contains('\')) {
             Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message "'scope' at $Path must be written without white space. Got: '$ScopeText'. An Azure resource whose name holds white space cannot be declared in a document; remove the entry."
+                -Message ("'scope' at $Path must be written without a '\': the request reads it as '/', so the scope would be a second " +
+                    "spelling of the one written with '/'. Got: '$ScopeText'. A resource whose name holds one cannot be declared in a " +
+                    'document; remove the entry.')
+        }
+        if ($ScopeText.Contains('?') -or $ScopeText.Contains('#')) {
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
+                -Message ("'scope' at $Path must be written without a '?' or '#': either ends the path of the request, which would " +
+                    "then name another scope than the one written. Got: '$ScopeText'. A resource whose name holds one cannot be " +
+                    'declared in a document; remove the entry.')
+        }
+        # String.Trim() removes exactly the characters [char]::IsWhiteSpace reports, at both ends.
+        $EdgeWhiteSpace = @($Segments | Where-Object { $_ -cne $_.Trim() }).Count -gt 0
+        $OtherWhiteSpace = @($ScopeText.ToCharArray() | Where-Object {
+                [char]::IsControl($_) -or ([char]::IsWhiteSpace($_) -and [int]$_ -ne 32)
+            } | Select-Object -Unique)
+        if ($EdgeWhiteSpace -or $OtherWhiteSpace.Count -gt 0) {
+            $Named = if ($OtherWhiteSpace.Count -gt 0) {
+                ' It contains ' + (($OtherWhiteSpace | ForEach-Object { 'U+{0:X4}' -f [int]$_ }) -join ', ') + '.'
+            } else { '' }
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
+                -Message ("'scope' at $Path must be written without white space at the start or end of the scope or of a segment, " +
+                    "white space other than a space (U+0020) or a control character; a space between other characters of a segment " +
+                    "is accepted. Got: '$ScopeText'.$Named A resource whose name holds one of these cannot be declared in a " +
+                    'document; remove the entry.')
         }
     }
 

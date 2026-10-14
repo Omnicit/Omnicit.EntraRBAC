@@ -23,9 +23,9 @@ only if it reviews the declared package and policy (a non-unique name must be an
 
 `Set-OERAccessPackageAssignmentPolicy` no longer drops custom extension stages and can update an
 automatic assignment policy. `Test-OERStructure` refuses `previousDisplayName` outside groups, an
-invalid `mailNickname` and a scope with a dot segment, `%` or white space, and warns when a renamed
-group keeps its alias. `New-OERGroup` refuses an underivable alias. `-WhatIf` now plans a package in
-a new catalog as created.
+invalid `mailNickname` and a scope with a dot segment, `%`, `\`, `?`, `#` or stray white space, and
+warns when a renamed group keeps its alias. `New-OERGroup` refuses an underivable alias. `-WhatIf`
+plans a package in a new catalog as created.
 
 ## [1.2.0] - 2026-10-11
 

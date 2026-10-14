@@ -1115,8 +1115,9 @@ Describe 'Get-OERStructureSchemaJson tenantId (BL-88, A14)' {
 
 Describe 'Get-OERStructureSchemaJson renames, mail aliases and scope spelling (BL-128, BL-132, BL-141)' {
     # Sprint 11 step 3. The offline validator refuses previousDisplayName outside groups, a mailNickname
-    # Microsoft Graph refuses, and a scope spelled with a dot segment, a percent escape or white space;
-    # the schema says so in its descriptions and bounds the alias length. It carries no regular-expression
+    # Microsoft Graph refuses, and a scope spelled with a dot segment, a '%', a '\', a '?', a '#' or white
+    # space where a resource name cannot hold it (decision A13 as narrowed in round 1); the schema says so
+    # in its descriptions and bounds the alias length. It carries no regular-expression
     # pattern for the characters, which the validator alone enforces.
     It 'bounds a group mailNickname to 1 to 64 characters and declares no pattern' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
         InModuleScope $script:moduleName {
@@ -1171,12 +1172,14 @@ Describe 'Get-OERStructureSchemaJson renames, mail aliases and scope spelling (B
                 roleManagementPolicies = $Props.roleManagementPolicies.items.properties.scope.description
             }
             foreach ($Name in $Scopes.Keys) {
-                $Scopes[$Name] | Should -Match ([regex]::Escape("without a trailing or doubled '/', without a '.' or '..' segment, without a '%' escape and without white space")) -Because "the $Name scope names the spellings"
+                $Scopes[$Name] | Should -Match ([regex]::Escape("without a trailing or doubled '/', a '.' or '..' segment, a '%', a '\', a '?' or a '#', white space at the start or end of the scope or of a segment, white space other than a space, and a control character: Test-OERStructure refuses each of them as an Error.")) -Because "the $Name scope names the spellings"
                 $Scopes[$Name] | Should -Match ([regex]::Escape('The mg:, sub: and subscription: forms are resolved by a lookup and never sent as written, so only the rule about ''/'' applies to them.')) -Because "the $Name scope names the exempt forms"
-                # White space is refused as a whole, not because the request would name another scope, so
-                # a resource whose name holds a space cannot be declared: the description says so.
-                $Scopes[$Name] | Should -Match ([regex]::Escape('white space is refused as a whole, so an Azure resource whose name holds a space cannot be declared.')) -Because "the $Name scope states the limit"
-                $Scopes[$Name] | Should -Not -Match ([regex]::Escape('refuses each of them as an Error, since the request would name another scope')) -Because "the $Name scope no longer gives that reason for white space"
+                # Decision A13 as narrowed on 2026-10-14: a space between other characters of a segment is
+                # accepted, as a legal Azure resource name can hold one, and the limit that remains is stated.
+                $Scopes[$Name] | Should -Match ([regex]::Escape('One or more spaces between other characters of a segment, as an Azure resource name can hold, are accepted.')) -Because "the $Name scope says what is accepted"
+                $Scopes[$Name] | Should -Match ([regex]::Escape('a resource whose name holds one of these cannot be declared.')) -Because "the $Name scope states the limit"
+                $Scopes[$Name] | Should -Not -Match ([regex]::Escape('white space is refused as a whole')) -Because "the $Name scope no longer refuses every space"
+                $Scopes[$Name] | Should -Not -Match ([regex]::Escape('without white space')) -Because "the $Name scope no longer refuses every space"
             }
         }
     }

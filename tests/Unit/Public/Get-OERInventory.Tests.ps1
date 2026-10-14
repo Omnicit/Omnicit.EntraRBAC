@@ -3012,6 +3012,45 @@ Describe 'Get-OERInventory' {
             Assert-DupDocumentValid -Inventory $Inv
         }
 
+        It 'writes a role assignment at a resource whose name holds a space with its scope as Azure returns it, and the document validates (A13)' {
+            # An Azure resource name can hold spaces between other characters (Microsoft Learn: a
+            # Microsoft.Sql database, an Application Insights component). The validator accepts them since
+            # A13 was narrowed, so an export that reads such an assignment stays appliable.
+            $SqlScope = "$($script:DupSub1)/resourceGroups/rg-one/providers/Microsoft.Sql/servers/srv1/databases/sales data"
+            $AppScope = "$($script:DupSub1)/resourceGroups/rg-one/providers/Microsoft.Insights/components/web  app 1"
+            $script:DupNames = @{ $script:DupUser1 = 'person1@example.com' }
+            $script:DupRoleAssignments = @(
+                New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One' -Scope $SqlScope
+                New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One' -Scope $AppScope
+            )
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.principal)" }) | Should -Be @(
+                "$SqlScope|person1@example.com"
+                "$AppScope|person1@example.com"
+            )
+            Assert-DupDocumentValid -Inventory $Inv
+        }
+
+        It 'writes a role assignment at a resource whose name holds a ''#'' as Azure returns it, and the validator refuses it with the way out (A13)' {
+            # The limit of the rule: a few resource types allow '#' in a name, but a '#' ends the path of the
+            # request URI, so such a scope is refused and the message says to remove the entry. The export
+            # itself is unchanged.
+            $HashScope = "$($script:DupSub1)/resourceGroups/rg-one/providers/Microsoft.Sql/servers/srv1/databases/db#1"
+            $script:DupNames = @{ $script:DupUser1 = 'person1@example.com' }
+            $script:DupRoleAssignments = @(
+                New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One' -Scope $HashScope
+            )
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            @($Inv.roleAssignments)[0].scope | Should -BeExactly $HashScope
+            $Validation = Get-DupValidation -Inventory $Inv
+            Get-DupValidationError -Validation $Validation | Should -Be @(
+                ("roleAssignments[0].scope: 'scope' at roleAssignments[0] must be written without a '?' or '#': either ends the path " +
+                    "of the request, which would then name another scope than the one written. Got: '$HashScope'. A resource whose " +
+                    'name holds one cannot be declared in a document; remove the entry.')
+            )
+            $Validation.Valid | Should -BeFalse
+        }
+
         It 'names a user and a group that carry the same name by their object ids, each with its own principalType' {
             # A group can carry a user principal name as its display name, so the user and the group
             # export the same string. Users are moved to their ids too, or the pair would stay a duplicate.
