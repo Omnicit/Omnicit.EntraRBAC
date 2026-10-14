@@ -65,12 +65,9 @@ function Test-OERStructureSchema {
     inventory README used to document before they were renamed (activationEnabledRules,
     activeEnabledRules, eligibleAlertRecipients, activeAlertRecipients, activationAlertRecipients) gets a
     "Did you mean '<current name>'?" suffix pointing at its replacement. Other sections keep accepting
-    unknown keys without comment, except previousDisplayName: groups, administrativeUnits, catalogs and
-    accessPackages entries can be renamed through the document (see below), but an assignmentPolicies
-    entry of an access package and an accessReviews entry cannot, so a previousDisplayName declared on
-    either is an Error (BL-128), since Invoke-OERStructure does not read previousDisplayName there and
-    would create a new object under the new displayName beside the existing one instead of renaming it.
-    An explicit null is not declared and is not reported. An accessPackages assignmentPolicies entry declaring requireApproval true together
+    unknown keys without comment. previousDisplayName is accepted on a groups, administrativeUnits,
+    catalogs, accessPackages, accessPackages assignmentPolicies and accessReviews entry alike, with the
+    rules described below (BL-128). An accessPackages assignmentPolicies entry declaring requireApproval true together
     with an empty approvalStages array is a Warning naming the measured outcome: Microsoft Graph refuses
     the write with InvalidApprovalStages ("If approval is required, a valid list of stages must be
     provided."), so the assignment policy is reported Failed and left completely unchanged and the
@@ -122,11 +119,15 @@ function Test-OERStructureSchema {
     Warning, since both names then find the same group and a case-only rename is not possible
     through the document (Set-OERGroup -NewDisplayName does it). An explicit null is not declared,
     as for every other key, and that Warning does not compare a template-based group's computed name.
-    An administrativeUnits, catalogs or accessPackages entry's previousDisplayName (Sprint 11 step 4)
-    follows the groups' rules: it must be a non-empty string (Error otherwise); one equal to the
-    entry's displayName ignoring case is a Warning naming Set-OERAdministrativeUnit, Set-OERCatalog or
-    Set-OERAccessPackage -NewDisplayName; and an explicit null is not declared. It is a claimed key of
-    the section's duplicate check (below), and a reference to it is warned about (Rule 14, below).
+    An administrativeUnits, catalogs or accessPackages entry's previousDisplayName (Sprint 11 step 4),
+    and the previousDisplayName of an accessPackages assignmentPolicies entry or of an accessReviews
+    entry (Sprint 11 step 4b), follow the groups' rules: it must be a non-empty string (Error
+    otherwise); one equal to the entry's displayName ignoring case is a Warning naming Set-OERAdministrativeUnit,
+    Set-OERCatalog or Set-OERAccessPackage -NewDisplayName, for a policy Set-OERAccessPackageAssignmentPolicy
+    -DisplayName together with another property (its -DisplayName alone reports NothingToUpdate when only
+    the case differs), and for a review Set-OERAccessReviewDefinition -DisplayName; and an explicit null
+    is not declared. It is a claimed key of the duplicate check (below), and a reference to it is warned
+    about (Rule 14, below).
     A group's onPremisesSynced, when present, must be a boolean (Error); it is information only.
     A groups[] entry's mailNickname, when present, must be a string (Error) of 1 to 64 characters
     (BL-132): an empty one is an Error, one longer than 64 characters is an Error naming its length, and
@@ -171,7 +172,15 @@ function Test-OERStructureSchema {
     named. A previousDisplayName that is an object id is skipped, since a reference by id stays valid
     after a rename, and so is an entry without a displayName. For an access package's catalog this
     Warning replaces Rule 11's "Catalog is not declared" Warning, which is not written for a catalog
-    that is a renamed catalog's previousDisplayName (an object id included). A second top-level entry
+    that is a renamed catalog's previousDisplayName (an object id included). Rule 14 has a second
+    half for policies (Sprint 11 step 4b): an accessReviews[] entry whose assignmentPolicy equals,
+    ignoring case, the previousDisplayName of an assignmentPolicies entry that renames its policy (the
+    same reading, an object id and an entry without a displayName skipped) of the access package its
+    accessPackage names -- by the package's displayName, or by the name or object id it renames from --
+    is a Warning at accessReviews[i].assignmentPolicy: once the rename is applied no policy of the
+    package carries the old name, so the review's target check fails, and the Warning says to name the
+    policy by its new name or its object id. The first policy entry that renames from the name is the
+    one named. A second top-level entry
     whose key matches an earlier one, compared without regard to letter case, is an Error at the later
     entry's path that names the earlier entry's index, since the two describe one live object and
     applying both makes each undo the other, or through a child collection removes what the other
@@ -182,9 +191,16 @@ function Test-OERStructureSchema {
     entry; for administrativeUnits and catalogs, displayName together with a declared
     previousDisplayName, compared the same way (a previousDisplayName that is not a non-empty string,
     or equals the entry's own displayName ignoring case, claims nothing); for accessReviews,
-    displayName; for accessPackages, catalog together with displayName, and catalog together with a
+    displayName together with a declared previousDisplayName, compared the same way; for accessPackages,
+    catalog together with displayName, and catalog together with a
     declared previousDisplayName (the same previous name in another catalog is another package, and a
-    package that declares no catalog claims nothing); for roleAssignments, scope, role and principal; for
+    package that declares no catalog claims nothing); for the assignmentPolicies of one access package
+    (Sprint 11 step 4b, Ruling P4), displayName together with a declared previousDisplayName, compared
+    among the policies of that package only and the same way, except that two policies declaring the same
+    displayName are not reported: a collision is an Error through the same helper, at the later claim's
+    path (accessPackages[i].assignmentPolicies[k], or its previousDisplayName) naming the earlier policy
+    as accessPackages[i].assignmentPolicies[n], only when at least one of the two claims is a
+    previousDisplayName; for roleAssignments, scope, role and principal; for
     roleManagementPolicies, scope and role; for directoryRoleManagementPolicies, role. A scope is
     compared in the canonical form ConvertTo-OERCanonicalScope owns, a pure helper that the apply
     engine shares, so sub: and subscription: with an id, and mg:, are spellings of the scope's path;
@@ -289,29 +305,10 @@ function Test-OERStructureSchema {
         }
     }
 
-    # BL-128 (A5): groups, administrative units, catalogs and access packages can be renamed through the
-    # document (Test-SupportedRename below covers the last three). The other two handlers -- a policy
-    # within its package and a review -- never read previousDisplayName, they match an entry by its
-    # displayName, so a previousDisplayName there would be ignored and the engine would create a second
-    # object beside the one the document means to rename. Refused as an Error until those two support it
-    # (Sprint 11 step 4b); it is called for assignmentPolicies and accessReviews only. A null value is not
-    # declared and is not reported. The message names the kind with the article its first letter calls
-    # for ('an assignment policy', 'an access review').
-    function Add-UnsupportedRenameFinding {
-        param([object]$Node, [string]$Section, [string]$Item, [string]$Path, [string]$Kind)
-        if (-not (Test-HasProp -Node $Node -Name 'previousDisplayName')) { return }
-        $KindWithArticle = if ($Kind -match '^[aeiou]') { "an $Kind" } else { "a $Kind" }
-        Add-Finding -Section $Section -Item $Item -Path "$Path.previousDisplayName" `
-            -Message ("'previousDisplayName' at $Path is not supported for $KindWithArticle yet: only groups, " +
-                "administrative units, catalogs and access packages can be renamed through the document. " +
-                "Invoke-OERStructure does not read previousDisplayName for $KindWithArticle, so it would " +
-                "create a new $Kind named by displayName beside the existing one instead of renaming it. " +
-                "Remove previousDisplayName, and rename the existing object outside the document first.")
-    }
-
-    # BL-128 (A5): the one reading of what an administrativeUnits, catalogs or accessPackages entry
-    # declares as previousDisplayName, shared by the finding and by the cross-reference rules (11 and
-    # 14) so they cannot disagree. Pure: it adds no finding. State is
+    # BL-128 (A5): the one reading of what an administrativeUnits, catalogs, accessPackages,
+    # assignmentPolicies (of an access package) or accessReviews entry declares as previousDisplayName,
+    # shared by the finding and by the cross-reference rules (11 and 14) so they cannot disagree. Pure:
+    # it adds no finding. State is
     #   None      the key is absent or an explicit null (not declared);
     #   Invalid   not a string, or an empty one -- it names no object;
     #   CaseOnly  equal to the entry's own displayName ignoring case -- Graph matches names without
@@ -332,13 +329,19 @@ function Test-OERStructureSchema {
         [PSCustomObject]@{ State = 'Rename'; Previous = $Prev }
     }
 
-    # BL-128 (A5): administrativeUnits, catalogs and accessPackages rename the object found under
-    # previousDisplayName, with the groups' rules. A non-string or empty value names nothing (Error); one
-    # equal to displayName ignoring case finds the same object, so nothing is renamed and a case-only
-    # rename is not possible through the document (Warning naming the cmdlet that does it). Returns the
-    # previous name to claim in the duplicate check, or $null when there is none to claim.
+    # BL-128 (A5): administrativeUnits, catalogs, accessPackages, the assignmentPolicies of an access
+    # package and accessReviews rename the object found under previousDisplayName, with the groups'
+    # rules. A non-string or empty value names nothing (Error); one equal to displayName ignoring case
+    # finds the same object, so nothing is renamed and a case-only rename is not possible through the
+    # document (Warning naming the cmdlet and parameter that do it). The parameter is -NewDisplayName
+    # unless the caller names another; -NameQualifier is the words that follow it ('together with another
+    # property' for a policy, whose -DisplayName alone is NothingToUpdate when only the case differs).
+    # Returns the previous name to claim in the duplicate check, or $null when there is none to claim.
     function Test-SupportedRename {
-        param([object]$Node, [string]$Section, [string]$Item, [string]$Path, [string]$SetCommand)
+        param(
+            [object]$Node, [string]$Section, [string]$Item, [string]$Path, [string]$SetCommand,
+            [string]$NameParameter = '-NewDisplayName', [string]$NameQualifier = ''
+        )
         $Declaration = Get-RenameDeclaration -Node $Node
         switch ($Declaration.State) {
             'Invalid' {
@@ -347,7 +350,7 @@ function Test-OERStructureSchema {
             }
             'CaseOnly' {
                 Add-Finding -Section $Section -Item $Item -Path "$Path.previousDisplayName" -Severity 'Warning' `
-                    -Message "'previousDisplayName' at $Path equals displayName ignoring case; a case-only rename is not possible through the document -- use $SetCommand -NewDisplayName."
+                    -Message "'previousDisplayName' at $Path equals displayName ignoring case; a case-only rename is not possible through the document -- use $SetCommand $NameParameter$NameQualifier."
             }
         }
         $Declaration.Previous
@@ -374,16 +377,19 @@ function Test-OERStructureSchema {
     # for every section; directoryRoleAssignments keeps its own older check (Rule 10c).
     # -Seen maps a key to the index of the first entry that claimed it and must be built with
     # StringComparer.OrdinalIgnoreCase; a second claim is reported against that first index and is
-    # never recorded, so every later copy names the same earlier entry.
+    # never recorded, so every later copy names the same earlier entry. The earlier entry is named as
+    # <Section>[<index>] unless -EarlierCollection says where the indexes count: the assignment policies
+    # of one access package are numbered inside that package, so their findings name
+    # accessPackages[i].assignmentPolicies[k].
     function Add-DuplicateEntryFinding {
         param(
             [System.Collections.Generic.Dictionary[string, int]]$Seen,
             [string]$Key, [int]$Index, [string]$Section, [string]$Item, [string]$Path,
-            [string]$What, [string]$Consequence
+            [string]$What, [string]$Consequence, [string]$EarlierCollection = $Section
         )
         if ($Seen.ContainsKey($Key)) {
             Add-Finding -Section $Section -Item $Item -Path $Path `
-                -Message ("$Path declares the same $What as $($Section)[$($Seen[$Key])] (compared without regard to letter case). " +
+                -Message ("$Path declares the same $What as $($EarlierCollection)[$($Seen[$Key])] (compared without regard to letter case). " +
                     "$Consequence Keep one entry.")
             return
         }
@@ -1123,6 +1129,18 @@ function Test-OERStructureSchema {
                             -Message "'assignmentPolicies' at $APPath must be an array."
                     } else {
                         $Pols = @($PolsVal)
+                        # Sprint 11 step 4b: the policies of one package are matched by name within it, and a
+                        # policy renamed through the document is found under its previousDisplayName too, so
+                        # both names are claims of the package. Two claims that collide are an Error only
+                        # when one of them is a previousDisplayName (Ruling P4): two equal displayNames
+                        # stay unreported, as they always were. $PolSeen holds the first claim of a name;
+                        # $PolPrevClaimed every name that some previousDisplayName claimed, whether or not
+                        # it was the first, so a displayName that collides with a LATER-recorded previous
+                        # name is still caught.
+                        $PolSeen = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        $PolPrevClaimed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        $PolConsequence = 'Both entries reconcile one assignment policy of the access package, so each would undo the ' +
+                            'other''s settings.'
                         for ($J = 0; $J -lt $Pols.Count; $J++) {
                             $Pol = $Pols[$J]
                             $PolPath = "$APPath.assignmentPolicies[$J]"
@@ -1130,9 +1148,28 @@ function Test-OERStructureSchema {
                                 Add-Finding -Section 'accessPackages' -Item $APItem `
                                     -Path "$PolPath.displayName" `
                                     -Message "'displayName' is required at $PolPath."
+                            } else {
+                                $PolName = [string]$Pol.displayName
+                                # A displayName that meets another displayName alone is left unreported
+                                # (widening that is out of scope), and the first claim stays recorded.
+                                $PolNamesCollideAlone = $PolSeen.ContainsKey($PolName) -and -not $PolPrevClaimed.Contains($PolName)
+                                if (-not $PolNamesCollideAlone) {
+                                    Add-DuplicateEntryFinding -Seen $PolSeen -Key $PolName -Index $J `
+                                        -Section 'accessPackages' -Item $APItem -Path $PolPath `
+                                        -What "display name '$PolName'" `
+                                        -Consequence $PolConsequence -EarlierCollection "$APPath.assignmentPolicies"
+                                }
                             }
-                            Add-UnsupportedRenameFinding -Node $Pol -Section 'accessPackages' -Item $APItem -Path $PolPath `
-                                -Kind 'assignment policy'
+                            $PolPrev = Test-SupportedRename -Node $Pol -Section 'accessPackages' -Item $APItem -Path $PolPath `
+                                -SetCommand 'Set-OERAccessPackageAssignmentPolicy' -NameParameter '-DisplayName' `
+                                -NameQualifier ' together with another property'
+                            if ($PolPrev) {
+                                $null = $PolPrevClaimed.Add($PolPrev)
+                                Add-DuplicateEntryFinding -Seen $PolSeen -Key $PolPrev -Index $J `
+                                    -Section 'accessPackages' -Item $APItem -Path "$PolPath.previousDisplayName" `
+                                    -What "display name '$PolPrev'" `
+                                    -Consequence $PolConsequence -EarlierCollection "$APPath.assignmentPolicies"
+                            }
 
                             if (Test-HasProp -Node $Pol -Name 'requestorScope') {
                                 $RScope = $Pol.requestorScope
@@ -1448,14 +1485,24 @@ function Test-OERStructureSchema {
                             -Message "'$Req' is required at $ARPath."
                     }
                 }
+                $ARConsequence = 'Both entries reconcile one access review, so applying the document would rewrite its settings on every run.'
                 if (Test-HasProp -Node $AR -Name 'displayName') {
                     Add-DuplicateEntryFinding -Seen $ARSeen -Key ([string]$AR.displayName) -Index $I `
                         -Section 'accessReviews' -Item $ARItem -Path $ARPath `
                         -What "display name '$($AR.displayName)'" `
-                        -Consequence 'Both entries reconcile one access review, so applying the document would rewrite its settings on every run.'
+                        -Consequence $ARConsequence
                 }
-                Add-UnsupportedRenameFinding -Node $AR -Section 'accessReviews' -Item $ARItem -Path $ARPath `
-                    -Kind 'access review'
+                # A review renamed through the document is found under its previousDisplayName too (tenant-wide,
+                # as its displayName is), so that name is a claim of its own, checked after the displayName
+                # claim just as the units' and catalogs' is.
+                $ARPrev = Test-SupportedRename -Node $AR -Section 'accessReviews' -Item $ARItem -Path $ARPath `
+                    -SetCommand 'Set-OERAccessReviewDefinition' -NameParameter '-DisplayName'
+                if ($ARPrev) {
+                    Add-DuplicateEntryFinding -Seen $ARSeen -Key $ARPrev -Index $I `
+                        -Section 'accessReviews' -Item $ARItem -Path "$ARPath.previousDisplayName" `
+                        -What "display name '$ARPrev'" `
+                        -Consequence $ARConsequence
+                }
 
                 if (Test-HasProp -Node $AR -Name 'recurrence') {
                     if ($ValidRecurrence -inotcontains $AR.recurrence) {
@@ -2343,6 +2390,61 @@ function Test-OERStructureSchema {
                     "accessPackages[$($RefRename.Index)], which renames that access package to '$($RefRename.DisplayName)'. " +
                     "Name the access package by its new name '$($RefRename.DisplayName)' or its object id: once the rename is applied " +
                     "no access package carries '$RefPackage', and the review's target check fails.")
+        }
+    }
+
+    # Rule 14, the policy half (Sprint 11 step 4b): an access review names its assignment policy by display
+    # name within the package it names, so a review whose assignmentPolicy is the previousDisplayName of a
+    # policy entry of that package finds nothing once the rename is applied, and its target check fails. The
+    # package is the entry whose displayName, or the previous name it renames from, equals the review's
+    # accessPackage (a previous name that is an object id included: the review may name the package by that
+    # id). The policy's rename is read as above: Get-RenameDeclaration, an object id skipped (R10), an
+    # entry without a displayName skipped. The first policy entry that renames from the name is the one
+    # named. A Warning at the review's assignmentPolicy, never an Error.
+    if ((Test-HasProp -Node $Document -Name 'accessPackages') -and
+        ($Document.accessPackages -is [System.Collections.IEnumerable]) -and
+        ($Document.accessPackages -isnot [string]) -and
+        (Test-HasProp -Node $Document -Name 'accessReviews') -and
+        ($Document.accessReviews -is [System.Collections.IEnumerable]) -and
+        ($Document.accessReviews -isnot [string])) {
+        $PolRefPackages = @($Document.accessPackages)
+        $PolRefReviews = @($Document.accessReviews)
+        for ($I = 0; $I -lt $PolRefReviews.Count; $I++) {
+            if (-not (Test-HasProp -Node $PolRefReviews[$I] -Name 'accessPackage')) { continue }
+            if (-not (Test-HasProp -Node $PolRefReviews[$I] -Name 'assignmentPolicy')) { continue }
+            $PolRefPackage = $PolRefReviews[$I].accessPackage
+            $PolRefPolicy = $PolRefReviews[$I].assignmentPolicy
+            if ($PolRefPackage -isnot [string] -or $PolRefPolicy -isnot [string]) { continue }
+
+            $PolRefHit = $null
+            for ($P = 0; $P -lt $PolRefPackages.Count -and $null -eq $PolRefHit; $P++) {
+                $PolRefPkg = $PolRefPackages[$P]
+                if (-not (Test-HasProp -Node $PolRefPkg -Name 'displayName')) { continue }
+                $PkgRename = Get-RenameDeclaration -Node $PolRefPkg
+                $PkgIsNamed = ([string]$PolRefPkg.displayName -ieq $PolRefPackage) -or
+                    ($PkgRename.State -eq 'Rename' -and $PkgRename.Previous -ieq $PolRefPackage)
+                if (-not $PkgIsNamed) { continue }
+                if (-not (Test-HasProp -Node $PolRefPkg -Name 'assignmentPolicies') -or
+                    $PolRefPkg.assignmentPolicies -isnot [System.Collections.IEnumerable] -or
+                    $PolRefPkg.assignmentPolicies -is [string]) { continue }
+                $PkgPolicies = @($PolRefPkg.assignmentPolicies)
+                for ($K = 0; $K -lt $PkgPolicies.Count -and $null -eq $PolRefHit; $K++) {
+                    $PolRename = Get-RenameDeclaration -Node $PkgPolicies[$K]
+                    if ($PolRename.State -ne 'Rename') { continue }
+                    if (Test-OERGuid -Value $PolRename.Previous) { continue }
+                    if (-not (Test-HasProp -Node $PkgPolicies[$K] -Name 'displayName')) { continue }
+                    if ($PolRename.Previous -ine $PolRefPolicy) { continue }
+                    $PolRefHit = [PSCustomObject]@{ Package = $P; Index = $K; DisplayName = [string]$PkgPolicies[$K].displayName }
+                }
+            }
+            if ($null -eq $PolRefHit) { continue }
+
+            $PolRefReviewName = if (Test-HasProp -Node $PolRefReviews[$I] -Name 'displayName') { [string]$PolRefReviews[$I].displayName } else { "accessReviews[$I]" }
+            Add-Finding -Section 'accessReviews' -Item $PolRefReviewName -Path "accessReviews[$I].assignmentPolicy" -Severity 'Warning' `
+                -Message ("Access review '$PolRefReviewName' at accessReviews[$I] declares assignmentPolicy '$PolRefPolicy', the previousDisplayName of " +
+                    "accessPackages[$($PolRefHit.Package)].assignmentPolicies[$($PolRefHit.Index)], which renames that assignment policy to '$($PolRefHit.DisplayName)'. " +
+                    "Name the assignment policy by its new name '$($PolRefHit.DisplayName)' or its object id: once the rename is applied no assignment policy of the " +
+                    "access package carries '$PolRefPolicy', and the review's target check fails.")
         }
     }
 

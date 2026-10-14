@@ -1114,12 +1114,12 @@ Describe 'Get-OERStructureSchemaJson tenantId (BL-88, A14)' {
 }
 
 Describe 'Get-OERStructureSchemaJson renames, mail aliases and scope spelling (BL-128, BL-132, BL-141)' {
-    # Sprint 11 step 3. The offline validator refuses previousDisplayName on an assignment policy and an
-    # access review (the other three kinds accept it since step 4, the Describe below), a mailNickname
-    # Microsoft Graph refuses, and a scope spelled with a dot segment, a '%', a '\', a '?', a '#' or white
-    # space where a resource name cannot hold it (decision A13 as narrowed in round 1); the schema says so
-    # in its descriptions and bounds the alias length. It carries no regular-expression
-    # pattern for the characters, which the validator alone enforces.
+    # Sprint 11 step 3. The offline validator refuses a mailNickname Microsoft Graph refuses, and a scope
+    # spelled with a dot segment, a '%', a '\', a '?', a '#' or white space where a resource name cannot
+    # hold it (decision A13 as narrowed in round 1); the schema says so in its descriptions and bounds the
+    # alias length. It carries no regular-expression pattern for the characters, which the validator
+    # alone enforces. (Step 3 also refused previousDisplayName on an assignment policy and an access
+    # review; every kind accepts it since step 4 and step 4b, the Describe below.)
     It 'bounds a group mailNickname to 1 to 64 characters and declares no pattern' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
         InModuleScope $script:moduleName {
             $Schema = Get-OERStructureSchemaJson
@@ -1147,28 +1147,24 @@ Describe 'Get-OERStructureSchemaJson renames, mail aliases and scope spelling (B
         }
     }
 
-    It 'says in every section that cannot rename that renaming is not supported and previousDisplayName is refused, and not in the sections that can' {
+    It 'says in no section that renaming is not supported or that previousDisplayName is refused (every kind can be renamed since step 4b)' {
         InModuleScope $script:moduleName {
             $Props = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties
-            # Since Sprint 11 step 4 only an assignment policy and an access review cannot be renamed
-            # through the document (step 4b takes them).
-            $Descriptions = [ordered]@{
-                assignmentPolicies = $Props.accessPackages.items.properties.assignmentPolicies.description
-                accessReviews      = $Props.accessReviews.description
-            }
-            foreach ($Name in $Descriptions.Keys) {
-                $Descriptions[$Name] | Should -Match ([regex]::Escape('Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a')) -Because "the $Name description says so"
-                $Descriptions[$Name] | Should -Match 'would create a new .+ beside the old one' -Because "the $Name description names the consequence"
-            }
             $Can = [ordered]@{
                 groups              = $Props.groups.description
                 administrativeUnits = $Props.administrativeUnits.description
                 catalogs            = $Props.catalogs.description
                 accessPackages      = $Props.accessPackages.description
+                assignmentPolicies  = $Props.accessPackages.items.properties.assignmentPolicies.description
+                accessReviews       = $Props.accessReviews.description
             }
+            $Can.Count | Should -Be 6
             foreach ($Name in $Can.Keys) {
+                $Can[$Name] | Should -Not -BeNullOrEmpty -Because "the $Name description must exist to be read"
                 $Can[$Name] | Should -Not -Match ([regex]::Escape('Renaming is not supported yet')) -Because "the $Name section can be renamed"
                 $Can[$Name] | Should -Not -Match ([regex]::Escape('Renaming through the document is not possible')) -Because "the $Name section can be renamed"
+                $Can[$Name] | Should -Not -Match 'refuses previousDisplayName' -Because "the $Name section accepts previousDisplayName"
+                $Can[$Name] | Should -Not -Match 'beside the old one' -Because "the $Name section no longer describes a refused duplicate"
             }
         }
     }
@@ -1198,8 +1194,9 @@ Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs a
     # Sprint 11 step 4: an administrative unit, a catalog and an access package are renamed through the
     # document like a group, by declaring the new name as displayName and the current name (or object id)
     # as previousDisplayName. The item schemas declare the key, the section descriptions say how to
-    # declare a rename, and the property descriptions say what the apply engine does with it. An
-    # assignment policy and an access review still declare nothing (step 4b).
+    # declare a rename, and the property descriptions say what the apply engine does with it. Step 4b
+    # adds an assignment policy (inside its package) and an access review; they are nested or differ in
+    # wording, so they have tests of their own below.
     BeforeDiscovery {
         $script:SchemaRenameCase = @(
             @{
@@ -1247,12 +1244,55 @@ Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs a
         }
     }
 
-    It 'declares no previousDisplayName on the assignmentPolicies and accessReviews items, and keeps it on the group item' {
+    It 'declares previousDisplayName on the assignmentPolicies item as a non-empty string and describes what the engine does with it (step 4b)' {
+        InModuleScope $script:moduleName {
+            $Policies = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessPackages.items.properties.assignmentPolicies
+            $Prev = $Policies.items.properties.previousDisplayName
+            $Prev | Should -Not -BeNullOrEmpty
+            $Prev.type | Should -BeExactly 'string'
+            $Prev.minLength | Should -Be 1
+            $Prev.description | Should -BeExactly 'The assignment policy''s current display name or object id, when displayName declares a new one. When only this value matches a live assignment policy of this access package, that policy is renamed in place; when displayName also matches a different policy of the access package, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. An object id matches only a policy of this access package. A name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. An access review that names the policy must name it by its new name or object id once the rename is applied. Not exported by Get-OERInventory.'
+            # The policy is renamed within its package, and the section description says how.
+            $Policies.description | Should -BeExactly 'Assignment policies of the package. displayName is the match key within the package: an existing policy is matched and updated by it. To rename a policy, declare its new name as displayName and its current name (or object id) as previousDisplayName, within its package; an access review that names the policy must name it by its new name (or object id) once the rename is applied.'
+        }
+    }
+
+    It 'declares previousDisplayName on the accessReviews item as a non-empty string and describes the tenant-wide lookup and the target check (step 4b)' {
+        InModuleScope $script:moduleName {
+            $Reviews = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.accessReviews
+            $Prev = $Reviews.items.properties.previousDisplayName
+            $Prev | Should -Not -BeNullOrEmpty
+            $Prev.type | Should -BeExactly 'string'
+            $Prev.minLength | Should -Be 1
+            $Prev.description | Should -BeExactly 'The access review''s current display name or object id, when displayName declares a new one. The name is looked up tenant-wide, as displayName is. When only this value matches a live access review, that review is renamed in place; when displayName also matches a different review, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. The review found under either name must review the declared accessPackage and assignmentPolicy, or the entry fails and nothing is written. A name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. Not exported by Get-OERInventory.'
+            # The section description keeps what it said about the update and the match key, and adds the rename.
+            $Reviews.description | Should -Match ([regex]::Escape('displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy; otherwise the entry fails and nothing is written.'))
+            $Reviews.description | Should -Match ([regex]::Escape('To rename a review, declare its new name as displayName and its current name (or object id) as previousDisplayName: the name is looked up tenant-wide, as displayName is, and the review found under either name must review the declared accessPackage and assignmentPolicy, or the entry fails and nothing is written. When the same document renames the access package or the policy, name it by its new name (or object id) here.'))
+        }
+    }
+
+    It 'declares previousDisplayName on the group, policy and review items alike' {
         InModuleScope $script:moduleName {
             $Props = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties
-            $Props.accessPackages.items.properties.assignmentPolicies.items.properties.PSObject.Properties.Name | Should -Not -Contain 'previousDisplayName'
-            $Props.accessReviews.items.properties.PSObject.Properties.Name | Should -Not -Contain 'previousDisplayName'
             $Props.groups.items.properties.PSObject.Properties.Name | Should -Contain 'previousDisplayName'
+            $Props.accessPackages.items.properties.assignmentPolicies.items.properties.PSObject.Properties.Name | Should -Contain 'previousDisplayName'
+            $Props.accessReviews.items.properties.PSObject.Properties.Name | Should -Contain 'previousDisplayName'
+            # Declaring it never makes it required: a policy and a review without a rename stay valid.
+            $Props.accessPackages.items.properties.assignmentPolicies.items.required | Should -Not -Contain 'previousDisplayName'
+            $Props.accessReviews.items.required | Should -Not -Contain 'previousDisplayName'
+        }
+    }
+
+    It 'validates a policy and a review declaring previousDisplayName, and rejects an empty one' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Policy = '"accessPackages": [ { "displayName": "AP-One", "catalog": "CAT-One", "assignmentPolicies": [ { "displayName": "POL-New", "previousDisplayName": "%PREV%" } ] } ]'
+            $Review = '"accessReviews": [ { "displayName": "REV-New", "previousDisplayName": "%PREV%", "accessPackage": "AP-One", "assignmentPolicy": "POL-New" } ]'
+            foreach ($Section in @($Policy, $Review)) {
+                Test-Json -Json ('{ "version": "1.0", ' + $Section.Replace('%PREV%', 'Old') + ' }') -Schema $Schema | Should -BeTrue
+                Test-Json -Json ('{ "version": "1.0", ' + $Section.Replace('%PREV%', '') + ' }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+                Test-Json -Json ('{ "version": "1.0", ' + $Section.Replace('"%PREV%"', '5') + ' }') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+            }
         }
     }
 
