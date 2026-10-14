@@ -222,11 +222,13 @@ document.
     different groups the entry fails and nothing is changed (two groups are never merged), and when
     neither matches the entry fails and nothing is created: a rename names an existing group. A NEW
     group is declared without previousDisplayName.
-  - Renaming in place is supported only for groups, for now. previousDisplayName in any other
-    section (administrativeUnits, catalogs, accessPackages and their assignmentPolicies,
-    accessReviews) is refused by Test-OERStructure as an Error, and without it a changed
-    displayName there creates a new object beside the old one. Do not propose a rename in those
-    sections.
+  - Renaming in place is supported for groups, administrativeUnits, catalogs and accessPackages (a
+    package within its catalog); the bullet of each of those sections says how. It is not supported
+    yet for assignmentPolicies and accessReviews: previousDisplayName there is refused by
+    Test-OERStructure as an Error, and without it a changed displayName there creates a new object
+    beside the old one. Do not propose a rename in those two sections. Test-OERStructure warns on a
+    reference that still names a renamed object by its previous name: a group's administrativeUnit,
+    an access package's catalog, an access review's accessPackage.
   - A mail alias does not follow a rename. A renamed group keeps its mailNickname unless the
     proposal declares the new one, so when a proposal renames a group, declare mailNickname with
     the alias the new name should carry (Test-OERStructure warns when a renamed group declares no
@@ -277,30 +279,52 @@ document.
     no pimPolicy in inventory.json was not found to use it. Adding or changing a pimPolicy on a
     group that does not use PIM for Groups yet ONBOARDS it, which cannot be undone -- propose that
     only deliberately, and say so in the rationale.
-- administrativeUnits[]: { displayName (required), description, restricted (bool; immutable once the
+- administrativeUnits[]: { displayName (required), previousDisplayName (rename only -- the unit's
+  current display name or object id when displayName declares a new one; NOT captured by
+  inventory), description, restricted (bool; immutable once the
   unit is created -- only declare it when creating a new unit), dynamic (bool; freely declare it -- the
   apply engine changes membershipType on an existing unit, but a unit declared dynamic must also declare
   membershipRule), membershipRule, membershipRuleProcessingState (On|Paused), hiddenMembership (bool;
   freely declare it in either direction -- the apply engine both hides a public unit and reverts a hidden
   unit back to public), members[], scopedRoles[] { role (required -- a directory role display name, or a
   role id GUID when the name could not be resolved), principal (required) } }
-  - displayName is the match key: an existing unit is matched and updated by it. Renaming through
-    the document is not possible -- changing displayName creates a new unit and leaves the old one
-    in place, unreported.
+  - displayName is the match key: an existing unit is matched and updated by it. To rename a unit,
+    declare its new name as displayName and its current name (or object id) as
+    previousDisplayName: the unit found under previousDisplayName alone is renamed in place. When
+    both names match different units the entry fails and nothing is changed (two units are never
+    merged), and when neither matches the entry fails and nothing is created: a rename names an
+    existing unit. A NEW unit is declared without previousDisplayName.
+  - Microsoft Graph's name lookup can follow a unit's rename with a delay, as it does a group's: keep
+    previousDisplayName in the proposal, and tell the operator in the rationale to wait until the
+    new name resolves before applying again. When a proposal renames a unit, a group created into
+    it names it by its NEW name in administrativeUnit (the apply reaches the renamed unit by its id
+    in the same run).
   - members[] is only reconciled on an ASSIGNED unit. A dynamic unit's membership is owned by its
     membershipRule, so declared members there are reported as skipped and nothing is added or removed --
     change membershipRule instead. scopedRoles[] are unaffected and apply on either kind of unit.
-- catalogs[]: { displayName (required), description, externallyVisible (bool -- whether the
+- catalogs[]: { displayName (required), previousDisplayName (rename only -- the catalog's current
+  display name or object id when displayName declares a new one; NOT captured by inventory),
+  description, externallyVisible (bool -- whether the
   catalog's access packages are requestable by connected-organization users outside the
   directory), resources[] { name (required -- for a Group or Application its current name or object
   id, matched by the object id it resolves to),
   type (Group | Application | SharePointSite), url (SharePoint site URL -- STRONGLY RECOMMENDED for a
   SharePointSite resource; the site is onboarded by URL. If url is omitted the apply falls back to
   name, which only works when name is itself a site URL) } }
-  - displayName is the match key: an existing catalog is matched and updated by it. Renaming
-    through the document is not possible -- changing displayName creates a new catalog and leaves
-    the old one in place, unreported.
-- accessPackages[]: { displayName (required), catalog (required), description, hidden (bool),
+  - displayName is the match key: an existing catalog is matched and updated by it. To rename a
+    catalog, declare its new name as displayName and its current name (or object id) as
+    previousDisplayName: the catalog found under previousDisplayName alone is renamed in place.
+    When both names match different catalogs the entry fails and nothing is changed (two catalogs
+    are never merged), and when neither matches the entry fails and nothing is created: a rename
+    names an existing catalog. A NEW catalog is declared without previousDisplayName.
+  - Microsoft Graph's name lookup can follow a catalog's rename with a delay: keep
+    previousDisplayName in the proposal, and tell the operator in the rationale to wait until the
+    new name resolves before applying again. When a proposal renames a catalog, every access
+    package declared in it names the catalog by its NEW name in catalog (the apply reaches the
+    renamed catalog by its id in the same run).
+- accessPackages[]: { displayName (required), previousDisplayName (rename only -- the package's
+  current display name or object id, in the same catalog, when displayName declares a new one; NOT
+  captured by inventory), catalog (required), description, hidden (bool),
   resourceRoles[] { resource (required), role (required) }, assignmentPolicies[] { displayName (required),
   requestorScope { scope (an explicit scope always wins; omitting it infers SpecificDirectoryUsers
     when users or groups is a non-empty array -- prefer declaring scope explicitly),
@@ -317,8 +341,21 @@ document.
   durationInDays (1-3650) OR durationInHours (>=1) OR expirationDateTime (ISO 8601) [at most one],
   notificationsDisabled (bool) } }
   - displayName is the match key WITHIN the declared catalog (names are unique per catalog, not
-    tenant-wide). Renaming through the document is not possible -- changing displayName creates a
-    new package and leaves the old one in place, unreported, with no Extra warning either.
+    tenant-wide). To rename a package, declare its new name as displayName and its current name (or
+    object id) as previousDisplayName, in the same catalog: the package of that catalog found under
+    previousDisplayName alone is renamed in place, and a package of another catalog is never
+    matched. When both names match different packages of the catalog the entry fails and nothing
+    is changed (two packages are never merged), and when neither matches the entry fails and
+    nothing is created: a rename names an existing package. A NEW package is declared without
+    previousDisplayName; a changed displayName WITHOUT it still creates a new package and leaves
+    the old one in place, unreported, with no Extra warning either.
+  - Microsoft Graph's name lookup can follow a package's rename with a delay: keep
+    previousDisplayName in the proposal, and tell the operator in the rationale to wait until the
+    new name resolves before applying again. A package in a catalog the same proposal renames names
+    the catalog by its NEW name (the apply reaches the renamed catalog by its id in the same run),
+    and an access review of a package the proposal renames names the package by its NEW name too,
+    which the apply does not yet translate: in the run that renames the package that review can
+    fail with AccessPackageNotFound until the new name resolves, and works on the next run.
   - identities in users[], groups[], alternateUsers[], alternateGroups[] may be display names,
     UPNs, or object ids -- they are resolved live against the tenant.
   - approverInfoVisibility controls whether the requestor can see the approvers' identities:
