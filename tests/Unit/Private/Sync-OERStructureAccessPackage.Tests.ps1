@@ -7089,7 +7089,7 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             @{ ErrorId = 'AccessPackageRenameNotFound' }
         ) {
             $Packages = if ($ErrorId -eq 'AccessPackageRenameConflict') {
-                @([PSCustomObject]@{ Id = 'ap-new'; DisplayName = 'AP-New' }, [PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old' })
+                @([PSCustomObject]@{ Id = 'pkg-new'; DisplayName = 'AP-New' }, [PSCustomObject]@{ Id = 'pkg-old'; DisplayName = 'AP-Old' })
             } else { @() }
             $Map = New-PolMap
             $Item = [PSCustomObject]@{
@@ -7106,7 +7106,9 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
 
             @($Run.Rows).Count | Should -Be 1
             $Run.Rows[0].Error.FullyQualifiedErrorId | Should -Match "^$ErrorId"
-            $Map.Count | Should -Be 2
+            # A conflict also marks the renaming policy under both packages' ids (fix round 2); a rename that
+            # found neither name has no id to mark.
+            $Map.Count | Should -Be $(if ($ErrorId -eq 'AccessPackageRenameConflict') { 4 } else { 2 })
             $Map['accessPackages|AP-New'].Refused | Should -BeTrue
             $Map['accessPackages|AP-New'].ErrorId | Should -BeExactly $ErrorId
             $Map['accessPackages|AP-New'].Id | Should -BeNullOrEmpty
@@ -7275,6 +7277,80 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             } else {
                 $Map.Count | Should -Be 2
             }
+        }
+
+        # Fix round 2: the entry also knows package ids when it stops at a refused rename conflict (both
+        # packages) or at an ambiguous name (every candidate). Each renaming policy is marked under each of
+        # those ids, so a review that names any of them by object id is refused, never looked up by name. A
+        # rename that found neither name has no id to mark. Read back through the real reader.
+        It 'marks the renaming policy under every package id the entry knows when it stops at <Case>' -ForEach @(
+            @{ Case = 'a package rename conflict'; UseWhatIf = $false; Prev = 'AP-Old'
+                Packages = @('pkg-new=AP-New', 'pkg-old=AP-Old'); Ids = @('pkg-new', 'pkg-old')
+                Detail = "both 'AP-New' and its previousDisplayName 'AP-Old' exist in catalog 'CAT' as different access packages*" }
+            @{ Case = 'a package rename conflict, under -WhatIf'; UseWhatIf = $true; Prev = 'AP-Old'
+                Packages = @('pkg-new=AP-New', 'pkg-old=AP-Old'); Ids = @('pkg-new', 'pkg-old')
+                Detail = "both 'AP-New' and its previousDisplayName 'AP-Old' exist in catalog 'CAT' as different access packages*" }
+            @{ Case = 'a package rename that found neither name'; UseWhatIf = $false; Prev = 'AP-Old'
+                Packages = @('pkg-other=AP-Other'); Ids = @()
+                Detail = "neither 'AP-New' nor its previousDisplayName 'AP-Old' matches an access package in catalog 'CAT'*" }
+            @{ Case = 'an ambiguous previous name'; UseWhatIf = $false; Prev = 'AP-Old'
+                Packages = @('pkg-o1=AP-Old', 'pkg-o2=AP-Old'); Ids = @('pkg-o1', 'pkg-o2')
+                Detail = "catalog 'CAT' holds 2 access packages named 'AP-Old' (pkg-o1, pkg-o2), the previousDisplayName of this entry*" }
+            @{ Case = 'an ambiguous previous name while a package carries the new name'; UseWhatIf = $false; Prev = 'AP-Old'
+                Packages = @('pkg-n=AP-New', 'pkg-o1=AP-Old', 'pkg-o2=AP-Old'); Ids = @('pkg-n', 'pkg-o1', 'pkg-o2')
+                Detail = "catalog 'CAT' holds 2 access packages named 'AP-Old' (pkg-o1, pkg-o2), the previousDisplayName of this entry*" }
+            @{ Case = 'an ambiguous name'; UseWhatIf = $false; Prev = $null
+                Packages = @('pkg-a1=AP-New', 'pkg-a2=AP-New'); Ids = @('pkg-a1', 'pkg-a2')
+                Detail = "catalog 'CAT' holds 2 access packages named 'AP-New' (pkg-a1, pkg-a2); the display name cannot identify one" }
+        ) {
+            $Map = New-PolMap
+            $Item = [PSCustomObject]@{
+                displayName        = 'AP-New'
+                catalog            = 'CAT'
+                assignmentPolicies = @(
+                    [PSCustomObject]@{ displayName = 'POL-New'; previousDisplayName = 'POL-Old' }
+                    [PSCustomObject]@{ displayName = 'POL-Blank'; previousDisplayName = '' }
+                    [PSCustomObject]@{ displayName = 'Plain' }
+                )
+            }
+            if ($Prev) { $Item | Add-Member -NotePropertyName previousDisplayName -NotePropertyValue $Prev }
+            $LivePackages = @(foreach ($Pair in $Packages) { [PSCustomObject]@{ Id = ($Pair -split '=')[0]; DisplayName = ($Pair -split '=')[1] } })
+
+            $Run = Invoke-PolSync -Item $Item -Packages $LivePackages -Live @(New-PolRaw -Id 'pol-old' -DisplayName 'POL-Old') -UseWhatIf $UseWhatIf -RenameMap $Map
+
+            # The entry stopped with one Failed row, before any package or policy read and any write.
+            @($Run.Rows).Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeLike $Detail
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 0
+            $Run.Sent.Count | Should -Be 0
+            @($Run.Published | Where-Object { $_.Exception -is [System.Management.Automation.ParameterBindingException] }) | Should -BeNullOrEmpty
+
+            $Found = InModuleScope $script:moduleName -Parameters @{ Map = $Map; Terms = @(@('AP-New') + @($Ids)) } {
+                param($Map, $Terms)
+                foreach ($Term in $Terms) {
+                    [PSCustomObject]@{
+                        Term   = $Term
+                        Policy = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'POL-New' -AccessPackage $Term -RenameMap $Map
+                        Blank  = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'POL-Blank' -AccessPackage $Term -RenameMap $Map
+                        Plain  = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'Plain' -AccessPackage $Term -RenameMap $Map
+                    }
+                }
+            }
+            @($Found).Count | Should -Be (1 + @($Ids).Count)
+            foreach ($Hit in @($Found)) {
+                $Hit.Policy | Should -Not -BeNullOrEmpty -Because "the renaming policy must be marked under '$($Hit.Term)'"
+                $Hit.Policy.Refused | Should -BeTrue
+                $Hit.Policy.Id | Should -BeNullOrEmpty
+                $Hit.Policy.ErrorId | Should -BeNullOrEmpty
+                $Hit.Policy.Reason | Should -BeExactly $script:PolUndecided
+                $Hit.Policy.PreviousName | Should -BeExactly 'POL-Old'
+                $Hit.Blank | Should -BeNullOrEmpty
+                $Hit.Plain | Should -BeNullOrEmpty
+            }
+            # The policy keys are the name key and one per id; nothing else of the policies is registered.
+            $PolicyKeys = @($Map.Keys | Where-Object { $_ -like 'assignmentpolicies|*' } | Sort-Object)
+            $PolicyKeys | Should -BeExactly @(@(@('ap-new') + @($Ids)) | ForEach-Object { "assignmentpolicies|$_|pol-new" } | Sort-Object)
         }
 
         It 'marks again under the package''s id no policy name that is empty after string conversion, and publishes no error for it (<Case>)' -ForEach @(

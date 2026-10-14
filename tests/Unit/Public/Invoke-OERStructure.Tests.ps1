@@ -3548,6 +3548,49 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy -Times 0
     }
 
+    # Fix round 2: a package rename refused as a conflict names two packages; the entry marks its renaming
+    # policies under both ids, so a review that names either package by object id and the policy by its
+    # new name is refused with the handler's reason instead of looking the policy up by name.
+    It 'refuses the review of a policy by its new name, the package named by the <Which> id of a refused rename conflict (<Mode>)' -ForEach @(
+        @{ Which = 'previous name''s'; PackageId = 'aaaa1111-0000-0000-0000-000000000031'; Mode = 'a real run' }
+        @{ Which = 'new name''s'; PackageId = 'aaaa1111-0000-0000-0000-000000000032'; Mode = 'a real run' }
+        @{ Which = 'previous name''s'; PackageId = 'aaaa1111-0000-0000-0000-000000000031'; Mode = 'a plan under -WhatIf' }
+    ) {
+        # Catalog CAT-1 holds both names: 'AP-New' is another package, 'AP-Old' the one the entry renames.
+        $script:RvState.Packages = @(
+            [PSCustomObject]@{ Id = $script:RvOtherPkgId; DisplayName = 'AP-New' }
+            [PSCustomObject]@{ Id = $script:RvPkgId; DisplayName = 'AP-Old' }
+        )
+        $Json = ('{ "version": "1.0", ' +
+            '"accessPackages": [ { "displayName": "AP-New", "previousDisplayName": "AP-Old", "catalog": "CAT-1", "resourceRoles": [], ' +
+            '"assignmentPolicies": [ { "displayName": "POL-New", "previousDisplayName": "POL-Old" } ] } ], ' +
+            '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', $PackageId).Replace('#POL#', 'POL-New') + ' ] }')
+        $Errs = $null
+        $Params = @{ Json = $Json; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Errs'; WarningAction = 'SilentlyContinue' }
+        if ($Mode -eq 'a plan under -WhatIf') { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+        $Rows = @(Invoke-OERStructure @Params)
+
+        @(ConvertTo-RvRowLine -Row $Rows) | Should -Be @(
+            ("accessPackages|AP-New|Failed|both 'AP-New' and its previousDisplayName 'AP-Old' exist in catalog 'CAT-1' as different access packages; " +
+                'the document never merges two access packages, so nothing was changed -- rename or delete one of them, or remove previousDisplayName')
+            ("accessReviews|Q3 AP review|Failed|assignment policy 'POL-New' of access package '$PackageId' was not reconciled in this run: its rename " +
+                "from 'POL-Old' was refused (the accessPackages entry did not reach a decision in this run; see that entry's rows), so the assignment " +
+                'policy this access review reviews cannot be identified; nothing was created, read or written for it')
+        )
+        # The conflict's record is the one the engine published; the review's row carries none.
+        $Rows[1].Error | Should -BeNullOrEmpty
+        $Own = @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId.EndsWith(',Invoke-OERStructure') })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -BeExactly 'AccessPackageRenameConflict,Invoke-OERStructure'
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackage -Times 0
+    }
+
     It 'still updates a review by name when -Include leaves AccessPackages out and nothing it names is renamed (control)' {
         $Doc = ('{ "version": "1.0", ' +
             '"accessPackages": [ { "displayName": "AP-1", "catalog": "CAT-1", "resourceRoles": [], "assignmentPolicies": [ { "displayName": "Standard" } ] } ], ' +
