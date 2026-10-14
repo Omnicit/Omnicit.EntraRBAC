@@ -232,9 +232,9 @@ function Get-OERInventory {
     catalog in the tenant carries it; -Catalog given as a name reads every catalog Microsoft Graph
     matches by that name, and when that is more than one, their packages are written with the
     catalog ids. A group's name is counted among every group in the tenant -- one extra paged
-    listing of every group's id and display name, made once when the Groups section read at least
-    one group, and shared with the group principals of RoleAssignments and DirectoryRoleAssignments
-    -- so a security group that shares its name with a Microsoft 365 group or a
+    listing of every group's id and display name, made at most once per call, when the Groups
+    section read at least one group or when a role assignment or directory role assignment names a
+    group -- so a security group that shares its name with a Microsoft 365 group or a
     distribution group, which the default filter never reads, is left out too; the reported cause
     names how many live objects carry the name. When that listing fails, groupNames is reported
     unread through the InventoryPartial

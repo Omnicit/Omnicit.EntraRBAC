@@ -66,6 +66,20 @@ Describe 'Get-OERGroupReference' {
         }
     }
 
+    It 'returns the id for a null index under a strict mode, and does not throw, since it reads no member of it' {
+        # Strict mode refuses a member read on $null ("The property 'Read' cannot be found"), so the
+        # declared [AllowNull()] contract needs the explicit null check, whatever mode the module runs in.
+        # The mode is set in a child scope of its own (& { }), so it ends with it and reaches no other test.
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Id = $script:GroupA } {
+            param($Id)
+            & {
+                Set-StrictMode -Version Latest
+                { Get-OERGroupReference -Id $Id -Name 'Admins' -Index $null -ErrorAction Stop } | Should -Not -Throw
+                Get-OERGroupReference -Id $Id -Name 'Admins' -Index $null | Should -BeExactly $Id
+            }
+        }
+    }
+
     It 'returns the id, and does not throw, when an index marked read carries no dictionary' {
         $Index = [PSCustomObject]@{ Read = $true; IdsByName = $null; Message = $null }
         InModuleScope Omnicit.EntraRBAC -Parameters @{ Index = $Index; Id = $script:GroupA } {

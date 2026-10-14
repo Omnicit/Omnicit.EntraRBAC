@@ -42,10 +42,11 @@ function Get-OERGroupReference {
         [Parameter(Mandatory)][AllowNull()][object]$Index
     )
 
-    # A null index reads Read as null, so it writes the id with no check of its own. A name the index
-    # does not hold reads as null (an index never throws on a missing key here), which @() makes one
-    # empty id that never equals the mandatory -Id, so it writes the id too.
-    if ($Index.Read -ne $true -or [string]::IsNullOrWhiteSpace($Name)) { return $Id }
+    # A null index is refused by name, before any member of it is read, so the declared [AllowNull()]
+    # contract holds whatever strict mode the module runs under. A name the index does not hold reads
+    # as null (indexing a dictionary never throws on a missing key here), which @() makes one empty id
+    # that never equals the mandatory -Id, so it writes the id too.
+    if ($null -eq $Index -or $Index.Read -ne $true -or [string]::IsNullOrWhiteSpace($Name)) { return $Id }
     $IdsByName = $Index.IdsByName
     if ($null -eq $IdsByName) { return $Id }
     $Ids = @($IdsByName[$Name])

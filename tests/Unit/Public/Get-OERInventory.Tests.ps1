@@ -3894,6 +3894,26 @@ Describe 'Get-OERInventory' {
             Assert-DupDocumentValid -Inventory $Inv
         }
 
+        It 'names a ForeignGroup whose name only a user carries by its object id in the collision pass, with principalType Group' {
+            # The ForeignGroup's name is unique among groups, so the group rule keeps it; it equals a user's
+            # principal name at the same scope and role, so the collision pass moves both to their ids and
+            # stamps the normalised type: Group for the ForeignGroup, never ForeignGroup.
+            $script:DupNames = @{ $script:DupUser1 = 'person1@example.com'; $script:DupGrp1 = 'person1@example.com' }
+            $script:DupRoleAssignments = @(
+                New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One'
+                New-DupRoleAssignment -PrincipalId $script:DupGrp1 -PrincipalType 'ForeignGroup' -PrincipalName 'person1@example.com'
+            )
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @(
+                "$($script:DupUser1)|User"
+                "$($script:DupGrp1)|Group"
+            )
+            @(@($Inv.roleAssignments)[1].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType')
+            # Reach proof: the group rule read the index, which holds the ForeignGroup's name for it alone.
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+            Assert-DupDocumentValid -Inventory $Inv
+        }
+
         It 'names two service principals that share a name by their object ids and keeps the principalType they already carried in place' {
             $script:DupNames = @{ $script:DupGrp1 = 'Automation'; $script:DupGrp2 = 'Automation' }
             $script:DupRoleAssignments = @(
@@ -4242,7 +4262,7 @@ Describe 'Get-OERInventory' {
 
         It 'states the index listing and the information record in the help' {
             $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
-            $Help | Should -Match ([regex]::Escape("A group's name is counted among every group in the tenant -- one extra paged listing of every group's id and display name, made once when the Groups section read at least one group, and shared with the group principals of RoleAssignments and DirectoryRoleAssignments -- so a security group that shares its name with a Microsoft 365 group or a distribution group, which the default filter never reads, is left out too"))
+            $Help | Should -Match ([regex]::Escape("A group's name is counted among every group in the tenant -- one extra paged listing of every group's id and display name, made at most once per call, when the Groups section read at least one group or when a role assignment or directory role assignment names a group -- so a security group that shares its name with a Microsoft 365 group or a distribution group, which the default filter never reads, is left out too"))
             $Help | Should -Match ([regex]::Escape('When that listing fails, groupNames is reported unread through the InventoryPartial error, with its cause, and the names are counted among the groups read.'))
             $Help | Should -Match ([regex]::Escape('Each name left out is also handed over in one information record tagged Omnicit.EntraRBAC.SharedName, whose Names list carries the Section, Name and Count of each; under the default $InformationPreference the record is not displayed.'))
         }
@@ -4401,15 +4421,19 @@ Describe 'Get-OERInventory' {
             (Test-OERStructure -InputObject $Inv).Valid | Should -BeTrue
         }
 
-        It 'reads the index once for the group principals of both sections' {
+        It 'reads the index once for the group principals of both sections, and says nothing about a failed read when it was read' {
             # The Task 2 once-only rule (Get-GroupNameIndexOnce) with a second caller: one listing per call.
             $script:GpRas = @(New-GpRa -PrincipalId $script:GpOps -PrincipalType 'Group')
             $script:GpEligible = @(New-GpDirRow -PrincipalId $script:GpSolo -ScheduleId 's-1')
-            $Inv = Get-OERInventory -Include RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM
+            $Stream = @(Get-OERInventory -Include RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM -Verbose 4>&1)
+            $Inv = @($Stream | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })[0]
+            $Said = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
             # Reach proof: each section named its group through the index.
             @($Inv.roleAssignments).principal | Should -Be @($script:GpOps)
             @($Inv.directoryRoleAssignments).principal | Should -Be @('Solo')
             Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+            # The index was read, so no line says every group principal is written by its object id.
+            @($Said | Where-Object { $_.EndsWith($script:GpNoteSuffix, [System.StringComparison]::Ordinal) }) | Should -BeNullOrEmpty
         }
 
         It 'shares the one listing with the Groups section' {
@@ -7037,6 +7061,37 @@ Describe 'Get-OERInventory' {
                 $Validation.Valid | Should -BeTrue
             } finally {
                 foreach ($One in $DirGroup2, $DirGroup3, $DirGroup4) { $script:DirNames.Remove($One) }
+            }
+        }
+
+        It 'keeps the name of a group that only a principal holding ANOTHER role carries: the collision is per role' {
+            # The group's name is unique among groups, so the group rule keeps it; it equals the UPN of a
+            # user who holds role A, while the group holds role B. The two entries differ in role, so the
+            # validator accepts them, and the collision pass, keyed on the role definition id as well as
+            # the kind and the name, leaves the group by its name.
+            $DirGroup5 = 'bbbbbbbb-0000-0000-0000-000000000005'
+            $script:DirNames[$DirGroup5] = 'person2@example.com'
+            try {
+                $script:DirEligible = @(
+                    New-DirRow -ScheduleId 's-1' -PrincipalId $script:DirUser2
+                    New-DirRow -ScheduleId 's-2' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -PrincipalId $DirGroup5 -PrincipalType 'Group'
+                )
+                $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+                @($Inv.directoryRoleAssignments | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalType)" }) | Should -Be @(
+                    'Fixture Role A|person2@example.com|User'
+                    'Fixture Role B|person2@example.com|Group'
+                )
+                # Reach proof: the group was named through the index of every group, which holds it alone.
+                Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+                $Doc = [PSCustomObject]@{ version = '1.0'; directoryRoleAssignments = @($Inv.directoryRoleAssignments) }
+                $Validation = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                    param($Doc)
+                    Test-OERStructureSchema -Document $Doc
+                }
+                @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' } | ForEach-Object { "$($_.Path): $($_.Message)" }) |
+                    Should -BeNullOrEmpty
+            } finally {
+                $script:DirNames.Remove($DirGroup5)
             }
         }
 
