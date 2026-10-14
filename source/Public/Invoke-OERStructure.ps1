@@ -30,14 +30,8 @@ function Invoke-OERStructure {
     early enough for the group creation to succeed. An administrativeUnits entry that declares
     previousDisplayName is never created by the pre-pass, which only resolves both of its names,
     records the outcome in the run's rename map (one per document) and reports no rename outcome: a
-    lookup that throws is reported as a pre-pass handler error. When its previous name finds the unit,
-    a group created into the unit's new name is created into that unit, by its id, and the
-    administrativeUnits pass then renames the unit. When the rename is refused -- both names find
-    different units, or neither finds one -- a group to be created into the unit is not created and is
-    reported Failed, and the administrativeUnits pass reports the refusal. The same Failed row, naming
-    why, refuses such a group when the run cannot decide the rename: the previous-name lookup threw, or
-    -Include leaves AdministrativeUnits out (and, likewise, an access package in a catalog the document
-    renames when -Include leaves Catalogs out).
+    lookup that throws is reported as a pre-pass handler error. The groups section reads that outcome;
+    see the same-run references below.
 
     Renaming (previousDisplayName): a groups, administrativeUnits, catalogs or accessPackages entry
     that declares previousDisplayName renames the object found under it in place, displayName being
@@ -70,7 +64,8 @@ function Invoke-OERStructure {
     own row carries the error when its rename was refused. A group that already exists is not
     affected, since administrativeUnit applies only when a group is created.
 
-    A rename the run cannot decide is one whose previous-name lookup threw, or one of an
+    A rename the run cannot decide is the rename of a unit or catalog for which a lookup of one of its
+    names threw (the unit's or catalog's own row reports the error), or the rename of an
     administrativeUnits or catalogs entry whose section -Include leaves out (for which nothing is
     read, written or reported). While -Include leaves the section out and the entry still declares
     previousDisplayName, every such reference to its new name is refused -- for a catalog every
@@ -80,8 +75,9 @@ function Invoke-OERStructure {
     -ErrorAction Stop and $? do not see it: check the rows. An access review's accessPackage is not
     translated through the map yet: named by the package's new name, it can fail with
     AccessPackageNotFound in the run (and the -WhatIf plan) that renames the package, until Graph's
-    lookup finds the new name. Test-OERStructure warns on a reference that still names a renamed object by its previous name,
-    and refuses previousDisplayName on an assignmentPolicies or accessReviews entry.
+    lookup finds the new name. Test-OERStructure warns on a reference that still names a renamed
+    object by its previous name, and refuses previousDisplayName on an assignmentPolicies or
+    accessReviews entry.
 
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
@@ -366,8 +362,10 @@ function Invoke-OERStructure {
     findings.
 
     .PARAMETER Include
-    Restricts the sections the engine dispatches. Defaults to all nine sections. Pass a subset
-    to limit the apply run (for example -Include Groups,Catalogs to skip Azure sections).
+    Restricts the sections the engine dispatches. Defaults to all nine sections. Pass a subset to limit
+    the apply run (for example -Include Groups,Catalogs to skip Azure sections). A section left out
+    still matters when its entries declare previousDisplayName: a group created into such a unit, or
+    an access package in such a catalog, is reported Failed with no error record (see Renaming above).
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. Without it

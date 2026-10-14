@@ -46,7 +46,7 @@ function Sync-OERStructureAccessPackage {
     the catalog -- the package list, the package create, the catalog resource read and the resource
     role add -- passes the id the catalogs handler registered for it. The rows still name the
     catalog as the document does. A catalog whose rename was refused (a conflict, or neither name
-    found), or that this run could not decide (its previous name could not be looked up, or -Include
+    found), or that this run could not decide (one of its names could not be looked up, or -Include
     leaves the catalogs section out), is not the catalog the document means, whatever now carries its
     new name: the package gets one Failed row naming the refused rename and why (its error id, or what
     kept the run from deciding it), and nothing is created, read or written for it. That row
@@ -266,7 +266,7 @@ function Sync-OERStructureAccessPackage {
         # not the catalog the document means, whatever now carries its new name: nothing is read or
         # written for this package. Get-OERStructureRenameTarget owns the map's key.
         $CatalogRef = $Item.catalog
-        # A rename this run could not decide (R12: the catalog's previous name could not be looked up, or
+        # A rename this run could not decide (R12: one of the catalog's names could not be looked up, or
         # -Include leaves the catalogs section out) is refused the same way; Reason is the error id, or
         # what kept the run from deciding.
         $CatalogTarget = Get-OERStructureRenameTarget -Section 'catalogs' -Name ([string]$Item.catalog) -RenameMap $RenameMap

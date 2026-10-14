@@ -3005,22 +3005,28 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
             }
         }
 
-        # R12: the entry is marked undecided in the map BEFORE its previous name is looked up. A lookup
-        # that throws leaves that mark -- so a group the run creates into the unit's new name is refused
-        # instead of being created into whatever unit a name lookup finds -- and a decision replaces it.
+        # R12: the entry is marked undecided in the map BEFORE either of its names is looked up. A lookup
+        # that throws -- of the new name too, a transient failure included -- leaves that mark, so a group
+        # the run creates into the unit's new name is refused instead of being created into whatever unit
+        # a later name lookup finds; a decision replaces it.
         Context 'a rename this run cannot decide (R12)' {
-            It 'leaves a refused entry, with the reason that the previous name could not be looked up, when <Case>, and still throws with nothing written' -ForEach @(
-                @{ Case = 'the previous name matches several units'; Prev = 'AU-Old'; EnsureOnly = $false }
-                @{ Case = 'the previous name matches several units in the pre-pass (-EnsureOnly)'; Prev = 'AU-Old'; EnsureOnly = $true }
-                @{ Case = 'the probe of a previous object id fails with anything but not-found'; Prev = '11111111-1111-1111-1111-111111111111'; EnsureOnly = $false }
+            It 'leaves a refused entry, with the reason that one of its names could not be looked up, when <Case>, and still throws with nothing written' -ForEach @(
+                @{ Case = 'the previous name matches several units'; Prev = 'AU-Old'; EnsureOnly = $false; NewThrows = $false }
+                @{ Case = 'the previous name matches several units in the pre-pass (-EnsureOnly)'; Prev = 'AU-Old'; EnsureOnly = $true; NewThrows = $false }
+                @{ Case = 'the probe of a previous object id fails with anything but not-found'; Prev = '11111111-1111-1111-1111-111111111111'; EnsureOnly = $false; NewThrows = $false }
+                @{ Case = 'the lookup of the new name fails (a transient failure)'; Prev = 'AU-Old'; EnsureOnly = $false; NewThrows = $true }
+                @{ Case = 'the lookup of the new name fails in the pre-pass (-EnsureOnly)'; Prev = 'AU-Old'; EnsureOnly = $true; NewThrows = $true }
             ) {
-                InModuleScope $script:moduleName -Parameters @{ Prev = $Prev; EnsureOnly = $EnsureOnly } {
-                    param($Prev, $EnsureOnly)
+                InModuleScope $script:moduleName -Parameters @{ Prev = $Prev; EnsureOnly = $EnsureOnly; NewThrows = $NewThrows } {
+                    param($Prev, $EnsureOnly, $NewThrows)
                     Mock Resolve-OERAdministrativeUnitId {
                         throw [System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new("Administrative unit display name 'AU-Old' matches 2 units (au-a, au-b)."),
                             'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'AU-Old')
                     } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    if ($NewThrows) {
+                        Mock Resolve-OERAdministrativeUnitId { throw 'transient 502' } -ParameterFilter { $DisplayName -eq 'AU-New' }
+                    }
                     Mock Invoke-OERGraphRequest { throw 'graph 403' } -ParameterFilter {
                         $Uri -eq 'v1.0/directory/administrativeUnits/11111111-1111-1111-1111-111111111111?$select=id'
                     }
@@ -3028,6 +3034,10 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                     $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = $Prev; description = 'new desc'; members = @('person9@example.com') }
 
                     { Invoke-SyncAuRenameViaCaller -Item $Item -EnsureOnly:$EnsureOnly -RenameMap $Map -ErrorAction SilentlyContinue } | Should -Throw
+                    if ($NewThrows) {
+                        # The new name's lookup threw first: the previous name was never looked up.
+                        Should -Invoke Resolve-OERAdministrativeUnitId -Times 0 -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    }
                     Should -Invoke New-OERAdministrativeUnit -Times 0
                     Should -Invoke Get-OERAdministrativeUnit -Times 0
                     Should -Invoke Set-OERAdministrativeUnit -Times 0
@@ -3037,8 +3047,30 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                     $Entry.Refused | Should -BeTrue
                     $Entry.Id | Should -BeNullOrEmpty
                     $Entry.ErrorId | Should -BeNullOrEmpty
-                    $Entry.Reason | Should -BeExactly 'its previous name could not be looked up'
+                    $Entry.Reason | Should -BeExactly 'one of its names could not be looked up'
                     $Entry.PreviousName | Should -BeExactly $Prev
+                }
+            }
+
+            It 'carries the unit id as the probe answers it, not as previousDisplayName types it (an id in upper case)' {
+                InModuleScope $script:moduleName {
+                    Mock Invoke-OERGraphRequest { [PSCustomObject]@{ id = 'aaaaaaaa-0000-0000-0000-0000000000b1' } } -ParameterFilter {
+                        $Uri -eq 'v1.0/directory/administrativeUnits/AAAAAAAA-0000-0000-0000-0000000000B1?$select=id'
+                    }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AAAAAAAA-0000-0000-0000-0000000000B1' }
+                    $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    # Positive proof first: the id was probed, once, as typed.
+                    Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
+                    @($Err).Count | Should -Be 0
+                    $Map['administrativeunits|au-new'].Id | Should -BeExactly 'aaaaaaaa-0000-0000-0000-0000000000b1'
+                    $Map['administrativeunits|au-new'].Refused | Should -BeFalse
+                    Should -Invoke Get-OERAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $AdministrativeUnit -ceq 'aaaaaaaa-0000-0000-0000-0000000000b1' }
+                    Should -Invoke Set-OERAdministrativeUnit -Times 1 -Exactly -ParameterFilter {
+                        $AdministrativeUnit -ceq 'aaaaaaaa-0000-0000-0000-0000000000b1' -and $NewDisplayName -eq 'AU-New'
+                    }
+                    @($r | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
                 }
             }
 

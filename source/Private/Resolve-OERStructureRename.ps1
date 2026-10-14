@@ -34,8 +34,8 @@ function Resolve-OERStructureRename {
     no ErrorId, whose Reason is the text given, and returns Outcome Undecided (Id, RenameFrom,
     ErrorRecord and Result all $null). A reference to the new name is then refused instead of being
     looked up by name, which while another object carries that name would reach that object. The
-    administrative unit and catalog handlers register it before they look up the previous name, so a
-    lookup that throws leaves it and the decision after the lookup replaces it; Invoke-OERStructure
+    administrative unit and catalog handlers register it before they look up either name, so a lookup
+    that throws leaves it and the decision after the lookups replaces it; Invoke-OERStructure
     registers it for every entry of a section -Include leaves out. Without -RenameMap it registers
     nothing.
 
@@ -73,7 +73,7 @@ function Resolve-OERStructureRename {
     Returns Outcome Rename with Id $OldId, and registers 'catalogs|cat-new' as $OldId in $Map.
 
     .EXAMPLE
-    $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Undecided -Reason 'its previous name could not be looked up' -RenameMap $Map
+    $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Undecided -Reason 'one of its names could not be looked up' -RenameMap $Map
     Registers 'catalogs|cat-new' in $Map as refused with that reason, until a decision replaces it.
     #>
     [OutputType([PSCustomObject])]
@@ -91,7 +91,7 @@ function Resolve-OERStructureRename {
     )
     $Key = ('{0}|{1}' -f $Section, $Name).ToLowerInvariant()
 
-    # R12: a rename this run cannot decide -- its previous name could not be looked up, or -Include
+    # R12: a rename this run cannot decide -- one of its names could not be looked up, or -Include
     # leaves its section out. Registered as refused, so a reference to the new name is refused rather
     # than looked up by name; a decision for the same key replaces it.
     if ($Undecided) {

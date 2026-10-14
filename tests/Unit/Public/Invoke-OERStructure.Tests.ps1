@@ -2638,10 +2638,17 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
     Context 'an administrative unit a group is created into' {
         BeforeEach {
             # Graph's name lookup finds the unit under its previous name only -- or, with OldFound
-            # false, under neither name; with OldThrows the previous-name lookup throws (an ambiguous
-            # name). LiveMembers is the unit's live member list.
-            $script:RnAuState = @{ OldFound = $true; OldThrows = $false; LiveMembers = @() }
+            # false, under neither name; with OldThrows the lookup of the previous name throws (an
+            # ambiguous name). With NewThrowsOnce the first lookup of the new name fails (a transient
+            # 502) and later ones succeed; with OtherNew another unit carries the new name.
+            # LiveMembers is the unit's live member list.
+            $script:RnAuState = @{ OldFound = $true; OldThrows = $false; NewThrowsOnce = $false; OtherNew = $false; LiveMembers = @() }
             Mock -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId {
+                if ($DisplayName -eq 'AU-New' -and $script:RnAuState.NewThrowsOnce) {
+                    $script:RnAuState.NewThrowsOnce = $false
+                    throw 'transient 502'
+                }
+                if ($DisplayName -eq 'AU-New' -and $script:RnAuState.OtherNew) { 'aaaaaaaa-0000-0000-0000-000000000002' }
                 if ($DisplayName -eq 'AU-Old' -and $script:RnAuState.OldThrows) {
                     throw [System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new("Administrative unit display name 'AU-Old' matches 2 units."),
@@ -2799,7 +2806,7 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             $Rows[1].Section | Should -BeExactly 'groups'
             $Rows[1].Action | Should -BeExactly 'Failed'
             $Rows[1].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' was refused " +
-                '(its previous name could not be looked up), so the unit the group is to be created into cannot be identified')
+                '(one of its names could not be looked up), so the unit the group is to be created into cannot be identified')
             $Rows[1].Error | Should -BeNullOrEmpty
             $Rows[2].Section | Should -BeExactly 'administrativeUnits'
             $Rows[2].Action | Should -BeExactly 'Failed'
@@ -2813,6 +2820,41 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             Should -Invoke -ModuleName $script:moduleName New-OERAdministrativeUnit -Times 0
             Should -Invoke -ModuleName $script:moduleName Set-OERAdministrativeUnit -Times 0
         }
+
+        # The reviewer's probe: the pre-pass's lookup of the NEW name fails once (an unretried 502), and
+        # every later lookup succeeds -- with another unit carrying 'AU-New'. Without a mark set before
+        # that lookup the group would be created into 'AU-New' by name, which reaches that other unit.
+        It 'refuses the group, creating nothing, when the pre-pass''s lookup of the unit''s new name fails once (<Mode>)' -ForEach @(
+            @{ Mode = 'run' }
+            @{ Mode = 'WhatIf' }
+        ) {
+            $script:RnAuState.NewThrowsOnce = $true
+            $script:RnAuState.OtherNew = $true
+            $Params = @{ Json = $script:RnAuDoc; ErrorAction = 'SilentlyContinue'; WarningAction = 'SilentlyContinue' }
+            if ($Mode -eq 'WhatIf') { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+            $Rows = @(Invoke-OERStructure @Params)
+
+            # Positive proof first: the new name was looked up twice -- the pre-pass's failed lookup and
+            # the administrativeUnits pass's successful one -- and the previous name only by that pass.
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId -Times 2 -Exactly -ParameterFilter { $DisplayName -eq 'AU-New' }
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'AU-Old' }
+            $Rows.Count | Should -Be 3
+            $Rows[0].Section | Should -BeExactly 'administrativeUnits'
+            $Rows[0].Action | Should -BeExactly 'Failed'
+            $Rows[0].Detail | Should -BeExactly 'pre-pass handler error: transient 502'
+            $Rows[1].Section | Should -BeExactly 'groups'
+            $Rows[1].Action | Should -BeExactly 'Failed'
+            $Rows[1].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' was refused " +
+                '(one of its names could not be looked up), so the unit the group is to be created into cannot be identified')
+            $Rows[1].Error | Should -BeNullOrEmpty
+            # The administrativeUnits pass then finds both names on different units: the conflict.
+            $Rows[2].Section | Should -BeExactly 'administrativeUnits'
+            $Rows[2].Action | Should -BeExactly 'Failed'
+            [string]$Rows[2].Error.FullyQualifiedErrorId | Should -BeLike 'AdministrativeUnitRenameConflict*'
+            Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAdministrativeUnit -Times 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERAdministrativeUnit -Times 0
+        }
     }
 
     Context 'a catalog and an access package in it' {
@@ -2821,9 +2863,14 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             # a rename, and a test moves it on between two runs, as Graph's lookup catches up. CatName
             # and ApName are the names the two objects carry; the Set mocks change them. OtherNew puts
             # another catalog, holding no package, under the name CAT-New. With OldThrows the lookup of
-            # CAT-Old throws (an ambiguous name).
-            $script:RnCatState = @{ CatName = 'CAT-Old'; CatIndexed = 'CAT-Old'; ApName = 'AP-Old'; OtherNew = $false; OldThrows = $false }
+            # CAT-Old throws (an ambiguous name); with NewThrowsOnce the first lookup of CAT-New fails (a
+            # transient 502) and later ones succeed.
+            $script:RnCatState = @{ CatName = 'CAT-Old'; CatIndexed = 'CAT-Old'; ApName = 'AP-Old'; OtherNew = $false; OldThrows = $false; NewThrowsOnce = $false }
             Mock -ModuleName $script:moduleName Resolve-OERCatalogId {
+                if ($DisplayName -eq 'CAT-New' -and $script:RnCatState.NewThrowsOnce) {
+                    $script:RnCatState.NewThrowsOnce = $false
+                    throw 'transient 502'
+                }
                 if ($DisplayName -eq 'CAT-Old' -and $script:RnCatState.OldThrows) {
                     throw [System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new("Catalog display name 'CAT-Old' matches 2 catalogs."),
@@ -2994,7 +3041,7 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             $Rows[0].Detail | Should -BeLike 'handler error: *'
             $Rows[1].Section | Should -BeExactly 'accessPackages'
             $Rows[1].Action | Should -BeExactly 'Failed'
-            $Rows[1].Detail | Should -BeExactly ("catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (its previous name could not be looked up), " +
+            $Rows[1].Detail | Should -BeExactly ("catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (one of its names could not be looked up), " +
                 'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
             $Rows[1].Error | Should -BeNullOrEmpty
             # -ErrorVariable also holds each layer's copy of the thrown record, some as the exception that
@@ -3002,6 +3049,36 @@ Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an a
             # package's row publishes none).
             @($Errs | Where-Object { [string]$_.FullyQualifiedErrorId -like 'AmbiguousName*' }).Count | Should -BeGreaterThan 0
             @($Errs | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.FullyQualifiedErrorId } else { [string]$_.ErrorRecord.FullyQualifiedErrorId } } | Where-Object { $_ -notlike 'AmbiguousName*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERCatalog -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERCatalog -Times 0
+        }
+
+        # The reviewer's probe: the catalogs pass's lookup of the NEW name fails once (an unretried 502),
+        # and the package's own lookup of 'CAT-New' a moment later succeeds -- on another catalog that
+        # carries that name and holds no package. Without a mark set before that lookup the package would
+        # be read from and created in that other catalog.
+        It 'refuses the package, reading and writing nothing for it, when the catalogs section''s lookup of the catalog''s new name fails once (<Mode>)' -ForEach @(
+            @{ Mode = 'run' }
+            @{ Mode = 'WhatIf' }
+        ) {
+            $script:RnCatState.OtherNew = $true
+            $script:RnCatState.NewThrowsOnce = $true
+            $Params = @{ Json = $script:RnCatConflictDoc; ErrorAction = 'SilentlyContinue'; WarningAction = 'SilentlyContinue' }
+            if ($Mode -eq 'WhatIf') { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+            $Rows = @(Invoke-OERStructure @Params)
+
+            # Positive proof first: the new name's lookup was made, and threw before the previous name
+            # was looked up.
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERCatalogId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'CAT-New' }
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERCatalogId -Times 0 -ParameterFilter { $DisplayName -eq 'CAT-Old' }
+            @(ConvertTo-RnRowLine -Row $Rows) | Should -Be @(
+                'catalogs|CAT-New|Failed|handler error: transient 502'
+                ("accessPackages|AP-1|Failed|catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (one of its names could not be looked up), " +
+                    'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
+            )
+            $Rows[1].Error | Should -BeNullOrEmpty
             Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
             Should -Invoke -ModuleName $script:moduleName Set-OERCatalog -Times 0

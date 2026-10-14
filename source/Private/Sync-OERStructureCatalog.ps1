@@ -34,10 +34,12 @@ function Sync-OERStructureCatalog {
     any request: an id that no longer names a catalog counts as not matching, so a stale id never
     reports a false conflict (with displayName resolving, the item is applied normally; with it not
     resolving, the item fails as above), and any other failure of that read throws, again with
-    nothing created or renamed. With -RenameMap, the entry is registered as undecided before its
-    previous name is looked up, and the decision replaces that mark; when the lookup throws the mark
-    stays, so an access package declared in the catalog's new name in the same run is refused rather
-    than read or created in whatever catalog a name lookup finds.
+    nothing created or renamed. The read's answer supplies the id, so an id typed in another letter
+    case reaches the map and the rename as the catalog's own id. With -RenameMap, the entry is
+    registered as undecided before either of its names is looked up, and the decision replaces that
+    mark; when a lookup of either name throws the mark stays, so an access package declared in the
+    catalog's new name in the same run is refused rather than read or created in whatever catalog a
+    later name lookup finds.
 
     Microsoft Graph's displayName lookup can follow a rename with a delay. On the run that renames
     the catalog, a reference to the NEW name elsewhere in the same document can therefore fail to
@@ -117,12 +119,12 @@ function Sync-OERStructureCatalog {
     For an entry that declares previousDisplayName, Resolve-OERStructureRename registers the outcome
     under 'catalogs|<new name>' in lower case: the id of the catalog the entry renames, a refused entry
     when its rename conflicts or finds nothing, and no entry when the new name already finds the
-    catalog; before the previous name is looked up the entry is marked undecided (refused, with the
-    reason that its previous name could not be looked up), a mark only a lookup that throws leaves in
-    place. The registration is made when the decision is, so
-    under -WhatIf too and before the rename is sent; Get-OERStructureRenameTarget reads it, so an access
-    package declared in the renamed catalog is read and created against the catalog's id. Optional:
-    without it the decision is the same and nothing is registered.
+    catalog; before either name is looked up the entry is marked undecided (refused, with the reason
+    that one of its names could not be looked up), a mark only a lookup that throws leaves in place.
+    The registration is made when the decision is, so under -WhatIf too and before the rename is sent;
+    Get-OERStructureRenameTarget reads it, so an access package declared in the renamed catalog is read
+    and created against the catalog's id. Optional: without it the decision is the same and nothing is
+    registered.
 
     .EXAMPLE
     Sync-OERStructureCatalog -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
@@ -158,6 +160,15 @@ function Sync-OERStructureCatalog {
         $Name = $Item.displayName
 
         # -- Check existence ----------------------------------------------------------------
+        # R12: an entry that declares previousDisplayName is marked undecided in the run's rename map
+        # BEFORE either of its names is looked up. The decision below replaces the mark (Current removes
+        # it); a lookup that throws -- an ambiguous name, a failed probe, a transient failure of either
+        # lookup -- leaves it, so an access package declared in the catalog's new name in this run is
+        # refused instead of landing in whatever catalog a later name lookup finds.
+        if (Test-OERDeclaredProperty -Node $Item -Name 'previousDisplayName') {
+            $null = Resolve-OERStructureRename -Section 'catalogs' -Name $Name -PreviousName ([string]$Item.previousDisplayName) `
+                -Undecided -Reason 'one of its names could not be looked up' -RenameMap $RenameMap
+        }
         $CatId = Resolve-OERCatalogId -DisplayName $Name
 
         # -- Rename through previousDisplayName (BL-128, A5) -------------------------------
@@ -168,21 +179,18 @@ function Sync-OERStructureCatalog {
         $RenameFrom = $null
         if (Test-OERDeclaredProperty -Node $Item -Name 'previousDisplayName') {
             $PrevName = [string]$Item.previousDisplayName
-            # R12: marked undecided BEFORE the previous name is looked up. The decision below replaces
-            # the mark (Current removes it); a lookup that throws leaves it, so an access package declared
-            # in the catalog's new name in this run is refused instead of landing in whatever catalog a
-            # name lookup finds. The new-name lookup above is outside this rule: when it throws, a
-            # reference to the new name throws the same way in its own lookup.
-            $null = Resolve-OERStructureRename -Section 'catalogs' -Name $Name -PreviousName $PrevName `
-                -Undecided -Reason 'its previous name could not be looked up' -RenameMap $RenameMap
             if (Test-OERGuid -Value $PrevName) {
                 # An object id: Resolve-OERCatalogId returns a GUID verbatim, with no request, so it
                 # would "find" a catalog that was deleted. One read settles it; the not-found answer is
                 # declared to the transport and means "no catalog under that id", any other failure
-                # throws and the item fails with nothing written. No $select (Ruling R6).
+                # throws and the item fails with nothing written. No $select (Ruling R6); the answer
+                # still carries the id, taken as it spells it, so the map and the rename carry the
+                # catalog's own id rather than the operator's spelling of it.
                 $PrevProbe = Invoke-OERGraphRequest -Uri "v1.0/identityGovernance/entitlementManagement/catalogs/$PrevName" `
                     -ExpectedErrorCode 'CatalogNotFound', 'NotFound'
-                $PrevCatId = if (@($PrevProbe.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') { $null } else { $PrevName }
+                $PrevCatId = if (@($PrevProbe.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') { $null }
+                elseif ($PrevProbe.id) { [string]$PrevProbe.id }
+                else { $PrevName }
             } else {
                 $PrevCatId = Resolve-OERCatalogId -DisplayName $PrevName
             }

@@ -248,7 +248,7 @@ function Sync-OERStructureGroup {
     administrativeUnits[] entry with previousDisplayName, which the engine's pre-pass resolves and
     registers before this section runs -- the group is created into that unit by its object id. When
     that unit's rename was refused (both names found different units, or neither found one), or this
-    run could not decide it (its previous name could not be looked up, or -Include leaves the
+    run could not decide it (one of its names could not be looked up, or -Include leaves the
     administrativeUnits section out), the unit the group is to be created into cannot be identified:
     the item emits one Failed row naming the unit, the refused rename and why (its error id, or what
     kept the run from deciding it), and nothing is created, read further or written for it. The check
@@ -588,7 +588,7 @@ function Sync-OERStructureGroup {
             # BL-128 (A5): an administrative unit the document renames in this run is found under its
             # previous name, and Graph's name lookup cannot find its new name yet; the engine's pre-pass
             # registered it in the run's rename map, so the group is created into it by id. A unit whose
-            # rename was refused, or that this run could not decide (R12: its previous name could not be
+            # rename was refused, or that this run could not decide (R12: one of its names could not be
             # looked up, or -Include leaves the administrativeUnits section out), cannot be identified:
             # the group is not created, under -WhatIf too. Reason is the error id, or what kept the run
             # from deciding.

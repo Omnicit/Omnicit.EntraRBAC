@@ -14,7 +14,7 @@ function Get-OERStructureRenameTarget {
     object the document means cannot be identified, so the referring entry must not act. It is either
     a rename that failed with a conflict or found nothing (ErrorId and Reason are the error id), or an
     undecided mark (R12: no ErrorId, and a Reason saying that the entry's section is not selected by
-    -Include, or that its previous name could not be looked up). Readers print Reason in their
+    -Include, or that one of its names could not be looked up). Readers print Reason in their
     Failed row. The key is '<section>|<name>' in lower case, built exactly as
     Resolve-OERStructureRename builds it.
 

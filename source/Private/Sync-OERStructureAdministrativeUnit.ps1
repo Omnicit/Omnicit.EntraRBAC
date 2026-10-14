@@ -31,10 +31,12 @@ function Sync-OERStructureAdministrativeUnit {
     verified with one read (v1.0/directory/administrativeUnits/<id>?$select=id): an id that no longer
     names a unit counts as not matching, so a stale id never reports a false conflict (with
     displayName resolving, the item is applied normally; with it not resolving, the item fails as
-    above), and any other failure of that read throws, again with nothing created or renamed. With
-    -RenameMap, the entry is registered as undecided before its previous name is looked up, and the
-    decision replaces that mark; when the lookup throws the mark stays, so a group the same run creates
-    into the unit's new name is refused rather than created into whatever unit a name lookup finds.
+    above), and any other failure of that read throws, again with nothing created or renamed. The
+    read's answer supplies the id, so an id typed in another letter case reaches the map and the rename
+    as the unit's own id. With -RenameMap, the entry is registered as undecided before either of its
+    names is looked up, and the decision replaces that mark; when a lookup of either name throws the
+    mark stays, so a group the same run creates into the unit's new name is refused rather than created
+    into whatever unit a later name lookup finds.
 
     Microsoft Graph's displayName lookup can follow a rename with a delay. On the run that renames
     the unit, a reference to the NEW name elsewhere in the same document can therefore fail to
@@ -180,9 +182,9 @@ function Sync-OERStructureAdministrativeUnit {
     unit found only under its previous name is the one the document renames, and one found under
     neither is a rename that fails. The administrativeUnits pass reports the rename, the conflict or
     the not-found, so the same refusal is never reported twice; what the pre-pass registered is what
-    the groups section reads for a group created into the unit. A previous-name lookup that throws ends
-    the pre-pass call as any throw does (the engine reports it as a pre-pass handler error) and leaves
-    the entry marked undecided, so that group is refused.
+    the groups section reads for a group created into the unit. A lookup of either name that throws
+    ends the pre-pass call as any throw does (the engine reports it as a pre-pass handler error) and
+    leaves the entry marked undecided, so that group is refused.
 
     .PARAMETER Item
     One element from the administrativeUnits[] array in the structure document, as a PSCustomObject
@@ -240,12 +242,11 @@ function Sync-OERStructureAdministrativeUnit {
     package handlers. For an entry that declares previousDisplayName, Resolve-OERStructureRename
     registers the outcome under 'administrativeunits|<new name>' in lower case: the id of the unit the
     entry renames, a refused entry when its rename conflicts or finds nothing, and no entry when the new
-    name already finds the unit; before the previous name is looked up the entry is marked undecided
-    (refused, with the reason that its previous name could not be looked up), a mark only a lookup that
-    throws leaves in place. The registration is
-    made when the decision is, so under -WhatIf too and before the rename is sent;
-    Get-OERStructureRenameTarget reads it. Optional: without it the decision is the same and nothing is
-    registered.
+    name already finds the unit; before either name is looked up the entry is marked undecided
+    (refused, with the reason that one of its names could not be looked up), a mark only a lookup that
+    throws leaves in place. The registration is made when the decision is, so under -WhatIf too and
+    before the rename is sent; Get-OERStructureRenameTarget reads it. Optional: without it the decision
+    is the same and nothing is registered.
 
     .EXAMPLE
     Sync-OERStructureAdministrativeUnit -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
@@ -316,6 +317,15 @@ function Sync-OERStructureAdministrativeUnit {
         $Name = $Item.displayName
 
         # -- Check existence ----------------------------------------------------------------
+        # R12: an entry that declares previousDisplayName is marked undecided in the run's rename map
+        # BEFORE either of its names is looked up. The decision below replaces the mark (Current removes
+        # it); a lookup that throws -- an ambiguous name, a failed probe, a transient failure of either
+        # lookup -- leaves it, so a group created into the unit's new name in this run is refused instead
+        # of being created into whatever unit a later name lookup finds.
+        if (Test-DeclHas -Node $Item -Name 'previousDisplayName') {
+            $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name $Name -PreviousName ([string]$Item.previousDisplayName) `
+                -Undecided -Reason 'one of its names could not be looked up' -RenameMap $RenameMap
+        }
         $Auid = Resolve-OERAdministrativeUnitId -DisplayName $Name
 
         # -- Rename through previousDisplayName (BL-128, A5) -------------------------------
@@ -326,20 +336,17 @@ function Sync-OERStructureAdministrativeUnit {
         $RenameFrom = $null
         if (Test-DeclHas -Node $Item -Name 'previousDisplayName') {
             $PrevName = [string]$Item.previousDisplayName
-            # R12: marked undecided BEFORE the previous name is looked up. The decision below replaces
-            # the mark (Current removes it); a lookup that throws leaves it, so a group created into the
-            # unit's new name in this run is refused instead of being created into whatever unit a name
-            # lookup finds. The new-name lookup above is outside this rule: when it throws, a reference to
-            # the new name throws the same way in its own lookup.
-            $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name $Name -PreviousName $PrevName `
-                -Undecided -Reason 'its previous name could not be looked up' -RenameMap $RenameMap
             if (Test-OERGuid -Value $PrevName) {
                 # An object id: Resolve-OERAdministrativeUnitId would look it up as a display name. One
                 # read settles it; the not-found answer is declared to the transport and means "no unit
-                # under that id", any other failure throws and the item fails with nothing written.
+                # under that id", any other failure throws and the item fails with nothing written. The
+                # id is taken as the answer spells it, so the map and the rename carry the unit's own id
+                # rather than the operator's spelling of it.
                 $PrevProbe = Invoke-OERGraphRequest -Uri "v1.0/directory/administrativeUnits/$PrevName`?`$select=id" `
                     -ExpectedErrorCode 'Request_ResourceNotFound', 'ResourceNotFound'
-                $PrevAuid = if (@($PrevProbe.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') { $null } else { $PrevName }
+                $PrevAuid = if (@($PrevProbe.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') { $null }
+                elseif ($PrevProbe.id) { [string]$PrevProbe.id }
+                else { $PrevName }
             } else {
                 $PrevAuid = Resolve-OERAdministrativeUnitId -DisplayName $PrevName
             }

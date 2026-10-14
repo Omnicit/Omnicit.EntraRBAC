@@ -111,13 +111,13 @@ Describe 'Get-OERStructureRenameTarget' {
             $Entry = InModuleScope $script:moduleName {
                 $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name 'AU-New' -PreviousName 'AU-Old' -Undecided `
-                    -Reason 'its previous name could not be looked up' -RenameMap $Map
+                    -Reason 'one of its names could not be looked up' -RenameMap $Map
                 Get-OERStructureRenameTarget -Section 'administrativeUnits' -Name 'au-new' -RenameMap $Map
             }
             $Entry.Refused | Should -BeTrue
             $Entry.Id | Should -BeNullOrEmpty
             $Entry.ErrorId | Should -BeNullOrEmpty
-            $Entry.Reason | Should -BeExactly 'its previous name could not be looked up'
+            $Entry.Reason | Should -BeExactly 'one of its names could not be looked up'
             $Entry.PreviousName | Should -BeExactly 'AU-Old'
         }
         It 'returns the refused entry a NotFound registered, with its ErrorId' {

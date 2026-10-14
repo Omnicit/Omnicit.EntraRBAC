@@ -284,7 +284,7 @@ Describe 'Resolve-OERStructureRename' {
                 param($Section, $Earlier)
                 $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 if ($Earlier -eq 'undecided') {
-                    $null = Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Undecided -Reason 'its previous name could not be looked up' -RenameMap $Map
+                    $null = Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Undecided -Reason 'one of its names could not be looked up' -RenameMap $Map
                 } else {
                     $null = Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Id $null -PreviousId $null -RenameMap $Map
                 }
@@ -322,7 +322,7 @@ Describe 'Resolve-OERStructureRename' {
         }
     }
 
-    # R12: a rename the run cannot decide -- the previous name could not be looked up, or -Include leaves
+    # R12: a rename the run cannot decide -- one of its names could not be looked up, or -Include leaves
     # the section out -- is registered as refused with a reason, so a reference to the new name is refused
     # instead of looked up by name. A decision for the same key replaces it.
     Context 'Undecided (<Section>)' -ForEach $script:Kinds {
@@ -330,7 +330,7 @@ Describe 'Resolve-OERStructureRename' {
             $Result = InModuleScope $script:moduleName -Parameters @{ Section = $Section } {
                 param($Section)
                 $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                $null = Resolve-OERStructureRename -Section $Section -Name 'New-NAME' -PreviousName 'Old-Name' -Undecided -Reason 'its previous name could not be looked up' -RenameMap $Map
+                $null = Resolve-OERStructureRename -Section $Section -Name 'New-NAME' -PreviousName 'Old-Name' -Undecided -Reason 'one of its names could not be looked up' -RenameMap $Map
                 [PSCustomObject]@{ Count = $Map.Count; Key = @($Map.Keys)[0]; Entry = @($Map.Values)[0] }
             }
             $Result.Count | Should -Be 1
@@ -342,7 +342,7 @@ Describe 'Resolve-OERStructureRename' {
             $Result.Entry.Refused | Should -BeTrue
             $Result.Entry.Id | Should -BeNullOrEmpty
             $Result.Entry.ErrorId | Should -BeNullOrEmpty
-            $Result.Entry.Reason | Should -BeExactly 'its previous name could not be looked up'
+            $Result.Entry.Reason | Should -BeExactly 'one of its names could not be looked up'
         }
         It 'returns the Undecided outcome with nothing to act on and nothing to report' {
             $Hit = InModuleScope $script:moduleName -Parameters @{ Section = $Section } {
@@ -372,7 +372,7 @@ Describe 'Resolve-OERStructureRename' {
             $Entry = InModuleScope $script:moduleName -Parameters @{ Section = $Section; Id = $Id; PreviousId = $PreviousId } {
                 param($Section, $Id, $PreviousId)
                 $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                $null = Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Undecided -Reason 'its previous name could not be looked up' -RenameMap $Map
+                $null = Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Undecided -Reason 'one of its names could not be looked up' -RenameMap $Map
                 $null = Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Id $Id -PreviousId $PreviousId -RenameMap $Map
                 if ($Map.Count -ne 1) { throw "expected one entry, found $($Map.Count)" }
                 @($Map.Values)[0]

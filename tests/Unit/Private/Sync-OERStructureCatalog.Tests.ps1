@@ -1539,21 +1539,26 @@ Describe 'Sync-OERStructureCatalog' {
             }
         }
 
-        # R12: the entry is marked undecided in the map BEFORE its previous name is looked up. A lookup
-        # that throws leaves that mark -- so an access package declared in the catalog's new name is
-        # refused instead of landing in whatever catalog a name lookup finds -- and a decision replaces it.
+        # R12: the entry is marked undecided in the map BEFORE either of its names is looked up. A lookup
+        # that throws -- of the new name too, a transient failure included -- leaves that mark, so an
+        # access package declared in the catalog's new name is refused instead of landing in whatever
+        # catalog a later name lookup finds; a decision replaces it.
         Context 'a rename this run cannot decide (R12)' {
-            It 'leaves a refused entry, with the reason that the previous name could not be looked up, when <Case>, and still throws with nothing written' -ForEach @(
-                @{ Case = 'the previous name matches several catalogs'; Prev = 'CAT-Old' }
-                @{ Case = 'the probe of a previous object id fails with anything but not-found'; Prev = '11111111-1111-1111-1111-111111111111' }
+            It 'leaves a refused entry, with the reason that one of its names could not be looked up, when <Case>, and still throws with nothing written' -ForEach @(
+                @{ Case = 'the previous name matches several catalogs'; Prev = 'CAT-Old'; NewThrows = $false }
+                @{ Case = 'the probe of a previous object id fails with anything but not-found'; Prev = '11111111-1111-1111-1111-111111111111'; NewThrows = $false }
+                @{ Case = 'the lookup of the new name fails (a transient failure)'; Prev = 'CAT-Old'; NewThrows = $true }
             ) {
-                InModuleScope $script:moduleName -Parameters @{ Prev = $Prev } {
-                    param($Prev)
+                InModuleScope $script:moduleName -Parameters @{ Prev = $Prev; NewThrows = $NewThrows } {
+                    param($Prev, $NewThrows)
                     Mock Resolve-OERCatalogId {
                         throw [System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new("Catalog display name 'CAT-Old' matches 2 catalogs (cat-a, cat-b)."),
                             'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'CAT-Old')
                     } -ParameterFilter { $DisplayName -eq 'CAT-Old' }
+                    if ($NewThrows) {
+                        Mock Resolve-OERCatalogId { throw 'transient 502' } -ParameterFilter { $DisplayName -eq 'CAT-New' }
+                    }
                     Mock Invoke-OERGraphRequest { throw 'graph 403' } -ParameterFilter {
                         $Uri -eq 'v1.0/identityGovernance/entitlementManagement/catalogs/11111111-1111-1111-1111-111111111111'
                     }
@@ -1561,6 +1566,10 @@ Describe 'Sync-OERStructureCatalog' {
                     $Item = [PSCustomObject]@{ displayName = 'CAT-New'; previousDisplayName = $Prev; description = 'new desc'; resources = @() }
 
                     { Invoke-SyncCatRenameViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue } | Should -Throw
+                    if ($NewThrows) {
+                        # The new name's lookup threw first: the previous name was never looked up.
+                        Should -Invoke Resolve-OERCatalogId -Times 0 -ParameterFilter { $DisplayName -eq 'CAT-Old' }
+                    }
                     Should -Invoke New-OERCatalog -Times 0
                     Should -Invoke Get-OERCatalog -Times 0
                     Should -Invoke Set-OERCatalog -Times 0
@@ -1570,8 +1579,31 @@ Describe 'Sync-OERStructureCatalog' {
                     $Entry.Refused | Should -BeTrue
                     $Entry.Id | Should -BeNullOrEmpty
                     $Entry.ErrorId | Should -BeNullOrEmpty
-                    $Entry.Reason | Should -BeExactly 'its previous name could not be looked up'
+                    $Entry.Reason | Should -BeExactly 'one of its names could not be looked up'
                     $Entry.PreviousName | Should -BeExactly $Prev
+                }
+            }
+
+            It 'carries the catalog id as the probe answers it, not as previousDisplayName types it (an id in upper case)' {
+                InModuleScope $script:moduleName {
+                    Mock Invoke-OERGraphRequest { [PSCustomObject]@{ id = 'aaaaaaaa-0000-0000-0000-0000000000c1'; displayName = 'CAT-Old' } } -ParameterFilter {
+                        $Uri -eq 'v1.0/identityGovernance/entitlementManagement/catalogs/AAAAAAAA-0000-0000-0000-0000000000C1'
+                    }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'CAT-New'; previousDisplayName = 'AAAAAAAA-0000-0000-0000-0000000000C1' }
+                    $r = @(Invoke-SyncCatRenameViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    # Positive proof first: the id was probed, once, as typed.
+                    Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
+                    @($Err).Count | Should -Be 0
+                    $Map['catalogs|cat-new'].Id | Should -BeExactly 'aaaaaaaa-0000-0000-0000-0000000000c1'
+                    $Map['catalogs|cat-new'].Refused | Should -BeFalse
+                    Should -Invoke Get-OERCatalog -Times 1 -Exactly -ParameterFilter { $Id -ceq 'aaaaaaaa-0000-0000-0000-0000000000c1' }
+                    Should -Invoke Set-OERCatalog -Times 1 -Exactly -ParameterFilter {
+                        $Id -ceq 'aaaaaaaa-0000-0000-0000-0000000000c1' -and $NewDisplayName -eq 'CAT-New'
+                    }
+                    Should -Invoke Get-OERCatalogResource -Times 1 -Exactly -ParameterFilter { $Catalog -ceq 'aaaaaaaa-0000-0000-0000-0000000000c1' }
+                    @($r | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
                 }
             }
 
