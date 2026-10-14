@@ -155,7 +155,10 @@ function Sync-OERStructureAccessPackage {
          "renamed assignmentPolicy '<previous>' to '<new>'", followed by "; updated assignmentPolicy
          fields (<fields>)" when fields differ, or under -WhatIf one Skipped row "would rename
          assignmentPolicy '<previous>' to '<new>'" (and "; would update assignmentPolicy fields
-         (<fields>)").
+         (<fields>)"); a failed call is one Failed row "failed to rename assignmentPolicy '<previous>'
+         to '<new>': <error>". When previousDisplayName is an object id, these texts and the
+         ShouldProcess prompt name the policy by its current name and id instead: '<current name>'
+         (<id>).
        - Both match the SAME policy, or only displayName matches: applied normally (a second run
          reports Unchanged).
        Each Failed row is a row of the package, with a Detail starting "assignmentPolicy '<new name>': ",
@@ -165,9 +168,10 @@ function Sync-OERStructureAccessPackage {
        a deleted one, matches nothing. A previous name that several policies of the package carry is
        refused like an ambiguous displayName: one Failed row and one AmbiguousName error (target the
        previous name) naming every id, nothing written; declare previousDisplayName as the object id
-       then. A live policy that a declared previousDisplayName names is never reported as Extra. A
-       changed displayName WITHOUT previousDisplayName still creates a new policy under the new name and
-       reports the old one as Extra.
+       then. A live policy that a declared previousDisplayName names is not reported as Extra, unless
+       the entry's own displayName was refused first as one several policies share (that refusal names
+       only the displayName's policies). A changed displayName WITHOUT previousDisplayName still creates
+       a new policy under the new name and reports the old one as Extra.
 
     When -Prune is set, current resource role bindings whose (role.displayName, scope.originId)
     pair is not declared are removed (with Write-Warning) after a ShouldProcess gate. Without
@@ -312,8 +316,10 @@ function Sync-OERStructureAccessPackage {
         # (Resolve-OERStructureRename owns the keys); every early return leaves the marks that were not
         # yet decided, so a reference to a new name later in the same run, read through
         # Get-OERStructureRenameTarget, is refused instead of being looked up by name, which could reach
-        # another object that carries that name. An entry whose names are not non-empty strings is not
-        # marked: the validator refuses it, and the helper's binding would end the item here.
+        # another object that carries that name. A name that is empty after string conversion (an empty
+        # string, or a missing or null value) is not marked -- the package's displayName, its
+        # previousDisplayName, a policy's displayName or its previousDisplayName: the validator refuses
+        # such an entry, and the helper's parameter binding would otherwise end the item in this block.
         if ($null -ne $RenameMap -and -not [string]::IsNullOrEmpty([string]$Name)) {
             $UndecidedReason = "the accessPackages entry did not reach a decision in this run; see that entry's rows"
             if ((Test-OERDeclaredProperty -Node $Item -Name 'previousDisplayName') -and
@@ -1186,33 +1192,18 @@ function Sync-OERStructureAccessPackage {
         }
 
         $DeclaredPolicyNames = [System.Collections.Generic.List[string]]::new()
-        # The ids of the live policies an entry's previousDisplayName names. The Extra pass below never
-        # reports one of them: the policy an entry renames was read under its previous name, and a
-        # policy a refused rename names is the subject of that entry's own Failed row, not an
-        # undeclared policy. The name check stays as it was for every other live policy.
+        # The ids of the live policies an entry's previousDisplayName names, once the entry's displayName
+        # has passed its own duplicate refusal. The Extra pass below never reports one of them: the policy
+        # an entry renames was read under its previous name, and a policy a refused rename names is named
+        # by that entry's own Failed row (the conflict row by its name, the ambiguous previous name row by
+        # its id), not an undeclared policy. An entry stopped by the duplicate refusal of its displayName
+        # names none, so the policy under its previous name is still reported Extra there. The name check
+        # stays as it was for every other live policy.
         $PreviousPolicyIds = [System.Collections.Generic.List[string]]::new()
         if (Test-OERDeclaredProperty -Node $Item -Name 'assignmentPolicies') {
             foreach ($PolEntry in @($Item.assignmentPolicies)) {
                 $PolName = $PolEntry.displayName
                 $DeclaredPolicyNames.Add(([string]$PolName).ToLowerInvariant())
-
-                # previousDisplayName (BL-128 part 2) is matched in the package's policy list, which is
-                # already read, and needs no request of its own. An object id matches only the Id of a
-                # policy of THIS package (R5), without regard to letter case; a name matches DisplayName
-                # without regard to letter case, as displayName does. The match is taken here, before
-                # either name can refuse the entry, so the Extra pass knows every policy it names.
-                $PolHasPrev = Test-OERDeclaredProperty -Node $PolEntry -Name 'previousDisplayName'
-                $PolPrev = $null
-                $PolPrevMatches = @()
-                if ($PolHasPrev) {
-                    $PolPrev = [string]$PolEntry.previousDisplayName
-                    $PolPrevMatches = if (Test-OERGuid -Value $PolPrev) {
-                        @($CurrentPolicies | Where-Object { [string]$_.Id -ieq $PolPrev })
-                    } else {
-                        @($CurrentPolicies | Where-Object { [string]$_.DisplayName -ieq $PolPrev })
-                    }
-                    foreach ($PrevPol in $PolPrevMatches) { $PreviousPolicyIds.Add([string]$PrevPol.Id) }
-                }
 
                 # Every match is kept, never just the first (decision D3). Assignment policy display
                 # names are NOT unique within an access package in Microsoft Graph, and the reconcile
@@ -1257,8 +1248,23 @@ function Sync-OERStructureAccessPackage {
                 # (AssignmentPolicyRenameConflict, AssignmentPolicyRenameNotFound), their texts and the
                 # rename map entry that replaces the policy's undecided mark -- under the package's
                 # declared name and, since the package's id is known here, under its id as well.
+                # previousDisplayName is matched in the package's policy list, which is already read, and
+                # needs no request of its own. An object id matches only the Id of a policy of THIS
+                # package (R5), without regard to letter case; a name matches DisplayName without regard
+                # to letter case, as displayName does.
+                $PolHasPrev = Test-OERDeclaredProperty -Node $PolEntry -Name 'previousDisplayName'
+                $PolPrev = $null
+                $PolPrevMatches = @()
                 $PolRenameFrom = $null
+                $PolRenameLabel = $null
                 if ($PolHasPrev) {
+                    $PolPrev = [string]$PolEntry.previousDisplayName
+                    $PolPrevMatches = if (Test-OERGuid -Value $PolPrev) {
+                        @($CurrentPolicies | Where-Object { [string]$_.Id -ieq $PolPrev })
+                    } else {
+                        @($CurrentPolicies | Where-Object { [string]$_.DisplayName -ieq $PolPrev })
+                    }
+                    foreach ($PrevPol in $PolPrevMatches) { $PreviousPolicyIds.Add([string]$PrevPol.Id) }
                     if ($PolPrevMatches.Count -gt 1) {
                         $PrevAmbiguousIds = ($PolPrevMatches | ForEach-Object { [string]$_.Id }) -join ', '
                         $PrevAmbiguousRecord = [System.Management.Automation.ErrorRecord]::new(
@@ -1277,9 +1283,17 @@ function Sync-OERStructureAccessPackage {
                     }
                     $PolPrevId = if ($PolPrevMatches.Count -eq 1) { [string]$PolPrevMatches[0].Id } else { $null }
                     $PolCurId = if ($ExistingPol) { [string]$ExistingPol.Id } else { $null }
+                    # Reset first: a call that fails to bind must never leave the previous entry's
+                    # decision in use for this one. Under Invoke-OERStructure such a failure ends the item
+                    # in the engine's catch; with no try anywhere on the stack it only skips the assignment
+                    # and execution carries on, so a missing decision stops this policy, nothing written
+                    # for it -- the binding error is its report (an empty name, which the validator
+                    # refuses).
+                    $PolRename = $null
                     $PolRename = Resolve-OERStructureRename -Section 'assignmentPolicies' -AccessPackage ([string]$Name) `
                         -AccessPackageId ([string]$ApId) -Name ([string]$PolName) -PreviousName $PolPrev `
                         -Id $PolCurId -PreviousId $PolPrevId -RenameMap $RenameMap
+                    if ($null -eq $PolRename) { continue }
                     if ($PolRename.ErrorRecord) {
                         # Conflict or NotFound: nothing is built, created or updated for this policy, and
                         # the package's other declared policies carry on.
@@ -1290,8 +1304,15 @@ function Sync-OERStructureAccessPackage {
                     if ($PolRename.Outcome -eq 'Rename') {
                         # The policy found under its previous name takes the existing-policy path below,
                         # and the rename travels in its one Set-OERAccessPackageAssignmentPolicy call.
+                        # The texts name it by the previous name the entry declares, or, when that is an
+                        # object id, by its current name and its id: '<current name>' (<id>).
                         $ExistingPol = $PolPrevMatches[0]
                         $PolRenameFrom = $PolRename.RenameFrom
+                        $PolRenameLabel = if (Test-OERGuid -Value $PolRenameFrom) {
+                            "'$([string]$ExistingPol.DisplayName)' ($([string]$ExistingPol.Id))"
+                        } else {
+                            "'$PolRenameFrom'"
+                        }
                     }
                 }
 
@@ -1379,9 +1400,10 @@ function Sync-OERStructureAccessPackage {
                     # policy update has always had. Without a rename every text is what it always was.
                     $PolicyFieldList = $Change.ChangedFields -join ', '
                     if ($PolRenameFrom) {
-                        $PolicyAction = "Rename assignmentPolicy '$PolRenameFrom' to '$PolName'"
-                        $PolicyUpdatedDetail = "renamed assignmentPolicy '$PolRenameFrom' to '$PolName'"
-                        $PolicyPlannedDetail = "would rename assignmentPolicy '$PolRenameFrom' to '$PolName'"
+                        $PolicyAction = "Rename assignmentPolicy $PolRenameLabel to '$PolName'"
+                        $PolicyUpdatedDetail = "renamed assignmentPolicy $PolRenameLabel to '$PolName'"
+                        $PolicyPlannedDetail = "would rename assignmentPolicy $PolRenameLabel to '$PolName'"
+                        $PolicyFailedPrefix = "failed to rename assignmentPolicy $PolRenameLabel to '$PolName'"
                         if ($Change.Differs) {
                             $PolicyAction += ' and update it'
                             $PolicyUpdatedDetail += "; updated assignmentPolicy fields ($PolicyFieldList)"
@@ -1391,6 +1413,7 @@ function Sync-OERStructureAccessPackage {
                         $PolicyAction = "Update assignmentPolicy '$PolName'"
                         $PolicyUpdatedDetail = "updated assignmentPolicy '$PolName' ($PolicyFieldList)"
                         $PolicyPlannedDetail = "would update assignmentPolicy '$PolName'"
+                        $PolicyFailedPrefix = "failed to update assignmentPolicy '$PolName'"
                     }
                     if (-not $Caller.ShouldProcess($Name, $PolicyAction)) {
                         ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Skipped' -Detail $PolicyPlannedDetail
@@ -1426,7 +1449,7 @@ function Sync-OERStructureAccessPackage {
                     } catch {
                         Remove-OERErrorRecord -Record $PSItem
                         $Caller.WriteError($PSItem)
-                        ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' -Detail "failed to update assignmentPolicy '$PolName': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+                        ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' -Detail "${PolicyFailedPrefix}: $($PSItem.Exception.Message)" -ErrorRecord $PSItem
                     }
                     continue
                 }

@@ -6706,9 +6706,10 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
 
             $Run = Invoke-PolSync -Item $Item -Live @(New-PolRaw -Id 'aaaaaaaa-0000-0000-0000-000000000061' -DisplayName 'POL-Old')
 
+            # An object id names the policy by its current name and its id as the list spells it.
             @($Run.Rows).Count | Should -Be 2
             $Run.Rows[1].Action | Should -BeExactly 'Updated'
-            $Run.Rows[1].Detail | Should -BeExactly "renamed assignmentPolicy 'AAAAAAAA-0000-0000-0000-000000000061' to 'POL-New'"
+            $Run.Rows[1].Detail | Should -BeExactly "renamed assignmentPolicy 'POL-Old' (aaaaaaaa-0000-0000-0000-000000000061) to 'POL-New'"
             $Run.Published.Count | Should -Be 0
             # The only read of the policy is the real Set's own; the PUT names the id as the list spells it.
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter $script:PolGetFilter
@@ -6800,7 +6801,7 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
             $Map['assignmentPolicies|AP|POL-New'].Reason | Should -BeExactly $script:PolUndecided
         }
 
-        It 'keeps the displayName duplicate refusal exactly as it is when the entry also declares previousDisplayName' {
+        It 'keeps the displayName duplicate refusal exactly as it is when the entry also declares previousDisplayName, and still reports the policy under the previous name as Extra' {
             $Item = [PSCustomObject]@{
                 displayName        = 'AP'
                 catalog            = 'CAT'
@@ -6814,9 +6815,13 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
 
             $Run = Invoke-PolSync -Item $Item -Live $Live
 
-            @($Run.Rows).Count | Should -Be 2
+            # The refusal names only the policies carrying displayName, so the policy under the previous
+            # name is still named by a row of its own: the Extra row.
+            @($Run.Rows).Count | Should -Be 3
             $Run.Rows[1].Action | Should -BeExactly 'Failed'
             $Run.Rows[1].Detail | Should -BeExactly "2 assignment policies of 'AP' are named 'POL-New' (pol-new1, pol-new2); nothing was written for it"
+            $Run.Rows[2].Action | Should -BeExactly 'Extra'
+            $Run.Rows[2].Detail | Should -BeExactly "undeclared assignmentPolicy 'POL-Old' is still in force (the engine never removes assignment policies; use Remove-OERAccessPackageAssignmentPolicy)"
             $Run.Published.Count | Should -Be 1
             $Run.Published[0].TargetObject | Should -BeExactly 'POL-New'
             $Run.Sent.Count | Should -Be 0
@@ -6870,7 +6875,7 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
             $Map['assignmentPolicies|AP|POL-New'].Refused | Should -BeFalse
         }
 
-        It 'asks ShouldProcess "Rename assignmentPolicy" for a rename, "and update it" when fields differ too, and the unchanged text without a rename' {
+        It 'asks ShouldProcess "Rename assignmentPolicy" for a rename, "and update it" when fields differ too, the current name and id for an object id, and the unchanged text without a rename' {
             # In a runspace whose host answers the prompt, so the question itself is read: -WhatIf
             # writes one 'What if:' line per ShouldProcess call and a declined -Confirm one prompt.
             $Scenario = [scriptblock]::Create(@'
@@ -6884,7 +6889,7 @@ $Module = Get-Module Omnicit.EntraRBAC
     }
     Set-Item -Path function:script:Invoke-OERGraphRequest -Value { [pscustomobject]@{ value = @() } }
     Set-Item -Path function:script:Get-OERAccessPackageAssignmentPolicy -Value {
-        foreach ($Pair in @(@('pol-old', 'POL-Old'), @('pol-a', 'POL-A'), @('pol-plain', 'Plain'))) {
+        foreach ($Pair in @(@('pol-old', 'POL-Old'), @('pol-a', 'POL-A'), @('aaaaaaaa-0000-0000-0000-000000000065', 'POL-C'), @('pol-plain', 'Plain'))) {
             ConvertTo-OERAssignmentPolicy -InputObject @{
                 id = $Pair[0]; displayName = $Pair[1]; description = 'live'; accessPackage = @{ id = 'ap-1' }
                 allowedTargetScope = 'allMemberUsers'; specificAllowedTargets = @(); expiration = @{ type = 'noExpiration' }
@@ -6898,7 +6903,7 @@ $Module = Get-Module Omnicit.EntraRBAC
         Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
     }
 }
-$Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "displayName": "POL-New", "previousDisplayName": "POL-Old", "description": "changed" }, { "displayName": "POL-B", "previousDisplayName": "POL-A" }, { "displayName": "Plain", "description": "changed" } ] }' | ConvertFrom-Json
+$Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "displayName": "POL-New", "previousDisplayName": "POL-Old", "description": "changed" }, { "displayName": "POL-B", "previousDisplayName": "POL-A" }, { "displayName": "POL-D", "previousDisplayName": "AAAAAAAA-0000-0000-0000-000000000065" }, { "displayName": "Plain", "description": "changed" } ] }' | ConvertFrom-Json
 'WHATIF'
 & $Module { param($Item) Invoke-SyncApAsk -Item $Item -WhatIf } $Item | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
 'CONFIRM'
@@ -6913,35 +6918,96 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
                 'ROW:Unchanged:access package properties match'
                 "ROW:Skipped:would rename assignmentPolicy 'POL-Old' to 'POL-New'; would update assignmentPolicy fields (description)"
                 "ROW:Skipped:would rename assignmentPolicy 'POL-A' to 'POL-B'"
+                "ROW:Skipped:would rename assignmentPolicy 'POL-C' (aaaaaaaa-0000-0000-0000-000000000065) to 'POL-D'"
                 "ROW:Skipped:would update assignmentPolicy 'Plain'"
             )
             @($Run.Output) | Should -Be (@('WHATIF') + $Rows + @('CONFIRM') + $Rows + @('END'))
             $Actions = @(
                 "Rename assignmentPolicy 'POL-Old' to 'POL-New' and update it"
                 "Rename assignmentPolicy 'POL-A' to 'POL-B'"
+                "Rename assignmentPolicy 'POL-C' (aaaaaaaa-0000-0000-0000-000000000065) to 'POL-D'"
                 "Update assignmentPolicy 'Plain'"
             )
             $WhatIf = @($Run.Events | Where-Object { $_ -like 'Line: What if:*' })
-            $WhatIf.Count | Should -Be 3
-            @($Run.Prompts).Count | Should -Be 3
-            for ($Index = 0; $Index -lt 3; $Index++) {
+            $WhatIf.Count | Should -Be 4
+            @($Run.Prompts).Count | Should -Be 4
+            for ($Index = 0; $Index -lt 4; $Index++) {
                 $WhatIf[$Index] | Should -BeExactly ('Line: What if: Performing the operation "{0}" on target "AP".' -f $Actions[$Index])
                 $Run.Prompts[$Index] | Should -BeLikeExactly ('*Performing the operation "{0}" on target "AP".*' -f $Actions[$Index])
             }
         }
 
-        It 'reports a failed Set of a rename as one Failed row carrying the error, and nothing as renamed' {
+        It 'never carries one policy''s rename decision over to the next when that one''s decision cannot be made, in a script with no try' {
+            # With no try anywhere on the stack a failed parameter binding only skips its statement, so the
+            # decision of the policy before would still be in $PolRename. The second entry's empty
+            # displayName (refused by the validator, reachable only through this private entry point)
+            # makes its decision call fail to bind: it must get no row at all -- neither the first
+            # policy's rename applied to it, nor a create -- and its binding error is its report.
+            $Scenario = [scriptblock]::Create(@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Get-OERAccessPackage -Value {
+        param($Catalog, $Id)
+        if ($Catalog) { @([pscustomobject]@{ Id = 'ap-1'; DisplayName = 'AP' }) }
+        else { [pscustomobject]@{ Id = 'ap-1'; DisplayName = 'AP'; Description = $null; IsHidden = $false } }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value { [pscustomobject]@{ value = @() } }
+    Set-Item -Path function:script:Get-OERAccessPackageAssignmentPolicy -Value {
+        foreach ($Pair in @(@('pol-old', 'POL-Old'), @('pol-q', 'POL-Q'))) {
+            ConvertTo-OERAssignmentPolicy -InputObject @{
+                id = $Pair[0]; displayName = $Pair[1]; description = 'live'; accessPackage = @{ id = 'ap-1' }
+                allowedTargetScope = 'allMemberUsers'; specificAllowedTargets = @(); expiration = @{ type = 'noExpiration' }
+            }
+        }
+    }
+    Set-Item -Path function:script:Set-OERAccessPackageAssignmentPolicy -Value { }
+    Set-Item -Path function:script:New-OERAccessPackageAssignmentPolicy -Value { }
+    function script:Invoke-SyncApAsk {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([PSCustomObject]$Item)
+        Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+    }
+}
+$Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "displayName": "POL-New", "previousDisplayName": "POL-Old" }, { "displayName": "", "previousDisplayName": "POL-Q" } ] }' | ConvertFrom-Json
+'WHATIF'
+& $Module { param($Item) Invoke-SyncApAsk -Item $Item -WhatIf } $Item | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'END'
+'@)
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -Script $Scenario
+
+            @($Run.Output) | Should -Be @(
+                'WHATIF'
+                'ROW:Unchanged:access package properties match'
+                "ROW:Skipped:would rename assignmentPolicy 'POL-Old' to 'POL-New'"
+                'END'
+            )
+            @($Run.Errors).Count | Should -Be 1
+            $Run.Errors[0] | Should -BeLike "*parameter 'Name'*"
+            @($Run.Events | Where-Object { $_ -like 'Line: What if:*' }).Count | Should -Be 1
+        }
+
+        It 'reports a failed Set as one Failed row carrying the error, naming the rename when it carried one (<Case>)' -ForEach @(
+            @{ Case = 'a rename by previous name'; Prev = 'POL-Old'; LiveId = 'pol-old'; LiveName = 'POL-Old'
+                Expected = "failed to rename assignmentPolicy 'POL-Old' to 'POL-New': Graph rejected the update" }
+            @{ Case = 'a rename by object id'; Prev = 'AAAAAAAA-0000-0000-0000-000000000066'; LiveId = 'aaaaaaaa-0000-0000-0000-000000000066'; LiveName = 'POL-Old'
+                Expected = "failed to rename assignmentPolicy 'POL-Old' (aaaaaaaa-0000-0000-0000-000000000066) to 'POL-New': Graph rejected the update" }
+            @{ Case = 'no rename (control: the text it always had)'; Prev = $null; LiveId = 'pol-old'; LiveName = 'POL-New'
+                Expected = "failed to update assignmentPolicy 'POL-New': Graph rejected the update" }
+        ) {
             Mock -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy { throw 'Graph rejected the update' }
+            $Entry = [PSCustomObject]@{ displayName = 'POL-New'; description = 'changed' }
+            if ($Prev) { $Entry | Add-Member -NotePropertyName previousDisplayName -NotePropertyValue $Prev }
             $Item = [PSCustomObject]@{
                 displayName        = 'AP'
                 catalog            = 'CAT'
                 assignmentPolicies = @(
-                    [PSCustomObject]@{ displayName = 'POL-New'; previousDisplayName = 'POL-Old'; description = 'changed' }
+                    $Entry
                     [PSCustomObject]@{ displayName = 'Other' }
                 )
             }
             $Live = @(
-                New-PolRaw -Id 'pol-old' -DisplayName 'POL-Old'
+                New-PolRaw -Id $LiveId -DisplayName $LiveName
                 New-PolRaw -Id 'pol-other' -DisplayName 'Other'
             )
 
@@ -6949,7 +7015,7 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
 
             @($Run.Rows).Count | Should -Be 3
             $Run.Rows[1].Action | Should -BeExactly 'Failed'
-            $Run.Rows[1].Detail | Should -BeExactly "failed to update assignmentPolicy 'POL-New': Graph rejected the update"
+            $Run.Rows[1].Detail | Should -BeExactly $Expected
             $Run.Rows[1].Error | Should -Not -BeNullOrEmpty
             $Run.Rows[2].Detail | Should -BeExactly "assignmentPolicy 'Other' matches"
             @($Run.Rows | Where-Object { $_.Detail -like 'renamed*' }).Count | Should -Be 0
@@ -6959,8 +7025,42 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             @($Run.Published | Where-Object { $_.Exception.Message -ceq 'Graph rejected the update' }).Count | Should -Be 2
             Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
             Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter {
-                $Id -eq 'pol-old' -and $DisplayName -eq 'POL-New' -and $Description -eq 'changed'
+                $Id -eq $LiveId -and $DisplayName -eq 'POL-New' -and $Description -eq 'changed'
             }
+        }
+
+        It 'refuses a rename of a policy whose entry declares requestorScope SpecificConnectedOrganizationUsers with the BL-50 row, before ShouldProcess and with no request (WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ UseWhatIf = $false }
+            @{ UseWhatIf = $true }
+        ) {
+            # The live policy matches every declared field, so only the rename would send the Set call --
+            # and that call would carry the declared scope, whose connected organization targets this
+            # module cannot name.
+            $Raw = New-PolRaw -Id 'pol-old' -DisplayName 'POL-Old'
+            $Raw.allowedTargetScope = 'specificConnectedOrganizationUsers'
+            $Raw.specificAllowedTargets = @(@{
+                    '@odata.type'           = '#microsoft.graph.connectedOrganizationMembers'
+                    connectedOrganizationId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+                    description             = 'Partner organization'
+                })
+            $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "displayName": "POL-New", "previousDisplayName": "POL-Old", "description": "live description", "requestorScope": { "scope": "SpecificConnectedOrganizationUsers" } } ] }' |
+                ConvertFrom-Json
+
+            $Run = Invoke-PolSync -Item $Item -Live @($Raw) -UseWhatIf $UseWhatIf
+
+            @($Run.Rows).Count | Should -Be 2
+            $Run.Rows[1].Action | Should -BeExactly 'Failed'
+            $Run.Rows[1].Detail | Should -BeExactly ("assignmentPolicy 'POL-New' declares requestorScope SpecificConnectedOrganizationUsers, " +
+                'but this module does not model connected organization targets, so the update would drop any ' +
+                'the live policy names; nothing was written for it. Omit requestorScope from the entry to update ' +
+                'the other fields while keeping the live scope.')
+            $Run.Rows[1].Error | Should -BeNullOrEmpty
+            $Run.Published.Count | Should -Be 0
+            # Before ShouldProcess: no 'would rename' row under -WhatIf, and the real Set never ran (its
+            # read of the policy was never made, and nothing was PUT).
+            @($Run.Rows | Where-Object { $_.Action -eq 'Skipped' -or $_.Detail -like '*rename*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter $script:PolGetFilter
+            $Run.Sent.Count | Should -Be 0
         }
     }
 
@@ -7114,6 +7214,59 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
                     if ($ErrorId) { $Target.ErrorId | Should -BeExactly $ErrorId } else { $Target.ErrorId | Should -BeNullOrEmpty }
                 }
             }
+        }
+
+        It 'marks no name that is empty after string conversion, and the mark block publishes no error for it (<Case>)' -ForEach @(
+            @{ Case = 'the package''s previousDisplayName'; PackagePrev = ''; Policies = @('POL-New=POL-Old'); Marked = @('assignmentPolicies|AP|POL-New') }
+            @{ Case = 'a policy''s previousDisplayName'; PackagePrev = $null; Policies = @('POL-New=', 'POL-X=POL-Y'); Marked = @('assignmentPolicies|AP|POL-X') }
+            @{ Case = 'a policy''s displayName'; PackagePrev = $null; Policies = @('=POL-Old', 'POL-X=POL-Y'); Marked = @('assignmentPolicies|AP|POL-X') }
+        ) {
+            # The catalog's rename is refused, so the entry stops right after the mark block, before any
+            # lookup or decision: what the map holds then, and what was published, is the block's work.
+            $Map = New-PolMap
+            Register-PolRefusedCatalog -RenameMap $Map
+            $Item = [PSCustomObject]@{
+                displayName        = 'AP'
+                catalog            = 'CAT'
+                assignmentPolicies = @(foreach ($Pair in $Policies) {
+                        [PSCustomObject]@{ displayName = ($Pair -split '=')[0]; previousDisplayName = ($Pair -split '=')[1] }
+                    })
+            }
+            if ($null -ne $PackagePrev) { $Item | Add-Member -NotePropertyName previousDisplayName -NotePropertyValue $PackagePrev }
+
+            $Run = Invoke-PolSync -Item $Item -RenameMap $Map
+
+            @($Run.Rows).Count | Should -Be 1
+            $Run.Rows[0].Detail | Should -BeLike "catalog 'CAT' was not reconciled in this run*"
+            $Run.Published.Count | Should -Be 0
+            # The map's keys are lower case, as Resolve-OERStructureRename builds them.
+            @($Map.Keys | Sort-Object) | Should -BeExactly @(@('catalogs|cat') + @($Marked | ForEach-Object { $_.ToLowerInvariant() }) | Sort-Object)
+            foreach ($Key in $Marked) { $Map[$Key].Reason | Should -BeExactly $script:PolUndecided }
+        }
+
+        It 'never fails in the mark block on an empty package name: the item ends where it always did, at its first row' {
+            # An empty displayName cannot name a row either (ConvertTo-OERStructureResult refuses an empty
+            # -Item with a terminating binding error, measured), so the item ends at its first row -- here
+            # the refused catalog's row -- as it did before this step, and the engine reports it as a
+            # handler error. The mark block itself raises nothing and registers nothing for it.
+            $Map = New-PolMap
+            Register-PolRefusedCatalog -RenameMap $Map
+            $Item = [PSCustomObject]@{
+                displayName         = ''
+                previousDisplayName = 'AP-Old'
+                catalog             = 'CAT'
+                assignmentPolicies  = @([PSCustomObject]@{ displayName = 'POL-New'; previousDisplayName = 'POL-Old' })
+            }
+
+            $Thrown = $null
+            try { $null = Invoke-PolSync -Item $Item -RenameMap $Map } catch { $Thrown = $PSItem }
+
+            # The binding that failed is the row's -Item, never a -Name or -AccessPackage of the mark block.
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.Exception | Should -BeOfType ([System.Management.Automation.ParameterBindingException])
+            $Thrown.Exception.CommandInvocation.MyCommand.Name | Should -BeExactly 'ConvertTo-OERStructureResult'
+            $Thrown.Exception.ParameterName | Should -BeExactly 'Item'
+            @($Map.Keys) | Should -BeExactly @('catalogs|cat')
         }
 
         It 'registers nothing for an entry and policies that declare no previousDisplayName' {
