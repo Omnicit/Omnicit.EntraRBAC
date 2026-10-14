@@ -241,7 +241,9 @@ function Get-OERInventory {
     distribution group, which the default filter never reads, is left out too; the reported cause
     names how many live objects carry the name. When that listing fails, groupNames is reported
     unread through the InventoryPartial
-    error, with its cause, and the names are counted among the groups read. Each name left out is
+    error, with its cause, and the names are counted among the groups read. Export-OERInventory
+    shares that one listing among all the calls it makes to this cmdlet, so an export lists the
+    groups at most once, not once per Azure scope. Each name left out is
     also handed over in one information record tagged Omnicit.EntraRBAC.SharedName, whose Names list
     carries the Section, Name and Count of each; under the default $InformationPreference the record
     is not displayed. Role assignments whose scope
@@ -517,8 +519,20 @@ function Get-OERInventory {
         # principal is written by its object id instead, which is exact, so nothing is unread there
         # (Get-GroupPrincipalReference). Kept in a holder, since a local function cannot assign a
         # variable of this block.
+        #
+        # Sprint 11 step 6 (R-2 of step 5): under Export-OERInventory the holder is the export's run
+        # context ($script:_OERInventoryRunContext, GroupNameIndex), not this invocation's own, so the
+        # export's many calls (one per Azure scope) share ONE index: once per export, with the
+        # roster's index there already when the roster was read, and the first caller's listing
+        # otherwise. Without a context the invocation's own holder serves, as it always did, and
+        # nothing outlives the call.
         $GroupNameIndexHolder = @{ Index = $null }
         function Get-GroupNameIndexOnce {
+            $RunContext = $script:_OERInventoryRunContext
+            if ($null -ne $RunContext) {
+                if ($null -eq $RunContext.GroupNameIndex) { $RunContext.GroupNameIndex = Get-OERGroupNameIndex }
+                return $RunContext.GroupNameIndex
+            }
             if ($null -ne $GroupNameIndexHolder.Index) { return $GroupNameIndexHolder.Index }
             $GroupNameIndexHolder.Index = Get-OERGroupNameIndex
             $GroupNameIndexHolder.Index

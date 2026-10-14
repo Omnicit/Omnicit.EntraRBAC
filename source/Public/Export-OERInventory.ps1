@@ -171,7 +171,10 @@ function Export-OERInventory {
     Groups are counted over every group in the tenant, the roster's unfiltered listing, so a security
     group that shares its name with a Microsoft 365 group or a distribution group is left out too;
     when the roster could not be read, they are counted among the security-enabled groups the export
-    reads. The export writes ONE warning that gives how many names were left out and how many objects
+    reads. That index of every group's name, which also names the group principals of the role
+    assignments, is built once for the whole export -- from the roster when it was read, otherwise by
+    one listing of every group -- and never once per Azure scope. The export writes ONE warning that
+    gives how many names were left out and how many objects
     carry them in all. It writes it before the bundle is written, so -WhatIf shows it too, and under a
     Stop warning preference (-WarningAction Stop, or $WarningPreference set to 'Stop') the export
     stops at that warning, before it writes the bundle. The generated README.md lists each name, with
@@ -507,319 +510,336 @@ function Export-OERInventory {
         # other four: they are deliberately absent from the ARM-triggering check above, so naming
         # either one alone never acquires an ARM token.
         $EntraSections = @($Include | Where-Object { $_ -in @('AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments') })
-        # The ids the roster member-count join below is keyed on come from the group reader alone:
-        # it is asked for -IncludeId above, PURELY to key that join on object id instead of display
-        # name (Entra permits duplicate group display names -- Add-OERGroupMember.ps1:43-45 -- so a
-        # display-name join can attribute one group's member count to a different, same-named
-        # group). Get-OERInventory below reads the other sections and is not asked for ids, since
-        # nothing here joins on them. inventory.json staying id-free is a documented portability
-        # property of the export (Get-OERInventory's own .DESCRIPTION), so the ids the reader
-        # stamped are stripped back out below, before the canonical inventory and the per-area files
-        # are assembled and written; the same strip also covers any other section that arrives with
-        # an id.
-        $InventoryReadErrors = $null
-        $InventoryInformation = $null
-        $Inv = if ($EntraSections.Count -gt 0) {
-            # -ErrorAction Continue is PINNED here, not inherited, and deliberately not Stop.
-            # Get-OERInventory now reports a collection it could not read as a non-terminating
-            # InventoryPartial, and that must be folded into THIS cmdlet's single coverage signal
-            # rather than aborting an otherwise usable bundle. Without the pin this call inherits
-            # $ErrorActionPreference from the caller's scope, so under the very
-            # Export-OERInventory -ErrorAction Stop that this cmdlet's own help tells operators to
-            # adopt, the inner record would terminate HERE -- outside any try/catch, before a single
-            # bundle file is written -- and the operator would get an exception and NO BUNDLE AT
-            # ALL, instead of the documented "summary emitted first, then a loud error". Continue
-            # keeps the record non-terminating while still delivering it to BOTH the caller's error
-            # stream and $InventoryReadErrors; Export's own trailing Write-CmdletError is what
-            # honours -ErrorAction Stop, and it runs after $Out has been emitted.
-            #
-            # -AllDirectoryRolePolicies is added to the splat only when the switch is actually set,
-            # not forwarded unconditionally as -AllDirectoryRolePolicies:$AllDirectoryRolePolicies
-            # would be: Get-OERInventory's own default behaviour (policy of only the in-use roles) is
-            # what every OTHER -Include combination in this file's test suite already relies on, and
-            # binding the parameter at all -- even to $false -- is observable to a caller's
-            # -ParameterFilter, so adding it only when true keeps every existing call site untouched.
-            #
-            # BL-131: the names Get-OERInventory leaves out because two or more objects share them
-            # arrive in its information record tagged Omnicit.EntraRBAC.SharedName, captured here and
-            # not shown: -InformationAction SilentlyContinue keeps a caller's own information preference
-            # off the call, and -InformationVariable still collects the record.
-            $InvParams = @{
-                Include             = $EntraSections
-                ErrorAction         = 'Continue'
-                ErrorVariable       = 'InventoryReadErrors'
-                InformationAction   = 'SilentlyContinue'
-                InformationVariable = 'InventoryInformation'
-            }
-            if ($AllDirectoryRolePolicies) { $InvParams.AllDirectoryRolePolicies = $true }
-            Get-OERInventory @InvParams
-        } else {
-            ConvertTo-OERInventory -TenantId $DocumentTenantId
+        # Sprint 11 step 6 (R-2 of step 5): the export's run context. ONE object, held for the Entra ID
+        # call below and the whole Azure walk after it -- every Get-OERInventory call this export makes,
+        # the eligibility read and the role policy selection included -- and removed in the finally that
+        # ends the walk, also when the walk stops. It holds what one export shares across its
+        # Get-OERInventory calls: for now the index of every group's display name (GroupNameIndex), which
+        # the group principals of the role assignments are named through. When the roster was read, the
+        # index built from it goes in at once, with no request; otherwise the first caller lists the
+        # groups once and stores the index here, so an export lists them at most once and not once per
+        # Azure scope. A module-scope object and not a parameter, since Get-OERInventory gets no new
+        # public parameter (A9); a standalone call finds no context and keeps its own index for the call.
+        $script:_OERInventoryRunContext = [PSCustomObject]@{
+            GroupNameIndex = $GroupNameIndex
         }
-        $IncompleteReads = [System.Collections.Generic.List[string]]::new()
-        # The Groups read is reported FIRST, as ONE entry naming everything it could not read: the
-        # same shape, and the same place, as the groups take in a Get-OERInventory report, which
-        # reads them first. The null-filter keeps a blank entry out, so an IncompleteReads count
-        # never stands for a gap that names nothing.
-        $GroupUnread = @(if ($GroupRead) { @($GroupRead.Unread) | Where-Object { $_ } })
-        if ($GroupUnread.Count -gt 0) { $IncompleteReads.Add(($GroupUnread -join ', ')) }
-        foreach ($IErr in @($InventoryReadErrors)) {
-            if ($null -eq $IErr) { continue }
-            if ($IErr.FullyQualifiedErrorId -like 'InventoryPartial*') {
-                # TargetObject carries the section/displayName/key triples, which is what makes the
-                # summary entry name the affected object rather than merely count one. It is not
-                # guaranteed to be populated (a caller-supplied mock, or a future variant of the
-                # error), and an empty entry would make an IncompleteReads count assertion pass
-                # while saying nothing -- fall back to the message rather than record a blank.
-                $ReadDetail = [string]$IErr.TargetObject
-                if (-not $ReadDetail) { $ReadDetail = [string]$IErr.Exception.Message }
-                $IncompleteReads.Add($ReadDetail)
-            }
-        }
-
-        # BL-131 (R-3): every name left out of inventory.json because two or more objects share it,
-        # with its count and section: the group reader's own first, then the ones Get-OERInventory
-        # handed over in its information record. They stay named in IncompleteReads as before; this
-        # list adds the counts, for ONE warning here -- after both reads and before the Azure walk, so
-        # before the bundle's ShouldProcess: -WhatIf shows it, and a Stop warning preference stops the
-        # export here, before anything is written -- and for the README, which lists each name.
-        $InventorySharedNames = @($InventoryInformation |
-                Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' } |
-                ForEach-Object { @($_.MessageData.Names) })
-        $SharedNames = @(@(if ($GroupRead) { @($GroupRead.SharedNames) }) + $InventorySharedNames | Where-Object { $null -ne $_ })
-        if ($SharedNames.Count -gt 0) {
-            $NameCount = $SharedNames.Count
-            $ObjectCount = 0
-            foreach ($SharedName in $SharedNames) { $ObjectCount += [int]$SharedName.Count }
-            Write-Warning "Export-OERInventory: left out of inventory.json and the per-area files every object whose name another object of its kind shares, since the apply engine refuses an ambiguous name: $NameCount name(s), carried by $ObjectCount object(s) in all. README.md lists each name, how many objects carry it and its section under 'Names two or more objects share'."
-        }
-
-        # --- Naming auto-seed: the profile whose TenantId matches the connected tenant ---
-        $NamingConvention = $null
         try {
-            $ConnectedTenant = if ($script:_OERAuthState) { [string]$script:_OERAuthState.TenantId } else { $TenantId }
-            # -ErrorAction Stop for the same reason as the per-scope read below: without it a
-            # NON-terminating failure (a corrupt profile on disk now reports TenantProfileMalformed)
-            # bypasses this catch entirely and leaks out of Export-OERInventory, setting $? false on
-            # an otherwise complete bundle. InventoryPartial is the only coverage signal this cmdlet
-            # raises; a profile that cannot be read is a missing prompt hint, not missing coverage.
-            $Profiles = @(Get-OERConfiguration -ErrorAction Stop)
-            $Match = @($Profiles | Where-Object { $_.TenantId -and $_.TenantId -eq $ConnectedTenant })
-            if ($Match.Count -eq 0 -and $Profiles.Count -eq 1) { $Match = $Profiles }
-            if ($Match.Count -ge 1 -and $Match[0].Naming) { $NamingConvention = [string]$Match[0].Naming.Group }
-        } catch {
-            Remove-OERErrorRecord -Record $PSItem
-            # Verbose rather than a warning: the seed is a convenience that only shapes a hint line
-            # in the LLM prompt, so its absence never makes the bundle wrong -- but a silent catch
-            # gave an operator wondering why the prompt has no naming convention nothing to read.
-            Write-Verbose "[Export-OERInventory] Could not auto-seed the naming convention from a tenant profile: $($PSItem.Exception.Message)"
-        }
-
-        # --- Tenant-wide Azure walk (RoleAssignments / RoleManagementPolicies) ---
-        $AzureSections = @($Include | Where-Object { $_ -in @('RoleAssignments', 'RoleManagementPolicies') })
-        $RoleAssignments = [System.Collections.Generic.List[object]]::new()
-        $RoleManagementPolicies = [System.Collections.Generic.List[object]]::new()
-        $ScopeHierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
-        # ScopesEnumerated is what the walk FOUND; ScopeCount is what it actually READ. Reporting
-        # only the first overstated coverage: a run that skipped 40 of 50 scopes still said 50.
-        $ScopeCount = 0
-        $ScopesEnumerated = 0
-        $SkippedScopes = [System.Collections.Generic.List[string]]::new()
-        $AzureEligibilities = @()
-        $SkippedEligibilityScopes = [System.Collections.Generic.List[string]]::new()
-
-        # BL-107: without -AllRolePolicies the RoleManagementPolicies section keeps a role's policy at a
-        # scope only when the role has an active assignment or an eligibility EXACTLY at that scope, or
-        # the policy has been changed (Select-OERInventoryRolePolicy owns the rule). The policies are
-        # then read per scope by Get-OERInventoryRolePolicy -- the same one paged list and the same
-        # converters as Get-OERInventory -AllRolesAtScope -- and kept or omitted after the walk, once
-        # the eligibility read below is in; nothing is requested per policy. -AllRolePolicies runs the
-        # per-scope Get-OERInventory call exactly as before and selects nothing.
-        $SelectRolePolicies = ($AzureSections -contains 'RoleManagementPolicies') -and -not $AllRolePolicies
-        $ScopeSections = @(if ($SelectRolePolicies) { $AzureSections | Where-Object { $_ -ne 'RoleManagementPolicies' } } else { $AzureSections })
-        $RolePolicyCandidates = [System.Collections.Generic.List[object]]::new()
-        $RoleAssignmentFacts = [System.Collections.Generic.List[object]]::new()
-        $RoleAssignmentUnreadScopes = [System.Collections.Generic.List[string]]::new()
-        # The 'roleManagementPolicies/role selection at <scope>' entries, the scope in its canonical
-        # form (ConvertTo-OERCanonicalScope: a trailing '/' trimmed, letter case kept; an ARM scope
-        # reads 'roleManagementPolicies/role selection at /subscriptions/...'), in the shape of
-        # Get-OERInventory's 'directoryRoleManagementPolicies/role selection': scopes where at least one
-        # policy could not be judged and was kept. Kept apart from the Entra ID entries in
-        # $IncompleteReads and appended after them, so the Entra ID entries keep their documented order
-        # and own clause.
-        $RolePolicySelectionReads = [System.Collections.Generic.List[string]]::new()
-        # BL-126 (R3): the role assignments at the Azure root scope '/' that the per-scope
-        # Get-OERInventory calls left out, as each call's Omnicit.EntraRBAC.RootScopeAssignment
-        # information record carries them: one list for the whole walk, deduplicated after it.
-        $RootScopeRows = [System.Collections.Generic.List[object]]::new()
-
-        if ($AzureSections.Count -gt 0) {
-            $TreeParams = @{}
-            if ($ManagementGroup) { $TreeParams.ManagementGroup = $ManagementGroup }
-            if ($Scope) { $TreeParams.Scope = $Scope }
-            $Tree = $null
-            try {
-                $Tree = Resolve-OERInventoryScopeTree @TreeParams
-                $ScopeHierarchy = $Tree.Hierarchy
-                $ScopesEnumerated = @($Tree.Scopes).Count
-                # A level of the tree that could not be LISTED (a refused management-group listing,
-                # say) was not walked at all: it is skipped for the role-assignment walk AND for
-                # azurePimEligibility.json, which makes the bundle InventoryPartial below -- never
-                # "no management groups".
-                foreach ($TreeSkip in @($Tree.SkippedScopes)) {
-                    if (-not $TreeSkip) { continue }
-                    $SkippedScopes.Add([string]$TreeSkip)
-                    $SkippedEligibilityScopes.Add([string]$TreeSkip)
+            # The ids the roster member-count join below is keyed on come from the group reader alone:
+            # it is asked for -IncludeId above, PURELY to key that join on object id instead of display
+            # name (Entra permits duplicate group display names -- Add-OERGroupMember.ps1:43-45 -- so a
+            # display-name join can attribute one group's member count to a different, same-named
+            # group). Get-OERInventory below reads the other sections and is not asked for ids, since
+            # nothing here joins on them. inventory.json staying id-free is a documented portability
+            # property of the export (Get-OERInventory's own .DESCRIPTION), so the ids the reader
+            # stamped are stripped back out below, before the canonical inventory and the per-area files
+            # are assembled and written; the same strip also covers any other section that arrives with
+            # an id.
+            $InventoryReadErrors = $null
+            $InventoryInformation = $null
+            $Inv = if ($EntraSections.Count -gt 0) {
+                # -ErrorAction Continue is PINNED here, not inherited, and deliberately not Stop.
+                # Get-OERInventory now reports a collection it could not read as a non-terminating
+                # InventoryPartial, and that must be folded into THIS cmdlet's single coverage signal
+                # rather than aborting an otherwise usable bundle. Without the pin this call inherits
+                # $ErrorActionPreference from the caller's scope, so under the very
+                # Export-OERInventory -ErrorAction Stop that this cmdlet's own help tells operators to
+                # adopt, the inner record would terminate HERE -- outside any try/catch, before a single
+                # bundle file is written -- and the operator would get an exception and NO BUNDLE AT
+                # ALL, instead of the documented "summary emitted first, then a loud error". Continue
+                # keeps the record non-terminating while still delivering it to BOTH the caller's error
+                # stream and $InventoryReadErrors; Export's own trailing Write-CmdletError is what
+                # honours -ErrorAction Stop, and it runs after $Out has been emitted.
+                #
+                # -AllDirectoryRolePolicies is added to the splat only when the switch is actually set,
+                # not forwarded unconditionally as -AllDirectoryRolePolicies:$AllDirectoryRolePolicies
+                # would be: Get-OERInventory's own default behaviour (policy of only the in-use roles) is
+                # what every OTHER -Include combination in this file's test suite already relies on, and
+                # binding the parameter at all -- even to $false -- is observable to a caller's
+                # -ParameterFilter, so adding it only when true keeps every existing call site untouched.
+                #
+                # BL-131: the names Get-OERInventory leaves out because two or more objects share them
+                # arrive in its information record tagged Omnicit.EntraRBAC.SharedName, captured here and
+                # not shown: -InformationAction SilentlyContinue keeps a caller's own information preference
+                # off the call, and -InformationVariable still collects the record.
+                $InvParams = @{
+                    Include             = $EntraSections
+                    ErrorAction         = 'Continue'
+                    ErrorVariable       = 'InventoryReadErrors'
+                    InformationAction   = 'SilentlyContinue'
+                    InformationVariable = 'InventoryInformation'
                 }
+                if ($AllDirectoryRolePolicies) { $InvParams.AllDirectoryRolePolicies = $true }
+                Get-OERInventory @InvParams
+            } else {
+                ConvertTo-OERInventory -TenantId $DocumentTenantId
+            }
+            $IncompleteReads = [System.Collections.Generic.List[string]]::new()
+            # The Groups read is reported FIRST, as ONE entry naming everything it could not read: the
+            # same shape, and the same place, as the groups take in a Get-OERInventory report, which
+            # reads them first. The null-filter keeps a blank entry out, so an IncompleteReads count
+            # never stands for a gap that names nothing.
+            $GroupUnread = @(if ($GroupRead) { @($GroupRead.Unread) | Where-Object { $_ } })
+            if ($GroupUnread.Count -gt 0) { $IncompleteReads.Add(($GroupUnread -join ', ')) }
+            foreach ($IErr in @($InventoryReadErrors)) {
+                if ($null -eq $IErr) { continue }
+                if ($IErr.FullyQualifiedErrorId -like 'InventoryPartial*') {
+                    # TargetObject carries the section/displayName/key triples, which is what makes the
+                    # summary entry name the affected object rather than merely count one. It is not
+                    # guaranteed to be populated (a caller-supplied mock, or a future variant of the
+                    # error), and an empty entry would make an IncompleteReads count assertion pass
+                    # while saying nothing -- fall back to the message rather than record a blank.
+                    $ReadDetail = [string]$IErr.TargetObject
+                    if (-not $ReadDetail) { $ReadDetail = [string]$IErr.Exception.Message }
+                    $IncompleteReads.Add($ReadDetail)
+                }
+            }
+
+            # BL-131 (R-3): every name left out of inventory.json because two or more objects share it,
+            # with its count and section: the group reader's own first, then the ones Get-OERInventory
+            # handed over in its information record. They stay named in IncompleteReads as before; this
+            # list adds the counts, for ONE warning here -- after both reads and before the Azure walk, so
+            # before the bundle's ShouldProcess: -WhatIf shows it, and a Stop warning preference stops the
+            # export here, before anything is written -- and for the README, which lists each name.
+            $InventorySharedNames = @($InventoryInformation |
+                    Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' } |
+                    ForEach-Object { @($_.MessageData.Names) })
+            $SharedNames = @(@(if ($GroupRead) { @($GroupRead.SharedNames) }) + $InventorySharedNames | Where-Object { $null -ne $_ })
+            if ($SharedNames.Count -gt 0) {
+                $NameCount = $SharedNames.Count
+                $ObjectCount = 0
+                foreach ($SharedName in $SharedNames) { $ObjectCount += [int]$SharedName.Count }
+                Write-Warning "Export-OERInventory: left out of inventory.json and the per-area files every object whose name another object of its kind shares, since the apply engine refuses an ambiguous name: $NameCount name(s), carried by $ObjectCount object(s) in all. README.md lists each name, how many objects carry it and its section under 'Names two or more objects share'."
+            }
+
+            # --- Naming auto-seed: the profile whose TenantId matches the connected tenant ---
+            $NamingConvention = $null
+            try {
+                $ConnectedTenant = if ($script:_OERAuthState) { [string]$script:_OERAuthState.TenantId } else { $TenantId }
+                # -ErrorAction Stop for the same reason as the per-scope read below: without it a
+                # NON-terminating failure (a corrupt profile on disk now reports TenantProfileMalformed)
+                # bypasses this catch entirely and leaks out of Export-OERInventory, setting $? false on
+                # an otherwise complete bundle. InventoryPartial is the only coverage signal this cmdlet
+                # raises; a profile that cannot be read is a missing prompt hint, not missing coverage.
+                $Profiles = @(Get-OERConfiguration -ErrorAction Stop)
+                $Match = @($Profiles | Where-Object { $_.TenantId -and $_.TenantId -eq $ConnectedTenant })
+                if ($Match.Count -eq 0 -and $Profiles.Count -eq 1) { $Match = $Profiles }
+                if ($Match.Count -ge 1 -and $Match[0].Naming) { $NamingConvention = [string]$Match[0].Naming.Group }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-Warning "Could not enumerate Azure scopes: $($PSItem.Exception.Message)"
+                # Verbose rather than a warning: the seed is a convenience that only shapes a hint line
+                # in the LLM prompt, so its absence never makes the bundle wrong -- but a silent catch
+                # gave an operator wondering why the prompt has no naming convention nothing to read.
+                Write-Verbose "[Export-OERInventory] Could not auto-seed the naming convention from a tenant profile: $($PSItem.Exception.Message)"
+            }
+
+            # --- Tenant-wide Azure walk (RoleAssignments / RoleManagementPolicies) ---
+            $AzureSections = @($Include | Where-Object { $_ -in @('RoleAssignments', 'RoleManagementPolicies') })
+            $RoleAssignments = [System.Collections.Generic.List[object]]::new()
+            $RoleManagementPolicies = [System.Collections.Generic.List[object]]::new()
+            $ScopeHierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+            # ScopesEnumerated is what the walk FOUND; ScopeCount is what it actually READ. Reporting
+            # only the first overstated coverage: a run that skipped 40 of 50 scopes still said 50.
+            $ScopeCount = 0
+            $ScopesEnumerated = 0
+            $SkippedScopes = [System.Collections.Generic.List[string]]::new()
+            $AzureEligibilities = @()
+            $SkippedEligibilityScopes = [System.Collections.Generic.List[string]]::new()
+
+            # BL-107: without -AllRolePolicies the RoleManagementPolicies section keeps a role's policy at a
+            # scope only when the role has an active assignment or an eligibility EXACTLY at that scope, or
+            # the policy has been changed (Select-OERInventoryRolePolicy owns the rule). The policies are
+            # then read per scope by Get-OERInventoryRolePolicy -- the same one paged list and the same
+            # converters as Get-OERInventory -AllRolesAtScope -- and kept or omitted after the walk, once
+            # the eligibility read below is in; nothing is requested per policy. -AllRolePolicies runs the
+            # per-scope Get-OERInventory call exactly as before and selects nothing.
+            $SelectRolePolicies = ($AzureSections -contains 'RoleManagementPolicies') -and -not $AllRolePolicies
+            $ScopeSections = @(if ($SelectRolePolicies) { $AzureSections | Where-Object { $_ -ne 'RoleManagementPolicies' } } else { $AzureSections })
+            $RolePolicyCandidates = [System.Collections.Generic.List[object]]::new()
+            $RoleAssignmentFacts = [System.Collections.Generic.List[object]]::new()
+            $RoleAssignmentUnreadScopes = [System.Collections.Generic.List[string]]::new()
+            # The 'roleManagementPolicies/role selection at <scope>' entries, the scope in its canonical
+            # form (ConvertTo-OERCanonicalScope: a trailing '/' trimmed, letter case kept; an ARM scope
+            # reads 'roleManagementPolicies/role selection at /subscriptions/...'), in the shape of
+            # Get-OERInventory's 'directoryRoleManagementPolicies/role selection': scopes where at least one
+            # policy could not be judged and was kept. Kept apart from the Entra ID entries in
+            # $IncompleteReads and appended after them, so the Entra ID entries keep their documented order
+            # and own clause.
+            $RolePolicySelectionReads = [System.Collections.Generic.List[string]]::new()
+            # BL-126 (R3): the role assignments at the Azure root scope '/' that the per-scope
+            # Get-OERInventory calls left out, as each call's Omnicit.EntraRBAC.RootScopeAssignment
+            # information record carries them: one list for the whole walk, deduplicated after it.
+            $RootScopeRows = [System.Collections.Generic.List[object]]::new()
+
+            if ($AzureSections.Count -gt 0) {
+                $TreeParams = @{}
+                if ($ManagementGroup) { $TreeParams.ManagementGroup = $ManagementGroup }
+                if ($Scope) { $TreeParams.Scope = $Scope }
                 $Tree = $null
-                # Record the whole Azure walk as skipped so the partial-coverage error below fires.
-                # Without this the bundle is written with ZERO role assignments and zero policies and
-                # nothing but a warning says so, which leaves $? true and -ErrorAction Stop inert.
-                $SkippedScopes.Add('<all Azure scopes: scope enumeration failed>')
-                # Same reasoning for the eligibility read: with no scope tree there is nothing to walk
-                # for azurePimEligibility.json either, and the gap must be named rather than silently
-                # written as an empty (and therefore misleadingly "complete") file.
-                $SkippedEligibilityScopes.Add('<all Azure scopes: scope enumeration failed>')
-            }
-            if ($Tree) {
-                $SeenRa = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                $SeenRmp = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                $ScopeIndex = 0
                 try {
-                    foreach ($S in @($Tree.Scopes)) {
-                        $ScopeIndex++
-                        Write-Progress -Activity 'Export-OERInventory' -Status "Azure scope $ScopeIndex of $ScopesEnumerated" -PercentComplete (($ScopeIndex / [Math]::Max($ScopesEnumerated, 1)) * 100)
-                        $ScopeInv = $null
-                        $ScopeCandidates = @()
-                        $ScopeAssignments = @()
-                        $ScopeAssignmentsUnread = $false
-                        try {
-                            # Selecting, the call leaves RoleManagementPolicies (and -AllRolesAtScope)
-                            # out and is not made at all when nothing is left; otherwise it is the call
-                            # it always was.
-                            if ($ScopeSections.Count -gt 0) {
-                                $ScopeParams = @{ Include = $ScopeSections; Scope = $S }
-                                if ($ScopeSections -contains 'RoleManagementPolicies') { $ScopeParams.AllRolesAtScope = $true }
-                                # -ErrorAction Stop is load-bearing: without it a NON-terminating failure
-                                # inside Get-OERInventory never reaches this catch under the default
-                                # preference, so the scope contributed nothing and did not even warn.
-                                #
-                                # BL-126 (R3): every read below the root scope returns a root assignment as
-                                # inherited, so each call would warn about the same rows. Its warnings are
-                                # therefore captured, not shown, and its root notices read from the
-                                # information stream: the rows join $RootScopeRows, and ONE warning after
-                                # the walk names them. -InformationAction SilentlyContinue keeps a caller's
-                                # own information preference off the call, so a notice is never displayed
-                                # per scope and never stops the call (under Stop, every scope below a root
-                                # assignment would otherwise be skipped); -InformationVariable still
-                                # captures it.
-                                # Every other captured warning is written again here,
-                                # with its own text, so it is shown once per scope as before; under a Stop
-                                # preference that write stops, and the catch below skips the scope as
-                                # before. The capture runs in a finally, so what a call wrote before it
-                                # failed -- a warning, a root notice -- still counts before the scope is
-                                # skipped. A caller's own
-                                # -WarningVariable still collects the captured warnings too: PowerShell
-                                # appends a nested command's warnings to every enclosing -WarningVariable,
-                                # whatever that command's -WarningAction (measured).
-                                $ScopeWarnings = $null
-                                $ScopeInformation = $null
-                                try {
-                                    $ScopeInv = Get-OERInventory @ScopeParams -ErrorAction Stop -WarningAction SilentlyContinue -WarningVariable ScopeWarnings `
-                                        -InformationAction SilentlyContinue -InformationVariable ScopeInformation
-                                } finally {
-                                    $ScopeNotices = @($ScopeInformation | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.RootScopeAssignment' } | ForEach-Object { $_.MessageData })
-                                    $ScopeNoticeTexts = @($ScopeNotices | ForEach-Object { [string]$_.Warning })
-                                    foreach ($ScopeNotice in $ScopeNotices) {
-                                        foreach ($RootRow in @($ScopeNotice.Assignments)) { if ($null -ne $RootRow) { $RootScopeRows.Add($RootRow) } }
-                                    }
-                                    foreach ($ScopeWarning in @($ScopeWarnings)) {
-                                        if ($null -eq $ScopeWarning) { continue }
-                                        if ($ScopeNoticeTexts -cnotcontains [string]$ScopeWarning.Message) { Write-Warning ([string]$ScopeWarning.Message) }
+                    $Tree = Resolve-OERInventoryScopeTree @TreeParams
+                    $ScopeHierarchy = $Tree.Hierarchy
+                    $ScopesEnumerated = @($Tree.Scopes).Count
+                    # A level of the tree that could not be LISTED (a refused management-group listing,
+                    # say) was not walked at all: it is skipped for the role-assignment walk AND for
+                    # azurePimEligibility.json, which makes the bundle InventoryPartial below -- never
+                    # "no management groups".
+                    foreach ($TreeSkip in @($Tree.SkippedScopes)) {
+                        if (-not $TreeSkip) { continue }
+                        $SkippedScopes.Add([string]$TreeSkip)
+                        $SkippedEligibilityScopes.Add([string]$TreeSkip)
+                    }
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    Write-Warning "Could not enumerate Azure scopes: $($PSItem.Exception.Message)"
+                    $Tree = $null
+                    # Record the whole Azure walk as skipped so the partial-coverage error below fires.
+                    # Without this the bundle is written with ZERO role assignments and zero policies and
+                    # nothing but a warning says so, which leaves $? true and -ErrorAction Stop inert.
+                    $SkippedScopes.Add('<all Azure scopes: scope enumeration failed>')
+                    # Same reasoning for the eligibility read: with no scope tree there is nothing to walk
+                    # for azurePimEligibility.json either, and the gap must be named rather than silently
+                    # written as an empty (and therefore misleadingly "complete") file.
+                    $SkippedEligibilityScopes.Add('<all Azure scopes: scope enumeration failed>')
+                }
+                if ($Tree) {
+                    $SeenRa = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $SeenRmp = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $ScopeIndex = 0
+                    try {
+                        foreach ($S in @($Tree.Scopes)) {
+                            $ScopeIndex++
+                            Write-Progress -Activity 'Export-OERInventory' -Status "Azure scope $ScopeIndex of $ScopesEnumerated" -PercentComplete (($ScopeIndex / [Math]::Max($ScopesEnumerated, 1)) * 100)
+                            $ScopeInv = $null
+                            $ScopeCandidates = @()
+                            $ScopeAssignments = @()
+                            $ScopeAssignmentsUnread = $false
+                            try {
+                                # Selecting, the call leaves RoleManagementPolicies (and -AllRolesAtScope)
+                                # out and is not made at all when nothing is left; otherwise it is the call
+                                # it always was.
+                                if ($ScopeSections.Count -gt 0) {
+                                    $ScopeParams = @{ Include = $ScopeSections; Scope = $S }
+                                    if ($ScopeSections -contains 'RoleManagementPolicies') { $ScopeParams.AllRolesAtScope = $true }
+                                    # -ErrorAction Stop is load-bearing: without it a NON-terminating failure
+                                    # inside Get-OERInventory never reaches this catch under the default
+                                    # preference, so the scope contributed nothing and did not even warn.
+                                    #
+                                    # BL-126 (R3): every read below the root scope returns a root assignment as
+                                    # inherited, so each call would warn about the same rows. Its warnings are
+                                    # therefore captured, not shown, and its root notices read from the
+                                    # information stream: the rows join $RootScopeRows, and ONE warning after
+                                    # the walk names them. -InformationAction SilentlyContinue keeps a caller's
+                                    # own information preference off the call, so a notice is never displayed
+                                    # per scope and never stops the call (under Stop, every scope below a root
+                                    # assignment would otherwise be skipped); -InformationVariable still
+                                    # captures it.
+                                    # Every other captured warning is written again here,
+                                    # with its own text, so it is shown once per scope as before; under a Stop
+                                    # preference that write stops, and the catch below skips the scope as
+                                    # before. The capture runs in a finally, so what a call wrote before it
+                                    # failed -- a warning, a root notice -- still counts before the scope is
+                                    # skipped. A caller's own
+                                    # -WarningVariable still collects the captured warnings too: PowerShell
+                                    # appends a nested command's warnings to every enclosing -WarningVariable,
+                                    # whatever that command's -WarningAction (measured).
+                                    $ScopeWarnings = $null
+                                    $ScopeInformation = $null
+                                    try {
+                                        $ScopeInv = Get-OERInventory @ScopeParams -ErrorAction Stop -WarningAction SilentlyContinue -WarningVariable ScopeWarnings `
+                                            -InformationAction SilentlyContinue -InformationVariable ScopeInformation
+                                    } finally {
+                                        $ScopeNotices = @($ScopeInformation | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.RootScopeAssignment' } | ForEach-Object { $_.MessageData })
+                                        $ScopeNoticeTexts = @($ScopeNotices | ForEach-Object { [string]$_.Warning })
+                                        foreach ($ScopeNotice in $ScopeNotices) {
+                                            foreach ($RootRow in @($ScopeNotice.Assignments)) { if ($null -ne $RootRow) { $RootScopeRows.Add($RootRow) } }
+                                        }
+                                        foreach ($ScopeWarning in @($ScopeWarnings)) {
+                                            if ($null -eq $ScopeWarning) { continue }
+                                            if ($ScopeNoticeTexts -cnotcontains [string]$ScopeWarning.Message) { Write-Warning ([string]$ScopeWarning.Message) }
+                                        }
                                     }
                                 }
-                            }
-                            if ($SelectRolePolicies) {
-                                # The role assignments listed at (or above) the scope, FIRST: its sign-in
-                                # check renews a token near expiry before the policy list, as the
-                                # per-scope Get-OERRoleManagementPolicy call does with -AllRolePolicies.
-                                # A failure here costs the selection, not the scope: a policy at the scope
-                                # not kept by a use or a change is then kept without being judged, and the
-                                # scope is named, never dropped.
-                                try {
-                                    $ScopeAssignments = @(Get-OERRoleAssignment -Scope $S -AtScope -ErrorAction Stop)
-                                } catch {
-                                    Remove-OERErrorRecord -Record $PSItem
-                                    Write-Warning "Could not read the role assignments at scope '$S', so a role management policy there not kept by a use or a change is kept without being judged: $($PSItem.Exception.Message)"
-                                    $ScopeAssignmentsUnread = $true
+                                if ($SelectRolePolicies) {
+                                    # The role assignments listed at (or above) the scope, FIRST: its sign-in
+                                    # check renews a token near expiry before the policy list, as the
+                                    # per-scope Get-OERRoleManagementPolicy call does with -AllRolePolicies.
+                                    # A failure here costs the selection, not the scope: a policy at the scope
+                                    # not kept by a use or a change is then kept without being judged, and the
+                                    # scope is named, never dropped.
+                                    try {
+                                        $ScopeAssignments = @(Get-OERRoleAssignment -Scope $S -AtScope -ErrorAction Stop)
+                                    } catch {
+                                        Remove-OERErrorRecord -Record $PSItem
+                                        Write-Warning "Could not read the role assignments at scope '$S', so a role management policy there not kept by a use or a change is kept without being judged: $($PSItem.Exception.Message)"
+                                        $ScopeAssignmentsUnread = $true
+                                    }
+                                    # A failed policy list reaches the catch below and skips the scope, as a
+                                    # failed policy read always has. -ErrorAction Stop for the same reason as
+                                    # above.
+                                    $ScopeCandidates = @(Get-OERInventoryRolePolicy -Scope $S -ErrorAction Stop)
                                 }
-                                # A failed policy list reaches the catch below and skips the scope, as a
-                                # failed policy read always has. -ErrorAction Stop for the same reason as
-                                # above.
-                                $ScopeCandidates = @(Get-OERInventoryRolePolicy -Scope $S -ErrorAction Stop)
+                            } catch {
+                                Remove-OERErrorRecord -Record $PSItem
+                                Write-Warning "Skipping scope '$S': $($PSItem.Exception.Message)"
+                                $SkippedScopes.Add([string]$S)
+                                continue
                             }
-                        } catch {
-                            Remove-OERErrorRecord -Record $PSItem
-                            Write-Warning "Skipping scope '$S': $($PSItem.Exception.Message)"
-                            $SkippedScopes.Add([string]$S)
-                            continue
+                            # $ScopeInv is $null when no call was made, and @($null.X) is a one-element
+                            # array holding $null, so every read of it drops nulls.
+                            foreach ($Ra in @($ScopeInv.RoleAssignments | Where-Object { $null -ne $_ })) {
+                                $Key = if ($Ra.PSObject.Properties.Name -contains 'id' -and $Ra.id) { [string]$Ra.id } else { '{0}|{1}|{2}' -f $Ra.scope, $Ra.role, $Ra.principal }
+                                if ($SeenRa.Add($Key)) { $RoleAssignments.Add($Ra) }
+                            }
+                            # Non-empty only under -AllRolePolicies: selecting, the call reads no policy.
+                            foreach ($Rmp in @($ScopeInv.RoleManagementPolicies | Where-Object { $null -ne $_ })) {
+                                $Key = '{0}|{1}' -f $Rmp.scope, $Rmp.role
+                                if ($SeenRmp.Add($Key)) { $RoleManagementPolicies.Add($Rmp) }
+                            }
+                            # The selection's inputs, from a scope that was read; decided after the walk.
+                            foreach ($Candidate in $ScopeCandidates) { if ($null -ne $Candidate) { $RolePolicyCandidates.Add($Candidate) } }
+                            foreach ($Fact in $ScopeAssignments) { if ($null -ne $Fact) { $RoleAssignmentFacts.Add($Fact) } }
+                            if ($ScopeAssignmentsUnread) { $RoleAssignmentUnreadScopes.Add([string]$S) }
+                            # Counted only here, after the scope has been read and merged, so ScopeCount
+                            # reports coverage rather than intent.
+                            $ScopeCount++
                         }
-                        # $ScopeInv is $null when no call was made, and @($null.X) is a one-element
-                        # array holding $null, so every read of it drops nulls.
-                        foreach ($Ra in @($ScopeInv.RoleAssignments | Where-Object { $null -ne $_ })) {
-                            $Key = if ($Ra.PSObject.Properties.Name -contains 'id' -and $Ra.id) { [string]$Ra.id } else { '{0}|{1}|{2}' -f $Ra.scope, $Ra.role, $Ra.principal }
-                            if ($SeenRa.Add($Key)) { $RoleAssignments.Add($Ra) }
-                        }
-                        # Non-empty only under -AllRolePolicies: selecting, the call reads no policy.
-                        foreach ($Rmp in @($ScopeInv.RoleManagementPolicies | Where-Object { $null -ne $_ })) {
-                            $Key = '{0}|{1}' -f $Rmp.scope, $Rmp.role
-                            if ($SeenRmp.Add($Key)) { $RoleManagementPolicies.Add($Rmp) }
-                        }
-                        # The selection's inputs, from a scope that was read; decided after the walk.
-                        foreach ($Candidate in $ScopeCandidates) { if ($null -ne $Candidate) { $RolePolicyCandidates.Add($Candidate) } }
-                        foreach ($Fact in $ScopeAssignments) { if ($null -ne $Fact) { $RoleAssignmentFacts.Add($Fact) } }
-                        if ($ScopeAssignmentsUnread) { $RoleAssignmentUnreadScopes.Add([string]$S) }
-                        # Counted only here, after the scope has been read and merged, so ScopeCount
-                        # reports coverage rather than intent.
-                        $ScopeCount++
+                    } finally {
+                        Write-Progress -Activity 'Export-OERInventory' -Completed
                     }
-                } finally {
-                    Write-Progress -Activity 'Export-OERInventory' -Completed
-                }
 
-                # R4: one bounded eligibility read of the SAME scope list, after the role-assignment /
-                # policy walk above rather than interleaved with it, so a throttled or failing scope
-                # is never charged against both files from the same failed request.
-                $EligResult = Get-OERInventoryAzureEligibility -Scope @($Tree.Scopes)
-                $AzureEligibilities = @($EligResult.Eligibilities)
-                foreach ($SkEl in @($EligResult.SkippedScopes)) {
-                    if ($SkEl) { $SkippedEligibilityScopes.Add([string]$SkEl) }
-                }
-
-                # BL-107: the selection, now that the eligibilities are read. A scope whose role
-                # assignment read or eligibility read failed cannot be judged: its policies that are not
-                # kept on other grounds are kept anyway, and the scope is named. The kept entries are
-                # merged with the same scope|role rule as the -AllRolePolicies path above.
-                if ($SelectRolePolicies) {
-                    $SelectionUnread = @(@($RoleAssignmentUnreadScopes) + @($EligResult.SkippedScopes) |
-                            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
-                    $Selection = Select-OERInventoryRolePolicy `
-                        -Policy $RolePolicyCandidates.ToArray() `
-                        -Assignment $RoleAssignmentFacts.ToArray() `
-                        -Eligibility @($EligResult.RoleScopes | Where-Object { $null -ne $_ }) `
-                        -UnreadScope $SelectionUnread
-                    foreach ($Kept in @($Selection.Kept | Where-Object { $null -ne $_ })) {
-                        $Key = '{0}|{1}' -f $Kept.scope, $Kept.role
-                        if ($SeenRmp.Add($Key)) { $RoleManagementPolicies.Add($Kept) }
+                    # R4: one bounded eligibility read of the SAME scope list, after the role-assignment /
+                    # policy walk above rather than interleaved with it, so a throttled or failing scope
+                    # is never charged against both files from the same failed request.
+                    $EligResult = Get-OERInventoryAzureEligibility -Scope @($Tree.Scopes)
+                    $AzureEligibilities = @($EligResult.Eligibilities)
+                    foreach ($SkEl in @($EligResult.SkippedScopes)) {
+                        if ($SkEl) { $SkippedEligibilityScopes.Add([string]$SkEl) }
                     }
-                    foreach ($Unjudged in @($Selection.UnjudgedScopes)) {
-                        if ($Unjudged) { $RolePolicySelectionReads.Add("roleManagementPolicies/role selection at $Unjudged") }
+
+                    # BL-107: the selection, now that the eligibilities are read. A scope whose role
+                    # assignment read or eligibility read failed cannot be judged: its policies that are not
+                    # kept on other grounds are kept anyway, and the scope is named. The kept entries are
+                    # merged with the same scope|role rule as the -AllRolePolicies path above.
+                    if ($SelectRolePolicies) {
+                        $SelectionUnread = @(@($RoleAssignmentUnreadScopes) + @($EligResult.SkippedScopes) |
+                                Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
+                        $Selection = Select-OERInventoryRolePolicy `
+                            -Policy $RolePolicyCandidates.ToArray() `
+                            -Assignment $RoleAssignmentFacts.ToArray() `
+                            -Eligibility @($EligResult.RoleScopes | Where-Object { $null -ne $_ }) `
+                            -UnreadScope $SelectionUnread
+                        foreach ($Kept in @($Selection.Kept | Where-Object { $null -ne $_ })) {
+                            $Key = '{0}|{1}' -f $Kept.scope, $Kept.role
+                            if ($SeenRmp.Add($Key)) { $RoleManagementPolicies.Add($Kept) }
+                        }
+                        foreach ($Unjudged in @($Selection.UnjudgedScopes)) {
+                            if ($Unjudged) { $RolePolicySelectionReads.Add("roleManagementPolicies/role selection at $Unjudged") }
+                        }
                     }
                 }
             }
+        } finally {
+            $script:_OERInventoryRunContext = $null
         }
 
         # BL-126 (R3): the role assignments at the root scope the walk's reads left out, each once

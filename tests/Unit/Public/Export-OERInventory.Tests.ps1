@@ -4738,3 +4738,199 @@ Describe 'Export-OERInventory (names two or more objects share, BL-131)' {
         $Help | Should -Match ([regex]::Escape('in a section "Names two or more objects share", directly after "Role assignments at the root scope (elevated access)"'))
     }
 }
+
+Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6)' {
+    # R-2 of step 5. A group named as a principal of a role assignment is written by its display name only
+    # when no other group in the tenant carries it, decided over the index of every group's name
+    # (Get-OERGroupNameIndex). Get-OERInventory builds that index once per call, and the export calls it
+    # once per Azure scope, so an export over N scopes listed every group in the tenant N times. The export
+    # now holds ONE run context for the Entra ID call and the whole Azure walk
+    # ($script:_OERInventoryRunContext), whose GroupNameIndex is the roster's index when the roster was
+    # read, and is otherwise built by the first caller, with one listing, and shared by the rest. Get-OERInventory
+    # runs for REAL here and the listing is answered through the transport, so the real
+    # Get-OERGroupNameIndex reads it. The tenant holds 'Ops' twice (in two letter cases) and 'Solo' once;
+    # two subscriptions, the first assigning 'Ops' and the second 'Solo' to a group principal. No id below
+    # is version-4 shaped.
+    BeforeAll {
+        $script:RcSubA = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:RcSubB = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'
+        $script:RcOps = 'eeee5555-0000-0000-0000-000000000001'
+        $script:RcOpsOther = 'eeee5555-0000-0000-0000-000000000002'
+        $script:RcSolo = 'eeee5555-0000-0000-0000-000000000003'
+        $script:RcListing = 'v1.0/groups?$select=id,displayName&$top=999'
+        # The rows inventory.json holds, as scope|principal|principalType, in scope order.
+        function script:Get-RcRoleAssignmentRow {
+            param([object]$Bundle)
+            $Inventory = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+            @($Inventory.roleAssignments | Sort-Object -Property scope | ForEach-Object { "$($_.scope)|$($_.principal)|$($_.principalType)" })
+        }
+        # What the run context holds right now, read from the module's scope.
+        function script:Get-RcRunContext {
+            & (Get-Module $script:moduleName) { $script:_OERInventoryRunContext }
+        }
+        $script:RcEmptyInventory = {
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        # The roster: the three groups of the tenant, 'Ops' in two letter cases.
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            [PSCustomObject]@{ Id = $script:RcOps; DisplayName = 'Ops'; GroupType = 'Assigned'; IsAssignableToRole = $false }
+            [PSCustomObject]@{ Id = $script:RcOpsOther; DisplayName = 'OPS'; GroupType = 'Assigned'; IsAssignableToRole = $false }
+            [PSCustomObject]@{ Id = $script:RcSolo; DisplayName = 'Solo'; GroupType = 'Assigned'; IsAssignableToRole = $false }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @($script:RcSubA, $script:RcSubB)
+                Hierarchy = [PSCustomObject]@{
+                    managementGroups = @()
+                    subscriptions    = @(
+                        [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'One'; id = $script:RcSubA; state = 'Enabled' }
+                        [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; displayName = 'Two'; id = $script:RcSubB; state = 'Enabled' }
+                    )
+                }
+            }
+        }
+        # One group principal per scope: 'Ops' at the first, 'Solo' at the second.
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
+            $GroupId = if ($Scope -eq $script:RcSubA) { $script:RcOps } else { $script:RcSolo }
+            [PSCustomObject]@{
+                Scope = $Scope; RoleName = 'Reader'; RoleDefinitionId = "$Scope/providers/Microsoft.Authorization/roleDefinitions/rd-reader"
+                PrincipalId = $GroupId; PrincipalType = 'Group'; PrincipalDisplayName = 'fixture'
+                RoleAssignmentId = "$Scope/providers/Microsoft.Authorization/roleAssignments/$GroupId"
+            }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ $script:RcOps = 'Ops'; $script:RcSolo = 'Solo' } }
+        # Any request the fixture does not answer fails visibly; the one listing of every group is answered.
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected request: $Uri" }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ value = @(
+                    @{ id = $script:RcOps; displayName = 'Ops' }
+                    @{ id = $script:RcOpsOther; displayName = 'OPS' }
+                    @{ id = $script:RcSolo; displayName = 'Solo' }
+                ) }
+        } -ParameterFilter { $Uri -ceq $script:RcListing }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'lists every group in the tenant once for the whole export, not once per Azure scope' {
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-listing') -Include RoleAssignments -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        # Reach proof: the real Get-OERInventory read both scopes, each naming a group principal.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Exactly -Times 1 -ParameterFilter { $Scope -eq $script:RcSubA -and $ResolveNames }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Exactly -Times 1 -ParameterFilter { $Scope -eq $script:RcSubB -and $ResolveNames }
+        # 'Ops' is shared by two groups, so it is written by its object id; 'Solo' is unique, so by its name.
+        Get-RcRoleAssignmentRow -Bundle $Bundle | Should -Be @("$($script:RcSubA)|$($script:RcOps)|Group", "$($script:RcSubB)|Solo|")
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -ceq $script:RcListing -and $All }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1
+    }
+
+    It 'builds the index from the roster and sends no listing at all when Groups is included' {
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-roster') -Include Groups, RoleAssignments -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        # Reach proof: the roster was read once, and both scopes were read and named from its index.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Exactly -Times 1 -ParameterFilter { $All }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Exactly -Times 2 -ParameterFilter { $ResolveNames }
+        Get-RcRoleAssignmentRow -Bundle $Bundle | Should -Be @("$($script:RcSubA)|$($script:RcOps)|Group", "$($script:RcSubB)|Solo|")
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 0
+    }
+
+    It 'holds one context for the Entra ID call and every scope, created before the first call, holding the roster index' {
+        $script:RcSeen = [System.Collections.Generic.List[object]]::new()
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $script:RcSeen.Add([PSCustomObject]@{ Include = (@($Include) -join ','); Context = (& (Get-Module Omnicit.EntraRBAC) { $script:_OERInventoryRunContext }) })
+            & $script:RcEmptyInventory
+        }
+        $null = Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-shared') -Include Groups, AdministrativeUnits, RoleAssignments -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        # The Entra ID call first, then one call per scope.
+        @($script:RcSeen | ForEach-Object { $_.Include }) | Should -Be @('AdministrativeUnits', 'RoleAssignments', 'RoleAssignments')
+        $Contexts = @($script:RcSeen | ForEach-Object { $_.Context })
+        @($Contexts | Where-Object { $null -eq $_ }).Count | Should -Be 0
+        [object]::ReferenceEquals($Contexts[0], $Contexts[1]) | Should -BeTrue
+        [object]::ReferenceEquals($Contexts[0], $Contexts[2]) | Should -BeTrue
+        # Only the group name index for now; later members join the same object.
+        @($Contexts[0].PSObject.Properties.Name) | Should -Be @('GroupNameIndex')
+        $Contexts[0].GroupNameIndex.Read | Should -BeTrue
+        $Contexts[0].GroupNameIndex.IdsByName['ops'].Count | Should -Be 2
+        $Contexts[0].GroupNameIndex.IdsByName['solo'].Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Exactly -Times 1 -ParameterFilter { $All }
+    }
+
+    It 'holds no index in the context until something asks for it, when the roster was not read' {
+        $script:RcSeen = [System.Collections.Generic.List[object]]::new()
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $script:RcSeen.Add([PSCustomObject]@{ Include = (@($Include) -join ','); Context = (& (Get-Module Omnicit.EntraRBAC) { $script:_OERInventoryRunContext }) })
+            & $script:RcEmptyInventory
+        }
+        $null = Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-noroster') -Include AdministrativeUnits, RoleAssignments -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $script:RcSeen.Count | Should -Be 3
+        $Contexts = @($script:RcSeen | ForEach-Object { $_.Context })
+        @($Contexts | Where-Object { $null -eq $_ }).Count | Should -Be 0
+        $Contexts[0].PSObject.Properties.Name | Should -Contain 'GroupNameIndex'
+        $null -eq $Contexts[0].GroupNameIndex | Should -BeTrue
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 0
+    }
+
+    It 'builds the index without the roster by the first caller and shares it, also when the roster could not be read' {
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            [CmdletBinding()] param([switch]$All)
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+        }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-rosterfail') -Include Groups, RoleAssignments -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        # Reach proof: the roster read ran and failed, and the scopes were read.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Exactly -Times 1 -ParameterFilter { $All }
+        Get-RcRoleAssignmentRow -Bundle $Bundle | Should -Be @("$($script:RcSubA)|$($script:RcOps)|Group", "$($script:RcSubB)|Solo|")
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -ceq $script:RcListing -and $All }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1
+    }
+
+    It 'removes the context when the export ends' {
+        $null = Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-end') -Include RoleAssignments -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        # Reach proof: the walk ran under the context.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Exactly -Times 2
+        $null -eq (Get-RcRunContext) | Should -BeTrue
+    }
+
+    It 'removes the context when the Azure walk throws' {
+        $script:RcDuring = @()
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            $script:RcDuring = @(& (Get-Module Omnicit.EntraRBAC) { $script:_OERInventoryRunContext })
+            throw 'the eligibility read stopped'
+        }
+        { Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-walk-throws') -Include RoleAssignments -WarningAction SilentlyContinue } |
+            Should -Throw -ExpectedMessage '*the eligibility read stopped*'
+        # Reach proof: the throw came from inside the walk, while the context stood.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Exactly -Times 1
+        $script:RcDuring.Count | Should -Be 1
+        $null -ne $script:RcDuring[0] | Should -BeTrue
+        $null -eq (Get-RcRunContext) | Should -BeTrue
+    }
+
+    It 'removes the context when the Entra ID read throws' {
+        $script:RcDuring = @()
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $script:RcDuring = @(& (Get-Module Omnicit.EntraRBAC) { $script:_OERInventoryRunContext })
+            throw 'the Entra ID read stopped'
+        }
+        { Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-entra-throws') -Include AdministrativeUnits -WarningAction SilentlyContinue } |
+            Should -Throw -ExpectedMessage '*the Entra ID read stopped*'
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Exactly -Times 1
+        $script:RcDuring.Count | Should -Be 1
+        $null -ne $script:RcDuring[0] | Should -BeTrue
+        $null -eq (Get-RcRunContext) | Should -BeTrue
+    }
+}

@@ -4345,6 +4345,11 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected transport call: $Uri" }
         }
 
+        AfterEach {
+            # A test below stands in for Export-OERInventory and sets its run context; it never outlives the test.
+            InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+        }
+
         It 'writes a role assignment group whose name another group in the tenant carries by its object id, with principalType Group directly after principal' {
             # 'Ops' is the only group of that name the section reads: the other one is not assigned here,
             # so only the index of every group tells the two apart.
@@ -4458,6 +4463,54 @@ Describe 'Get-OERInventory' {
             Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
             # The index was read, so no line says every group principal is written by its object id.
             @($Said | Where-Object { $_.EndsWith($script:GpNoteSuffix, [System.StringComparison]::Ordinal) }) | Should -BeNullOrEmpty
+        }
+
+        It 'builds the index once per call outside an export: a second call lists again, and no run context is left behind' {
+            # Standalone, the index lives for one call (Sprint 11 step 6, R-1): nothing is kept between two
+            # calls, so a change in the tenant between them is seen by the second.
+            $script:GpRas = @(New-GpRa -PrincipalId $script:GpOps -PrincipalType 'Group')
+            $First = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+            $Second = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            # Reach proof: both calls wrote the group principal through the index.
+            @($First.roleAssignments).principal | Should -Be @($script:GpOps)
+            @($Second.roleAssignments).principal | Should -Be @($script:GpOps)
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 2
+            $null -eq (& (Get-Module $script:moduleName) { $script:_OERInventoryRunContext }) | Should -BeTrue
+        }
+
+        It 'reads the index an export run context holds and builds none of its own' {
+            # The index the context holds says 'Ops' belongs to one group only, while the mock above says
+            # two: the name is written only when the context's index is the one read.
+            $script:GpRas = @(New-GpRa -PrincipalId $script:GpOps -PrincipalType 'Group')
+            $ContextIndex = & $script:NewGroupNameIndexOf @{ $script:GpOps = 'Ops' }
+            InModuleScope $script:moduleName -Parameters @{ ContextIndex = $ContextIndex } {
+                param($ContextIndex)
+                $script:_OERInventoryRunContext = [PSCustomObject]@{ GroupNameIndex = $ContextIndex }
+            }
+            $Ra = @((Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).roleAssignments)
+            $Ra.Count | Should -Be 1
+            $Ra[0].principal | Should -BeExactly 'Ops'
+            $Ra[0].PSObject.Properties.Name | Should -Not -Contain 'principalType'
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
+        }
+
+        It 'builds the index once for an export run context that holds none, stores it there, and shares it between calls' {
+            $script:GpRas = @(New-GpRa -PrincipalId $script:GpOps -PrincipalType 'Group')
+            InModuleScope $script:moduleName {
+                $script:_OERInventoryRunContext = [PSCustomObject]@{ GroupNameIndex = $null }
+            }
+            $First = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            $Held = & (Get-Module $script:moduleName) { $script:_OERInventoryRunContext.GroupNameIndex }
+            $Second = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            # Reach proof: both calls wrote the group principal through the index.
+            @($First.roleAssignments).principal | Should -Be @($script:GpOps)
+            @($Second.roleAssignments).principal | Should -Be @($script:GpOps)
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1 -ParameterFilter { -not $PSBoundParameters.ContainsKey('Group') }
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+            # The context holds the index the first call built, and still does after the second.
+            $Held.Read | Should -BeTrue
+            [object]::ReferenceEquals($Held, (& (Get-Module $script:moduleName) { $script:_OERInventoryRunContext.GroupNameIndex })) | Should -BeTrue
         }
 
         It 'shares the one listing with the Groups section' {
