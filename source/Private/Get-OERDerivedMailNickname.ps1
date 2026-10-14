@@ -11,7 +11,7 @@ function Get-OERDerivedMailNickname {
     the callers decide what that means. Pure: no Graph, ARM or file access.
 
     .PARAMETER DisplayName
-    The group display name.
+    The group display name the alias is derived from.
 
     .EXAMPLE
     Get-OERDerivedMailNickname -DisplayName 'role_sec (team)'

@@ -821,10 +821,11 @@ reports `previousDisplayName` in `administrativeUnits`, `catalogs`, `accessPacka
 `assignmentPolicies` and `accessReviews` as an `Error`: renaming is not supported there yet, and
 `Invoke-OERStructure` would create a new object beside the old one. A group's mail alias does not
 follow a rename: declare `mailNickname` for the new name, and the validator warns when a renamed
-group keeps the alias derived from its old name or declares none. A `mailNickname` Microsoft Graph
-refuses (more than 64 characters, `@ ( ) \ [ ] " ; : < > ,` or white space) is an `Error`, and
-`New-OERGroup` refuses to derive an alias that would be empty or longer than 64 characters
-(`DerivedMailNicknameInvalid`). A scope written as a path with a `.` or `..` segment, a `%` escape
+group keeps the alias derived from its old name or declares none. A `mailNickname` that is empty,
+longer than 64 characters or holds one of `@ ( ) \ [ ] " ; : < > ,`, a space or a tab is an `Error`,
+since Microsoft Graph was measured to refuse each of them; the validator refuses any other white
+space or control character too, which was not measured. `New-OERGroup` refuses to derive an alias
+that would be empty or longer than 64 characters (`DerivedMailNicknameInvalid`). A scope written as a path with a `.` or `..` segment, a `%` escape
 or white space is an `Error` too (the `mg:`, `sub:` and `subscription:` forms are not checked for
 these three).
 

@@ -1135,10 +1135,11 @@ Describe 'Get-OERStructureSchemaJson renames, mail aliases and scope spelling (B
         }
     }
 
-    It 'describes the refused characters and says the alias is not derived again on a rename' {
+    It 'keeps what Microsoft Graph was measured to refuse apart from what only the validator refuses, and says the alias is not derived again on a rename' {
         InModuleScope $script:moduleName {
             $Description = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.groups.items.properties.mailNickname.description
-            $Description | Should -Match ([regex]::Escape('1 to 64 characters, none of @ ( ) \ [ ] " ; : < > , and no white space or control character'))
+            $Description | Should -Match ([regex]::Escape('Microsoft Graph was measured to refuse the empty string, more than 64 characters, a space, a tab and each of @ ( ) \ [ ] " ; : < > , and Test-OERStructure refuses those as well as any other white space or control character, which was not measured.'))
+            $Description | Should -Not -Match ([regex]::Escape('since Microsoft Graph refuses each of them'))
             $Description | Should -Match ([regex]::Escape('The alias is not derived again on a rename: a renamed group keeps its alias unless the document declares one'))
             $Description | Should -Match 'DerivedMailNicknameInvalid'
         }

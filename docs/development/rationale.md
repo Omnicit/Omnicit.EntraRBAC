@@ -8187,7 +8187,7 @@ caught offline: `Test-OERStructure` and the `-WhatIf` plan accept it, since the 
 `would create group` without calling `New-OERGroup`, and the real run reports the entry `Failed` with
 `DerivedMailNicknameInvalid`. That is a known limit, not a decision.
 
-**Rule 3 (the validator refuses what Graph refuses; R8).** A declared `mailNickname` that is a string is
+**Rule 3 (the validator refuses what Graph was measured to refuse, and a little more; R8).** A declared `mailNickname` that is a string is
 an `Error` at its path when it is empty, when it is longer than 64 characters (the message names the
 length), and when it contains any of `@ ( ) \ [ ] " ; : < > ,`, white space (`[char]::IsWhiteSpace`) or
 a control character (`[char]::IsControl`); the message names each such character once, white space and
@@ -8195,9 +8195,11 @@ control characters by code point. Each rule is its own `Error`, so a value that 
 A non-string value keeps the existing "must be a string" `Error`. A non-ASCII letter and `.` are
 accepted, as Microsoft Graph accepted them (M6). White space other than the space and the tab, and
 control characters other than the tab, were not measured one by one: they follow the measured refusals
-and are refused on the ground that no alias needs them. The schema declares `minLength` 1 and
-`maxLength` 64 and describes the characters, and the character set is enforced by the offline
-validator alone. If wrong: a document whose alias holds such a character that Graph would accept is
+and are refused on the ground that no alias needs them, so the user-facing texts (the schema
+description, the README, the about topic) say that Microsoft Graph was measured to refuse the printable
+set, the space, the tab, the empty string and more than 64 characters, and that the validator refuses
+the rest too. The schema declares `minLength` 1 and `maxLength` 64 and describes the characters, and
+the character set is enforced by the offline validator alone. If wrong: a document whose alias holds such a character that Graph would accept is
 refused by the validator; remove the character.
 
 **Rule 4 (the alias does not follow a rename; A5).** A `groups[]` entry with a `previousDisplayName`

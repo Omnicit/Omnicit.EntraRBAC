@@ -78,10 +78,10 @@ function Get-OERStructureSchemaJson {
     not supported yet and that Test-OERStructure refuses previousDisplayName there as an Error, since
     the engine would create a new object beside the old one; the schema keeps those items open and
     does not declare the key, so only the offline validator refuses it. A groups[] mailNickname is
-    typed with minLength 1 and maxLength 64, and its description lists the characters Microsoft Graph
-    refuses and says the alias is not derived again on a rename; the characters themselves are
-    checked by the offline validator alone, since the schema carries no regular-expression pattern
-    for them. The scope descriptions of roleAssignments and roleManagementPolicies state the
+    typed with minLength 1 and maxLength 64, and its description lists what Microsoft Graph was
+    measured to refuse and what the validator refuses beyond it, and says the alias is not derived
+    again on a rename; the characters themselves are checked by the offline validator alone, since
+    the schema carries no regular-expression pattern for them. The scope descriptions of roleAssignments and roleManagementPolicies state the
     spellings the validator refuses: a trailing or doubled '/', and in a path a '.' or '..' segment,
     a '%' escape or white space.
     Exactly five keys are typed [ "array", "null" ] rather than "array": groups[].members,
@@ -180,7 +180,7 @@ function Get-OERStructureSchemaJson {
           "description": { "type": [ "string", "null" ] },
           "membershipRule": { "type": "string" },
           "membershipRuleProcessingState": { "type": "string", "enum": [ "On", "Paused" ] },
-          "mailNickname": { "type": "string", "minLength": 1, "maxLength": 64, "description": "The group's mail alias: 1 to 64 characters, none of @ ( ) \\ [ ] \" ; : < > , and no white space or control character, since Microsoft Graph refuses each of them. When a new group declares none, the alias is derived from its display name by removing every character outside A-Z, a-z, 0-9, '.', '_' and '-'; a name whose derived alias would be empty or longer than 64 characters is refused (DerivedMailNicknameInvalid), so declare mailNickname for it. The alias is not derived again on a rename: a renamed group keeps its alias unless the document declares one, and Test-OERStructure warns when a renamed group declares none or the alias derived from its previous name." },
+          "mailNickname": { "type": "string", "minLength": 1, "maxLength": 64, "description": "The group's mail alias, 1 to 64 characters. Microsoft Graph was measured to refuse the empty string, more than 64 characters, a space, a tab and each of @ ( ) \\ [ ] \" ; : < > , and Test-OERStructure refuses those as well as any other white space or control character, which was not measured. When a new group declares none, the alias is derived from its display name by removing every character outside A-Z, a-z, 0-9, '.', '_' and '-'; a name whose derived alias would be empty or longer than 64 characters is refused (DerivedMailNicknameInvalid), so declare mailNickname for it. The alias is not derived again on a rename: a renamed group keeps its alias unless the document declares one, and Test-OERStructure warns when a renamed group declares none or the alias derived from its previous name." },
           "administrativeUnit": {
             "type": "string",
             "description": "Administrative unit (display name or id) the group is created in. Create-only: it is applied when the group is created and is not captured by Get-OERInventory, so it never round-trips. Because of that, the SAME document's administrativeUnits[] entry that this value names -- by its declared id when the value parses as a GUID (compared as a GUID, so braced and dash-less forms match), otherwise by its displayName, ignoring case -- must also list this group's displayName in its own members array -- otherwise every later apply sees the group as an undeclared member of that unit and -Prune removes the membership, since nothing re-applies this create-only field to self-heal it. Only the apply run that creates the group keeps it: that run withholds the prune of the membership it created (Skipped, prune withheld)."
