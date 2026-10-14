@@ -248,8 +248,8 @@ RENAMES, MAIL ALIASES AND SCOPE SPELLING
     same run, a group that is created into a renamed unit and an access
     package declared in a renamed catalog find the renamed unit or catalog by
     its object id, so name the unit or the catalog by its new name in those
-    references. When the rename is refused, or the run cannot decide it (the
-    previous name could not be looked up, or -Include leaves out the
+    references. When the rename is refused, or the run cannot decide it (one
+    of its names could not be looked up, or -Include leaves out the
     AdministrativeUnits or Catalogs section that holds the entry), the group
     that would be created and every package of the catalog are Failed and
     nothing is created or written for them, instead of being looked up by

@@ -367,8 +367,8 @@ package declared in the renamed catalog (`catalog`) is read, and created or plan
 `-WhatIf` plan, where the rename is not sent. Microsoft Graph's lookup cannot find the new name yet.
 
 **A rename the run cannot settle refuses its references.** When the rename of the unit or the
-catalog is refused (a conflict, or neither name found), or the run cannot decide it (the previous
-name could not be looked up, or `-Include` leaves out the `AdministrativeUnits` or `Catalogs` section
+catalog is refused (a conflict, or neither name found), or the run cannot decide it (one of its
+names could not be looked up, or `-Include` leaves out the `AdministrativeUnits` or `Catalogs` section
 that holds the entry), a reference is not looked up by name, since that could land in another object
 that carries the new name. A group that would be created into the unit, and every package declared
 in the catalog, is `Failed`, under `-WhatIf` too, and nothing is created or written for it (a package

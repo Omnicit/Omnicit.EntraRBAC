@@ -6901,6 +6901,7 @@ real run while Graph's name lookup lags (`CatalogNotFound`), and works in the ne
 into a renamed unit fails the same way. The map is one engine variable and two reader calls. If wrong:
 the plan reports `Failed` rows for references that the real run satisfies, and the real run fails
 them once.
+
 **An access review does not read the map (R3).** An access review's `accessPackage` is not translated
 through the map in this step, since the review handler belongs to step 4b. A review that names a package
 by the new name the package gets in the same run can fail in the plan and in the first run with
@@ -6920,19 +6921,21 @@ once by the main pass, for one unit.
 
 **A rename the run cannot decide refuses its references (R12).** Before R12 a reference that the map
 held nothing for was looked up by name. That is wrong whenever the run could not decide the rename:
-Graph's lookup finds the new name only after the rename, so the lookup returns nothing, or another
-object that already carries the new name, and a group would be created into that unit or a package
-read from and created in that catalog. R12 registers such a rename in the map as a refused entry with
-no id, no error id and a reason, in two places. The unit and catalog handlers register the reason
-"its previous name could not be looked up" before they look the previous name up: the decision after
-the lookup replaces the mark (a `Current` removes it), and a lookup that throws leaves it in place,
-while the engine reports the throw as the item's handler error (a pre-pass handler error for the
-pre-pass). And `Invoke-OERStructure` registers, for every entry that declares both `displayName` and
-`previousDisplayName` in an administrativeUnits or catalogs section that `-Include` leaves out, the
-reason "the administrativeUnits section is not selected by -Include, so its rename is not reconciled
-in this run" (the section name is the document key), with no read, no row and no write. The new-name
-lookup of the unit or catalog itself is outside the rule: when it throws, a reference to the new name
-throws in its own lookup too.
+Graph's lookup finds the new name only after the rename, so the lookup returns nothing (the reference
+then fails) or another object that already carries the new name, and a group would be created into
+that other unit, a package read from and created in that other catalog. R12 registers such a rename in
+the map as a refused entry with no id, no error id and a reason, in two places. The unit and catalog
+handlers register the reason "one of its names could not be looked up" before they look either name
+up: the decision after the lookups replaces the mark (a `Current` removes it), and a lookup that throws
+-- an ambiguous name, a failed probe, a transient failure of either lookup -- leaves it in place, while
+the engine reports the throw as the item's handler error (a pre-pass handler error for the pre-pass).
+The mark comes before the new-name lookup too: a transient failure of that lookup alone, followed by a
+reference's own lookup of the same name seconds later that succeeds, would otherwise reach another
+object that carries the new name. And `Invoke-OERStructure` registers, for every entry that declares
+both `displayName` and `previousDisplayName` in an administrativeUnits or catalogs section that
+`-Include` leaves out, the reason "the administrativeUnits section is not selected by -Include, so its
+rename is not reconciled in this run" (the section name is the document key), with no read, no row and
+no write.
 
 The readers print the entry's reason in their Failed row -- the error id of a refused rename, or one
 of those two texts -- so a group that would be created into the unit, and every package declared in
@@ -6946,9 +6949,10 @@ cost, accepted: while `-Include` leaves the section out and the entry still decl
 `previousDisplayName`, every reference to its new name is refused -- for a catalog every package
 declared in it, existing ones included, and for a unit every group that would be created into it --
 even when the rename was done in an earlier run, since the run cannot know. A run that selects Groups
-but not AdministrativeUnits, or AccessPackages but not Catalogs, therefore refuses what it resolved by
-name before R12. The remedy is to include the section, or to remove `previousDisplayName` once the new
-name resolves.
+but not AdministrativeUnits, or AccessPackages but not Catalogs, therefore refuses, for units or
+catalogs that declare `previousDisplayName`, what it resolved by name before R12. The remedy is to
+include the section, or to remove `previousDisplayName` once the new name resolves.
+
 **The validator (R10, R11).** `Test-OERStructureSchema` accepts `previousDisplayName` on the three kinds
 with the groups' rules: a value that is not a non-empty string is an Error; one equal to `displayName`
 ignoring case is a Warning, since both names find one object and a case-only rename is not possible
