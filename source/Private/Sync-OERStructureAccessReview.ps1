@@ -68,6 +68,26 @@ function Sync-OERStructureAccessReview {
     created later under the previous name would make the entry fail with AccessReviewRenameConflict.
     A rename is decided without the run's rename map: nothing in a document refers to a review by
     name, so a review's rename is not registered there.
+
+    An access package or assignment policy the same document renames (BL-128): the entry's
+    accessPackage and assignmentPolicy are read in the run's rename map (-RenameMap) first, before any
+    Graph call for the entry, through Get-OERStructureRenameTarget -- the access package by its name (a
+    GUID is an object id and is not read in the map), the assignment policy by its name within the
+    access package as the entry names it (the package's name, or its object id). Microsoft Graph's
+    name lookup may not find a new name yet in the run that renames the object, and under -WhatIf the
+    rename is not even sent, so a name the map holds the object's id for is replaced by that id: the
+    target check below is given a copy of the entry carrying the id, and a review created for the
+    entry is created with it (-AccessPackage, -AssignmentPolicy). The diff keeps the names. A Failed
+    row of the target check then adds which declared name was read as which id. A name the map holds
+    as refused -- a rename that conflicted or found nothing, or one this run could not decide (R12:
+    the accessPackages entry stopped before it decided, or -Include leaves the accessPackages section
+    out) -- names an object the run cannot identify, and a name lookup could reach another object that
+    carries the new name, so the entry is refused instead: one Failed row naming the refused rename
+    and its reason, no error record of its own (the rename's own row carries one when it was refused),
+    and nothing is created, read or written for the entry, under -WhatIf too. The access package is
+    read first, so a refused package refuses the entry before its policy is read. A name the map
+    holds nothing for is resolved exactly as before.
+
     The update is a FULL-OBJECT PUT: Set-OERAccessReviewDefinition carries the live values of every
     writable top-level property forward by name (including instanceEnumerationScope and
     additionalNotificationRecipients, neither of which the document models). A writable property added
@@ -166,9 +186,23 @@ function Sync-OERStructureAccessReview {
     Optional Tenant Profile alias forwarded for context. Not used by this handler but accepted for
     a uniform Sync-OERStructure* signature.
 
+    .PARAMETER RenameMap
+    Optional run-scoped rename map Invoke-OERStructure creates once per document. The accessPackages
+    handler fills it (through Resolve-OERStructureRename) for every access package and assignment
+    policy the document renames, refuses or cannot decide, and Invoke-OERStructure marks them
+    undecided when -Include leaves the accessPackages section out. This handler only reads it, through
+    Get-OERStructureRenameTarget, for the entry's accessPackage and assignmentPolicy (see the
+    description); it registers nothing, not even its own rename. When the map is omitted or holds
+    nothing for those names, they are resolved as they always have been.
+
     .EXAMPLE
     Sync-OERStructureAccessReview -Item $DocItem -Caller $PSCmdlet -TenantAlias 'omnicit'
     Reconciles one access review entry from the document using the engine PSCmdlet as the caller.
+
+    .EXAMPLE
+    Sync-OERStructureAccessReview -Item $DocItem -Caller $PSCmdlet -RenameMap $RenameMap
+    Reconciles one access review entry, reaching an access package or assignment policy the same
+    document renames by the id the run's rename map holds for its new name.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
         'PSShouldProcess', '',
@@ -188,7 +222,8 @@ function Sync-OERStructureAccessReview {
         [Parameter(Mandatory)][PSCustomObject]$Item,
         [Parameter(Mandatory)][System.Management.Automation.PSCmdlet]$Caller,
         [switch]$Prune,
-        [string]$TenantAlias
+        [string]$TenantAlias,
+        [System.Collections.Generic.Dictionary[string, object]]$RenameMap
     )
     process {
         # -- Resolve the display name -----------------------------------------------------------
@@ -213,6 +248,54 @@ function Sync-OERStructureAccessReview {
         if (Test-OERDeclaredProperty -Node $Item -Name 'recurrence') {
             $DeclaredItem = $Item.PSObject.Copy()
             $DeclaredItem.recurrence = $MappedRecurrence
+        }
+
+        # -- A package or policy the same run renames (BL-128 part 2, D5) -----------------------
+        # Read in the run's rename map BEFORE any Graph call for the entry, the definition lookups
+        # included. The accessPackages handler registers there every package and assignment policy the
+        # document renames (the id of the object found under its previous name, under -WhatIf too and
+        # before the rename is sent), every rename it refused, and -- until a decision replaces it --
+        # every rename it has not decided yet (R12); Invoke-OERStructure marks them undecided when
+        # -Include leaves that section out. Get-OERStructureRenameTarget owns the keys: the package by
+        # its name -- a GUID is an object id, never a key, so it is not read in the map -- and the
+        # policy by its name within the package as this entry names it (the package's declared name,
+        # or its object id, which the package handler registers too once it knows the id).
+        # A refused entry means the object this review names cannot be identified, and a name lookup
+        # could reach another object that carries the new name: one Failed row and nothing else -- no
+        # error record (R9: the rename's own row carries one when it was refused), no read, no write,
+        # the same under -WhatIf. The package is read first, so a refused package stops the entry
+        # before its policy is read. An id the map holds replaces the name in a COPY of the entry that
+        # only the target check and the create read; $Item and the diff's $DeclaredItem keep the names
+        # (the diff compares a GUID only, and the target check has refused any other scope first).
+        $TargetItem = $Item
+        $TranslatedNote = [System.Collections.Generic.List[string]]::new()
+        $PackageRef = if (Test-OERDeclaredProperty -Node $Item -Name 'accessPackage') { [string]$Item.accessPackage } else { '' }
+        $PolicyRef = if (Test-OERDeclaredProperty -Node $Item -Name 'assignmentPolicy') { [string]$Item.assignmentPolicy } else { '' }
+        $PackageTarget = $null
+        if (-not (Test-OERGuid -Value $PackageRef)) {
+            $PackageTarget = Get-OERStructureRenameTarget -Section 'accessPackages' -Name $PackageRef -RenameMap $RenameMap
+        }
+        if ($PackageTarget -and $PackageTarget.Refused) {
+            ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
+                -Detail "access package '$PackageRef' was not reconciled in this run: its rename from '$($PackageTarget.PreviousName)' was refused ($($PackageTarget.Reason)), so the access package this access review reviews cannot be identified; nothing was created, read or written for it"
+            return
+        }
+        $PolicyTarget = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name $PolicyRef -AccessPackage $PackageRef -RenameMap $RenameMap
+        if ($PolicyTarget -and $PolicyTarget.Refused) {
+            ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
+                -Detail "assignment policy '$PolicyRef' of access package '$PackageRef' was not reconciled in this run: its rename from '$($PolicyTarget.PreviousName)' was refused ($($PolicyTarget.Reason)), so the assignment policy this access review reviews cannot be identified; nothing was created, read or written for it"
+            return
+        }
+        if ($PackageTarget -or $PolicyTarget) {
+            $TargetItem = $Item.PSObject.Copy()
+            if ($PackageTarget) {
+                $TargetItem.accessPackage = [string]$PackageTarget.Id
+                $TranslatedNote.Add("accessPackage '$PackageRef' was read as '$($PackageTarget.Id)', the access package this run renames from '$($PackageTarget.PreviousName)'")
+            }
+            if ($PolicyTarget) {
+                $TargetItem.assignmentPolicy = [string]$PolicyTarget.Id
+                $TranslatedNote.Add("assignmentPolicy '$PolicyRef' was read as '$($PolicyTarget.Id)', the assignment policy this run renames from '$($PolicyTarget.PreviousName)'")
+            }
         }
 
         # -- Find a definition by display name (throttle-tolerant) -----------------------------
@@ -470,7 +553,9 @@ function Sync-OERStructureAccessReview {
             # either the refusal (AccessReviewScopeMismatch) or a lookup that could not answer (a name
             # that matches nothing, an ambiguous name, a 403), published as itself. See
             # docs/development/rationale.md#access-review-target.
-            $TargetMismatch = Get-OERAccessReviewTargetMismatch -Declared $Item -Current $Existing
+            # $TargetItem carries the id the run's rename map holds for a package or policy this document
+            # renames (see above), which the check uses as written, with no lookup; otherwise it is $Item.
+            $TargetMismatch = Get-OERAccessReviewTargetMismatch -Declared $TargetItem -Current $Existing
             if ($TargetMismatch) {
                 $Caller.WriteError($TargetMismatch)
                 $MismatchDetail = if (([string]$TargetMismatch.FullyQualifiedErrorId).StartsWith('AccessReviewScopeMismatch', [System.StringComparison]::Ordinal)) {
@@ -484,6 +569,11 @@ function Sync-OERStructureAccessReview {
                 # the helper's own, unchanged).
                 if ($RenameFrom) {
                     $MismatchDetail += " (found under its previousDisplayName '$RenameFrom', id $([string]$Existing.Id))"
+                }
+                # The helper names a translated package or policy by the id it was given, which the entry
+                # does not declare, so the row says which declared name was read as which id.
+                if ($TranslatedNote.Count -gt 0) {
+                    $MismatchDetail += " ($($TranslatedNote -join '; '))"
                 }
                 ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
                     -Detail $MismatchDetail -ErrorRecord $TargetMismatch
@@ -749,8 +839,11 @@ function Sync-OERStructureAccessReview {
             } else {
                 "Please review access for $Name"
             }
-            AccessPackage           = $Item.accessPackage
-            AssignmentPolicy        = $Item.assignmentPolicy
+            # $TargetItem: the id the run's rename map holds for a package or policy this document
+            # renames, so the review is created on the object even before Graph's name lookup finds
+            # its new name; otherwise the names as declared.
+            AccessPackage           = $TargetItem.accessPackage
+            AssignmentPolicy        = $TargetItem.assignmentPolicy
             Recurrence              = $MappedRecurrence
             StartDate               = if (Test-OERDeclaredProperty -Node $Item -Name 'startDate') {
                 [datetime]$Item.startDate

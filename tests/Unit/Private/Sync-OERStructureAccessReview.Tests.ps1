@@ -4685,3 +4685,428 @@ Describe 'Sync-OERStructureAccessReview renames a review through previousDisplay
         }
     }
 }
+
+# BL-128 part 2 (Sprint 11 step 4b, D5). An access review's accessPackage and assignmentPolicy are read in
+# the run's rename map before any Graph call for the entry. The map is filled here exactly as the
+# accessPackages handler and the engine fill it -- through the real Resolve-OERStructureRename -- and the
+# target check runs for REAL, only its two lookups mocked. In the run that renames an object Graph's name
+# lookup does not find its new name yet, or finds another object that carries it: the lookup mocks below
+# answer every new name with ANOTHER package or policy, so a test that looked a translated name up would
+# reach it. No id below is version-4 shaped.
+Describe 'Sync-OERStructureAccessReview reaches an access package or assignment policy the run renames through the rename map (BL-128 part 2)' {
+
+    BeforeAll {
+        $script:MpName = 'Q3 AP review'
+        $script:MpDefId = 'cccc3333-0000-0000-0000-000000000021'
+        $script:MpPkgId = 'aaaa1111-0000-0000-0000-000000000021'
+        $script:MpOtherPkgId = 'aaaa1111-0000-0000-0000-000000000022'
+        $script:MpPolId = 'bbbb2222-0000-0000-0000-000000000021'
+        $script:MpOtherPolId = 'bbbb2222-0000-0000-0000-000000000022'
+        $script:MpNotUnique = 'Access review display names are not unique: give the entry or the review in the tenant another display name.'
+
+        # The live definition as ConvertTo-OERAccessReviewDefinition shapes it, reviewing the given
+        # package and policy.
+        function New-MpLive {
+            param([string]$AccessPackageId = $script:MpPkgId, [string]$AssignmentPolicyId = $script:MpPolId, [int]$DurationInDays = 14)
+            [PSCustomObject]@{
+                Id                      = $script:MpDefId
+                DisplayName             = $script:MpName
+                Status                  = 'InProgress'
+                DescriptionForAdmins    = 'admin text'
+                DescriptionForReviewers = 'reviewer text'
+                Scope                   = ("/identityGovernance/entitlementManagement/assignments?`$filter=(accessPackage/id eq '{0}' and assignmentPolicy/id eq '{1}')" -f $AccessPackageId, $AssignmentPolicyId)
+                AccessPackageId         = $AccessPackageId
+                AssignmentPolicyId      = $AssignmentPolicyId
+                Reviewers               = @(@{ query = '/users/usr-1' })
+                FallbackReviewers       = @()
+                DurationInDays          = $DurationInDays
+                Recurrence              = @{
+                    pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                    range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                }
+                Settings                = @{ instanceDurationInDays = $DurationInDays }
+            }
+        }
+        function New-MpEntry {
+            param([string]$AccessPackage = 'AP-New', [string]$AssignmentPolicy = 'Standard')
+            [PSCustomObject]@{
+                displayName      = $script:MpName
+                accessPackage    = $AccessPackage
+                assignmentPolicy = $AssignmentPolicy
+                durationInDays   = 21
+                reviewers        = @('person1@example.com')
+            }
+        }
+        function New-MpMap {
+            , [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        }
+        # Registers one decision, or one undecided mark, through the real owner, as the accessPackages
+        # handler (or, for -Include, the engine) does.
+        function Register-MpRename {
+            param([Parameter(Mandatory)]$RenameMap, [Parameter(Mandatory)][hashtable]$Splat)
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ RenameMap = $RenameMap; Splat = $Splat } {
+                param($RenameMap, $Splat)
+                $null = Resolve-OERStructureRename @Splat -RenameMap $RenameMap
+            }
+        }
+        # Applies one entry through a caller that owns ShouldProcess, with the map, and returns the rows,
+        # the error records the CALLER published, and every record -ErrorVariable collected at all.
+        function Invoke-MpSync {
+            param([Parameter(Mandatory)]$Item, $RenameMap, [switch]$WhatIf)
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Item = $Item; RenameMap = $RenameMap; PlanOnly = $WhatIf.IsPresent } {
+                param($Item, $RenameMap, $PlanOnly)
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.Dictionary[string, object]]$RenameMap)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -RenameMap $RenameMap
+                }
+                $Published = $null
+                $Rows = @(Invoke-SyncArViaCaller -Item $Item -RenameMap $RenameMap -WhatIf:$PlanOnly -ErrorAction SilentlyContinue `
+                        -ErrorVariable Published -WarningAction SilentlyContinue)
+                [PSCustomObject]@{
+                    Rows   = $Rows
+                    Errors = @($Published | Where-Object {
+                            $_ -is [System.Management.Automation.ErrorRecord] -and
+                            ([string]$_.FullyQualifiedErrorId).EndsWith(',Invoke-SyncArViaCaller')
+                        })
+                    All    = @($Published)
+                }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        $script:MpLiveNow = New-MpLive
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { param($Uri) throw "Unexpected Graph request: $Uri" }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition { $script:MpLiveNow }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal { 'usr-1' }
+        # Graph's name lookups in the run that renames: the names nothing renames resolve to the
+        # reviewed package and policy, and every other name -- a new name -- to ANOTHER package or policy.
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId {
+            if ($DisplayName -eq 'AP-Sales') { 'aaaa1111-0000-0000-0000-000000000021' } else { 'aaaa1111-0000-0000-0000-000000000022' }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId {
+            if ($AssignmentPolicy -eq 'Standard') { 'bbbb2222-0000-0000-0000-000000000021' } else { 'bbbb2222-0000-0000-0000-000000000022' }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+        # The definition Graph reads back after the PUT: it now carries the declared duration.
+        Mock -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition { New-MpLive -DurationInDays 21 }
+    }
+
+    Context 'an id the map holds replaces the name' {
+
+        It 'updates the review of the access package the run renames, checked by the id the map holds and with no package lookup (<Mode>)' -ForEach @(
+            @{ Mode = 'a real run'; PlanOnly = $false; Action = 'Updated'; Detail = "updated access review 'Q3 AP review' (durationInDays=21)"; Sets = 1 }
+            @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true; Action = 'Skipped'; Detail = "would update access review 'Q3 AP review' (durationInDays=21)"; Sets = 0 }
+        ) {
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-New'; PreviousName = 'AP-Old'; Id = $null; PreviousId = $script:MpPkgId }
+            $Run = Invoke-MpSync -Item (New-MpEntry) -RenameMap $Map -WhatIf:$PlanOnly
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly $Action
+            $Run.Rows[0].Detail | Should -BeExactly $Detail
+            @($Run.All).Count | Should -Be 0
+            # The package is compared by the map's id, as written: no name lookup, which here would find
+            # another package. The policy, which the map holds nothing for, is looked up by its name
+            # within the package that id names.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 1 -Exactly -ParameterFilter {
+                $AccessPackageId -eq 'aaaa1111-0000-0000-0000-000000000021' -and $AssignmentPolicy -eq 'Standard'
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times $Sets -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'looks the same entry up by name without the map, and is refused by the target check (control)' {
+            # The control for every test in this Describe: the lookup mocks answer the new name with
+            # another package, so an entry the map does not translate reaches that package and is refused.
+            $Run = Invoke-MpSync -Item (New-MpEntry) -RenameMap $null
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewScopeMismatch*'
+            $Run.Rows[0].Detail | Should -BeExactly ("Access review 'Q3 AP review' in the tenant reviews access package '$($script:MpPkgId)', not the access " +
+                "package 'AP-New' ('$($script:MpOtherPkgId)') this entry declares, so it is not the review this entry declares. Nothing was " +
+                "written. $($script:MpNotUnique)")
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'AP-New' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'updates the review of the assignment policy the run renames, checked by the id the map holds under the package <Key> (<Mode>)' -ForEach @(
+            @{ Key = 'name'; Package = 'AP-Sales'; PackageLookups = 1; Mode = 'a real run'; PlanOnly = $false; Action = 'Updated'; Sets = 1 }
+            @{ Key = 'id'; Package = 'aaaa1111-0000-0000-0000-000000000021'; PackageLookups = 0; Mode = 'a real run'; PlanOnly = $false; Action = 'Updated'; Sets = 1 }
+            @{ Key = 'name'; Package = 'AP-Sales'; PackageLookups = 1; Mode = 'a plan under -WhatIf'; PlanOnly = $true; Action = 'Skipped'; Sets = 0 }
+            @{ Key = 'id'; Package = 'aaaa1111-0000-0000-0000-000000000021'; PackageLookups = 0; Mode = 'a plan under -WhatIf'; PlanOnly = $true; Action = 'Skipped'; Sets = 0 }
+        ) {
+            # As the accessPackages handler registers a policy rename once it knows the package's id: under
+            # the package's declared name and under its id.
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{
+                Section = 'assignmentPolicies'; AccessPackage = 'AP-Sales'; AccessPackageId = $script:MpPkgId
+                Name = 'POL-New'; PreviousName = 'POL-Old'; Id = $null; PreviousId = $script:MpPolId
+            }
+            $Run = Invoke-MpSync -Item (New-MpEntry -AccessPackage $Package -AssignmentPolicy 'POL-New') -RenameMap $Map -WhatIf:$PlanOnly
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly $Action
+            @($Run.All).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times $PackageLookups -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times $Sets -Exactly
+        }
+
+        It 'updates the review of a package and a policy the run both renames with no lookup at all' {
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-New'; PreviousName = 'AP-Old'; Id = $null; PreviousId = $script:MpPkgId }
+            Register-MpRename -RenameMap $Map -Splat @{
+                Section = 'assignmentPolicies'; AccessPackage = 'AP-New'; AccessPackageId = $script:MpPkgId
+                Name = 'POL-New'; PreviousName = 'POL-Old'; Id = $null; PreviousId = $script:MpPolId
+            }
+            $Item = New-MpEntry -AccessPackage 'AP-New' -AssignmentPolicy 'POL-New'
+            $Run = Invoke-MpSync -Item $Item -RenameMap $Map
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Updated'
+            @($Run.All).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+            # The ids went into a copy: the entry the engine holds -- the parsed document -- keeps its names.
+            $Item.accessPackage | Should -BeExactly 'AP-New'
+            $Item.assignmentPolicy | Should -BeExactly 'POL-New'
+        }
+
+        It 'creates the review on the ids the map holds, <Case>' -ForEach @(
+            @{ Case = 'for the package alone'; Policy = 'Standard'; PolicyRenamed = $false; ExpectedPolicy = 'Standard' }
+            @{ Case = 'for the package and the policy'; Policy = 'POL-New'; PolicyRenamed = $true; ExpectedPolicy = 'bbbb2222-0000-0000-0000-000000000021' }
+        ) {
+            $script:MpLiveNow = $null
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-New'; PreviousName = 'AP-Old'; Id = $null; PreviousId = $script:MpPkgId }
+            if ($PolicyRenamed) {
+                Register-MpRename -RenameMap $Map -Splat @{
+                    Section = 'assignmentPolicies'; AccessPackage = 'AP-New'; AccessPackageId = $script:MpPkgId
+                    Name = 'POL-New'; PreviousName = 'POL-Old'; Id = $null; PreviousId = $script:MpPolId
+                }
+            }
+            $Run = Invoke-MpSync -Item (New-MpEntry -AssignmentPolicy $Policy) -RenameMap $Map
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Created'
+            $Run.Rows[0].Detail | Should -BeExactly "created access review 'Q3 AP review' (recurrence: OneTime)"
+            @($Run.All).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                $AccessPackage -eq 'aaaa1111-0000-0000-0000-000000000021' -and $AssignmentPolicy -eq $ExpectedPolicy -and $DisplayName -eq 'Q3 AP review'
+            }
+        }
+
+        It 'plans the create of the review of a package the run renames under -WhatIf, with no lookup and no Failed row' {
+            $script:MpLiveNow = $null
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-New'; PreviousName = 'AP-Old'; Id = $null; PreviousId = $script:MpPkgId }
+            $Run = Invoke-MpSync -Item (New-MpEntry) -RenameMap $Map -WhatIf
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Skipped'
+            $Run.Rows[0].Detail | Should -BeExactly "would create access review 'Q3 AP review'"
+            @($Run.All).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'says in the Failed row of the target check which declared name was read as which id, <Case>' -ForEach @(
+            @{
+                Case = 'for a review of another package'; LivePackage = 'aaaa1111-0000-0000-0000-000000000022'; LivePolicy = 'bbbb2222-0000-0000-0000-000000000021'; PolicyRenamed = $false; Policy = 'Standard'
+                Expected = ("Access review 'Q3 AP review' in the tenant reviews access package 'aaaa1111-0000-0000-0000-000000000022', not the access " +
+                    "package 'aaaa1111-0000-0000-0000-000000000021' this entry declares, so it is not the review this entry declares. Nothing was " +
+                    'written. Access review display names are not unique: give the entry or the review in the tenant another display name. ' +
+                    "(accessPackage 'AP-New' was read as 'aaaa1111-0000-0000-0000-000000000021', the access package this run renames from 'AP-Old')")
+            }
+            @{
+                Case = 'for a review of another policy'; LivePackage = 'aaaa1111-0000-0000-0000-000000000021'; LivePolicy = 'bbbb2222-0000-0000-0000-000000000022'; PolicyRenamed = $true; Policy = 'POL-New'
+                Expected = ("Access review 'Q3 AP review' in the tenant reviews assignment policy 'bbbb2222-0000-0000-0000-000000000022' of access " +
+                    "package 'aaaa1111-0000-0000-0000-000000000021', not the assignment policy 'bbbb2222-0000-0000-0000-000000000021' this entry " +
+                    'declares, so it is not the review this entry declares. Nothing was written. Access review display names are not unique: give ' +
+                    "the entry or the review in the tenant another display name. (accessPackage 'AP-New' was read as " +
+                    "'aaaa1111-0000-0000-0000-000000000021', the access package this run renames from 'AP-Old'; assignmentPolicy 'POL-New' was " +
+                    "read as 'bbbb2222-0000-0000-0000-000000000021', the assignment policy this run renames from 'POL-Old')")
+            }
+        ) {
+            $script:MpLiveNow = New-MpLive -AccessPackageId $LivePackage -AssignmentPolicyId $LivePolicy
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-New'; PreviousName = 'AP-Old'; Id = $null; PreviousId = $script:MpPkgId }
+            if ($PolicyRenamed) {
+                Register-MpRename -RenameMap $Map -Splat @{
+                    Section = 'assignmentPolicies'; AccessPackage = 'AP-New'; AccessPackageId = $script:MpPkgId
+                    Name = 'POL-New'; PreviousName = 'POL-Old'; Id = $null; PreviousId = $script:MpPolId
+                }
+            }
+            $Run = Invoke-MpSync -Item (New-MpEntry -AssignmentPolicy $Policy) -RenameMap $Map
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly $Expected
+            # The record is the target check's own, unchanged: the note is in the row only.
+            $Run.Errors.Count | Should -Be 1
+            [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch,Invoke-SyncArViaCaller'
+            $Run.Errors[0].Exception.Message | Should -Not -BeLike '*was read as*'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+        }
+
+        It 'does not read an access package named by its object id in the map, and checks the id as written' {
+            # A map entry under a GUID-shaped NAME, refused: if the id were read in the map as a name, the
+            # entry would be refused. A GUID is an object id, compared as written.
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{
+                Section = 'accessPackages'; Name = $script:MpPkgId; PreviousName = 'AP-Old'; Undecided = $true
+                Reason = "the accessPackages entry did not reach a decision in this run; see that entry's rows"
+            }
+            $Run = Invoke-MpSync -Item (New-MpEntry -AccessPackage $script:MpPkgId) -RenameMap $Map
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Updated'
+            @($Run.All).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+        }
+
+        It 'resolves both names exactly as before when the map holds nothing for them' {
+            # The map holds other packages and policies -- refused ones among them -- but none this entry
+            # names, so both names are looked up as they always have been.
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-Other'; PreviousName = 'AP-Old'; Id = $null; PreviousId = $null }
+            Register-MpRename -RenameMap $Map -Splat @{
+                Section = 'assignmentPolicies'; AccessPackage = 'AP-Other'; Name = 'Standard'; PreviousName = 'POL-Old'; Undecided = $true
+                Reason = "the accessPackages entry did not reach a decision in this run; see that entry's rows"
+            }
+            Register-MpRename -RenameMap $Map -Splat @{
+                Section = 'assignmentPolicies'; AccessPackage = 'AP-Sales'; Name = 'POL-Other'; PreviousName = 'POL-Old'; Undecided = $true
+                Reason = "the accessPackages entry did not reach a decision in this run; see that entry's rows"
+            }
+            $Run = Invoke-MpSync -Item (New-MpEntry -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard') -RenameMap $Map
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Updated'
+            $Run.Rows[0].Detail | Should -BeExactly "updated access review 'Q3 AP review' (durationInDays=21)"
+            @($Run.All).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'AP-Sales' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 1 -Exactly -ParameterFilter {
+                $AccessPackageId -eq 'aaaa1111-0000-0000-0000-000000000021' -and $AssignmentPolicy -eq 'Standard'
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+        }
+    }
+
+    Context 'a refused or undecided rename refuses the review' {
+
+        It 'refuses the review, reading and writing nothing, when the rename of its access package is <Case> (<Mode>)' -ForEach @(
+            foreach ($Mode in @('a real run', 'a plan under -WhatIf')) {
+                @{ Case = 'a conflict'; Mode = $Mode; Splat = @{ Id = 'aaaa1111-0000-0000-0000-000000000022'; PreviousId = 'aaaa1111-0000-0000-0000-000000000021' }; Reason = 'AccessPackageRenameConflict' }
+                @{ Case = 'not found'; Mode = $Mode; Splat = @{ Id = $null; PreviousId = $null }; Reason = 'AccessPackageRenameNotFound' }
+                @{ Case = 'undecided by its entry'; Mode = $Mode; Splat = @{ Undecided = $true; Reason = "the accessPackages entry did not reach a decision in this run; see that entry's rows" }; Reason = "the accessPackages entry did not reach a decision in this run; see that entry's rows" }
+                @{ Case = 'undecided by -Include'; Mode = $Mode; Splat = @{ Undecided = $true; Reason = 'the accessPackages section is not selected by -Include, so its rename is not reconciled in this run' }; Reason = 'the accessPackages section is not selected by -Include, so its rename is not reconciled in this run' }
+            }
+        ) {
+            $Map = New-MpMap
+            $Splat = @{ Section = 'accessPackages'; Name = 'AP-New'; PreviousName = 'AP-Old' } + $Splat
+            Register-MpRename -RenameMap $Map -Splat $Splat
+            $Run = Invoke-MpSync -Item (New-MpEntry) -RenameMap $Map -WhatIf:($Mode -ne 'a real run')
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Section | Should -BeExactly 'accessReviews'
+            $Run.Rows[0].Item | Should -BeExactly 'Q3 AP review'
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly ("access package 'AP-New' was not reconciled in this run: its rename from 'AP-Old' was refused ($Reason), " +
+                'so the access package this access review reviews cannot be identified; nothing was created, read or written for it')
+            $Run.Rows[0].Error | Should -BeNullOrEmpty
+            # R9: no error record of its own -- the rename's own row carries one when it was refused.
+            @($Run.All).Count | Should -Be 0
+            # Nothing read: not the definition, not a name, not a reviewer; nothing written.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'refuses the review, reading and writing nothing, when the rename of its assignment policy is <Case>, the package named by <Key> (<Mode>)' -ForEach @(
+            foreach ($Mode in @('a real run', 'a plan under -WhatIf')) {
+                @{ Case = 'a conflict'; Key = 'name'; Package = 'AP-Sales'; Mode = $Mode; Splat = @{ AccessPackageId = 'aaaa1111-0000-0000-0000-000000000021'; Id = 'bbbb2222-0000-0000-0000-000000000022'; PreviousId = 'bbbb2222-0000-0000-0000-000000000021' }; Reason = 'AssignmentPolicyRenameConflict' }
+                @{ Case = 'a conflict'; Key = 'id'; Package = 'aaaa1111-0000-0000-0000-000000000021'; Mode = $Mode; Splat = @{ AccessPackageId = 'aaaa1111-0000-0000-0000-000000000021'; Id = 'bbbb2222-0000-0000-0000-000000000022'; PreviousId = 'bbbb2222-0000-0000-0000-000000000021' }; Reason = 'AssignmentPolicyRenameConflict' }
+                @{ Case = 'not found'; Key = 'name'; Package = 'AP-Sales'; Mode = $Mode; Splat = @{ AccessPackageId = 'aaaa1111-0000-0000-0000-000000000021'; Id = $null; PreviousId = $null }; Reason = 'AssignmentPolicyRenameNotFound' }
+                @{ Case = 'not found'; Key = 'id'; Package = 'aaaa1111-0000-0000-0000-000000000021'; Mode = $Mode; Splat = @{ AccessPackageId = 'aaaa1111-0000-0000-0000-000000000021'; Id = $null; PreviousId = $null }; Reason = 'AssignmentPolicyRenameNotFound' }
+                @{ Case = 'undecided by its package entry'; Key = 'name'; Package = 'AP-Sales'; Mode = $Mode; Splat = @{ Undecided = $true; Reason = "the accessPackages entry did not reach a decision in this run; see that entry's rows" }; Reason = "the accessPackages entry did not reach a decision in this run; see that entry's rows" }
+                @{ Case = 'undecided by -Include'; Key = 'name'; Package = 'AP-Sales'; Mode = $Mode; Splat = @{ Undecided = $true; Reason = 'the accessPackages section is not selected by -Include, so its rename is not reconciled in this run' }; Reason = 'the accessPackages section is not selected by -Include, so its rename is not reconciled in this run' }
+            }
+        ) {
+            $Map = New-MpMap
+            $Splat = @{ Section = 'assignmentPolicies'; AccessPackage = 'AP-Sales'; Name = 'POL-New'; PreviousName = 'POL-Old' } + $Splat
+            Register-MpRename -RenameMap $Map -Splat $Splat
+            $Run = Invoke-MpSync -Item (New-MpEntry -AccessPackage $Package -AssignmentPolicy 'POL-New') -RenameMap $Map -WhatIf:($Mode -ne 'a real run')
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Section | Should -BeExactly 'accessReviews'
+            $Run.Rows[0].Item | Should -BeExactly 'Q3 AP review'
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly ("assignment policy 'POL-New' of access package '$Package' was not reconciled in this run: its rename from " +
+                "'POL-Old' was refused ($Reason), so the assignment policy this access review reviews cannot be identified; nothing was " +
+                'created, read or written for it')
+            $Run.Rows[0].Error | Should -BeNullOrEmpty
+            @($Run.All).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'refuses the review for its access package first when the renames of both its package and its policy are refused' {
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-New'; PreviousName = 'AP-Old'; Id = $null; PreviousId = $null }
+            Register-MpRename -RenameMap $Map -Splat @{
+                Section = 'assignmentPolicies'; AccessPackage = 'AP-New'; Name = 'POL-New'; PreviousName = 'POL-Old'; Undecided = $true
+                Reason = "the accessPackages entry did not reach a decision in this run; see that entry's rows"
+            }
+            $Run = Invoke-MpSync -Item (New-MpEntry -AssignmentPolicy 'POL-New') -RenameMap $Map
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Detail | Should -BeExactly ("access package 'AP-New' was not reconciled in this run: its rename from 'AP-Old' was refused " +
+                '(AccessPackageRenameNotFound), so the access package this access review reviews cannot be identified; nothing was created, read or written for it')
+            @($Run.All).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'reads an undecided policy under the package''s declared name when the map holds an id for the package' {
+            # Undecided marks are registered under the package's name only: the policy is read under the
+            # name the review declares, never under the id the package was translated to, which would miss
+            # the mark and look the policy's new name up -- here another policy carries it.
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-New'; PreviousName = 'AP-Old'; Id = $null; PreviousId = $script:MpPkgId }
+            Register-MpRename -RenameMap $Map -Splat @{
+                Section = 'assignmentPolicies'; AccessPackage = 'AP-New'; Name = 'POL-New'; PreviousName = 'POL-Old'; Undecided = $true
+                Reason = "the accessPackages entry did not reach a decision in this run; see that entry's rows"
+            }
+            $Run = Invoke-MpSync -Item (New-MpEntry -AssignmentPolicy 'POL-New') -RenameMap $Map
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly ("assignment policy 'POL-New' of access package 'AP-New' was not reconciled in this run: its rename from " +
+                "'POL-Old' was refused (the accessPackages entry did not reach a decision in this run; see that entry's rows), so the assignment " +
+                'policy this access review reviews cannot be identified; nothing was created, read or written for it')
+            @($Run.All).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        }
+    }
+}

@@ -55,29 +55,34 @@ function Invoke-OERStructure {
     object beside the old one, which -Prune never deletes.
 
     References to a renamed object in the same run: a group that would be created into a unit the
-    document renames, and every access package declared in a catalog the document renames, reach the
-    renamed object by its object id, through the run's rename map; name the unit or catalog by its new
-    name in those references. When the rename is refused, or the run cannot decide it, the reference
-    is refused instead of being looked up by name, which could land in another object that carries
-    the new name: such a group and every such package are reported Failed, under -WhatIf too, with
-    nothing created or written for them (a package is not read either), and the unit's or catalog's
-    own row carries the error when its rename was refused. A group that already exists is not
-    affected, since administrativeUnit applies only when a group is created.
+    document renames, every access package declared in a catalog the document renames, and an access
+    review whose accessPackage or assignmentPolicy names an access package or an assignment policy the
+    document renames, reach the renamed object by its object id, through the run's rename map; name
+    the object by its new name in those references. An assignment policy is matched within the access
+    package as the review names it: by the package's new name, or by the package's object id, which
+    the map knows only once the accessPackages entry has decided the policy's rename -- until then a
+    review naming the package by id looks the policy up by name, as before. When the rename is
+    refused, or the run cannot decide it, the reference is refused instead of being looked up by
+    name, which could land in another object that carries the new name: such a group, every such
+    package and such a review are reported Failed, under -WhatIf too, with nothing created or written
+    for them (a package or a review is not read either), and the row of the entry that renames the
+    object carries the error when its rename was refused. A group that already exists is not
+    affected, since administrativeUnit applies only when a group is created; an access review that
+    already exists is, since its access package and assignment policy are checked on every run.
 
     A rename the run cannot decide is the rename of a unit or catalog for which a lookup of one of its
-    names threw (the unit's or catalog's own row reports the error), or the rename of an
-    administrativeUnits or catalogs entry whose section -Include leaves out (for which nothing is
-    read, written or reported). While -Include leaves the section out and the entry still declares
-    previousDisplayName, every such reference to its new name is refused -- for a catalog every
-    package declared in it, existing ones included -- even when the rename was done in an earlier
-    run: include the section, or remove previousDisplayName once the new name resolves. A refusal
-    because -Include leaves the section out publishes no error record, only the Failed row, so
-    -ErrorAction Stop and $? do not see it: check the rows. An access review's accessPackage is not
-    translated through the map yet: named by the package's new name, it can fail with
-    AccessPackageNotFound in the run (and the -WhatIf plan) that renames the package, until Graph's
-    lookup finds the new name. Test-OERStructure warns on a reference that still names a renamed
-    object by its previous name, and refuses previousDisplayName on an assignmentPolicies or
-    accessReviews entry.
+    names threw (the unit's or catalog's own row reports the error), the rename of an access package
+    or assignment policy whose accessPackages entry stopped before it decided the rename (that entry's
+    rows say why), or the rename of an administrativeUnits, catalogs or accessPackages entry -- an
+    assignment policy of such an entry included -- whose section -Include leaves out (for which
+    nothing is read, written or reported). While -Include leaves the section out and the entry still
+    declares previousDisplayName, every such reference to its new name is refused -- for a catalog
+    every package declared in it, and for an access package or assignment policy every access review
+    that names it, existing ones included -- even when the rename was done in an earlier run: include
+    the section, or remove previousDisplayName once the new name resolves. A refusal because -Include
+    leaves the section out publishes no error record, only the Failed row, so -ErrorAction Stop and
+    $? do not see it: check the rows. Test-OERStructure warns on a reference that still names a
+    renamed object by its previous name.
 
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
@@ -216,12 +221,14 @@ function Invoke-OERStructure {
     AccessReviews target check: an existing access review is found by its display name in the whole
     tenant, and display names are not unique, so the review found can be one of a group, a role or
     another access package. It is updated only when it reviews the access package and the assignment
-    policy the entry declares: a GUID is compared as written, and a name is resolved as
-    New-OERAccessReviewDefinition resolves it. A review that does not is reported Failed with the
-    error AccessReviewScopeMismatch, and nothing is written to it; a review that reviews no access
-    package at all is refused with no access package or assignment policy lookup. A name that matches
-    nothing is reported Failed with AccessPackageNotFound or AssignmentPolicyNotFound, and a lookup
-    that fails (an ambiguous name, a 403) with its own error, and nothing is written either. An
+    policy the entry declares: a GUID is compared as written, a name the document renames in the same
+    run is compared as the object id the run's rename map holds for it (see References to a renamed
+    object above), and any other name is resolved as New-OERAccessReviewDefinition resolves it. A
+    review that does not is reported Failed with the error AccessReviewScopeMismatch, and nothing is
+    written to it; a review that reviews no access package at all is refused with no access package
+    or assignment policy lookup. A name that matches nothing is reported Failed with
+    AccessPackageNotFound or AssignmentPolicyNotFound, and a lookup that fails (an ambiguous name, a
+    403) with its own error, and nothing is written either. An
     access package name is not unique in the tenant, nor an assignment policy name in its access
     package, and Get-OERInventory exports both by name: when such a name is shared, the entry is
     reported Failed with AmbiguousName until it names the package or the policy by id. The check runs
@@ -364,8 +371,9 @@ function Invoke-OERStructure {
     .PARAMETER Include
     Restricts the sections the engine dispatches. Defaults to all nine sections. Pass a subset to limit
     the apply run (for example -Include Groups,Catalogs to skip Azure sections). A section left out
-    still matters when its entries declare previousDisplayName: a group created into such a unit, or
-    an access package in such a catalog, is reported Failed with no error record (see Renaming above).
+    still matters when its entries declare previousDisplayName: a group created into such a unit, an
+    access package in such a catalog, or an access review of such an access package or of such an
+    assignment policy, is reported Failed with no error record (see Renaming above).
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. Without it
@@ -552,32 +560,50 @@ function Invoke-OERStructure {
         $PlannedCatalog = [System.Collections.Generic.List[string]]::new()
 
         # BL-128 (A5): the run's rename map. Resolve-OERStructureRename registers each administrative
-        # unit and catalog the document renames (found under previousDisplayName alone) and each one whose
-        # rename it refused; Get-OERStructureRenameTarget reads it for a reference to the new name in the
-        # same run -- a group created into a unit, an access package in a catalog -- which Graph's name
-        # lookup cannot find yet. One map per document, passed to the pre-pass and to the four handlers.
+        # unit, catalog, access package and assignment policy the document renames (found under
+        # previousDisplayName alone) and each one whose rename it refused or has not decided yet;
+        # Get-OERStructureRenameTarget reads it for a reference to the new name in the same run -- a
+        # group created into a unit, an access package in a catalog, an access review's access package
+        # and assignment policy -- which Graph's name lookup cannot find yet. One map per document,
+        # passed to the pre-pass and to the five handlers.
         $RenameMap = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
         # R12: a section -Include leaves out decides none of its renames, so a reference to an entry's new
-        # name -- a group created into a unit, an access package in a catalog -- could only be looked up
-        # by name, and while another object carries that name it would land there. Every entry of such a
-        # section that declares previousDisplayName is registered as undecided, so the reference is
-        # refused instead. No read, no row, no write.
+        # name -- a group created into a unit, an access package in a catalog, an access review of a
+        # package or of one of its assignment policies -- could only be looked up by name, and while
+        # another object carries that name it would land there. Every entry of such a section that
+        # declares previousDisplayName is registered as undecided, so the reference is refused instead.
+        # An access package's assignment policies are renamed by its entry too, so for a left-out
+        # accessPackages section each policy that declares previousDisplayName is registered as well,
+        # under the package's declared name (D4), whether or not the package itself is renamed. No read,
+        # no row, no write.
         $UndecidedSection = @(
             [PSCustomObject]@{ IncludeName = 'AdministrativeUnits'; DocKey = 'administrativeUnits' }
             [PSCustomObject]@{ IncludeName = 'Catalogs'; DocKey = 'catalogs' }
+            [PSCustomObject]@{ IncludeName = 'AccessPackages'; DocKey = 'accessPackages' }
         )
         foreach ($Undecided in $UndecidedSection) {
             if ($Include -contains $Undecided.IncludeName) { continue }
             if ($Document.PSObject.Properties.Name -notcontains $Undecided.DocKey) { continue }
+            $UndecidedReason = "the $($Undecided.DocKey) section is not selected by -Include, so its rename is not reconciled in this run"
             foreach ($Entry in @($Document.($Undecided.DocKey))) {
-                if (-not (Test-OERDeclaredProperty -Node $Entry -Name 'previousDisplayName')) { continue }
                 if (-not (Test-OERDeclaredProperty -Node $Entry -Name 'displayName')) { continue }
                 # The validator refuses an empty name; skipped here, so no binding error can end the run.
-                if ([string]::IsNullOrEmpty([string]$Entry.displayName) -or [string]::IsNullOrEmpty([string]$Entry.previousDisplayName)) { continue }
-                $null = Resolve-OERStructureRename -Section $Undecided.DocKey -Name ([string]$Entry.displayName) `
-                    -PreviousName ([string]$Entry.previousDisplayName) -Undecided `
-                    -Reason "the $($Undecided.DocKey) section is not selected by -Include, so its rename is not reconciled in this run" -RenameMap $RenameMap
+                if ([string]::IsNullOrEmpty([string]$Entry.displayName)) { continue }
+                if ((Test-OERDeclaredProperty -Node $Entry -Name 'previousDisplayName') -and
+                    -not [string]::IsNullOrEmpty([string]$Entry.previousDisplayName)) {
+                    $null = Resolve-OERStructureRename -Section $Undecided.DocKey -Name ([string]$Entry.displayName) `
+                        -PreviousName ([string]$Entry.previousDisplayName) -Undecided -Reason $UndecidedReason -RenameMap $RenameMap
+                }
+                if ($Undecided.DocKey -ne 'accessPackages') { continue }
+                if (-not (Test-OERDeclaredProperty -Node $Entry -Name 'assignmentPolicies')) { continue }
+                foreach ($Policy in @($Entry.assignmentPolicies)) {
+                    if (-not (Test-OERDeclaredProperty -Node $Policy -Name 'previousDisplayName')) { continue }
+                    if ([string]::IsNullOrEmpty([string]$Policy.displayName) -or [string]::IsNullOrEmpty([string]$Policy.previousDisplayName)) { continue }
+                    $null = Resolve-OERStructureRename -Section 'assignmentPolicies' -AccessPackage ([string]$Entry.displayName) `
+                        -Name ([string]$Policy.displayName) -PreviousName ([string]$Policy.previousDisplayName) `
+                        -Undecided -Reason $UndecidedReason -RenameMap $RenameMap
+                }
             }
         }
 
@@ -724,10 +750,11 @@ function Invoke-OERStructure {
                 if ($Section.IncludeName -eq 'Catalogs' -or $Section.IncludeName -eq 'AccessPackages') {
                     $ExtraParams.PlannedCatalog = $PlannedCatalog
                 }
-                # BL-128 (A5): administrativeUnits and catalogs register their renames in the run's map;
-                # groups read it for the unit a group is created into, accessPackages for the catalog.
-                # accessReviews does not read it in this step (R3).
-                if ($Section.IncludeName -in @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages')) {
+                # BL-128 (A5): administrativeUnits, catalogs and accessPackages register their renames
+                # (an access package's assignment policies included) in the run's map; groups read it for
+                # the unit a group is created into, accessPackages for the catalog, and accessReviews for
+                # the access package and assignment policy a review names (part 2, D5).
+                if ($Section.IncludeName -in @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews')) {
                     $ExtraParams.RenameMap = $RenameMap
                 }
                 try {
