@@ -27,11 +27,11 @@ and access reviews, an invalid `mailNickname` and a scope with a dot segment, `%
 stray white space, and warns when a renamed group keeps its alias. `New-OERGroup` refuses an
 underivable alias. `-WhatIf` plans a package in a new catalog as created.
 
-`Invoke-OERStructure` renames administrative units, catalogs and access packages in place through
-`previousDisplayName`, as it does groups: the object found only under its previous name is renamed
-with its other changes; when both names find different objects, or neither finds one, the entry
-fails and writes nothing. A group created into a renamed unit and a package in a renamed catalog
-reach it by id.
+`Invoke-OERStructure` renames administrative units, catalogs and access packages through
+`previousDisplayName`, like groups: the object found only under its previous name is renamed with its
+other changes; when both names find different objects, or neither finds one, the entry fails and
+writes nothing. In the same run, a group created into a renamed unit and a package in a renamed
+catalog reach it by id.
 
 ## [1.2.0] - 2026-10-11
 

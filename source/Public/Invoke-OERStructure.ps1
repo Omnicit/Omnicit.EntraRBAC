@@ -35,6 +35,38 @@ function Invoke-OERStructure {
     both names find different units, or neither finds one -- a group to be created into the unit is
     not created and is reported Failed, and the administrativeUnits pass reports the refusal.
 
+    Renaming (previousDisplayName): a groups, administrativeUnits, catalogs or accessPackages entry
+    that declares previousDisplayName renames the object found under it in place, displayName being
+    the new name; an access package is matched within the catalog it declares. Both names are looked
+    up before anything is read or written for the entry. The object found only under
+    previousDisplayName is renamed in the same update as every other property that changed, and its
+    children are then reconciled as usual (when that update fails they are not). When the two names
+    find different objects the entry fails with GroupRenameConflict, AdministrativeUnitRenameConflict,
+    CatalogRenameConflict or AccessPackageRenameConflict and nothing is changed; when neither finds
+    one it fails with the matching GroupRenameNotFound, AdministrativeUnitRenameNotFound,
+    CatalogRenameNotFound or AccessPackageRenameNotFound and nothing is created, since a rename names
+    an object that exists and an object is created only by an entry WITHOUT previousDisplayName.
+    previousDisplayName also accepts the object id: a group, unit or catalog id is verified with one
+    read, an id that no longer names an object counts as not matching, and a package id is matched
+    only against the packages of the declared catalog. Microsoft Graph's name lookup can follow a
+    rename with a delay, so keep previousDisplayName in the document until the new name resolves (a
+    run after that reports the object Unchanged; a run inside the window in which neither name
+    resolves yet fails with the RenameNotFound id and creates nothing), then remove it. Within one
+    run, a group created into a unit the document renames and an access package declared in a
+    catalog the document renames reach the renamed object by its object id, through the run's rename
+    map; name the unit or catalog by its new name in those references. When that rename is refused
+    the group or package is reported Failed, under -WhatIf too, with nothing created, read or written
+    for it, and the unit's or catalog's own row carries the error. The map is filled only by the
+    sections -Include selects -- the pre-pass needs both Groups and AdministrativeUnits, and a
+    catalog's rename is registered only when Catalogs is included -- so with those sections left out
+    a reference to the new name is resolved by name, as before. An access review's accessPackage is
+    not translated through the map yet: named by the package's new name, it can fail with
+    AccessPackageNotFound in the run (and the -WhatIf plan) that renames the package, until Graph's
+    lookup finds the new name. A displayName changed WITHOUT previousDisplayName still creates a new
+    object beside the old one, which -Prune never deletes. Test-OERStructure warns on a reference
+    that still names a renamed object by its previous name, and refuses previousDisplayName on an
+    assignmentPolicies or accessReviews entry.
+
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
     item. A single bad item never aborts the run.

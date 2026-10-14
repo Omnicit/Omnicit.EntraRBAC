@@ -828,11 +828,12 @@ matching `GroupRenameNotFound`, `AdministrativeUnitRenameNotFound`, `CatalogRena
 children (members, scoped roles, resources, resource roles, assignment policies) are not
 reconciled, and under `-WhatIf` the plan says `would rename` and plans them against the object
 found under its previous name. Microsoft Graph's name lookup can follow a rename with a delay: keep
-`previousDisplayName` in the document until the new name resolves. In the same document, a group
-created into a renamed unit and an access package declared in a renamed catalog reach it by its
-object id, so name the unit or the catalog by its new name; an access review's `accessPackage` does
-not follow a package's rename yet, and can fail with `AccessPackageNotFound` in the run that renames
-the package. `Test-OERStructure` reports `previousDisplayName` in `assignmentPolicies` and
+`previousDisplayName` in the document until the new name resolves. In the same run, a group created
+into a renamed unit and an access package declared in a renamed catalog reach it by its object id, so
+name the unit or the catalog by its new name; that holds for the sections `-Include` selects (a unit
+needs `Groups` and `AdministrativeUnits`, a catalog needs `Catalogs`), and with them left out the new
+name is resolved by name, as before. An access review's `accessPackage` does not follow a package's
+rename yet, and can fail with `AccessPackageNotFound` in the run that renames the package. `Test-OERStructure` reports `previousDisplayName` in `assignmentPolicies` and
 `accessReviews` as an `Error`: renaming is not supported there yet, and `Invoke-OERStructure` would
 create a new object beside the old one. It warns on a reference that still names a renamed object by
 its previous name. A group's mail alias does not follow a rename: declare `mailNickname` for the new

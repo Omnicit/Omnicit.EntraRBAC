@@ -359,13 +359,16 @@ reports it `Unchanged`, and a run inside the window in which neither name resolv
 entry with the `RenameNotFound` id and creates nothing. Once the new name resolves, remove
 `previousDisplayName`: an object created later under the old name would make the entry fail.
 
-**References in the same document.** Name a renamed unit or catalog by its NEW name. When the same
-document renames it, `Invoke-OERStructure` reaches it by its object id, so a group created into the
-renamed unit (`administrativeUnit`) and an access package declared in the renamed catalog (`catalog`)
-neither fail while the new name does not resolve yet nor create anything beside it, also in a
-`-WhatIf` plan. When the rename of the unit or the catalog was refused (a conflict, or neither name
-found), the group or the package is `Failed` and nothing is created, read or written for it; the
-unit's or the catalog's own row carries the error id. An access review's `accessPackage` does not
+**References in the same run.** Name a renamed unit or catalog by its NEW name. When the same
+document renames it, `Invoke-OERStructure` reaches it by its object id: a group created into the
+renamed unit (`administrativeUnit`) is created into it, and an access package declared in the
+renamed catalog (`catalog`) is read and created in it, also in a `-WhatIf` plan, where the rename is
+not sent: Microsoft Graph's lookup cannot find the new name yet. That holds for the sections
+`-Include` selects: a unit needs `Groups` and `AdministrativeUnits` both, a catalog needs `Catalogs`,
+and with them left out the new name is resolved by name, as before. When the rename of the unit or the
+catalog was refused (a conflict, or neither name found), the group or the package is `Failed`, under
+`-WhatIf` too, and nothing is created, read or written for it; the unit's or the catalog's own row
+carries the error id. An access review's `accessPackage` does not
 follow a package's rename yet: named by the new name, it can fail with `AccessPackageNotFound` in the
 plan and in the run that renames the package, and works on a later run once the new name resolves.
 

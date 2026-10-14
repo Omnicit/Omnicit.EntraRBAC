@@ -245,11 +245,14 @@ RENAMES, MAIL ALIASES AND SCOPE SPELLING
 
     Microsoft Graph's name lookup can follow a rename with a delay: keep
     previousDisplayName in the document until the new name resolves. In the
-    same document, a group created into a renamed unit and an access package
+    same run, a group created into a renamed unit and an access package
     declared in a renamed catalog reach it by its object id, so name the unit
-    or the catalog by its new name; an access review's accessPackage does not
-    follow a package's rename yet, and can fail with AccessPackageNotFound in
-    the run that renames the package.
+    or the catalog by its new name; that holds for the sections -Include
+    selects (a unit needs Groups and AdministrativeUnits, a catalog needs
+    Catalogs), and with them left out the new name is resolved by name, as
+    before. An access review's accessPackage does not follow a package's
+    rename yet, and can fail with AccessPackageNotFound in the run that
+    renames the package.
 
     Test-OERStructure reports previousDisplayName in assignmentPolicies and
     accessReviews as an Error: renaming is not supported there yet, and

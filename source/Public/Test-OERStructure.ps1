@@ -46,8 +46,8 @@ function Test-OERStructure {
     the object. Once the rename is applied no object carries the previous name, so the Warning says to
     name the object by its new name. A previousDisplayName that is an object id raises none, since a
     reference by id stays valid after a rename. When the same document renames the unit or catalog,
-    Invoke-OERStructure reaches it by its object id for a group created into the unit and for a
-    package declared in the catalog; an access review's accessPackage is not translated that way, so
+    Invoke-OERStructure reaches it by its object id in the same run for a group created into the
+    unit and for a package declared in the catalog; an access review's accessPackage is not translated that way, so
     in the run and the -WhatIf plan that rename the package it can fail with AccessPackageNotFound
     until Microsoft Graph's name lookup finds the new name.
 

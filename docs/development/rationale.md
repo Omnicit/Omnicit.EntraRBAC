@@ -6894,7 +6894,11 @@ unit's id; a refused entry gives one Failed row before the create gate, also und
 without it a package in a catalog renamed by the same document fails in the `-WhatIf` plan, where the
 rename is not sent and the new name resolves to nothing, and in the first real run while Graph's name
 lookup lags (`CatalogNotFound`), and works in the next; a group created into a renamed unit fails the
-same way. The map is one engine variable and two reader calls. If wrong: the plan reports `Failed` rows
+same way. The map is one engine variable and two reader calls. It is filled only by the sections
+`-Include` selects: the pre-pass runs only when both `Groups` and `AdministrativeUnits` are selected and
+present, and only for a unit a declared group names, and a catalog registers only when `Catalogs` is
+selected, so with those left out a reference to the new name is resolved by name, as before. A group
+that already exists is not touched either way, since `administrativeUnit` applies only on create. If wrong: the plan reports `Failed` rows
 for references that the real run satisfies, and the real run fails them once.
 
 **An access review does not read the map (R3).** An access review's `accessPackage` is not translated
@@ -6930,10 +6934,11 @@ declared" Warning, which would say the same thing about the same path twice; a c
 name is an object id raises neither. If wrong: an operator sees the old name flagged as missing instead
 of as renamed, or sees two Warnings for one reference.
 
-**Cost, accepted.** A package renamed in a catalog renamed by the same document is found through the
+**Cost, accepted.** A package in a catalog renamed by the same document is found through the
 catalog's id, which needs the catalog entry to run before the package: the engine's section order
-already does. A reference by name from a section that does not read the map (an access review) still
-waits for Graph's lookup. And a `displayName` changed WITHOUT `previousDisplayName` still creates a new
+already does. A reference by name from a section that does not read the map (an access review), or
+from a run whose `-Include` leaves out the section that registers the rename, still waits for Graph's
+lookup. And a `displayName` changed WITHOUT `previousDisplayName` still creates a new
 object beside the old one, silently, as before.
 
 ## role-assignment-key
