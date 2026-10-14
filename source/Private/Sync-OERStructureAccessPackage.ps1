@@ -41,7 +41,7 @@ function Sync-OERStructureAccessPackage {
     that one is left in place silently.
 
     A catalog the same document renames (a catalogs[] entry with previousDisplayName) is addressed
-    through the run's rename map (-RenameMap): Microsoft Graph's name lookup cannot find the
+    through the run's rename map (-RenameMap): Microsoft Graph's name lookup may not find the
     catalog's new name yet, and under -WhatIf the rename is not even sent, so every call that names
     the catalog -- the package list, the package create, the catalog resource read and the resource
     role add -- passes the id the catalogs handler registered for it. The rows still name the
@@ -180,11 +180,11 @@ function Sync-OERStructureAccessPackage {
     A package declared in a catalog the same -WhatIf plan would create (-PlannedCatalog) is planned
     that way without any read: the catalog does not exist yet, so the catalog-scoped lookup of the
     package would fail with CatalogNotFound and report the package Failed ("the access package was NOT
-    created") while the real run creates the catalog and then the package. A catalog that is neither
-    in -PlannedCatalog nor in the tenant still fails the package, with or without -WhatIf. An entry
-    in such a catalog that declares previousDisplayName is not planned as created: nothing can be
-    renamed in a catalog that does not exist yet, so it fails with AccessPackageRenameNotFound, as
-    an entry neither of whose names matches.
+    created") while the real run creates the catalog and then the package. An entry in a catalog
+    the plan would create that declares previousDisplayName is not planned as created: nothing can
+    be renamed in a catalog that does not exist yet, so it fails with AccessPackageRenameNotFound, as
+    an entry neither of whose names matches. A catalog that is neither in -PlannedCatalog nor in the
+    tenant still fails the package, with or without -WhatIf.
 
     .PARAMETER Item
     One element from the accessPackages[] array in the structure document, as a PSCustomObject
@@ -222,8 +222,8 @@ function Sync-OERStructureAccessPackage {
 
     .PARAMETER RenameMap
     Optional run-scoped rename map Invoke-OERStructure creates once per document and the catalogs
-    handler fills (through Resolve-OERStructureRename) for every catalogs[] entry that declares
-    previousDisplayName. This handler only reads it, through Get-OERStructureRenameTarget, for the
+    handler fills (through Resolve-OERStructureRename) for every catalogs[] entry whose
+    previousDisplayName renames the catalog or is refused. This handler only reads it, through Get-OERStructureRenameTarget, for the
     entry's catalog: an entry naming the id of a catalog the run renames makes every call that names
     the catalog pass that id, and an entry naming a refused rename fails the package with nothing
     created, read or written. When the map is omitted or does not hold the catalog, the catalog is
@@ -257,7 +257,7 @@ function Sync-OERStructureAccessPackage {
         $Name = $Item.displayName
 
         # BL-128 (A5): a catalog the document renames in this run is found under its previous name, and
-        # Graph's name lookup cannot find the new name yet (under -WhatIf the rename is not even sent).
+        # Graph's name lookup may not find the new name yet (under -WhatIf the rename is not even sent).
         # The catalogs handler registered it in the run's rename map, so this package addresses the
         # catalog by that id. A catalog whose rename was refused (a conflict, or neither name found) is
         # not the catalog the document means, whatever now carries its new name: nothing is read or

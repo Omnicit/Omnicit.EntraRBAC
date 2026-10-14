@@ -5634,6 +5634,40 @@ Describe 'Sync-OERStructureAccessPackage -previousDisplayName and the rename map
             }
         }
 
+        It 'applies the entry normally, with no conflict and no rename, when a stale object id in previousDisplayName is not in the list and displayName is' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                # A deleted package, or one of another catalog: the stale id must never be resolved
+                # or probed into a second package and read as a conflict.
+                Mock Resolve-OERAccessPackageId { '11111111-1111-1111-1111-111111111111' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'ap-new'; DisplayName = 'AP-New' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-new'; DisplayName = 'AP-New'; Description = 'same'; IsHidden = $false } } -ParameterFilter { $Id -eq 'ap-new' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = '11111111-1111-1111-1111-111111111111'; catalog = 'CAT'; description = 'same' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Unchanged'
+                $r[0].Detail | Should -BeExactly 'access package properties match'
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+                Should -Invoke Resolve-OERAccessPackageId -Times 0
+                # The children are reconciled by the package found under displayName.
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-new' }
+            }
+        }
+
         It 'applies the entry normally when the object id previousDisplayName names is the package that carries displayName' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncApViaCaller {
