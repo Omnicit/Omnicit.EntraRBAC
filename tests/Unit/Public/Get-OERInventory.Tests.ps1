@@ -11,6 +11,22 @@ BeforeAll {
     Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment {
         [PSCustomObject]@{ Read = $true; Value = @(); Message = $null; Exception = $null }
     }
+    # BL-131: the groups section counts a group's name over every group in the tenant, through one
+    # paged listing (Get-OERGroupNameIndex). Answered here as an index that was read and holds no
+    # name, so every name is counted over the groups a fixture lists, exactly as before the listing
+    # existed, and no fixture's transport mock has to answer it. The Context 'shared names are counted
+    # over every group in the tenant (BL-131)' answers it with names, and drives the real helper
+    # through the transport.
+    $script:NewEmptyGroupNameIndex = {
+        $Index = [PSCustomObject]@{
+            Read      = $true
+            IdsByName = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[string]]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            Message   = $null
+        }
+        $Index.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupNameIndex')
+        $Index
+    }
+    Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewEmptyGroupNameIndex }
     # Three Split-Path hops from tests\Unit\Public: tests\Unit\Public -> tests\Unit -> tests ->
     # repo root. A two-hop version resolves to tests\ and was corrected once already on this
     # branch (Task 1) -- do not repeat that mistake.
@@ -2828,7 +2844,7 @@ Describe 'Get-OERInventory' {
             $Partial = Get-DupPartial -Record @($InvErr)
             $Partial.Count | Should -Be 1
             [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Dup'
-            $Partial[0].Exception.Message | Should -Match 'Two or more live objects share the name groups/Dup'
+            $Partial[0].Exception.Message | Should -Match '2 live objects share the name groups/Dup'
             $Partial[0].Exception.Message |
                 Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are not stated as facts in the document*'
         }
@@ -3187,7 +3203,7 @@ Describe 'Get-OERInventory' {
             $Err = $null
             $Stream = @(Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -Verbose 4>&1)
             $Said = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
-            $Cause = 'Get-OERInventory: Two or more live objects share the name groups/Dup (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.'
+            $Cause = 'Get-OERInventory: 2 live objects share the name groups/Dup (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.'
             @($Said | Where-Object { $_ -ceq $Cause }).Count | Should -Be 1 -Because 'one cause line per colliding name, never one per object'
             (Get-DupPartial -Record @($Err)).Count | Should -Be 1 -Because 'the run reached the partial the verbose line belongs to'
         }
@@ -3211,7 +3227,7 @@ Describe 'Get-OERInventory' {
             [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Dup, administrativeUnits/Team'
             $Message = $Partial[0].Exception.Message
             $Message | Should -Match 'Unread: groups/Dup, administrativeUnits/Team\. '
-            @([regex]::Matches($Message, 'Two or more live objects share the name')).Count | Should -Be 1 -Because 'the second collision has the same cause, so it is not stated again'
+            @([regex]::Matches($Message, '2 live objects share the name')).Count | Should -Be 1 -Because 'the second collision has the same cause, so it is not stated again'
         }
 
         It 'writes a role policy that was read twice once' {
@@ -3234,6 +3250,202 @@ Describe 'Get-OERInventory' {
             Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly
             @($Inv.roleManagementPolicies | ForEach-Object { $_.role }) | Should -Be @('Reader', 'Owner')
             Assert-DupDocumentValid -Inventory $Inv
+        }
+    }
+
+    Context 'shared names are counted over every group in the tenant (BL-131)' {
+        # The groups section reads the security groups only, but the apply engine refuses a name any
+        # live group answers to, so a group's name is counted over every group in the tenant too: the
+        # index Get-OERGroupNameIndex reads with one listing. It is answered here by a mock that hands
+        # back the index each case builds; the real helper is driven through the transport in the
+        # Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' below. No id
+        # is version-4 shaped.
+        BeforeAll {
+            $script:NiSec1 = 'eeee1111-0000-0000-0000-000000000001'
+            $script:NiSec2 = 'eeee1111-0000-0000-0000-000000000002'
+            $script:NiSec3 = 'eeee1111-0000-0000-0000-000000000003'
+            $script:NiM365a = 'eeee1111-0000-0000-0000-0000000000a1'
+            $script:NiM365b = 'eeee1111-0000-0000-0000-0000000000a2'
+            function script:New-NiGroup {
+                param([string]$Name, [string]$Id)
+                [PSCustomObject]@{
+                    Id = $Id; DisplayName = $Name; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Members = @(); Owners = @(); PimEligibility = @()
+                }
+            }
+            function script:New-NiAdministrativeUnit {
+                param([string]$Name, [string]$Id)
+                [PSCustomObject]@{
+                    Id = $Id; DisplayName = $Name; Description = $null; IsMemberManagementRestricted = $false
+                    MembershipType = 'Assigned'; Visibility = $null; Members = @(); ScopedRoles = @()
+                }
+            }
+            # An index the way Get-OERGroupNameIndex returns one: Read, the ids by name compared
+            # without regard to letter case, and the message.
+            function script:New-NiIndex {
+                param([hashtable]$IdsByName = @{}, [bool]$Read = $true, [string]$Message)
+                $Ids = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[string]]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                foreach ($Name in $IdsByName.Keys) {
+                    $Ids[$Name] = [System.Collections.Generic.List[string]]::new()
+                    foreach ($Id in @($IdsByName[$Name])) { $Ids[$Name].Add($Id) }
+                }
+                $Index = [PSCustomObject]@{ Read = $Read; IdsByName = $Ids; Message = $(if ($Message) { $Message } else { $null }) }
+                $Index.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupNameIndex')
+                $Index
+            }
+            # The InventoryPartial records Get-OERInventory itself published.
+            function script:Get-NiPartial {
+                param([object[]]$Record)
+                @($Record | Where-Object {
+                        $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' -and
+                        $_.FullyQualifiedErrorId -like 'InventoryPartial*'
+                    })
+            }
+            # The information records tagged Omnicit.EntraRBAC.SharedName.
+            function script:Get-NiNotice {
+                param([object[]]$Record)
+                @($Record | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' })
+            }
+        }
+
+        BeforeEach {
+            $script:NiGroups = @()
+            $script:NiAdministrativeUnits = @()
+            $script:NiIndex = New-NiIndex
+            Mock -ModuleName $script:moduleName Get-OERGroup { $script:NiGroups }
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy { $null }
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit { $script:NiAdministrativeUnits }
+            Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { $script:NiIndex }
+        }
+
+        It 'leaves out a security group whose name only a Microsoft 365 group outside the section shares, and names the count' {
+            $script:NiGroups = @(
+                New-NiGroup -Name 'Admins' -Id $script:NiSec1
+                New-NiGroup -Name 'Solo' -Id $script:NiSec2
+            )
+            # Every group in the tenant: the two security groups and a Microsoft 365 group that carries
+            # the first one's name in another letter case.
+            $script:NiIndex = New-NiIndex -IdsByName @{ 'Admins' = @($script:NiSec1, $script:NiM365a); 'Solo' = @($script:NiSec2) }
+            $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+            @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('Solo')
+            $Partial = Get-NiPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Admins'
+            $Partial[0].Exception.Message | Should -BeLike '*Causes: 2 live objects share the name groups/Admins (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.*'
+            # The index is read once, as a listing: no groups are handed to it.
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1 -ParameterFilter { -not $PSBoundParameters.ContainsKey('Group') }
+            $Notice = Get-NiNotice -Record @($Info)
+            $Notice.Count | Should -Be 1
+            @($Notice[0].MessageData.Names).Count | Should -Be 1
+            $Notice[0].MessageData.Names[0].Section | Should -BeExactly 'groups'
+            $Notice[0].MessageData.Names[0].Name | Should -BeExactly 'Admins'
+            $Notice[0].MessageData.Names[0].Count | Should -Be 2
+        }
+
+        It 'counts the larger of the listed groups and the index, so an index that lags behind the listing never lowers the count' {
+            # Two listed groups of one name, and an index read before the second was created.
+            $script:NiGroups = @(
+                New-NiGroup -Name 'Dup' -Id $script:NiSec1
+                New-NiGroup -Name 'dup' -Id $script:NiSec2
+                New-NiGroup -Name 'Solo' -Id $script:NiSec3
+            )
+            $script:NiIndex = New-NiIndex -IdsByName @{ 'Dup' = @($script:NiSec1) }
+            $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+            @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('Solo')
+            $Partial = Get-NiPartial -Record @($InvErr)
+            $Partial[0].Exception.Message | Should -BeLike '*Causes: 2 live objects share the name groups/Dup *'
+            (Get-NiNotice -Record @($Info))[0].MessageData.Names[0].Count | Should -Be 2
+        }
+
+        It 'counts the index when it holds more of a name than the listing' {
+            $script:NiGroups = @(
+                New-NiGroup -Name 'Dup' -Id $script:NiSec1
+                New-NiGroup -Name 'dup' -Id $script:NiSec2
+            )
+            $script:NiIndex = New-NiIndex -IdsByName @{ 'DUP' = @($script:NiSec1, $script:NiSec2, $script:NiM365a) }
+            $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+            @($Inv.groups).Count | Should -Be 0
+            (Get-NiPartial -Record @($InvErr))[0].Exception.Message | Should -BeLike '*Causes: 3 live objects share the name groups/Dup *'
+            (Get-NiNotice -Record @($Info))[0].MessageData.Names[0].Count | Should -Be 3
+        }
+
+        It 'writes a group of a unique name as before, reports nothing and writes no information record' {
+            # The index holds another name only, so a name it does not hold is counted over the listing.
+            $script:NiGroups = @(New-NiGroup -Name 'Solo' -Id $script:NiSec1)
+            $script:NiIndex = New-NiIndex -IdsByName @{ 'Other' = @($script:NiM365a) }
+            $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+            @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('Solo')
+            (Get-NiPartial -Record @($InvErr)).Count | Should -Be 0
+            (Get-NiNotice -Record @($Info)).Count | Should -Be 0
+            # Reach proof: the index was read for the group.
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+        }
+
+        It 'names groupNames unread with its cause when the index could not be read, and counts over the groups read' {
+            # An index that was not read is never counted, whatever it holds: these ids would make
+            # Admins shared.
+            $script:NiGroups = @(
+                New-NiGroup -Name 'Admins' -Id $script:NiSec1
+                New-NiGroup -Name 'Dup' -Id $script:NiSec2
+                New-NiGroup -Name 'dup' -Id $script:NiSec3
+            )
+            $script:NiIndex = New-NiIndex -Read $false -IdsByName @{ 'Admins' = @($script:NiSec1, $script:NiM365a) } `
+                -Message 'Could not list every group to count the names groups share: Too many requests (429)'
+            $Stream = @(Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info -Verbose 4>&1)
+            $Inv = @($Stream | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })[0]
+            $Said = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+            @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('Admins')
+            $Partial = Get-NiPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'groupNames, groups/Dup'
+            $Partial[0].Exception.Message | Should -BeLike '*Could not list every group to count the names groups share: Too many requests (429)*'
+            $Partial[0].Exception.Message | Should -BeLike '*2 live objects share the name groups/Dup *'
+            @($Said | Where-Object { $_ -ceq 'Get-OERInventory: Could not list every group to count the names groups share: Too many requests (429)' }).Count | Should -Be 1
+            (Get-NiNotice -Record @($Info))[0].MessageData.Names.Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+        }
+
+        It 'hands every name it left out over in ONE information record, a group and an administrative unit, before the inventory' {
+            $script:NiGroups = @(New-NiGroup -Name 'Admins' -Id $script:NiSec1)
+            $script:NiIndex = New-NiIndex -IdsByName @{ 'Admins' = @($script:NiSec1, $script:NiM365a, $script:NiM365b) }
+            $script:NiAdministrativeUnits = @(
+                New-NiAdministrativeUnit -Name 'Team' -Id $script:NiSec2
+                New-NiAdministrativeUnit -Name 'TEAM' -Id $script:NiSec3
+            )
+            $Stream = @(Get-OERInventory -Include Groups, AdministrativeUnits -ErrorAction SilentlyContinue -InformationAction Continue 6>&1)
+            $Records = @($Stream | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+            $Notice = Get-NiNotice -Record $Records
+            $Notice.Count | Should -Be 1
+            $Notice[0].MessageData.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.SharedNameNotice'
+            @($Notice[0].MessageData.PSObject.Properties.Name) | Should -Be @('Names')
+            $Names = @($Notice[0].MessageData.Names)
+            $Names.Count | Should -Be 2
+            ($Names | ForEach-Object { "$($_.Section)|$($_.Name)|$($_.Count)" }) -join ';' | Should -BeExactly 'groups|Admins|3;administrativeUnits|Team|2'
+            # The record precedes the inventory object it describes.
+            $InventoryAt = [array]::IndexOf($Stream, @($Stream | Where-Object { $_ -isnot [System.Management.Automation.InformationRecord] })[0])
+            [array]::IndexOf($Stream, $Notice[0]) | Should -BeLessThan $InventoryAt
+        }
+
+        It 'does not read the index when <Case>' -ForEach @(
+            @{ Case = 'the Groups section is not included'; Include = @('AdministrativeUnits'); Listed = $true }
+            @{ Case = 'the Groups section read no group'; Include = @('Groups'); Listed = $false }
+        ) {
+            if ($Listed) { $script:NiGroups = @(New-NiGroup -Name 'Admins' -Id $script:NiSec1) }
+            $script:NiAdministrativeUnits = @(New-NiAdministrativeUnit -Name 'Team' -Id $script:NiSec2)
+            $Inv = Get-OERInventory -Include $Include -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
+            (Get-NiPartial -Record @($InvErr)).Count | Should -Be 0
+            # Reach proof: the sections included were read.
+            if ($Include -contains 'Groups') { Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Exactly -Times 1 }
+            else { @($Inv.administrativeUnits).Count | Should -Be 1 }
+        }
+
+        It 'states the index listing and the information record in the help' {
+            $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
+            $Help | Should -Match ([regex]::Escape("A group's name is counted among every group in the tenant -- one extra paged listing of every group's id and display name, made once when the Groups section read at least one group -- so a security group that shares its name with a Microsoft 365 group or a distribution group, which the default filter never reads, is left out too"))
+            $Help | Should -Match ([regex]::Escape('When that listing fails, groupNames is reported unread through the InventoryPartial error, with its cause, and the names are counted among the groups read.'))
+            $Help | Should -Match ([regex]::Escape('Each name left out is also handed over in one information record tagged Omnicit.EntraRBAC.SharedName, whose Names list carries the Section, Name and Count of each; under the default $InformationPreference the record is not displayed.'))
         }
     }
 
@@ -6071,6 +6283,10 @@ Describe 'Get-OERInventory does not provoke a PimPolicyNotFound for a group that
         # These cases pin the policy-id pre-check and the read behind it, which the section reaches
         # only for a group Test-OERGroupPimInUse reports in use -- so it answers in use here.
         Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x' } }
+        # BL-131: the root default mock of the group name index is gone here -- this Describe imports
+        # the module again, and a mock lives in the module instance it was made in -- so it is made
+        # again, with the same answer: an index that was read and holds no name.
+        Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewEmptyGroupNameIndex }
     }
 
     It 'never calls Get-OERGroupPimPolicy at all when the group has no policy id' {
@@ -6885,6 +7101,12 @@ Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' {
                 @{ value = @(@{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_team'; securityEnabled = $true
                             isAssignableToRole = $false; groupTypes = @(); description = $null; mailNickname = $null }) }
             } -ParameterFilter { $Uri -eq 'v1.0/groups?$filter=securityEnabled%20eq%20true' }
+            # BL-131: the one listing of every group in the tenant the shared names are counted over,
+            # answered through the transport so the real Get-OERGroupNameIndex reads it: the tenant
+            # holds the one group, so its name is unique.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_team' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups?$select=id,displayName&$top=999' }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 @{ value = @(@{ '@odata.type' = '#microsoft.graph.group'; id = 'g-nested'; displayName = 'nested' }) }
             } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
@@ -6923,6 +7145,32 @@ Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' {
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
                 $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' -and $All
             }
+        }
+
+        It 'lists every group''s name once through the transport, and leaves out the group a Microsoft 365 group shares its name with (BL-131)' {
+            # The listing of every group in the tenant holds a second group, outside the security
+            # listing, that carries the name in another letter case.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(
+                        @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_team' }
+                        @{ id = '33333333-3333-3333-3333-333333333333'; displayName = 'ROLE_SEC_TEAM' }
+                    ) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups?$select=id,displayName&$top=999' }
+            $Err = $null
+            $Info = $null
+            $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue -InformationVariable Info
+            @($Inv.groups).Count | Should -Be 0
+            $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'groups/role_sec_team'
+            $Partial[0].Exception.Message | Should -BeLike '*Causes: 2 live objects share the name groups/role_sec_team (compared without regard to letter case)*'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -like 'v1.0/groups?$select=*' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter {
+                $Uri -ceq 'v1.0/groups?$select=id,displayName&$top=999' -and $All
+            }
+            $Notice = @($Info | Where-Object { $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' })
+            $Notice.Count | Should -Be 1
+            ($Notice[0].MessageData.Names | ForEach-Object { "$($_.Section)|$($_.Name)|$($_.Count)" }) | Should -BeExactly 'groups|role_sec_team|2'
         }
 
         Context 'a failed typed read leaves the collection unread' {

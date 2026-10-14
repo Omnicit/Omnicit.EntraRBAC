@@ -3819,6 +3819,8 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
                     return [PSCustomObject]@{ value = @(foreach ($PrincipalId in @($Body.ids)) { @{ id = $PrincipalId; userPrincipalName = 'person13@contoso.com' } }) }
                 }
                 if ($Uri.StartsWith('v1.0/groups?') -or $Uri -eq 'v1.0/groups') {
+                    # The unfiltered roster read is refused under the key 'roster'.
+                    if ($Uri -eq 'v1.0/groups') { & $RefuseIfAsked 'roster' }
                     # A group a test marks NotSecurity (a Microsoft 365 group) is left out of a listing
                     # that carries the security-enabled filter and kept by the unfiltered roster read.
                     $Listed = @($script:E2ETenant | Where-Object { -not ($Uri -like '*securityEnabled*' -and $_.NotSecurity) })
@@ -4176,9 +4178,12 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
                 }
             }
 
-            It 'does not give a Microsoft 365 group the count of a security group that shares its name' {
-                # The security-enabled listing never holds this group, so the export did not read it, and
-                # a name is no key: it must not be counted as the security group that shares its name.
+            It 'gives neither group a count when a Microsoft 365 group shares a security group''s name, since the security group is left out (BL-131)' {
+                # The security-enabled listing never holds the Microsoft 365 group, so the export did not
+                # read it, and a name is no key: it is never counted as the security group that shares its
+                # name. Since BL-131 the names are counted over the roster, so the security group shares
+                # its name too: it is left out of inventory.json, and a group left out for a shared name
+                # has no count either.
                 $script:E2ETenant = @($script:E2ETenant) + @(
                     @{ Id = $script:E2EIdM365; Name = 'G-RA'; RoleAssignable = $false; Synced = $false; Dynamic = $false; NotSecurity = $true
                         Member = 'person27@contoso.com'; Owner = 'person28@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
@@ -4189,8 +4194,121 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
                 $Roster.Count | Should -Be 7
                 $Twins = @($Roster | Where-Object { $_.displayName -eq 'G-RA' })
                 $Twins.Count | Should -Be 2
-                @($Twins | Where-Object { $null -eq $_.memberCount }).Count | Should -Be 1 -Because 'the Microsoft 365 group was not read'
-                @($Twins | Where-Object { $_.memberCount -eq 2 }).Count | Should -Be 1 -Because 'the security group keeps its own count'
+                @($Twins | Where-Object { $null -eq $_.memberCount }).Count | Should -Be 2 -Because 'neither group is written to inventory.json'
+                # Non-vacuity: the group beside them keeps its count, and the security group is named.
+                (ConvertTo-E2ECountMap -Roster $Roster)['G-EL'] | Should -Be 1
+                @((Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json).groups | ForEach-Object { $_.displayName }) |
+                    Should -Not -Contain 'G-RA'
+                @($Bundle.IncompleteReads) | Should -Be @('groups/G-RA')
+            }
+        }
+
+        Context 'names two or more objects share (BL-131)' {
+            # The names are counted over the roster, every group in the tenant, which the export reads
+            # before the group reader. Every object of a shared name is left out of inventory.json and
+            # the per-area files, the export writes ONE warning before the bundle, and README.md lists
+            # each name with its count and section.
+            BeforeAll {
+                $script:SharedHeading = '## Names two or more objects share'
+                function Get-E2ESharedBullets {
+                    param([string]$BundlePath)
+                    $Readme = Get-Content (Join-Path $BundlePath 'README.md') -Raw
+                    $Start = $Readme.IndexOf($script:SharedHeading)
+                    $Start | Should -BeGreaterOrEqual 0 -Because 'README.md carries the section'
+                    $Section = $Readme.Substring($Start, $Readme.IndexOf("`n## ", $Start) - $Start)
+                    @($Section -split '\r?\n' | Where-Object { $_ -like '- *' })
+                }
+                function Get-E2ESharedWarning {
+                    param([object[]]$Warning)
+                    @($Warning | Where-Object { "$_" -like 'Export-OERInventory: left out of inventory.json and the per-area files every object whose name*' } | ForEach-Object { "$_" })
+                }
+                function Get-E2EGroupFileName {
+                    param([string]$BundlePath, [string]$File)
+                    $Data = Get-Content (Join-Path $BundlePath $File) -Raw | ConvertFrom-Json
+                    if ($File -eq 'inventory.json') { $Data = $Data.groups }
+                    @($Data | ForEach-Object { $_.displayName })
+                }
+                $script:SharedWarningText = "Export-OERInventory: left out of inventory.json and the per-area files every object whose name another object of its kind shares, since the apply engine refuses an ambiguous name: {0} name(s), carried by {1} object(s) in all. README.md lists each name, how many objects carry it and its section under 'Names two or more objects share'."
+            }
+
+            It 'leaves out two security groups of one name, names it in README.md with its count, and warns once' {
+                $script:E2ETenant = @($script:E2ETenant) + @(
+                    @{ Id = $script:E2EIdDupRa; Name = 'G-DUP'; RoleAssignable = $true; Synced = $false; Dynamic = $false
+                        Member = 'person15@contoso.com'; Owner = 'person16@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                    @{ Id = $script:E2EIdDupPlain; Name = 'g-dup'; RoleAssignable = $true; Synced = $false; Dynamic = $false
+                        Member = 'person17@contoso.com'; Owner = 'person18@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                )
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'shared-two-security') -Include Groups `
+                    -WarningAction SilentlyContinue -WarningVariable Warn -ErrorAction SilentlyContinue
+                foreach ($File in 'inventory.json', 'groups.json') {
+                    Get-E2EGroupFileName -BundlePath $Bundle.BundlePath -File $File | Should -Be @('G-RA', 'G-EL', 'G-MOD') -Because "$File leaves both out"
+                }
+                ((Get-E2ESharedBullets -BundlePath $Bundle.BundlePath) -join "`n") | Should -BeExactly '- `G-DUP` -- 2 objects, section `groups`'
+                $Shared = @(Get-E2ESharedWarning -Warning $Warn)
+                $Shared.Count | Should -Be 1
+                $Shared[0] | Should -BeExactly ($script:SharedWarningText -f 1, 2)
+                @($Bundle.IncompleteReads) | Should -Be @('groups/G-DUP')
+            }
+
+            It 'leaves out a security group a Microsoft 365 group in the roster shares its name with, and names it with its count' {
+                $script:E2ETenant = @($script:E2ETenant) + @(
+                    @{ Id = $script:E2EIdM365; Name = 'g-ra'; RoleAssignable = $false; Synced = $false; Dynamic = $false; NotSecurity = $true
+                        Member = 'person27@contoso.com'; Owner = 'person28@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                )
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'shared-m365') -Include Groups `
+                    -WarningAction SilentlyContinue -WarningVariable Warn -ErrorAction SilentlyContinue -ErrorVariable ExErr
+                foreach ($File in 'inventory.json', 'groups.json') {
+                    Get-E2EGroupFileName -BundlePath $Bundle.BundlePath -File $File | Should -Be @('G-EL', 'G-MOD') -Because "$File leaves G-RA out"
+                }
+                ((Get-E2ESharedBullets -BundlePath $Bundle.BundlePath) -join "`n") | Should -BeExactly '- `G-RA` -- 2 objects, section `groups`'
+                $Shared = @(Get-E2ESharedWarning -Warning $Warn)
+                $Shared.Count | Should -Be 1
+                $Shared[0] | Should -BeExactly ($script:SharedWarningText -f 1, 2)
+                @($Bundle.IncompleteReads) | Should -Be @('groups/G-RA')
+                $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+                $Partial.Count | Should -Be 1
+                $Partial[0].Exception.Message | Should -BeLike '*2 live objects share the name groups/G-RA (compared without regard to letter case)*'
+                # Reach proof: the Microsoft 365 group is in the roster, and was never read itself.
+                @(Read-E2ERoster -BundlePath $Bundle.BundlePath | Where-Object { $_.id -eq $script:E2EIdM365 }).Count | Should -Be 1
+                @($script:E2EGraphCalls | Where-Object { $_ -like "*$($script:E2EIdM365)*" }).Count | Should -Be 0
+            }
+
+            It 'writes every group of a unique name as before, says so in README.md, and writes no such warning' {
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'shared-none') -Include Groups `
+                    -WarningAction SilentlyContinue -WarningVariable Warn -ErrorAction SilentlyContinue
+                Get-E2EGroupFileName -BundlePath $Bundle.BundlePath -File 'inventory.json' | Should -Be @('G-RA', 'G-EL', 'G-MOD')
+                @(Get-E2ESharedBullets -BundlePath $Bundle.BundlePath).Count | Should -Be 0
+                (Get-Content (Join-Path $Bundle.BundlePath 'README.md') -Raw) | Should -Match ([regex]::Escape('None. No two objects this export read share a name.'))
+                (Get-E2ESharedWarning -Warning $Warn).Count | Should -Be 0
+                @($Bundle.IncompleteReads).Count | Should -Be 0
+            }
+
+            It 'writes the warning under -WhatIf too, and writes nothing to disk' {
+                $script:E2ETenant = @($script:E2ETenant) + @(
+                    @{ Id = $script:E2EIdM365; Name = 'G-RA'; RoleAssignable = $false; Synced = $false; Dynamic = $false; NotSecurity = $true
+                        Member = 'person27@contoso.com'; Owner = 'person28@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                )
+                $Root = Join-Path $TestDrive 'shared-whatif'
+                $Bundle = Export-OERInventory -OutputPath $Root -Include Groups -WhatIf `
+                    -WarningAction SilentlyContinue -WarningVariable Warn -ErrorAction SilentlyContinue
+                $Shared = @(Get-E2ESharedWarning -Warning $Warn)
+                $Shared.Count | Should -Be 1
+                $Shared[0] | Should -BeExactly ($script:SharedWarningText -f 1, 2)
+                Test-Path $Root | Should -BeFalse
+                @($Bundle.Files) | Should -Contain 'README.md'
+            }
+
+            It 'reads the roster before the group listing' {
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'shared-order') -Include Groups `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+                $Calls = @($script:E2EGraphCalls)
+                $Roster = [array]::IndexOf($Calls, 'GET v1.0/groups')
+                $Listing = [array]::IndexOf($Calls, 'GET v1.0/groups?$filter=securityEnabled%20eq%20true')
+                $Roster | Should -BeGreaterOrEqual 0
+                $Listing | Should -BeGreaterThan $Roster
+                # The index is built from the roster: no listing of every group's name is sent.
+                @($Calls | Where-Object { $_ -like 'GET v1.0/groups?$select=*' }).Count | Should -Be 0
+                $Bundle.RosterCount | Should -Be 6
             }
         }
 
@@ -4309,7 +4427,11 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
                 }
             }
 
-            It 'keeps the security group of a shared name when its namesake is one the filter widened to (ruling 1)' {
+            It 'leaves out the security group of a shared name when its namesake is one the filter widened to, since the roster counts it (BL-131)' {
+                # Ruling 1 counted the names over the security-enabled listing alone, so a namesake the
+                # filter widened to (and the reader dropped) did not make the name shared. BL-131 counts
+                # them over every group in the tenant, the roster, where the namesake is listed: the
+                # apply engine refuses the name either way.
                 $Fixture = @{}
                 foreach ($Group in $script:E2ETenant) { $Fixture[$Group.Name] = $Group }
                 $Fixture['G-RA'].Name = 'Admins'
@@ -4321,10 +4443,32 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
                 $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'gf-shared') -Include Groups -GroupFilter $script:WidenedFilter `
                     -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr -WarningVariable Warn
                 Get-E2EListingCall -Exactly $script:WidenedFilterListing | Should -Be 1
-                Get-E2EWrittenGroupName -BundlePath $Bundle.BundlePath | Should -Be @('Admins')
-                @($Bundle.IncompleteReads).Count | Should -Be 0 -Because 'the namesake is out of scope, so the name is not shared'
-                @($ExErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+                @(Get-E2EWrittenGroupName -BundlePath $Bundle.BundlePath).Count | Should -Be 0
+                @($Bundle.IncompleteReads) | Should -Be @('groups/Admins')
+                @($ExErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 1
                 @($Warn | Where-Object { "$_" -like '-GroupFilter returned*' }).Count | Should -Be 1
+                @($Warn | Where-Object { "$_" -like '*1 name(s), carried by 2 object(s) in all*' }).Count | Should -Be 1
+            }
+
+            It 'keeps the security group of a shared name when the roster could not be read, counting over the security-enabled listing (ruling 1)' {
+                # Without the roster the reader gets no index and counts over its own listing, where the
+                # namesake the filter widened to is out of scope, so the name is not shared.
+                $Fixture = @{}
+                foreach ($Group in $script:E2ETenant) { $Fixture[$Group.Name] = $Group }
+                $Fixture['G-RA'].Name = 'Admins'
+                $script:E2ETenant = @($script:E2ETenant) + @(
+                    @{ Id = $script:E2EIdM365; Name = 'admins'; RoleAssignable = $false; Synced = $false; Dynamic = $false; NotSecurity = $true
+                        Member = 'person27@contoso.com'; Owner = 'person28@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                )
+                $script:E2EFilterAnswer = @($script:E2EIdRa, $script:E2EIdM365)
+                $script:E2ERefuse['roster'] = 'Insufficient privileges to complete the operation.'
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'gf-shared-noroster') -Include Groups -GroupFilter $script:WidenedFilter `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr -WarningVariable Warn
+                Get-E2EListingCall -Exactly 'GET v1.0/groups' | Should -Be 1
+                Get-E2EWrittenGroupName -BundlePath $Bundle.BundlePath | Should -Be @('Admins')
+                @($Bundle.IncompleteReads) | Should -Be @('groupsRoster') -Because 'the namesake is out of scope of the listing, so the name is not shared'
+                @($Warn | Where-Object { "$_" -like '*Could not read the group roster*' }).Count | Should -Be 1
+                @($Warn | Where-Object { "$_" -like '*carried by*object(s) in all*' }).Count | Should -Be 0
             }
 
         }
@@ -4388,7 +4532,9 @@ Export-OERInventory -OutputPath '#OUTPUT#' -Include Groups -GroupFilter 'x eq 1)
         @($script:GateRun.Errors) | Should -BeNullOrEmpty
         foreach ($Prefix in 'WHATIF-CALLS:', 'CONFIRM-CALLS:') {
             $Line = [string](@($script:GateRun.Output | Where-Object { [string]$_ -like "$Prefix*" })[0])
-            $Line | Should -BeExactly ($Prefix + 'GET v1.0/groups?$filter=securityEnabled%20eq%20true%20and%20%28x%20eq%201%29%20or%20%28securityEnabled%20eq%20false%29;GET v1.0/groups')
+            # BL-131: the roster (every group in the tenant) is read first, since the group reader
+            # counts the names groups share over it; the filtered listing follows.
+            $Line | Should -BeExactly ($Prefix + 'GET v1.0/groups;GET v1.0/groups?$filter=securityEnabled%20eq%20true%20and%20%28x%20eq%201%29%20or%20%28securityEnabled%20eq%20false%29')
         }
     }
 
@@ -4407,5 +4553,188 @@ Export-OERInventory -OutputPath '#OUTPUT#' -Include Groups -GroupFilter 'x eq 1)
         @($Events | Where-Object { $_ -ceq $script:GateWarning }).Count | Should -Be 1
         [array]::IndexOf([string[]]$Events, $script:GateWarning) | Should -BeLessThan $Prompt
         Test-Path $script:GateOutput | Should -BeFalse
+    }
+}
+
+Describe 'Export-OERInventory (names two or more objects share, BL-131)' {
+    # BL-131 (R-2, R-3). The export reads its roster (every group in the tenant) before the group
+    # reader and hands the reader the index of every group's name built from it, so a security group
+    # that shares its name with a Microsoft 365 or distribution group is left out like two security
+    # groups that share it. The names the reader left out, followed by the ones Get-OERInventory hands
+    # over in its information records tagged Omnicit.EntraRBAC.SharedName, go into ONE warning before
+    # the bundle and into README.md. The reader and Get-OERInventory are mocked here; the real reader
+    # is driven through the transport in the Context 'names two or more objects share (BL-131)' above.
+    # No id below is version-4 shaped.
+    BeforeAll {
+        # Writes an information record the way the real Get-OERInventory does, from inside the module,
+        # so the preferences of the call it stands in for govern it exactly as they govern the real one.
+        function script:Write-AsGetOERInventoryRecord {
+            param([object]$Notice, [string]$Tag)
+            & (Get-Module $script:moduleName) {
+                param($Notice, $Tag)
+                Microsoft.PowerShell.Utility\Write-Information -MessageData $Notice -Tags $Tag
+            } $Notice $Tag
+        }
+        function script:New-SnNotice {
+            param([object[]]$Names)
+            $Notice = [PSCustomObject]@{ Names = @($Names) }
+            $Notice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.SharedNameNotice')
+            $Notice
+        }
+        function script:New-SnName {
+            param([string]$Section, [string]$Name, [int]$Count)
+            [PSCustomObject]@{ Section = $Section; Name = $Name; Count = $Count }
+        }
+        $script:SnHeading = '## Names two or more objects share'
+        function script:Get-SnBullets {
+            param([string]$BundlePath)
+            $Readme = Get-Content (Join-Path $BundlePath 'README.md') -Raw
+            $Start = $Readme.IndexOf($script:SnHeading)
+            $Section = $Readme.Substring($Start, $Readme.IndexOf("`n## ", $Start) - $Start)
+            @($Section -split '\r?\n' | Where-Object { $_ -like '- *' })
+        }
+        $script:SnWarningText = "Export-OERInventory: left out of inventory.json and the per-area files every object whose name another object of its kind shares, since the apply engine refuses an ambiguous name: {0} name(s), carried by {1} object(s) in all. README.md lists each name, how many objects carry it and its section under 'Names two or more objects share'."
+        $script:SnSec1 = 'ffff1111-0000-0000-0000-000000000001'
+        $script:SnM365 = 'ffff1111-0000-0000-0000-0000000000a1'
+        $script:FailRosterReadSn = {
+            [CmdletBinding()] param([switch]$All)
+            $script:SnOrder.Add('roster')
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        $script:SnOrder = [System.Collections.Generic.List[string]]::new()
+        # The roster: a security group and a Microsoft 365 group that carries its name.
+        $script:SnRoster = @(
+            [PSCustomObject]@{ Id = $script:SnSec1; DisplayName = 'Admins'; SecurityEnabled = $true; MailEnabled = $false; GroupTypes = @(); GroupType = 'Assigned'; IsAssignableToRole = $true }
+            [PSCustomObject]@{ Id = $script:SnM365; DisplayName = 'ADMINS'; SecurityEnabled = $false; MailEnabled = $true; GroupTypes = @('Unified'); GroupType = 'Assigned'; IsAssignableToRole = $false }
+        )
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            $script:SnOrder.Add('roster')
+            $script:SnRoster
+        }
+        $script:SnReaderShared = @()
+        $script:SnReaderUnread = @()
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            $script:SnOrder.Add('reader')
+            [PSCustomObject]@{ Groups = @(); Unread = @($script:SnReaderUnread); Causes = @(); PimLeftOut = @(); SharedNames = @($script:SnReaderShared) }
+        }
+        # The records the Entra ID Get-OERInventory call writes: a list of @{ Notice; Tag }.
+        $script:SnInventoryRecords = @()
+        $script:SnInventoryPartial = $null
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            [CmdletBinding()] param($Include)
+            foreach ($Record in @($script:SnInventoryRecords)) { Write-AsGetOERInventoryRecord -Notice $Record.Notice -Tag $Record.Tag }
+            if ($script:SnInventoryPartial) {
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('This inventory is PARTIAL'), 'InventoryPartial',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, $script:SnInventoryPartial))
+            }
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+    }
+
+    It 'reads the roster before the group reader, and hands the reader the index built from it' {
+        $null = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sn-order') -Include Groups -WarningAction SilentlyContinue
+        @($script:SnOrder) | Should -Be @('roster', 'reader')
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Exactly -Times 1 -ParameterFilter { $All }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter {
+            $null -ne $GroupNameIndex -and $GroupNameIndex.Read -eq $true -and
+            $GroupNameIndex.IdsByName['admins'].Count -eq 2 -and @($GroupNameIndex.IdsByName.Keys).Count -eq 1
+        }
+    }
+
+    It 'hands the reader no index when the roster could not be read, and still names groupsRoster after every Get-OERInventory entry' {
+        Mock -ModuleName $script:moduleName Get-OERGroup -MockWith $script:FailRosterReadSn
+        $script:SnReaderUnread = @('groups/Admins/members')
+        $script:SnInventoryPartial = 'administrativeUnits'
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sn-noroster') -Include Groups, AdministrativeUnits `
+            -WarningAction SilentlyContinue -WarningVariable Warn -ErrorAction SilentlyContinue
+        @($script:SnOrder) | Should -Be @('roster', 'reader')
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1 -ParameterFilter { $null -eq $GroupNameIndex }
+        # The entry keeps its place: the group reader's, then Get-OERInventory's, then the roster's.
+        @($Bundle.IncompleteReads) | Should -Be @('groups/Admins/members', 'administrativeUnits', 'groupsRoster')
+        # The roster warning is written before the reader runs, so it stands before the bundle's gate.
+        @($Warn | Where-Object { "$_" -like 'Could not read the group roster*' }).Count | Should -Be 1
+    }
+
+    It 'joins the reader''s names and the ones Get-OERInventory handed over, in that order, in one warning and in README.md' {
+        $script:SnReaderShared = @(New-SnName -Section 'groups' -Name 'Admins' -Count 2)
+        $script:SnInventoryRecords = @(
+            @{ Tag = 'Omnicit.EntraRBAC.SharedName'; Notice = (New-SnNotice -Names @(
+                        (New-SnName -Section 'administrativeUnits' -Name 'Team' -Count 2)
+                        (New-SnName -Section 'accessPackages' -Name 'Catalog One/Package' -Count 3)
+                    )) }
+        )
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sn-join') -Include Groups, AdministrativeUnits, AccessPackages `
+            -WarningAction SilentlyContinue -WarningVariable Warn -ErrorAction SilentlyContinue
+        $Shared = @($Warn | Where-Object { "$_" -like 'Export-OERInventory: left out of inventory.json and the per-area files*' } | ForEach-Object { "$_" })
+        $Shared.Count | Should -Be 1
+        $Shared[0] | Should -BeExactly ($script:SnWarningText -f 3, 7)
+        ((Get-SnBullets -BundlePath $Bundle.BundlePath) -join "`n") | Should -BeExactly (@(
+                '- `Admins` -- 2 objects, section `groups`'
+                '- `Team` -- 2 objects, section `administrativeUnits`'
+                '- `Catalog One/Package` -- 3 objects, section `accessPackages`'
+            ) -join "`n")
+        # The Entra ID call captures its records rather than showing them.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Exactly -Times 1 -ParameterFilter {
+            $InformationAction -eq 'SilentlyContinue' -and $InformationVariable -eq 'InventoryInformation'
+        }
+    }
+
+    It 'reads only the records tagged Omnicit.EntraRBAC.SharedName' {
+        $script:SnInventoryRecords = @(
+            @{ Tag = 'Omnicit.EntraRBAC.Other'; Notice = (New-SnNotice -Names @(New-SnName -Section 'catalogs' -Name 'Elsewhere' -Count 2)) }
+            @{ Tag = 'Omnicit.EntraRBAC.SharedName'; Notice = (New-SnNotice -Names @(New-SnName -Section 'catalogs' -Name 'Shared' -Count 2)) }
+        )
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sn-tag') -Include Catalogs -WarningAction SilentlyContinue -WarningVariable Warn
+        ((Get-SnBullets -BundlePath $Bundle.BundlePath) -join "`n") | Should -BeExactly '- `Shared` -- 2 objects, section `catalogs`'
+        @($Warn | Where-Object { "$_" -ceq ($script:SnWarningText -f 1, 2) }).Count | Should -Be 1
+    }
+
+    It 'writes no such warning, and README.md says no two objects share a name, when nothing is shared' {
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sn-none') -Include Groups, AdministrativeUnits `
+            -WarningAction SilentlyContinue -WarningVariable Warn
+        @($Warn | Where-Object { "$_" -like '*carried by*object(s) in all*' }).Count | Should -Be 0
+        @(Get-SnBullets -BundlePath $Bundle.BundlePath).Count | Should -Be 0
+        (Get-Content (Join-Path $Bundle.BundlePath 'README.md') -Raw) | Should -Match ([regex]::Escape('None. No two objects this export read share a name.'))
+        # Reach proof: both reads ran.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Exactly -Times 1
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Exactly -Times 1
+    }
+
+    It 'stops at the warning under a Stop warning preference, before it writes the bundle' {
+        $script:SnReaderShared = @(New-SnName -Section 'groups' -Name 'Admins' -Count 2)
+        $Root = Join-Path $TestDrive 'sn-stop'
+        $Caught = $null
+        try {
+            Export-OERInventory -OutputPath $Root -Include Groups -WarningAction Stop | Out-Null
+        } catch {
+            $Caught = $PSItem
+        }
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeLike '*1 name(s), carried by 2 object(s) in all*'
+        Test-Path $Root | Should -BeFalse
+    }
+
+    It 'states the rule in the help' {
+        $Help = (Get-Help Export-OERInventory -Full | Out-String) -replace '\s+', ' '
+        $Help | Should -Match ([regex]::Escape('NAMES THAT TWO OR MORE OBJECTS SHARE.'))
+        $Help | Should -Match ([regex]::Escape('Groups are counted over every group in the tenant, the roster''s unfiltered listing, so a security group that shares its name with a Microsoft 365 group or a distribution group is left out too; when the roster could not be read, they are counted among the security-enabled groups the export reads.'))
+        $Help | Should -Match ([regex]::Escape('The export writes ONE warning that gives how many names were left out and how many objects carry them in all.'))
+        $Help | Should -Match ([regex]::Escape('in a section "Names two or more objects share", directly after "Role assignments at the root scope (elevated access)"'))
     }
 }

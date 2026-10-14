@@ -164,6 +164,22 @@ function Export-OERInventory {
     warning twice -- while the display shows each other per-scope warning once, and the root-scope
     assignments only in the export's one warning.
 
+    NAMES THAT TWO OR MORE OBJECTS SHARE. Microsoft Entra ID does not keep display names unique, and
+    the apply engine refuses a name that more than one live object answers to, so inventory.json and
+    the per-area files leave out every object whose name another object of its kind shares, compared
+    without regard to letter case -- all of them (the Get-OERInventory help describes the rule).
+    Groups are counted over every group in the tenant, the roster's unfiltered listing, so a security
+    group that shares its name with a Microsoft 365 group or a distribution group is left out too;
+    when the roster could not be read, they are counted among the security-enabled groups the export
+    reads. The export writes ONE warning that gives how many names were left out and how many objects
+    carry them in all. It writes it before the bundle is written, so -WhatIf shows it too, and under a
+    Stop warning preference (-WarningAction Stop, or $WarningPreference set to 'Stop') the export
+    stops at that warning, before it writes the bundle. The generated README.md lists each name, with
+    how many objects carry it and its section, in a section "Names two or more objects share",
+    directly after "Role assignments at the root scope (elevated access)", or says that no two objects
+    share a name. The names stay in IncompleteReads as well. Leaving them out changes nothing in the
+    tenant.
+
     Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
     Groups read when it left anything unread, then one entry per partial report from
     Get-OERInventory, which reads the other Entra ID sections. Each entry names the affected
@@ -418,7 +434,39 @@ function Export-OERInventory {
         # lists every group the second operand matches). The guard is -SecurityEnabledOnly, which
         # keeps only the groups the read itself shows as securityEnabled, whatever the filter listed.
         $GroupRead = $null
+        # The group roster is read FIRST (BL-131), before the group reader, since it is the one list of
+        # every group in the tenant, of every type, and the reader counts the names groups share over
+        # it: Get-OERGroupNameIndex builds the index from it with no request of its own, so a security
+        # group that shares its name with a Microsoft 365 group or a distribution group is left out of
+        # inventory.json and reported exactly like two security groups that share it. Its rows are still
+        # built further down, where the member counts are known, and a failed read is still named
+        # groupsRoster in IncompleteReads at the place it always was ($RosterUnread carries it there);
+        # the warning is written here, before the reader, and so still before the bundle's
+        # ShouldProcess. When the roster could not be read the reader gets no index and counts the names
+        # over its own listing, as before.
+        $RosterGroups = @()
+        $RosterUnread = $false
+        $GroupNameIndex = $null
         if ($Include -contains 'Groups') {
+            try {
+                # -All, NOT -Filter 'securityEnabled eq true'. The roster is the one file in the
+                # bundle that claims to be complete, and that filter made the claim false without
+                # saying so: measured against a real tenant, 106 groups read back as 100 -- the 6
+                # missing were 5 Microsoft 365 groups with securityEnabled false and 1 distribution
+                # group. An operator comparing the roster against the portal found groups simply
+                # absent, with nothing in the bundle to explain it. inventory.json keeps the
+                # security-enabled scope on purpose (it is the apply document, and widening it
+                # widens what -Prune deletes); the roster is read-only context and does not.
+                $RosterGroups = @(Get-OERGroup -All -ErrorAction Stop)
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                if ($PSItem.FullyQualifiedErrorId -notlike 'GroupNotFound*') {
+                    Write-Warning "Could not read the group roster: $($PSItem.Exception.Message)"
+                    $RosterUnread = $true
+                }
+            }
+            if (-not $RosterUnread) { $GroupNameIndex = Get-OERGroupNameIndex -Group $RosterGroups }
+
             $GroupReadParams = @{
                 Filter              = if ($GroupFilter) { "securityEnabled eq true and ($GroupFilter)" } else { 'securityEnabled eq true' }
                 IncludeId           = $true
@@ -430,6 +478,7 @@ function Export-OERInventory {
                 $GroupReadParams.RelevantOnly = $true
                 if ($IncludeSyncedGroups) { $GroupReadParams.IncludeSyncedGroups = $true }
             }
+            if ($null -ne $GroupNameIndex) { $GroupReadParams.GroupNameIndex = $GroupNameIndex }
             # The reader catches what it expects (a failed list read, a failed collection read) and
             # names it in Unread and Causes. This catch is for the rest: an error nothing in the
             # reader catches ends the read, and the reader's progress try/finally unwinds it -- a
@@ -446,10 +495,11 @@ function Export-OERInventory {
                 $GroupReadCause = "Could not read groups: $($PSItem.Exception.Message)"
                 Write-Warning $GroupReadCause
                 $GroupRead = [PSCustomObject]@{
-                    Groups     = @()
-                    Unread     = @('groups')
-                    Causes     = @([PSCustomObject]@{ Cause = $GroupReadCause; Target = '' })
-                    PimLeftOut = @()
+                    Groups      = @()
+                    Unread      = @('groups')
+                    Causes      = @([PSCustomObject]@{ Cause = $GroupReadCause; Target = '' })
+                    PimLeftOut  = @()
+                    SharedNames = @()
                 }
             }
         }
@@ -468,6 +518,7 @@ function Export-OERInventory {
         # are assembled and written; the same strip also covers any other section that arrives with
         # an id.
         $InventoryReadErrors = $null
+        $InventoryInformation = $null
         $Inv = if ($EntraSections.Count -gt 0) {
             # -ErrorAction Continue is PINNED here, not inherited, and deliberately not Stop.
             # Get-OERInventory now reports a collection it could not read as a non-terminating
@@ -488,10 +539,17 @@ function Export-OERInventory {
             # what every OTHER -Include combination in this file's test suite already relies on, and
             # binding the parameter at all -- even to $false -- is observable to a caller's
             # -ParameterFilter, so adding it only when true keeps every existing call site untouched.
+            #
+            # BL-131: the names Get-OERInventory leaves out because two or more objects share them
+            # arrive in its information record tagged Omnicit.EntraRBAC.SharedName, captured here and
+            # not shown: -InformationAction SilentlyContinue keeps a caller's own information preference
+            # off the call, and -InformationVariable still collects the record.
             $InvParams = @{
-                Include       = $EntraSections
-                ErrorAction   = 'Continue'
-                ErrorVariable = 'InventoryReadErrors'
+                Include             = $EntraSections
+                ErrorAction         = 'Continue'
+                ErrorVariable       = 'InventoryReadErrors'
+                InformationAction   = 'SilentlyContinue'
+                InformationVariable = 'InventoryInformation'
             }
             if ($AllDirectoryRolePolicies) { $InvParams.AllDirectoryRolePolicies = $true }
             Get-OERInventory @InvParams
@@ -517,6 +575,23 @@ function Export-OERInventory {
                 if (-not $ReadDetail) { $ReadDetail = [string]$IErr.Exception.Message }
                 $IncompleteReads.Add($ReadDetail)
             }
+        }
+
+        # BL-131 (R-3): every name left out of inventory.json because two or more objects share it,
+        # with its count and section: the group reader's own first, then the ones Get-OERInventory
+        # handed over in its information record. They stay named in IncompleteReads as before; this
+        # list adds the counts, for ONE warning here -- after both reads and before the Azure walk, so
+        # before the bundle's ShouldProcess: -WhatIf shows it, and a Stop warning preference stops the
+        # export here, before anything is written -- and for the README, which lists each name.
+        $InventorySharedNames = @($InventoryInformation |
+                Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' } |
+                ForEach-Object { @($_.MessageData.Names) })
+        $SharedNames = @(@(if ($GroupRead) { @($GroupRead.SharedNames) }) + $InventorySharedNames | Where-Object { $null -ne $_ })
+        if ($SharedNames.Count -gt 0) {
+            $NameCount = $SharedNames.Count
+            $ObjectCount = 0
+            foreach ($SharedName in $SharedNames) { $ObjectCount += [int]$SharedName.Count }
+            Write-Warning "Export-OERInventory: left out of inventory.json and the per-area files every object whose name another object of its kind shares, since the apply engine refuses an ambiguous name: $NameCount name(s), carried by $ObjectCount object(s) in all. README.md lists each name, how many objects carry it and its section under 'Names two or more objects share'."
         }
 
         # --- Naming auto-seed: the profile whose TenantId matches the connected tenant ---
@@ -868,26 +943,11 @@ function Export-OERInventory {
 
         $Roster = @()
         if ($Include -contains 'Groups') {
-            $RosterGroups = @()
-            try {
-                # -All, NOT -Filter 'securityEnabled eq true'. The roster is the one file in the
-                # bundle that claims to be complete, and that filter made the claim false without
-                # saying so: measured against a real tenant, 106 groups read back as 100 -- the 6
-                # missing were 5 Microsoft 365 groups with securityEnabled false and 1 distribution
-                # group. An operator comparing the roster against the portal found groups simply
-                # absent, with nothing in the bundle to explain it. inventory.json keeps the
-                # security-enabled scope on purpose (it is the apply document, and widening it
-                # widens what -Prune deletes); the roster is read-only context and does not.
-                $RosterGroups = @(Get-OERGroup -All -ErrorAction Stop)
-            } catch {
-                Remove-OERErrorRecord -Record $PSItem
-                if ($PSItem.FullyQualifiedErrorId -notlike 'GroupNotFound*') {
-                    Write-Warning "Could not read the group roster: $($PSItem.Exception.Message)"
-                    # A9: the same defect class as the unread sections -- the roster is written as []
-                    # either way. It is read-only context, so it is named here, not in Get-OERInventory.
-                    $IncompleteReads.Add('groupsRoster')
-                }
-            }
+            # The roster was read before the group reader (BL-131, above); a failed read is named here,
+            # after every Get-OERInventory entry, where it always was. A9: the same defect class as the
+            # unread sections -- the roster is written as [] either way. It is read-only context, so it
+            # is named here, not in Get-OERInventory.
+            if ($RosterUnread) { $IncompleteReads.Add('groupsRoster') }
             $Roster = @(foreach ($Rg in $RosterGroups) {
                 $RgId = [string]$Rg.Id
                 $RgName = [string]$Rg.DisplayName
@@ -1003,8 +1063,9 @@ function Export-OERInventory {
             # The role policy selection's entries follow the Entra ID entries, as in the output object.
             # The members and owners the group reader left out as PIM for Groups access go into the
             # README alone too, per group by name, for the groups inventory.json writes (BL-125), and
-            # so do the role assignments at the root scope the walk left out (BL-126).
-            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments) |
+            # so do the role assignments at the root scope the walk left out (BL-126), and the names two
+            # or more objects share, with their counts (BL-131).
+            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments -SharedNames $SharedNames) |
                 Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
         }
         $WrittenFiles.Add('README.md')

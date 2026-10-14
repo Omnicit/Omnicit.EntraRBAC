@@ -206,11 +206,19 @@ function Get-OERInventory {
     regard to letter case, are left out of the document -- all of them -- and each such name is
     reported through the InventoryPartial error, since the apply engine refuses an ambiguous name and
     neither entry could be applied; leaving a top-level entry out removes nothing, because -Prune acts
-    on child collections only. Role assignments whose scope (compared in its canonical form), role
-    and principal collide are written with the principal's object id and, when the principal is
-    already an id, with the role's full definition id; principalType is then written for a user,
-    group or service principal. A role management policy read twice, for example by naming the same
-    role twice in -Role, is written once.
+    on child collections only. A group's name is counted among every group in the tenant -- one extra
+    paged listing of every group's id and display name, made once when the Groups section read at
+    least one group -- so a security group that shares its name with a Microsoft 365 group or a
+    distribution group, which the default filter never reads, is left out too; the reported cause
+    names how many live objects carry the name. When that listing fails, groupNames is reported
+    unread through the InventoryPartial error, with its cause, and the names are counted among the
+    groups read. Each name left out is also handed over in one information record tagged
+    Omnicit.EntraRBAC.SharedName, whose Names list carries the Section, Name and Count of each; under
+    the default $InformationPreference the record is not displayed. Role assignments whose scope
+    (compared in its canonical form), role and principal collide are written with the principal's
+    object id and, when the principal is already an id, with the role's full definition id;
+    principalType is then written for a user, group or service principal. A role management policy
+    read twice, for example by naming the same role twice in -Role, is written once.
 
     The inventory carries a top-level tenantId, directly after its version: the tenant ID the session's
     Microsoft Graph token was issued for, never the tenant as named with -TenantId (a domain, or
@@ -410,12 +418,30 @@ function Get-OERInventory {
         # or a pair the validator refuses is written. An access package is keyed '<catalog>|<name>'
         # there, so it is keyed that way here. -NameOf, when given, builds the name that is REPORTED
         # for an entry ('<catalog>/<name>', the path an operator reads); without it the key is the name.
+        #
+        # -ExternalIds (BL-131), when given, is a dictionary from a key to the ids of every live object
+        # that carries it, counted wider than the entries: for the groups, the index of every group in the
+        # tenant (Get-OERGroupNameIndex), which holds the Microsoft 365 and distribution groups the
+        # security-enabled listing never does. A key then counts the larger of the entries and the ids,
+        # so a group whose name only a group outside the listing shares is left out too. The other
+        # sections pass nothing and are counted over their entries alone.
+        #
+        # Each name left out is also recorded, with its section and count, in $SharedNameList, which
+        # the information record tagged Omnicit.EntraRBAC.SharedName hands over below.
         function Select-UniqueNamedEntry {
-            param([object[]]$Entry, [string]$Section, [scriptblock]$KeyOf, [scriptblock]$NameOf)
+            param([object[]]$Entry, [string]$Section, [scriptblock]$KeyOf, [scriptblock]$NameOf, [System.Collections.IDictionary]$ExternalIds)
             $Count = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($E in $Entry) {
                 $K = [string](& $KeyOf $E)
                 $Count[$K] = 1 + $(if ($Count.ContainsKey($K)) { $Count[$K] } else { 0 })
+            }
+            if ($null -ne $ExternalIds) {
+                # The keys are copied first: the dictionary is written while they are walked.
+                foreach ($K in @($Count.Keys)) {
+                    if (-not $ExternalIds.ContainsKey($K)) { continue }
+                    $ExternalCount = @($ExternalIds[$K]).Count
+                    if ($ExternalCount -gt $Count[$K]) { $Count[$K] = $ExternalCount }
+                }
             }
             $Reported = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($E in $Entry) {
@@ -425,16 +451,42 @@ function Get-OERInventory {
                         $ReportedName = if ($NameOf) { [string](& $NameOf $E) } else { $K }
                         $Unread = "$Section/$ReportedName"
                         $UnreadCollections.Add($Unread)
-                        $NameCause = Get-OERSharedNameCause -Path $Unread
+                        $NameCause = Get-OERSharedNameCause -Path $Unread -Count $Count[$K]
                         # Every cause is written to the verbose stream as it is seen, like at every other
                         # Add-UnreadCause site: this one is added last, so it is the first the cap drops.
                         Write-Verbose "Get-OERInventory: $NameCause"
                         Add-UnreadCause -Cause $NameCause -Target $Unread
+                        $SharedNameList.Add([PSCustomObject]@{ Section = $Section; Name = $ReportedName; Count = $Count[$K] })
                     }
                     continue
                 }
                 $E
             }
+        }
+
+        # BL-131: the names Select-UniqueNamedEntry left out, each with its section and count, in the
+        # order reported. Handed over in ONE information record before the inventory is emitted.
+        $SharedNameList = [System.Collections.Generic.List[object]]::new()
+
+        # BL-131: the index of every group in the tenant by display name (Get-OERGroupNameIndex, one
+        # paged listing of every group's id and display name), built at most ONCE per invocation and
+        # only when a section asks for it. Any section may call this; the first call reads the index
+        # and every later call returns the same object. When the listing fails, the cause is recorded
+        # once (verbose, the cause list, and 'groupNames' in the unread list), so whichever section
+        # needed it ends the run in InventoryPartial, and the caller counts without it. Kept in a
+        # holder, since a local function cannot assign a variable of this block.
+        $GroupNameIndexHolder = @{ Index = $null }
+        function Get-GroupNameIndexOnce {
+            if ($null -ne $GroupNameIndexHolder.Index) { return $GroupNameIndexHolder.Index }
+            $Built = Get-OERGroupNameIndex
+            $GroupNameIndexHolder.Index = $Built
+            # Reported here, on the one build, so 'groupNames' is named once however many sections ask.
+            if ($Built.Read -ne $true) {
+                Write-Verbose "Get-OERInventory: $($Built.Message)"
+                Add-UnreadCause -Cause $Built.Message
+                $UnreadCollections.Add('groupNames')
+            }
+            $Built
         }
 
         # Reads the display name of the access package or assignment policy an access review points
@@ -491,6 +543,9 @@ function Get-OERInventory {
             return $Name
         }
 
+        # The ids by name the groups are counted against as well (BL-131): set below only when the
+        # index of every group in the tenant was read.
+        $GroupExternalIds = $null
         if ($Include -contains 'Groups') {
             $GroupReadFilter = if ($GroupFilter) { $GroupFilter } else { 'securityEnabled eq true' }
             # The reader catches what it expects and names it in Unread and Causes. This catch is for
@@ -512,6 +567,16 @@ function Get-OERInventory {
                 foreach ($GroupCause in @($GroupRead.Causes)) { Add-UnreadCause -Cause $GroupCause.Cause -Target $GroupCause.Target }
                 foreach ($GroupUnread in @($GroupRead.Unread)) { $UnreadCollections.Add($GroupUnread) }
                 foreach ($GroupEntry in @($GroupRead.Groups)) { $Groups.Add($GroupEntry) }
+            }
+            # BL-131: a group's name is counted over every group in the tenant, not only over the groups
+            # this section read, since the apply engine refuses a name a Microsoft 365 group or a
+            # distribution group shares as well. The index is read after the section, so its cause (when
+            # it fails) follows the section's own, and only when there is a group to count: a section
+            # that read none has no name to count. A failed index is reported by Get-GroupNameIndexOnce,
+            # and the names are then counted over the groups read, as before.
+            if ($Groups.Count -gt 0) {
+                $GroupNameIndex = Get-GroupNameIndexOnce
+                if ($GroupNameIndex.Read -eq $true) { $GroupExternalIds = $GroupNameIndex.IdsByName }
             }
         }
 
@@ -1693,15 +1758,32 @@ function Get-OERInventory {
             }
         }
 
-        # Select-UniqueNamedEntry runs while these arguments are evaluated, which is before the
-        # InventoryPartial check below, so the objects it leaves out are reported with the rest.
+        # Select-UniqueNamedEntry runs into variables first, before the InventoryPartial check below,
+        # so the objects it leaves out are reported with the rest, and before the inventory is emitted,
+        # so the information record below precedes it.
+        $UniqueGroups = @(Select-UniqueNamedEntry -Entry $Groups.ToArray() -Section 'groups' -KeyOf { param($E) $E.displayName } -ExternalIds $GroupExternalIds)
+        $UniqueAdministrativeUnits = @(Select-UniqueNamedEntry -Entry $AdministrativeUnits.ToArray() -Section 'administrativeUnits' -KeyOf { param($E) $E.displayName })
+        $UniqueCatalogs = @(Select-UniqueNamedEntry -Entry $Catalogs.ToArray() -Section 'catalogs' -KeyOf { param($E) $E.displayName })
+        $UniqueAccessPackages = @(Select-UniqueNamedEntry -Entry $AccessPackages.ToArray() -Section 'accessPackages' -KeyOf { param($E) "$($E.catalog)|$($E.displayName)" } -NameOf { param($E) "$($E.catalog)/$($E.displayName)" })
+        $UniqueAccessReviews = @(Select-UniqueNamedEntry -Entry $AccessReviews.ToArray() -Section 'accessReviews' -KeyOf { param($E) $E.displayName })
+
+        # BL-131 (R-3): every name left out above, with its section and count, in ONE information record
+        # (the BL-126 root-scope pattern), so a caller -- Export-OERInventory among them -- reads the
+        # names without parsing the partial message. Under the default $InformationPreference it is not
+        # displayed.
+        if ($SharedNameList.Count -gt 0) {
+            $Notice = [PSCustomObject]@{ Names = $SharedNameList.ToArray() }
+            $Notice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.SharedNameNotice')
+            Write-Information -MessageData $Notice -Tags 'Omnicit.EntraRBAC.SharedName'
+        }
+
         ConvertTo-OERInventory `
             -TenantId $DocumentTenantId `
-            -Groups @(Select-UniqueNamedEntry -Entry $Groups.ToArray() -Section 'groups' -KeyOf { param($E) $E.displayName }) `
-            -AdministrativeUnits @(Select-UniqueNamedEntry -Entry $AdministrativeUnits.ToArray() -Section 'administrativeUnits' -KeyOf { param($E) $E.displayName }) `
-            -Catalogs @(Select-UniqueNamedEntry -Entry $Catalogs.ToArray() -Section 'catalogs' -KeyOf { param($E) $E.displayName }) `
-            -AccessPackages @(Select-UniqueNamedEntry -Entry $AccessPackages.ToArray() -Section 'accessPackages' -KeyOf { param($E) "$($E.catalog)|$($E.displayName)" } -NameOf { param($E) "$($E.catalog)/$($E.displayName)" }) `
-            -AccessReviews @(Select-UniqueNamedEntry -Entry $AccessReviews.ToArray() -Section 'accessReviews' -KeyOf { param($E) $E.displayName }) `
+            -Groups $UniqueGroups `
+            -AdministrativeUnits $UniqueAdministrativeUnits `
+            -Catalogs $UniqueCatalogs `
+            -AccessPackages $UniqueAccessPackages `
+            -AccessReviews $UniqueAccessReviews `
             -DirectoryRoleManagementPolicies $DirectoryRoleManagementPolicies.ToArray() `
             -DirectoryRoleAssignments $DirectoryRoleAssignments.ToArray() `
             -RoleAssignments $RoleAssignments.ToArray() `
