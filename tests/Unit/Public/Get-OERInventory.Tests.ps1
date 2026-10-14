@@ -2294,6 +2294,61 @@ Describe 'Get-OERInventory' {
             @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
         }
 
+        It 'looks an access package name up once for two reviews whose package names differ only in letter case, and writes both by id' {
+            # Two packages, 'AP-Sales' and 'ap-sales': the tenant-wide lookup finds both, whichever spelling
+            # asks, so the answer to the first serves the second and both are written by id.
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                New-UqReview -Name 'Q3 AP review'
+                New-UqReview -Name 'Other review' -AccessPackageId 'aaaa1111-0000-0000-0000-000000000042' -AssignmentPolicyId 'bbbb2222-0000-0000-0000-000000000042'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'aaaa1111-0000-0000-0000-000000000042'; displayName = 'ap-sales' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000042?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'bbbb2222-0000-0000-0000-000000000042'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/bbbb2222-0000-0000-0000-000000000042?$expand=accessPackage'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' }, @{ id = 'aaaa1111-0000-0000-0000-000000000042'; displayName = 'ap-sales' }) }
+            } -ParameterFilter { $Uri -eq $script:UqApLookupUri }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'bbbb2222-0000-0000-0000-000000000042'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'aaaa1111-0000-0000-0000-000000000042'"
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews | ForEach-Object { "$($_.displayName)|$($_.accessPackage)" }) | Should -Be @(
+                "Q3 AP review|$($script:UqApId)"
+                "Other review|$($script:UqOtherApId)"
+            )
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq $script:UqApLookupUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter {
+                $Uri -ceq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'ap-sales'&`$select=id,displayName"
+            }
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'lists the policies of an access package once for two reviews whose package id differs only in letter case' {
+            # The second review's scope spells the same package id in upper case.
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                New-UqReview -Name 'Q3 AP review'
+                New-UqReview -Name 'Q4 AP review' -AccessPackageId 'AAAA1111-0000-0000-0000-000000000041' -AssignmentPolicyId 'BBBB2222-0000-0000-0000-000000000041'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' } } -ParameterFilter {
+                $Uri -ceq 'v1.0/identityGovernance/entitlementManagement/accessPackages/AAAA1111-0000-0000-0000-000000000041?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'bbbb2222-0000-0000-0000-000000000041'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -ceq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/BBBB2222-0000-0000-0000-000000000041?$expand=accessPackage'
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews | ForEach-Object { "$($_.displayName)|$($_.accessPackage)|$($_.assignmentPolicy)" }) | Should -Be @(
+                'Q3 AP review|AP-Sales|Default'
+                'Q4 AP review|AP-Sales|Default'
+            )
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq $script:UqPolLookupUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter {
+                $Uri -ceq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'AAAA1111-0000-0000-0000-000000000041'"
+            }
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
         It 'escapes the access package name in the lookup as the resolver does' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = "Lee's AP & Co" } } -ParameterFilter {
                 $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000041?$expand=catalog'
@@ -2361,6 +2416,133 @@ Describe 'Get-OERInventory' {
             $Help | Should -Match ([regex]::Escape('So the projection writes a name only when that same lookup finds this access package or assignment policy and no other'))
             $Help | Should -Match ([regex]::Escape('a name whose uniqueness could not be checked, because the lookup above failed'))
             $Help | Should -Not -Match ([regex]::Escape('until the entry names it by id'))
+        }
+    }
+
+    Context "the export's review-reference lookups agree with the resolvers (named deviation)" {
+        # A NAMED DEVIATION from the single-owner rule (Task 3b ruling): Get-OERInventory repeats the
+        # access package lookup of Resolve-OERAccessPackageId and the assignment policy lookup of
+        # Resolve-OERAssignmentPolicyId over the transport instead of calling them, since a resolver throws
+        # AmbiguousName for a shared name and would leave stray records in a caller's -ErrorVariable. This
+        # Context holds the copies in step: under ONE transport mock, the resolvers and the export answer
+        # the same four tenants, and (a) send byte-identical URIs and (b) agree -- the export keeps a name
+        # exactly when the resolver returns this object's id, and writes the id when the resolver throws
+        # AmbiguousName, returns $null or returns another id. The access package name needs escaping, so a
+        # change to the escaping shows. No id below is version-4 shaped.
+        BeforeAll {
+            $script:AgApId = 'aaaa1111-0000-0000-0000-000000000061'
+            $script:AgPolId = 'bbbb2222-0000-0000-0000-000000000061'
+            $script:AgOtherApId = 'aaaa1111-0000-0000-0000-000000000062'
+            $script:AgOtherPolId = 'bbbb2222-0000-0000-0000-000000000062'
+            $script:AgApName = "AP Sales & Co's #1"
+            $script:AgPolName = 'Default'
+            # What the resolver did: 'This' (returned this object's id), 'Other' (another id), 'Null' or
+            # 'Ambiguous' (threw AmbiguousName). Any other throw fails the test.
+            function script:Get-AgResolverOutcome {
+                param([scriptblock]$Resolve, [string]$ThisId)
+                try {
+                    $Result = & $Resolve
+                } catch {
+                    if ([string]$PSItem.FullyQualifiedErrorId -like 'AmbiguousName*') { return 'Ambiguous' }
+                    throw
+                }
+                if ($null -eq $Result) { return 'Null' }
+                if ([string]$Result -ieq $ThisId) { return 'This' }
+                'Other'
+            }
+        }
+
+        BeforeEach {
+            $script:AgCalls = [System.Collections.Generic.List[string]]::new()
+            $script:AgPackages = @()
+            $script:AgPolicies = @()
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-agree'; DisplayName = 'Agreement review'
+                    AccessPackageId = 'aaaa1111-0000-0000-0000-000000000061'; AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000061'
+                    Reviewers = @(); Recurrence = $null; DurationInDays = 14
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            # The ONE transport mock both sides send through. It dispatches on the URI's shape, not on the
+            # exact string, so a URI that drifts on one side is still answered and the comparison below
+            # is what reports it.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                $script:AgCalls.Add([string]$Uri)
+                $Base = 'v1.0/identityGovernance/entitlementManagement/'
+                if ($Uri.StartsWith($Base + 'accessPackages/')) { return @{ id = $script:AgApId; displayName = $script:AgApName } }
+                if ($Uri.StartsWith($Base + 'assignmentPolicies/')) { return @{ id = $script:AgPolId; displayName = $script:AgPolName } }
+                if ($Uri.StartsWith($Base + 'accessPackages?')) { return @{ value = @($script:AgPackages) } }
+                if ($Uri.StartsWith($Base + 'assignmentPolicies?')) { return @{ value = @($script:AgPolicies) } }
+                throw "Unexpected Graph request: $Uri"
+            }
+        }
+
+        It 'agrees with both resolvers on <Case>' -ForEach @(
+            @{ Case = 'a name this object alone carries'; Tenant = 'Unique'; Outcome = 'This' }
+            @{ Case = 'a name two objects carry, in two letter cases'; Tenant = 'Shared'; Outcome = 'Ambiguous' }
+            @{ Case = 'a name no object carries'; Tenant = 'None'; Outcome = 'Null' }
+            @{ Case = 'a name one other object alone carries'; Tenant = 'Another'; Outcome = 'Other' }
+        ) {
+            $This = @{ Ap = @{ id = $script:AgApId; displayName = $script:AgApName }; Pol = @{ id = $script:AgPolId; displayName = $script:AgPolName } }
+            switch ($Tenant) {
+                'Unique' {
+                    $script:AgPackages = @($This.Ap)
+                    $script:AgPolicies = @($This.Pol, @{ id = $script:AgOtherPolId; displayName = 'Premium' })
+                }
+                'Shared' {
+                    $script:AgPackages = @($This.Ap, @{ id = $script:AgOtherApId; displayName = $script:AgApName.ToUpperInvariant() })
+                    $script:AgPolicies = @($This.Pol, @{ id = $script:AgOtherPolId; displayName = $script:AgPolName.ToUpperInvariant() })
+                }
+                'None' {
+                    $script:AgPackages = @()
+                    $script:AgPolicies = @(@{ id = $script:AgOtherPolId; displayName = 'Premium' })
+                }
+                'Another' {
+                    $script:AgPackages = @(@{ id = $script:AgOtherApId; displayName = $script:AgApName })
+                    $script:AgPolicies = @(@{ id = $script:AgOtherPolId; displayName = $script:AgPolName })
+                }
+            }
+
+            # The resolvers, as the apply engine calls them for a name.
+            $script:AgCalls.Clear()
+            $ApOutcome = Get-AgResolverOutcome -ThisId $script:AgApId -Resolve {
+                InModuleScope $script:moduleName -Parameters @{ Name = $script:AgApName } {
+                    param($Name)
+                    Resolve-OERAccessPackageId -DisplayName $Name
+                }
+            }
+            $ResolverApUri = @($script:AgCalls)
+            $script:AgCalls.Clear()
+            $PolOutcome = Get-AgResolverOutcome -ThisId $script:AgPolId -Resolve {
+                InModuleScope $script:moduleName -Parameters @{ PackageId = $script:AgApId; Name = $script:AgPolName } {
+                    param($PackageId, $Name)
+                    Resolve-OERAssignmentPolicyId -AccessPackageId $PackageId -AssignmentPolicy $Name
+                }
+            }
+            $ResolverPolUri = @($script:AgCalls)
+
+            # The export.
+            $script:AgCalls.Clear()
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $ExportApUri = @($script:AgCalls | Where-Object { $_.StartsWith('v1.0/identityGovernance/entitlementManagement/accessPackages?') })
+            $ExportPolUri = @($script:AgCalls | Where-Object { $_.StartsWith('v1.0/identityGovernance/entitlementManagement/assignmentPolicies?') })
+
+            # Each case reaches the resolver outcome it is about, so the four together cover all four.
+            $ApOutcome | Should -BeExactly $Outcome
+            $PolOutcome | Should -BeExactly $Outcome
+            # (a) The same request, byte for byte.
+            $ResolverApUri.Count | Should -Be 1
+            $ExportApUri.Count | Should -Be 1
+            $ExportApUri[0] | Should -BeExactly $ResolverApUri[0]
+            $ResolverPolUri.Count | Should -Be 1
+            $ExportPolUri.Count | Should -Be 1
+            $ExportPolUri[0] | Should -BeExactly $ResolverPolUri[0]
+            # (b) The same decision: the name exactly when the resolver returns this object's id.
+            $Ar.accessPackage | Should -BeExactly $(if ($ApOutcome -eq 'This') { $script:AgApName } else { $script:AgApId })
+            $Ar.assignmentPolicy | Should -BeExactly $(if ($PolOutcome -eq 'This') { $script:AgPolName } else { $script:AgPolId })
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
         }
     }
 
@@ -3267,9 +3449,9 @@ Describe 'Get-OERInventory' {
             )
         }
 
-        It 'counts catalog names over the catalogs read, so with -Catalog a package keeps its catalog''s name (BL-39, documented limit)' {
-            # -Catalog reads one catalog, so the export cannot see a catalog elsewhere in the tenant that
-            # carries the same name.
+        It 'counts catalog names over the catalogs read, so with -Catalog given as an id a package keeps its catalog''s name (BL-39, documented limit)' {
+            # -Catalog given as an id reads that catalog alone, so the export cannot see a catalog elsewhere
+            # in the tenant that carries the same name.
             $script:DupCatalogs = @([PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000001'; DisplayName = 'Core'; Description = 'one' })
             $script:DupAccessPackages = @{
                 'eeee5555-0000-0000-0000-000000000001' = @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'Sales'; Description = $null })
@@ -3278,6 +3460,52 @@ Describe 'Get-OERInventory' {
             Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly -ParameterFilter { $Id -eq 'eeee5555-0000-0000-0000-000000000001' }
             @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @('Core|Sales')
             (Get-DupPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'writes the packages by catalog id when -Catalog given as a name reads two catalogs that carry it (BL-39)' {
+            # -Catalog given as a name reads every catalog Microsoft Graph matches by that name (here both
+            # spellings), and those are counted like any other list.
+            $script:DupCatalogs = @(
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000001'; DisplayName = 'Core'; Description = 'one' }
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000002'; DisplayName = 'core'; Description = 'two' }
+            )
+            $script:DupAccessPackages = @{
+                'eeee5555-0000-0000-0000-000000000001' = @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'Sales'; Description = $null })
+                'eeee5555-0000-0000-0000-000000000002' = @([PSCustomObject]@{ Id = 'ap-2'; DisplayName = 'Sales'; Description = $null })
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -Catalog 'Core' -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'Core' }
+            @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @(
+                'eeee5555-0000-0000-0000-000000000001|Sales'
+                'eeee5555-0000-0000-0000-000000000002|Sales'
+            )
+            (Get-DupPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'names an unread collection of a catalog whose name another catalog carries by the catalog id, and of a unique catalog by its name (BL-39)' {
+            # Two catalogs of one name must not read alike in the InventoryPartial error: each is named by the
+            # reference its packages are written with.
+            $script:DupCatalogs = @(
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000001'; DisplayName = 'Core'; Description = 'one' }
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000002'; DisplayName = 'core'; Description = 'two' }
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000003'; DisplayName = 'Solo Catalog'; Description = 'three' }
+            )
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                param($Catalog)
+                if ($Catalog -eq 'eeee5555-0000-0000-0000-000000000001') { throw 'resources refused (core one)' }
+                @()
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+                param($Catalog)
+                if ($Catalog -in @('eeee5555-0000-0000-0000-000000000002', 'eeee5555-0000-0000-0000-000000000003')) { throw 'packages refused' }
+                @()
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessPackages).Count | Should -Be 0
+            $Partial = Get-DupPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly ('accessPackages/eeee5555-0000-0000-0000-000000000001/catalogResourceNames, ' +
+                'accessPackages/eeee5555-0000-0000-0000-000000000002/packages, accessPackages/Solo Catalog/packages')
         }
 
         # BL-131 (Sprint 11 step 5): two assignment policies of ONE access package that carry one name,

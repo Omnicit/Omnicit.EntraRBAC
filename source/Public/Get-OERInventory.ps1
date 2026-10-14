@@ -220,9 +220,11 @@ function Get-OERInventory {
     access package in a catalog whose name another catalog carries is written with that catalog's
     object id as its catalog, which the apply engine takes as the catalog itself, so access packages
     of one name in two such catalogs are two entries and not a collision; the catalogs themselves are
-    left out as described. Catalog names are counted among the catalogs read, so with -Catalog, which
-    reads one catalog, a package keeps its catalog's name even when another catalog in the tenant
-    carries it. A group's name is counted among every group in the tenant -- one extra paged
+    left out as described. Catalog names are counted among the catalogs read only. -Catalog given as
+    an id reads that catalog alone, so a package in it keeps the catalog's name even when another
+    catalog in the tenant carries it; -Catalog given as a name reads every catalog Microsoft Graph
+    matches by that name, and when that is more than one, their packages are written with the
+    catalog ids. A group's name is counted among every group in the tenant -- one extra paged
     listing of every group's id and display name, made once when the Groups section read at least
     one group -- so a security group that shares its name with a Microsoft 365 group or a
     distribution group, which the default filter never reads, is left out too; the reported cause
@@ -573,6 +575,13 @@ function Get-OERInventory {
         # shared name could never be applied. A name Get-AccessReviewReferenceName returned is therefore
         # kept only when the engine's own lookup, sent here with the same URI, answers with this object
         # and no other; otherwise the id is written, which the engine takes as the object itself.
+        #
+        # A NAMED DEVIATION from the single-owner rule (Task 3b ruling): the two lookups are repeated here
+        # rather than calling the resolvers, which throw AmbiguousName for a shared name and so would
+        # leave stray records in a caller's -ErrorVariable -- the reason Get-AccessReviewReferenceName is a
+        # transport read too. The Context "the export's review-reference lookups agree with the resolvers
+        # (named deviation)" in tests/Unit/Public/Get-OERInventory.Tests.ps1 holds the URIs and the
+        # decisions in step with the resolvers.
         #
         # -MatchOf picks the candidates the lookup's answer holds for the name, exactly as the resolver
         # does. Each answer is cached for the invocation under -CacheKey in -Cache, so the reviews of one
@@ -933,9 +942,10 @@ function Get-OERInventory {
             # that name. Such a package is written with the catalog's OBJECT ID instead, which the engine
             # takes as the catalog itself (Resolve-OERCatalogId returns a GUID as it is). Since the
             # package key is '<catalog>|<name>', packages of one name in two such catalogs are then two
-            # keys, not a collision. The names are counted over the catalogs listed here, so with
-            # -Catalog the list holds one catalog and a package in it keeps the catalog's name: a known
-            # limit, documented in the help.
+            # keys, not a collision. The names are counted over the catalogs listed here only: -Catalog
+            # given as an id lists that catalog alone, so a package in it keeps the catalog's name even
+            # when another catalog in the tenant carries it (a known limit, documented in the help);
+            # given as a name it lists every catalog Graph matches by that name, which are counted.
             $ApCatalogNameCount = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($CountCat in @($ResolvedCatalogList)) {
                 $CountName = [string]$CountCat.DisplayName
@@ -943,7 +953,8 @@ function Get-OERInventory {
             }
             foreach ($ApCat in $ResolvedCatalogList) {
                 # The catalog reference every package of this catalog is written with: its name, or its
-                # object id when another listed catalog carries the name (see above).
+                # object id when another listed catalog carries the name (see above). The unread paths of
+                # this catalog below name it the same way, so two catalogs of one name never read alike.
                 $ApCatalogRef = if ($ApCatalogNameCount[[string]$ApCat.DisplayName] -gt 1) { [string]$ApCat.Id } else { $ApCat.DisplayName }
                 # Build an OriginId -> resource display-name map ONCE per catalog. A resource role
                 # binding's scope carries the resource OriginId plus a scope LABEL (commonly 'Root'
@@ -973,7 +984,7 @@ function Get-OERInventory {
                     $ApCatResCause = "Could not read a catalog's resources to name its access packages' bindings: $($PSItem.Exception.Message)"
                     Write-Verbose "Get-OERInventory: $ApCatResCause"
                     Add-UnreadCause -Cause $ApCatResCause -Target ([string]$ApCat.Id)
-                    $UnreadCollections.Add("accessPackages/$($ApCat.DisplayName)/catalogResourceNames")
+                    $UnreadCollections.Add("accessPackages/$ApCatalogRef/catalogResourceNames")
                     $ApCatRes = @()
                 }
                 $ApCurrentNames = & $GetCatalogResourceNames ([string]$ApCat.Id) $ApCatRes
@@ -999,7 +1010,7 @@ function Get-OERInventory {
                     $ApListCause = "Could not list a catalog's access packages: $($PSItem.Exception.Message)"
                     Write-Verbose "Get-OERInventory: $ApListCause"
                     Add-UnreadCause -Cause $ApListCause -Target ([string]$ApCat.Id)
-                    $UnreadCollections.Add("accessPackages/$($ApCat.DisplayName)/packages")
+                    $UnreadCollections.Add("accessPackages/$ApCatalogRef/packages")
                     $ApList = @()
                 }
                 foreach ($Ap in $ApList) {
@@ -1393,6 +1404,8 @@ function Get-OERInventory {
             }
             # BL-142: the engine's two name lookups, cached for the invocation (Get-AccessReviewUniqueReference):
             # the access package lookup by the lower-cased name, the assignment policy listing by package id.
+            # A PowerShell hashtable already compares keys without regard to letter case; the keys are
+            # lower-cased as well so that stays true if the cache ever becomes an ordinal dictionary.
             $ArPackageNameLookup = @{}
             $ArPolicyListLookup = @{}
             foreach ($Ar in $ArItems) {
@@ -1434,6 +1447,7 @@ function Get-OERInventory {
                 # BL-142: a NAME (not the id) stays only when the engine's tenant-wide lookup of it
                 # (Resolve-OERAccessPackageId, same URI, the name escaped the same way) finds exactly this
                 # access package.
+                # Named deviation, held in step with the resolver by the Get-OERInventory.Tests.ps1 Context "the export's review-reference lookups agree with the resolvers (named deviation)".
                 if ([string]$Proj.accessPackage -ne [string]$Ar.AccessPackageId) {
                     $ApLookupName = [string]$Proj.accessPackage
                     $Proj.accessPackage = Get-AccessReviewUniqueReference -Name $ApLookupName -Id ([string]$Ar.AccessPackageId) `
@@ -1450,6 +1464,7 @@ function Get-OERInventory {
                 # BL-142: a NAME (not the id) stays only when exactly one policy of the review's access
                 # package carries it, compared as Resolve-OERAssignmentPolicyId compares (-eq), and that
                 # policy is this one. The listing is the resolver's, by the review's access package id.
+                # Named deviation, held in step with the resolver by the Get-OERInventory.Tests.ps1 Context "the export's review-reference lookups agree with the resolvers (named deviation)".
                 if ([string]$Proj.assignmentPolicy -ne [string]$Ar.AssignmentPolicyId) {
                     $Proj.assignmentPolicy = Get-AccessReviewUniqueReference -Name ([string]$Proj.assignmentPolicy) -Id ([string]$Ar.AssignmentPolicyId) `
                         -Uri ("v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq '{0}'" -f $Ar.AccessPackageId) `
