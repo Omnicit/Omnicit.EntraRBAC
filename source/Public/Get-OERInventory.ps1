@@ -526,9 +526,25 @@ function Get-OERInventory {
         # roster's index there already when the roster was read, and the first caller's listing
         # otherwise. Without a context the invocation's own holder serves, as it always did, and
         # nothing outlives the call.
+        #
+        # The context is read ONCE per invocation, here, and used only when its Owner -- the
+        # invocation of the Export-OERInventory that made it -- is a frame of the CURRENT call stack
+        # (the very object a frame carries, compared by reference; module-qualified, so a function named
+        # Get-PSCallStack defined in the session cannot turn the check off, as in Lock-OERSignIn). An
+        # export that was stopped before it cleared its context leaves it behind, and a later call --
+        # standalone, or another export's -- finds an Owner that is on no stack and behaves as standalone.
+        $RunContext = $null
+        $RunContextFound = $script:_OERInventoryRunContext
+        if ($null -ne $RunContextFound -and $null -ne $RunContextFound.Owner) {
+            foreach ($Frame in Microsoft.PowerShell.Utility\Get-PSCallStack) {
+                if ([object]::ReferenceEquals($Frame.InvocationInfo, $RunContextFound.Owner)) {
+                    $RunContext = $RunContextFound
+                    break
+                }
+            }
+        }
         $GroupNameIndexHolder = @{ Index = $null }
         function Get-GroupNameIndexOnce {
-            $RunContext = $script:_OERInventoryRunContext
             if ($null -ne $RunContext) {
                 if ($null -eq $RunContext.GroupNameIndex) { $RunContext.GroupNameIndex = Get-OERGroupNameIndex }
                 return $RunContext.GroupNameIndex

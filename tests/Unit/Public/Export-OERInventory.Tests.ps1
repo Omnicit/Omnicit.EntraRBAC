@@ -4746,11 +4746,14 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
     # once per Azure scope, so an export over N scopes listed every group in the tenant N times. The export
     # now holds ONE run context for the Entra ID call and the whole Azure walk
     # ($script:_OERInventoryRunContext), whose GroupNameIndex is the roster's index when the roster was
-    # read, and is otherwise built by the first caller, with one listing, and shared by the rest. Get-OERInventory
-    # runs for REAL here and the listing is answered through the transport, so the real
-    # Get-OERGroupNameIndex reads it. The tenant holds 'Ops' twice (in two letter cases) and 'Solo' once;
-    # two subscriptions, the first assigning 'Ops' and the second 'Solo' to a group principal. No id below
-    # is version-4 shaped.
+    # read, and is otherwise built by the first caller, with one listing, and shared by the rest. The context
+    # is owned by the export's own invocation, set back to $null by a plain statement after the walk (no
+    # finally: a statement-terminating error in the region must keep skipping only its own statement), and
+    # Get-OERInventory uses it only while its Owner is a frame of the call stack, so one an export leaves
+    # behind is ignored. Get-OERInventory runs for REAL here and the listing is answered through the
+    # transport, so the real Get-OERGroupNameIndex reads it. The tenant holds 'Ops' twice (in two letter
+    # cases) and 'Solo' once; two subscriptions, the first assigning 'Ops' and the second 'Solo' to a group
+    # principal. No id below is version-4 shaped.
     BeforeAll {
         $script:RcSubA = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
         $script:RcSubB = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'
@@ -4847,10 +4850,18 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 0
     }
 
-    It 'holds one context for the Entra ID call and every scope, created before the first call, holding the roster index' {
+    It 'holds one context for the Entra ID call and every scope, created before the first call, owned by the export, holding the roster index' {
         $script:RcSeen = [System.Collections.Generic.List[object]]::new()
         Mock -ModuleName $script:moduleName Get-OERInventory {
-            $script:RcSeen.Add([PSCustomObject]@{ Include = (@($Include) -join ','); Context = (& (Get-Module Omnicit.EntraRBAC) { $script:_OERInventoryRunContext }) })
+            $Context = & (Get-Module Omnicit.EntraRBAC) { $script:_OERInventoryRunContext }
+            # Whether the Owner is a frame of the call stack this call runs on, the way Get-OERInventory asks.
+            $OnStack = $false
+            if ($null -ne $Context -and $null -ne $Context.Owner) {
+                foreach ($Frame in Microsoft.PowerShell.Utility\Get-PSCallStack) {
+                    if ([object]::ReferenceEquals($Frame.InvocationInfo, $Context.Owner)) { $OnStack = $true }
+                }
+            }
+            $script:RcSeen.Add([PSCustomObject]@{ Include = (@($Include) -join ','); Context = $Context; OwnerOnStack = $OnStack })
             & $script:RcEmptyInventory
         }
         $null = Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-shared') -Include Groups, AdministrativeUnits, RoleAssignments -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
@@ -4860,8 +4871,12 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
         @($Contexts | Where-Object { $null -eq $_ }).Count | Should -Be 0
         [object]::ReferenceEquals($Contexts[0], $Contexts[1]) | Should -BeTrue
         [object]::ReferenceEquals($Contexts[0], $Contexts[2]) | Should -BeTrue
-        # Only the group name index for now; later members join the same object.
-        @($Contexts[0].PSObject.Properties.Name) | Should -Be @('GroupNameIndex')
+        # The Owner is the export's own invocation, and a frame of the stack every call runs on.
+        @($script:RcSeen | Where-Object { $_.OwnerOnStack }).Count | Should -Be 3
+        $Contexts[0].Owner | Should -BeOfType ([System.Management.Automation.InvocationInfo])
+        $Contexts[0].Owner.MyCommand.Name | Should -BeExactly 'Export-OERInventory'
+        # The owner and the group name index for now; later members join the same object.
+        @($Contexts[0].PSObject.Properties.Name) | Should -Be @('Owner', 'GroupNameIndex')
         $Contexts[0].GroupNameIndex.Read | Should -BeTrue
         $Contexts[0].GroupNameIndex.IdsByName['ops'].Count | Should -Be 2
         $Contexts[0].GroupNameIndex.IdsByName['solo'].Count | Should -Be 1
@@ -4905,32 +4920,97 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
         $null -eq (Get-RcRunContext) | Should -BeTrue
     }
 
-    It 'removes the context when the Azure walk throws' {
-        $script:RcDuring = @()
-        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
-            $script:RcDuring = @(& (Get-Module Omnicit.EntraRBAC) { $script:_OERInventoryRunContext })
-            throw 'the eligibility read stopped'
-        }
-        { Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-walk-throws') -Include RoleAssignments -WarningAction SilentlyContinue } |
+    It 'ignores a context an export left behind when its walk stopped: the next standalone Get-OERInventory lists for itself' {
+        # There is no finally: an export that stops inside the walk never reaches the statement that clears
+        # its context. The context is then ignored by ownership, since its Owner is on no call stack.
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { throw 'the eligibility read stopped' }
+        { Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-left-behind') -Include Groups, RoleAssignments -WarningAction SilentlyContinue } |
             Should -Throw -ExpectedMessage '*the eligibility read stopped*'
-        # Reach proof: the throw came from inside the walk, while the context stood.
+        # Reach proof: both scopes were read, the walk stopped at the eligibility read, and the context the
+        # export left behind holds the roster's index (the tenant of the roster: 'Ops' carried by two groups).
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Exactly -Times 2
         Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Exactly -Times 1
-        $script:RcDuring.Count | Should -Be 1
-        $null -ne $script:RcDuring[0] | Should -BeTrue
+        $Left = Get-RcRunContext
+        $null -ne $Left | Should -BeTrue
+        $Left.GroupNameIndex.IdsByName['ops'].Count | Should -Be 2
+        # The listing now says 'Ops' belongs to one group: the call writes the name only when it listed for itself.
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ value = @(
+                    @{ id = $script:RcOps; displayName = 'Ops' }
+                    @{ id = $script:RcSolo; displayName = 'Solo' }
+                ) }
+        } -ParameterFilter { $Uri -ceq $script:RcListing }
+        $Inv = Get-OERInventory -Include RoleAssignments -Scope $script:RcSubA -WarningAction SilentlyContinue
+        @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @('Ops|')
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -ceq $script:RcListing -and $All }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1
+    }
+
+    It 'ignores a context an export left behind when the next export starts: it overwrites it and lists once' {
+        $Stale = & (Get-Module $script:moduleName) {
+            function Get-FinishedInvocation { $MyInvocation }
+            $script:_OERInventoryRunContext = [PSCustomObject]@{
+                Owner          = (Get-FinishedInvocation)
+                GroupNameIndex = [PSCustomObject]@{ Read = $true; IdsByName = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[string]]]::new(); Message = $null }
+            }
+            $script:_OERInventoryRunContext
+        }
+        # Reach proof: a context with a finished command's invocation as its Owner stands in the module.
+        $Stale.Owner | Should -BeOfType ([System.Management.Automation.InvocationInfo])
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-overwrite') -Include RoleAssignments -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        Get-RcRoleAssignmentRow -Bundle $Bundle | Should -Be @("$($script:RcSubA)|$($script:RcOps)|Group", "$($script:RcSubB)|Solo|")
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -ceq $script:RcListing -and $All }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1
         $null -eq (Get-RcRunContext) | Should -BeTrue
     }
 
-    It 'removes the context when the Entra ID read throws' {
-        $script:RcDuring = @()
-        Mock -ModuleName $script:moduleName Get-OERInventory {
-            $script:RcDuring = @(& (Get-Module Omnicit.EntraRBAC) { $script:_OERInventoryRunContext })
-            throw 'the Entra ID read stopped'
+    It 'keeps the control flow of the region: a statement-terminating error in the Entra ID call skips only that statement, and the walk still runs' {
+        # No try/finally wraps the region: a body-wide one skips the REST of the region on such an error,
+        # the whole Azure walk included, and writes a bundle with no Azure rows and no partial signal. A
+        # statement-terminating error only stays statement-level where no try stands up the call stack,
+        # and Pester stands in one, so the export runs in a runspace and a script with no try. The stubs
+        # replace the module's functions in that runspace's own copy; the log shows which reads were made.
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Root = Join-Path $TestDrive 'rc-no-try'
+        $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Get-OERConfiguration -Value { }
+    Set-Item -Path function:script:Test-OERStructureSchema -Value { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+    Set-Item -Path function:script:Get-OERInventoryAzureEligibility -Value { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+    Set-Item -Path function:script:Resolve-OERInventoryScopeTree -Value {
+        [PSCustomObject]@{
+            Scopes    = @('/subscriptions/aaaa1111-0000-0000-0000-000000000001', '/subscriptions/aaaa1111-0000-0000-0000-000000000002')
+            Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
         }
-        { Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-entra-throws') -Include AdministrativeUnits -WarningAction SilentlyContinue } |
-            Should -Throw -ExpectedMessage '*the Entra ID read stopped*'
-        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Exactly -Times 1
-        $script:RcDuring.Count | Should -Be 1
-        $null -ne $script:RcDuring[0] | Should -BeTrue
-        $null -eq (Get-RcRunContext) | Should -BeTrue
+    }
+    Set-Item -Path function:script:Get-OERInventory -Value {
+        [CmdletBinding()]
+        param($Include, $Scope, [switch]$AllRolesAtScope, [switch]$AllDirectoryRolePolicies)
+        Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value ('Get-OERInventory ' + (@($Include) -join ','))
+        if (@($Include) -contains 'AdministrativeUnits') {
+            $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('the Entra ID call was refused'), 'EntraCallRefused',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+        }
+        [PSCustomObject]@{
+            Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+            AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+        }
+    }
+}
+$Bundle = Export-OERInventory -OutputPath '#ROOT#' -Include AdministrativeUnits, RoleAssignments -Confirm:$false
+"BUNDLE:$(@($Bundle).Count)"
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#ROOT#', $Root.Replace("'", "''")))
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        # The script reached its end, and the export wrote its bundle.
+        ($Run.Output -join '|') | Should -Be 'BUNDLE:1|END'
+        # The Entra ID call was made and refused, and the walk read both scopes after it.
+        @(Get-Content -LiteralPath $Log) | Should -Be @('Get-OERInventory AdministrativeUnits', 'Get-OERInventory RoleAssignments', 'Get-OERInventory RoleAssignments')
+        @($Run.Errors | Where-Object { $_ -like '*the Entra ID call was refused*' }).Count | Should -BeGreaterThan 0
     }
 }

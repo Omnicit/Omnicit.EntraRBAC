@@ -4321,6 +4321,18 @@ Describe 'Get-OERInventory' {
                         $_.FullyQualifiedErrorId -like 'InventoryPartial*'
                     })
             }
+            # Stands in for Export-OERInventory (Sprint 11 step 6): makes the run context owned by its OWN
+            # invocation, the way the export does, calls Get-OERInventory -Times times from inside itself, and
+            # hands back the context and what the calls returned. Get-OERInventory runs one frame below this
+            # function, so the Owner is a frame of its call stack.
+            function script:Invoke-AsExport {
+                [CmdletBinding()]
+                param([object]$Index, [int]$Times = 1)
+                $Context = [PSCustomObject]@{ Owner = $MyInvocation; GroupNameIndex = $Index }
+                & (Get-Module $script:moduleName) { param($Context) $script:_OERInventoryRunContext = $Context } $Context
+                $Inventory = foreach ($Call in 1..$Times) { Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM }
+                [PSCustomObject]@{ Context = $Context; Inventory = @($Inventory) }
+            }
         }
 
         BeforeEach {
@@ -4479,38 +4491,54 @@ Describe 'Get-OERInventory' {
             $null -eq (& (Get-Module $script:moduleName) { $script:_OERInventoryRunContext }) | Should -BeTrue
         }
 
-        It 'reads the index an export run context holds and builds none of its own' {
+        It 'reads the index a run context holds while its Owner is on the call stack, and builds none of its own' {
             # The index the context holds says 'Ops' belongs to one group only, while the mock above says
             # two: the name is written only when the context's index is the one read.
             $script:GpRas = @(New-GpRa -PrincipalId $script:GpOps -PrincipalType 'Group')
             $ContextIndex = & $script:NewGroupNameIndexOf @{ $script:GpOps = 'Ops' }
-            InModuleScope $script:moduleName -Parameters @{ ContextIndex = $ContextIndex } {
-                param($ContextIndex)
-                $script:_OERInventoryRunContext = [PSCustomObject]@{ GroupNameIndex = $ContextIndex }
-            }
-            $Ra = @((Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).roleAssignments)
+            $Run = Invoke-AsExport -Index $ContextIndex
+            $Ra = @($Run.Inventory[0].roleAssignments)
             $Ra.Count | Should -Be 1
             $Ra[0].principal | Should -BeExactly 'Ops'
             $Ra[0].PSObject.Properties.Name | Should -Not -Contain 'principalType'
             Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
         }
 
-        It 'builds the index once for an export run context that holds none, stores it there, and shares it between calls' {
+        It 'builds the index once for a run context that holds none, stores it there, and shares it between calls' {
             $script:GpRas = @(New-GpRa -PrincipalId $script:GpOps -PrincipalType 'Group')
-            InModuleScope $script:moduleName {
-                $script:_OERInventoryRunContext = [PSCustomObject]@{ GroupNameIndex = $null }
-            }
-            $First = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
-            $Held = & (Get-Module $script:moduleName) { $script:_OERInventoryRunContext.GroupNameIndex }
-            $Second = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            $Run = Invoke-AsExport -Index $null -Times 2
             # Reach proof: both calls wrote the group principal through the index.
-            @($First.roleAssignments).principal | Should -Be @($script:GpOps)
-            @($Second.roleAssignments).principal | Should -Be @($script:GpOps)
+            @($Run.Inventory).Count | Should -Be 2
+            @($Run.Inventory[0].roleAssignments).principal | Should -Be @($script:GpOps)
+            @($Run.Inventory[1].roleAssignments).principal | Should -Be @($script:GpOps)
             Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1 -ParameterFilter { -not $PSBoundParameters.ContainsKey('Group') }
             Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
-            # The context holds the index the first call built, and still does after the second.
-            $Held.Read | Should -BeTrue
-            [object]::ReferenceEquals($Held, (& (Get-Module $script:moduleName) { $script:_OERInventoryRunContext.GroupNameIndex })) | Should -BeTrue
+            # The context holds the index the first call built (the mock's), and still does after the second.
+            [object]::ReferenceEquals($Run.Context.GroupNameIndex, $script:GpIndex) | Should -BeTrue
+        }
+
+        It 'ignores a run context whose <Case> and lists for itself, as a standalone call does' -ForEach @(
+            @{ Case = 'Owner is a command that has finished'; Owned = $true }
+            @{ Case = 'Owner is missing'; Owned = $false }
+        ) {
+            # What an export that was stopped leaves behind. Its index says 'Ops' belongs to one group only,
+            # while the mock above says two: the id is written only when the call listed for itself.
+            $script:GpRas = @(New-GpRa -PrincipalId $script:GpOps -PrincipalType 'Group')
+            $StaleIndex = & $script:NewGroupNameIndexOf @{ $script:GpOps = 'Ops' }
+            & (Get-Module $script:moduleName) {
+                param($StaleIndex, $Owned)
+                function Get-FinishedInvocation { $MyInvocation }
+                $Stale = [PSCustomObject]@{ GroupNameIndex = $StaleIndex }
+                if ($Owned) { $Stale | Add-Member -NotePropertyName Owner -NotePropertyValue (Get-FinishedInvocation) }
+                $script:_OERInventoryRunContext = $Stale
+            } $StaleIndex $Owned
+            $Ra = @((Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).roleAssignments)
+            $Ra.Count | Should -Be 1
+            $Ra[0].principal | Should -BeExactly $script:GpOps
+            $Ra[0].principalType | Should -BeExactly 'Group'
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1 -ParameterFilter { -not $PSBoundParameters.ContainsKey('Group') }
+            # The call neither filled nor cleared what it ignored.
+            [object]::ReferenceEquals((& (Get-Module $script:moduleName) { $script:_OERInventoryRunContext.GroupNameIndex }), $StaleIndex) | Should -BeTrue
         }
 
         It 'shares the one listing with the Groups section' {
