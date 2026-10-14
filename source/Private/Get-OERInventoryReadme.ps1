@@ -44,8 +44,9 @@ function Get-OERInventoryReadme {
     name, so every object whose name another object of its kind shares is left out of inventory.json
     and the per-area files, all of them, and is named under "What this export could not read" too;
     that groups are counted over every group in the tenant, Microsoft 365 and distribution groups
-    included; how a reference to such an object elsewhere in the document is written (by its id);
-    and that leaving them out changes nothing in the tenant. Then it lists one bullet per -SharedNames
+    included, and an assignment policy's name among the policies of its own access package only;
+    how a reference to such an object elsewhere in the document is written (by its id); and that
+    leaving them out changes nothing in the tenant. Then it lists one bullet per -SharedNames
     entry, in the order given: the name as a code span (the same fence rule as the entries above),
     how many objects carry it, and its section as a code span. When -SharedNames is empty it says
     that no two objects the export read share a name. That parameter is mandatory for the same
@@ -283,10 +284,12 @@ of them -- and is named under "What this export could not read" too. Groups are 
 group in the tenant, Microsoft 365 groups and distribution groups included, so a security group that
 shares its name with one of those is left out as well; when the group roster could not be read
 (`groupsRoster` under "What this export could not read"), groups are counted among the security
-groups the export read. A reference to such an object elsewhere in the document is written as the
-object's id: the catalog of an access package, the access package and assignment policy of an access
-review, and a group named as a principal, written with `principalType` `Group`. Leaving them out of
-the export changes nothing in the tenant.
+groups the export read. An assignment policy's name is counted among the policies of its own access
+package only, and is listed with section `assignmentPolicies` as `<package>/<policy>`. A reference to
+such an object elsewhere in the document is written as the object's id: the catalog of an access
+package, the access package and assignment policy of an access review, and a group named as the
+principal of a role assignment or a directory role assignment, written with `principalType` `Group`.
+Leaving them out of the export changes nothing in the tenant.
 '@
     $SharedNameSection = if ($SharedBullets.Count -gt 0) {
         $SharedIntro + "`n`n" + ($SharedBullets -join "`n")

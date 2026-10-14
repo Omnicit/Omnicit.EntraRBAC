@@ -39,6 +39,11 @@ access review that names the new name of a package or policy renamed in the same
 `Invoke-OERStructure` fails to read is now `Failed`, with nothing written to it, instead of being
 updated.
 
+`groupsRoster.json` rows now carry each group's id, type, visibility and creation time. Inventories
+count shared group names tenant-wide, leave out same-named policies of one package
+(`Test-OERStructure` now refuses them), write references to shared names by id, and the export
+README lists each name with its count.
+
 ## [1.2.0] - 2026-10-11
 
 A permanent group eligibility grant refused after `Add-OERGroupEligibility` opened the group's PIM

@@ -255,8 +255,9 @@ function Invoke-OERStructure {
     matches nothing is reported Failed with AccessPackageNotFound or AssignmentPolicyNotFound, and a
     lookup that fails (an ambiguous name, a 403) with its own error, and nothing is written either.
     An access package name is not unique in the tenant, nor an assignment policy name in its access
-    package, and Get-OERInventory exports both by name: when such a name is shared, the entry is
-    reported Failed with AmbiguousName until it names the package or the policy by id. The check runs
+    package: when such a name is shared, the entry is reported Failed with AmbiguousName until it
+    names the package or the policy by id. Get-OERInventory exports either by id whenever this lookup
+    would not find that package or policy alone, so an exported entry applies. The check runs
     before the reviewer lookups and before any ShouldProcess, so -WhatIf and a real run report the
     same Failed row. Under -ErrorAction Stop the error stops the command, as any error does.
 

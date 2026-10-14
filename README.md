@@ -812,9 +812,10 @@ and assignment policy the entry declares (a GUID compared as written, a name res
 another policy is reported `Failed` with `AccessReviewScopeMismatch`, and nothing is written to it,
 the same in a `-WhatIf` plan; a name that matches nothing is reported `Failed` with
 `AccessPackageNotFound` or `AssignmentPolicyNotFound`. An access package name is not unique in the
-tenant, nor an assignment policy name in its access package, and the export writes both by name:
-when such a name is shared, the entry is reported `Failed` with `AmbiguousName` until it gives the
-package or the policy by id. Give a new review a display name no other review in the tenant uses.
+tenant, nor an assignment policy name in its access package: when such a name is shared, the entry
+is reported `Failed` with `AmbiguousName` until it gives the package or the policy by id. The export
+writes either by id whenever that lookup would not find that package or policy alone. Give a new
+review a display name no other review in the tenant uses.
 
 A group, an administrative unit, a catalog, an access package (within its catalog), an assignment
 policy (within its access package) and an access review are renamed in place through the document:
@@ -915,6 +916,19 @@ is read from and never widens them: it is sent as `securityEnabled eq true and (
 group the read does not show as security-enabled is left out with one warning, and
 `groupsRoster.json` still lists every group. To widen the document beyond security-enabled groups,
 read it with `Get-OERInventory -GroupFilter` instead.
+
+Each `groupsRoster.json` row also carries the group's `id`, its type (`securityEnabled`,
+`mailEnabled` and `groupTypes`), `visibility` and `createdDateTime`, so two groups that share a name
+can be told apart. Display names are not unique in Microsoft Entra ID, and `Invoke-OERStructure`
+refuses a name more than one live object answers to, so `Get-OERInventory` and `Export-OERInventory`
+leave out every object whose name another object of its kind shares, letter case aside: a group's
+name is counted over every group in the tenant, Microsoft 365 and distribution groups included, and
+an assignment policy's among the policies of its own access package. The export warns once, and its
+`README.md` lists each name, with how many objects carry it, under "Names two or more objects
+share". An access package's `catalog`, an access review's `accessPackage` or `assignmentPolicy`, and
+a group named as the principal of a role assignment or a directory role assignment (with
+`principalType` `Group`) are written by object id when their name is shared. `Test-OERStructure`
+refuses two assignment policies of one name in one access package.
 
 With `RoleManagementPolicies` in `-Include`, `Export-OERInventory` keeps a role's Azure PIM policy at
 a scope only when the role has an active role assignment or a PIM eligibility exactly at that scope,

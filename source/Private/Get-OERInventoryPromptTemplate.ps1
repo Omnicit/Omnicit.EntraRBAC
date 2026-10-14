@@ -53,11 +53,16 @@ PowerShell module.
   object or Azure scope this export could not read, or says that nothing was left unread; anything
   listed there is unknown, not empty. README.md also lists, under "Role assignments at the root
   scope (elevated access)", the role assignments at the Azure root scope / that this export read and
-  left out of inventory.json: findings to review (see roleAssignments[] below)
+  left out of inventory.json: findings to review (see roleAssignments[] below). And it lists, under
+  "Names two or more objects share", every name that two or more objects of one kind carry, with how
+  many: each object that carries one is absent from inventory.json (see "An OBJECT ID where the
+  document otherwise carries a name" below)
 - inventory.json -- the current state, within this document's coverage limits (see below), in the
   exact apply schema. Your proposals reshape this.
-- groupsRoster.json -- every group in the tenant (names + flags only, onPremisesSynced among them).
-  Context for the landscape.
+- groupsRoster.json -- every group in the tenant, of every type: one row per group with its id,
+  displayName, type (securityEnabled, mailEnabled, groupTypes), visibility, createdDateTime and
+  flags, onPremisesSynced among them. Context for the landscape; the id tells apart two groups that
+  share a name.
 - scopeHierarchy.json -- the management group / subscription tree. Use it to place role
   assignments at the correct scope. NOTE: management groups and subscriptions are context only;
   do not try to create them.
@@ -155,6 +160,18 @@ tenant has none -- never read it as "the tenant has none" and never propose dele
 every proposal, each resource, role, name and principal must be a non-empty string: the validator
 refuses "".
 
+An OBJECT ID where the document otherwise carries a name -- an access package's catalog, an access
+review's accessPackage or assignmentPolicy, or a roleAssignments or directoryRoleAssignments
+principal written with principalType Group -- most often means that two or more objects share that
+name (for a group, two or more groups anywhere in the tenant, Microsoft 365 and distribution groups
+included), so the apply engine would refuse the name as ambiguous. It can also mean that the name
+could not be read, and for an access review that the object no longer exists. Keep such an id as it
+is in every proposal: the apply engine resolves an object id as the object itself, so never replace
+it with a name. The objects whose names are shared are absent from inventory.json and the per-area
+files, all of them, and README.md lists each such name, with how many objects carry it, under
+"Names two or more objects share": their absence is not evidence that the tenant has none, and an
+entry you declare under one of those names is refused when it is applied.
+
 # Principles to apply
 
 - Least privilege: grant the narrowest role at the narrowest scope that does the job.
@@ -188,7 +205,7 @@ none.
 Declare each group, administrative unit, catalog, access review and directory role policy once, by
 displayName (a directory role policy by role), and each access package once per catalog: names are
 compared without regard to letter case, and a second entry for one is an Error that refuses the whole
-document.
+document. Declare each assignment policy once per access package, the same way.
 
 - groups[]: { displayName (or template + tokens object), previousDisplayName (rename only -- the
   group's current display name or object id when displayName declares a new one; NOT captured by

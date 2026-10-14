@@ -19,6 +19,10 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
 - per-area JSON files (`groups.json`, `catalogs.json`, `directoryRoleManagementPolicies.json`,
   `directoryRoleAssignments.json`, ...).
 - `groupsRoster.json`, `scopeHierarchy.json`, `azurePimEligibility.json` -- read-only context.
+  `groupsRoster.json` lists every group in the tenant, of every type, one row per group with the
+  keys `displayName`, `roleAssignable`, `dynamic`, `onPremisesSynced`, `memberCount`, `id`,
+  `securityEnabled`, `mailEnabled`, `groupTypes`, `visibility` and `createdDateTime` (a UTC ISO 8601
+  time); the `id` tells apart two groups that share a name.
   `azurePimEligibility.json` (the Azure PIM eligible role assignments at the walked scopes) is
   written only when an Azure section (`RoleAssignments` or `RoleManagementPolicies`) is included.
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
@@ -27,8 +31,9 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
 - `README.md` -- explains the bundle, lists under "What this export could not read" everything the
   export could not read (or says that nothing was left unread), lists under "Role assignments at the
   root scope (elevated access)" the role assignments at the Azure root scope the export left out
-  (see below), and holds the next steps. Both lists are written into this file only, never into
-  `inventory.json` or any other JSON file.
+  (see below), lists under "Names two or more objects share" every name the export left out because
+  two or more objects carry it (see below), and holds the next steps. These lists are written into
+  this file only, never into `inventory.json` or any other JSON file.
 
 By default the Entra sections -- including the Microsoft Entra directory role sections,
 `DirectoryRoleManagementPolicies` and `DirectoryRoleAssignments` -- plus tenant-wide
@@ -437,8 +442,9 @@ document, except for an assignment policy together with another changed field of
 `Set-OERAdministrativeUnit`, `Set-OERCatalog` or `Set-OERAccessPackage -NewDisplayName`,
 `Set-OERAccessPackageAssignmentPolicy -DisplayName` together with another property, or
 `Set-OERAccessReviewDefinition -DisplayName`. Two entries of a section that claim one name, as
-`displayName` or `previousDisplayName`, are an error; for the policies of one package only when at
-least one of the two claims is a `previousDisplayName`. It also warns on a reference that still uses a
+`displayName` or `previousDisplayName`, are an error, and so are two assignment policies of one
+access package that claim one name, two equal `displayName`s included (the same name in two packages
+is two policies). It also warns on a reference that still uses a
 renamed object's previous name: a group's `administrativeUnit`, an access package's `catalog` and an
 access review's `accessPackage` and `assignmentPolicy`; a `previousDisplayName` that is an object id
 raises none, since a reference by id stays valid. `Get-OERInventory` never exports
@@ -466,7 +472,8 @@ an eligible assignment, an assignment a principal holds through a group, and one
 administrative unit are never exported -- their absence here is not evidence the tenant has none. A
 user is named by its user principal name and a group by its display name, each falling back to its
 object id when the name cannot be read, or, for a group, when its display name matches that of
-another principal holding the same role and assignment type; a service principal, or a principal of
+another group anywhere in the tenant or of another principal holding the same role and assignment
+type (see "Names two or more objects share" below); a service principal, or a principal of
 unknown type, is named by its object id. `principalType` is carried whenever the type is known. A
 time-bound assignment carries `durationDays` reconstructed from the live schedule window, so a
 re-applied export is `Unchanged`; a permanent one carries neither `durationDays` nor `permanent`.
@@ -491,8 +498,9 @@ it creates a review. The scope of a review cannot be changed on an existing one.
   `AssignmentPolicyNotFound`; a lookup that fails (an ambiguous name, a 403) is reported `Failed`
   with its own error. Nothing is written in either case.
 - An access package name is not unique in the tenant, nor an assignment policy name in its access
-  package, and the export writes both by name: when such a name is shared, the entry is reported
-  `Failed` with `AmbiguousName` until it gives the package or the policy by id.
+  package: when such a name is shared, the entry is reported `Failed` with `AmbiguousName` until it
+  gives the package or the policy by id. The export writes either by id whenever that lookup would
+  not find that package or policy alone, so an exported entry applies.
 - The check runs before the reviewer lookups and before any confirmation, so a `-WhatIf` plan and a
   real run report the same `Failed` row.
 
@@ -671,6 +679,47 @@ Fallback approvers are only partly modelled. A stage's `fallbackUsers` / `fallba
 `fallbackEscalationApprovers` are not modelled: they are preserved while the entry does not declare
 `approvalStages`, but an update of a policy whose entry declares `approvalStages` rebuilds and sends
 every stage, and so clears the escalation fallbacks of every stage -- a known limitation.
+
+## Names two or more objects share
+
+Microsoft Entra ID does not keep display names unique, and `Invoke-OERStructure` refuses a name that
+more than one live object answers to. So `Get-OERInventory` and `Export-OERInventory` leave out of
+the document every object whose name another object of its kind shares, compared without regard to
+letter case -- all of them -- and name each in `InventoryPartial`: groups, administrative units,
+catalogs, access reviews, the access packages of one catalog and the assignment policies of one
+access package. A group's name is counted over every group in the tenant, Microsoft 365 and
+distribution groups included: `Export-OERInventory` counts over its roster, and `Get-OERInventory`
+makes one more paged listing of every group's id and display name, at most once per call; when that
+listing fails, `groupNames` is reported unread and the names are counted among the groups read. An
+assignment policy's name is counted among the policies of its own access package only. Leaving an
+object out changes nothing in the tenant: `-Prune` acts on child collections only, and the apply
+engine never removes an assignment policy.
+
+`Export-OERInventory` writes ONE warning that gives how many names were left out and how many objects
+carry them, and the bundle's `README.md` lists each name, with how many objects carry it and its
+section (an assignment policy as `<package>/<policy>`, section `assignmentPolicies`), under "Names
+two or more objects share". `Get-OERInventory` hands the same names to its caller in one information
+record tagged `Omnicit.EntraRBAC.SharedName`, which the default `$InformationPreference` does not
+display.
+
+A reference to such an object elsewhere in the document is written by object id, which the apply
+engine takes as the object itself:
+
+- an access package's `catalog`, when another catalog the export read carries the catalog's name
+  (with `-Catalog` given as an id, only that catalog is read, so its packages keep its name even
+  when another catalog in the tenant carries it);
+- an access review's `accessPackage` or `assignmentPolicy`, whenever the apply engine's own lookup --
+  the package name in the whole tenant, the policy name among its package's policies -- would not
+  find that object alone;
+- a group named as the principal of a `roleAssignments` or `directoryRoleAssignments` entry, written
+  with `principalType` `Group`, unless no other group in the tenant carries its name; when the
+  listing of every group fails, every such group is written by its object id.
+
+Keep such an id as an id in a proposal. A group named anywhere else -- an `eligibility` principal of
+a group, an access review's reviewer, a catalog resource or an access package resource role -- is
+still written by its display name, and a shared one is refused when it is applied. `Test-OERStructure`
+refuses two assignment policies of one name in one access package, which an export made by an
+earlier version can hold.
 
 ## Unread collections
 

@@ -699,7 +699,7 @@ Describe 'Get-OERInventoryReadme (names two or more objects share, BL-131)' {
             param([string]$Section, [string]$Name, [int]$Count)
             [PSCustomObject]@{ Section = $Section; Name = $Name; Count = $Count }
         }
-        $script:SharedProse = 'Microsoft Entra ID does not keep display names unique, and `Invoke-OERStructure` refuses a name that more than one live object answers to. So every object whose name another object of its kind shares, compared without regard to letter case, is left out of `inventory.json` and the per-area files -- all of them -- and is named under "What this export could not read" too. Groups are counted over every group in the tenant, Microsoft 365 groups and distribution groups included, so a security group that shares its name with one of those is left out as well; when the group roster could not be read (`groupsRoster` under "What this export could not read"), groups are counted among the security groups the export read. A reference to such an object elsewhere in the document is written as the object''s id: the catalog of an access package, the access package and assignment policy of an access review, and a group named as a principal, written with `principalType` `Group`. Leaving them out of the export changes nothing in the tenant.'
+        $script:SharedProse = 'Microsoft Entra ID does not keep display names unique, and `Invoke-OERStructure` refuses a name that more than one live object answers to. So every object whose name another object of its kind shares, compared without regard to letter case, is left out of `inventory.json` and the per-area files -- all of them -- and is named under "What this export could not read" too. Groups are counted over every group in the tenant, Microsoft 365 groups and distribution groups included, so a security group that shares its name with one of those is left out as well; when the group roster could not be read (`groupsRoster` under "What this export could not read"), groups are counted among the security groups the export read. An assignment policy''s name is counted among the policies of its own access package only, and is listed with section `assignmentPolicies` as `<package>/<policy>`. A reference to such an object elsewhere in the document is written as the object''s id: the catalog of an access package, the access package and assignment policy of an access review, and a group named as the principal of a role assignment or a directory role assignment, written with `principalType` `Group`. Leaving them out of the export changes nothing in the tenant.'
         $script:SharedNone = 'None. No two objects this export read share a name.'
     }
 
@@ -710,6 +710,19 @@ Describe 'Get-OERInventoryReadme (names two or more objects share, BL-131)' {
         $Collapsed | Should -Match ([regex]::Escape($script:SharedProse))
         $Collapsed | Should -Match ([regex]::Escape($script:SharedNone))
         @(Get-SharedBullets -Section $Section).Count | Should -Be 0
+    }
+
+    It 'says that an assignment policy''s name is counted within its own access package, and how it is listed (Sprint 11 step 5)' {
+        $Collapsed = (Get-SharedSection -Readme (Get-SharedReadme)) -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape('An assignment policy''s name is counted among the policies of its own access package only, and is listed with section `assignmentPolicies` as `<package>/<policy>`.'))
+        # It follows the sentence on how groups are counted and precedes the one on references by id.
+        $Collapsed.IndexOf('An assignment policy''s name is counted') | Should -BeGreaterThan $Collapsed.IndexOf('groups are counted among the security groups the export read.')
+        $Collapsed.IndexOf('An assignment policy''s name is counted') | Should -BeLessThan $Collapsed.IndexOf('A reference to such an object elsewhere')
+        # The group principal written by id is the one of a role assignment or a directory role
+        # assignment: a group named elsewhere (an eligibility principal, a reviewer) keeps its name.
+        $Collapsed | Should -Not -Match ([regex]::Escape('and a group named as a principal, written'))
+        # Outside its code spans the prose holds no angle bracket: Markdown would read it as a tag.
+        ($Collapsed -replace '`[^`]*`', '') | Should -Not -Match '<'
     }
 
     It 'writes one bullet per name, in the order given, with its count and section, and no "None"' {

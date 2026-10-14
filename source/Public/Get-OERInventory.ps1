@@ -163,9 +163,9 @@ function Get-OERInventory {
     display name only when no other group in the tenant carries that name, compared without regard
     to letter case; otherwise, or when the listing of every group fails, it is written by its object
     id with principalType Group, which Invoke-OERStructure resolves verbatim. The listing is the one
-    described below, made at most once per call and only when a section holds a group principal;
-    when it fails, the verbose stream says so and nothing is reported unread, since an object id
-    names the group exactly. A role assignment at the Azure root scope '/', above every management group
+    described below, made at most once per call, when the Groups section read at least one group or
+    when a section holds a group principal, and shared by both; when it fails, the verbose stream
+    says so and no group principal is reported unread, since an object id names the group exactly. A role assignment at the Azure root scope '/', above every management group
     and subscription in the tenant, is left out of the RoleAssignments section: it is elevated
     access, a finding to review rather than part of the RBAC model a document describes, and
     Invoke-OERStructure never creates or removes one. A read at a management group or a subscription
