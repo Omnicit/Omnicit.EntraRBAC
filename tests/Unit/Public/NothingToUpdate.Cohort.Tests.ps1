@@ -19,11 +19,11 @@ BeforeDiscovery {
     #
     # Two members of the cohort carry predicates that are narrower than "any parameter", both by
     # design:
-    #   - Set-OERAccessPackageAssignmentPolicy's -DisplayName is Mandatory and is sent on every call,
-    #     so whether it alone is an update depends on the live policy (decision A16, Sprint 11 step
-    #     4b). The predicate is "no updatable property beyond -DisplayName AND -DisplayName equals the
-    #     live displayName, compared ignoring case": a -DisplayName that differs is a rename and is
-    #     sent as a full update. Deciding that needs the live name, so this one member is NOT refused
+    #   - Set-OERAccessPackageAssignmentPolicy's -DisplayName is Mandatory and is sent with every
+    #     update, so whether it alone is an update depends on the live policy (decision A16, Sprint
+    #     11 step 4b). The predicate is "no updatable property beyond -DisplayName AND -DisplayName
+    #     equals the live displayName, compared ignoring case": a -DisplayName that differs is a
+    #     rename and is sent as a full update. Deciding that needs the live name, so this one member is NOT refused
     #     before any request: it reads the policy once (the read its update makes anyway) and writes
     #     nothing. Its case carries LivePolicy, the answer to that read, which moves it from the
     #     "issues no request" It to the It that asserts exactly one read and no write. (Issue #47 had

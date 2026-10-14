@@ -45,13 +45,14 @@ function Set-OERAccessPackageAssignmentPolicy {
     The assignment policy id (GUID) to update.
 
     .PARAMETER DisplayName
-    The policy display name. Mandatory and sent on every call (a full PUT), and accepts pipeline input
-    by property name so a tagged Omnicit.EntraRBAC.AssignmentPolicy object from
+    The policy display name. Mandatory and sent with every update (a full PUT), and accepts pipeline
+    input by property name so a tagged Omnicit.EntraRBAC.AssignmentPolicy object from
     Get-OERAccessPackageAssignmentPolicy pipes straight into an update without repeating the name by
     hand. A value that differs from the live policy's display name renames the policy, on its own or
     together with other properties. Supplied with no other updatable property and equal to the live
     name (compared ignoring case), it reports NothingToUpdate after the policy is read once, and no
-    update is sent.
+    update is sent. A piped policy object's DisplayName is sent as given, so piping an object that was
+    read before the policy was renamed elsewhere renames the policy back to the name the object holds.
 
     .PARAMETER Description
     Optional policy description. When omitted the existing description is preserved; an explicit
@@ -178,7 +179,7 @@ function Set-OERAccessPackageAssignmentPolicy {
         Initialize-OERAuth @AuthParams
     }
     process {
-        # -DisplayName is Mandatory, so it is sent on every call. When it is the only property bound,
+        # -DisplayName is Mandatory, so it is sent with every update. When it is the only property bound,
         # whether the call is an update depends on the live policy (A16, Sprint 11 step 4b): a
         # -DisplayName that differs from the live displayName is a rename, sent as the full update
         # below with everything else carried forward; one equal to it, ignoring case, is NothingToUpdate.

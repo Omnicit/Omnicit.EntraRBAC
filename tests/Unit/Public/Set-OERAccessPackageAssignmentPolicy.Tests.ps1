@@ -1209,11 +1209,31 @@ Describe 'Set-OERAccessPackageAssignmentPolicy renames with -DisplayName alone (
             $Run = Invoke-A16Set -Name $Name -Extra @{ Description = 'new description' }
 
             $Run.Errors.Count | Should -Be 0
+            # Exactly two requests: the one read, then the one update.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                (-not $Method -or $Method -eq 'GET') -and $Uri -ceq $script:A16GetUri
+            }
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
                 $Method -eq 'PUT' -and
                 $Body.displayName -ceq $script:A16ExpectedName -and
                 $Body.description -ceq 'new description'
             }
+        }
+
+        It 'decides NothingToUpdate before the access package check: a read with the live name and no access package reports NothingToUpdate, not AccessPackageNotFound' {
+            # The decision stands directly after the read; nothing would be sent either way, so the
+            # caller learns that there is nothing to update rather than that the package is unknown.
+            $script:A16Live = @{ id = 'aaaaaaaa-0000-0000-0000-000000000041'; displayName = 'Policy' }
+
+            $Run = Invoke-A16Set -Name 'Policy'
+
+            $Run.Result | Should -BeNullOrEmpty
+            @($Run.Errors | Where-Object { $_.FullyQualifiedErrorId -eq 'NothingToUpdate,Set-OERAccessPackageAssignmentPolicy' }).Count | Should -Be 1
+            @($Run.Errors | Where-Object { $_.FullyQualifiedErrorId -like 'AccessPackageNotFound*' }).Count | Should -Be 0
+            $Run.Errors.Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PUT' }
         }
     }
 
@@ -1250,6 +1270,18 @@ Describe 'Set-OERAccessPackageAssignmentPolicy renames with -DisplayName alone (
             $Run.Errors[0].FullyQualifiedErrorId | Should -Be 'AccessPackageNotFound,Set-OERAccessPackageAssignmentPolicy'
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'takes a read that carries no displayName for a rename: one GET, then one PUT carrying -DisplayName' {
+            $script:A16Live.Remove('displayName')
+
+            $Run = Invoke-A16Set -Name 'Policy'
+
+            $Run.Errors.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and $Body.displayName -ceq 'Policy'
+            }
         }
     }
 }
