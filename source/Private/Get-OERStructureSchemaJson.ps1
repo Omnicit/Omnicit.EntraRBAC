@@ -73,11 +73,18 @@ function Get-OERStructureSchemaJson {
     name matches fails and creates nothing. Get-OERInventory never exports it.
     A groups[] item may carry onPremisesSynced, a boolean the export writes for a group synchronized
     from on-premises; it is information only.
-    Only a group can be renamed through the document. The descriptions of administrativeUnits,
-    catalogs, accessPackages (and its assignmentPolicies) and accessReviews each say that renaming is
-    not supported yet and that Test-OERStructure refuses previousDisplayName there as an Error, since
-    the engine would create a new object beside the old one; the schema keeps those items open and
-    does not declare the key, so only the offline validator refuses it. A groups[] mailNickname is
+    An administrativeUnits[], catalogs[] or accessPackages[] item may declare previousDisplayName as
+    well, a non-empty string naming the object's current display name or object id (an access
+    package's within its declared catalog) when displayName declares a new one. The section's
+    description says how to declare the rename and the property's description what the apply engine
+    does with it: the object found only under previousDisplayName is renamed in place, an entry whose
+    two names match different objects fails without merging them, and an entry neither name matches
+    fails and creates nothing. Get-OERInventory never exports it. An assignment policy and an access
+    review cannot be renamed through the document yet: the descriptions of assignmentPolicies and
+    accessReviews each say that renaming is not supported yet and that Test-OERStructure refuses
+    previousDisplayName there as an Error, since the engine would create a new object beside the old
+    one; the schema keeps those items open and does not declare the key, so only the offline
+    validator refuses it. A groups[] mailNickname is
     typed with minLength 1 and maxLength 64, and its description lists what Microsoft Graph was
     measured to refuse and what the validator refuses beyond it, and says the alias is not derived
     again on a rename; the characters themselves are checked by the offline validator alone, since
@@ -247,12 +254,13 @@ function Get-OERStructureSchemaJson {
     },
     "administrativeUnits": {
       "type": "array",
-      "description": "Administrative units. displayName is the match key: an existing unit is matched and updated by it. Renaming through the document is not possible -- changing displayName creates a new unit and leaves the old one in place, unreported. Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a unit as an Error, since the engine would create a new unit beside the old one.",
+      "description": "Administrative units. displayName is the match key: an existing unit is matched and updated by it. To rename a unit, declare its new name as displayName and its current name (or object id) as previousDisplayName.",
       "items": {
         "type": "object",
         "required": [ "displayName" ],
         "properties": {
           "displayName": { "type": "string" },
+          "previousDisplayName": { "type": "string", "minLength": 1, "description": "The administrative unit's current display name or object id, when displayName declares a new one. When only this value matches a live administrative unit, that administrative unit is renamed in place; when displayName also matches a different administrative unit, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. An object id is checked with one read. Microsoft Graph's name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. Not exported by Get-OERInventory." },
           "description": { "type": [ "string", "null" ] },
           "restricted": { "type": "boolean" },
           "dynamic": { "type": "boolean" },
@@ -281,12 +289,13 @@ function Get-OERStructureSchemaJson {
     },
     "catalogs": {
       "type": "array",
-      "description": "Entitlement Management catalogs. displayName is the match key: an existing catalog is matched and updated by it. Renaming through the document is not possible -- changing displayName creates a new catalog and leaves the old one in place, unreported. Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a catalog as an Error, since the engine would create a new catalog beside the old one.",
+      "description": "Entitlement Management catalogs. displayName is the match key: an existing catalog is matched and updated by it. To rename a catalog, declare its new name as displayName and its current name (or object id) as previousDisplayName.",
       "items": {
         "type": "object",
         "required": [ "displayName" ],
         "properties": {
           "displayName": { "type": "string" },
+          "previousDisplayName": { "type": "string", "minLength": 1, "description": "The catalog's current display name or object id, when displayName declares a new one. When only this value matches a live catalog, that catalog is renamed in place; when displayName also matches a different catalog, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. An object id is checked with one read. Microsoft Graph's name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. Not exported by Get-OERInventory." },
           "description": { "type": [ "string", "null" ] },
           "externallyVisible": {
             "type": "boolean",
@@ -313,12 +322,13 @@ function Get-OERStructureSchemaJson {
     },
     "accessPackages": {
       "type": "array",
-      "description": "Entitlement Management access packages. displayName is the match key within the declared catalog (names are unique per catalog, not tenant-wide): an existing package is matched and updated by it. Renaming through the document is not possible -- changing displayName creates a new package and leaves the old one in place, unreported; there is no top-level Extra reporting for this section either. Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a package as an Error, since the engine would create a new package beside the old one.",
+      "description": "Entitlement Management access packages. displayName is the match key within the declared catalog (names are unique per catalog, not tenant-wide): an existing package is matched and updated by it. To rename a package, declare its new name as displayName and its current name (or object id) as previousDisplayName, within its catalog; a package whose catalog is renamed in the same document names the catalog's new name. There is no top-level Extra reporting for this section.",
       "items": {
         "type": "object",
         "required": [ "displayName", "catalog" ],
         "properties": {
           "displayName": { "type": "string" },
+          "previousDisplayName": { "type": "string", "minLength": 1, "description": "The access package's current display name or object id, when displayName declares a new one. When only this value matches a live access package in the declared catalog, that access package is renamed in place; when displayName also matches a different access package in the declared catalog, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. An object id matches only a package of the declared catalog. Microsoft Graph's name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. Not exported by Get-OERInventory." },
           "catalog": { "type": "string" },
           "description": { "type": [ "string", "null" ] },
           "hidden": { "type": "boolean" },

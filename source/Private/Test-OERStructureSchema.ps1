@@ -65,12 +65,12 @@ function Test-OERStructureSchema {
     inventory README used to document before they were renamed (activationEnabledRules,
     activeEnabledRules, eligibleAlertRecipients, activeAlertRecipients, activationAlertRecipients) gets a
     "Did you mean '<current name>'?" suffix pointing at its replacement. Other sections keep accepting
-    unknown keys without comment, except previousDisplayName: only groups can be renamed through the
-    document, so a previousDisplayName declared on an administrativeUnits, catalogs or accessPackages
-    entry, on an assignmentPolicies entry of an access package, or on an accessReviews entry is an
-    Error (BL-128), since Invoke-OERStructure does not read previousDisplayName there and would create
-    a new object under the new displayName beside the existing one instead of renaming it. An explicit
-    null is not declared and is not reported. An accessPackages assignmentPolicies entry declaring requireApproval true together
+    unknown keys without comment, except previousDisplayName: groups, administrativeUnits, catalogs and
+    accessPackages entries can be renamed through the document (see below), but an assignmentPolicies
+    entry of an access package and an accessReviews entry cannot, so a previousDisplayName declared on
+    either is an Error (BL-128), since Invoke-OERStructure does not read previousDisplayName there and
+    would create a new object under the new displayName beside the existing one instead of renaming it.
+    An explicit null is not declared and is not reported. An accessPackages assignmentPolicies entry declaring requireApproval true together
     with an empty approvalStages array is a Warning naming the measured outcome: Microsoft Graph refuses
     the write with InvalidApprovalStages ("If approval is required, a valid list of stages must be
     provided."), so the assignment policy is reported Failed and left completely unchanged and the
@@ -122,6 +122,11 @@ function Test-OERStructureSchema {
     Warning, since both names then find the same group and a case-only rename is not possible
     through the document (Set-OERGroup -NewDisplayName does it). An explicit null is not declared,
     as for every other key, and that Warning does not compare a template-based group's computed name.
+    An administrativeUnits, catalogs or accessPackages entry's previousDisplayName (Sprint 11 step 4)
+    follows the groups' rules: it must be a non-empty string (Error otherwise); one equal to the
+    entry's displayName ignoring case is a Warning naming Set-OERAdministrativeUnit, Set-OERCatalog or
+    Set-OERAccessPackage -NewDisplayName; and an explicit null is not declared. It is a claimed key of
+    the section's duplicate check (below), and a reference to it is warned about (Rule 14, below).
     A group's onPremisesSynced, when present, must be a boolean (Error); it is information only.
     A groups[] entry's mailNickname, when present, must be a string (Error) of 1 to 64 characters
     (BL-132): an empty one is an Error, one longer than 64 characters is an Error naming its length, and
@@ -156,7 +161,17 @@ function Test-OERStructureSchema {
     administrativeUnits[] entry that declares no id of its own (one that does is another unit)
     reconciles its members (members not an explicit null) without naming the group, naming those
     entries and what to do -- name the group in that unit's members, or declare the unit's id on its
-    entry. A second top-level entry whose key matches an
+    entry. A reference that still names a renamed object by its previous name is a Warning at the
+    reference (Rule 14, Sprint 11 step 4): a groups[] entry whose administrativeUnit, an accessPackages[]
+    entry whose catalog, or an accessReviews[] entry whose accessPackage equals, ignoring case, the
+    previousDisplayName of an entry of that section that renames the object (a non-empty string that
+    differs from the entry's displayName ignoring case). Once the rename is applied no object carries
+    the previous name, so the Warning says to name the object by its new name or its object id. The
+    first entry that renames from the name is the one named. A previousDisplayName that is an object id
+    is skipped, since a reference by id stays valid after a rename, and so is an entry without a
+    displayName. For an access package's catalog this Warning replaces Rule 11's "Catalog is not
+    declared" Warning, which is not written for a catalog that is a renamed catalog's previousDisplayName
+    (an object id included). A second top-level entry whose key matches an
     earlier one, compared without regard to letter case, is an Error at the later entry's path
     that names the earlier entry's index, since the two describe one live object and applying both
     makes each undo the other, or through a child collection removes what the other declared, on
@@ -164,8 +179,12 @@ function Test-OERStructureSchema {
     the name Resolve-OERName computes from template and tokens; an entry whose name cannot be
     computed, for instance through an unknown token, claims no name) together with a declared
     previousDisplayName, which is compared against the names and previous names of every earlier
-    entry; for administrativeUnits, catalogs and accessReviews, displayName; for accessPackages,
-    catalog together with displayName; for roleAssignments, scope, role and principal; for
+    entry; for administrativeUnits and catalogs, displayName together with a declared
+    previousDisplayName, compared the same way (a previousDisplayName that is not a non-empty string,
+    or equals the entry's own displayName ignoring case, claims nothing); for accessReviews,
+    displayName; for accessPackages, catalog together with displayName, and catalog together with a
+    declared previousDisplayName (the same previous name in another catalog is another package, and a
+    package that declares no catalog claims nothing); for roleAssignments, scope, role and principal; for
     roleManagementPolicies, scope and role; for directoryRoleManagementPolicies, role. A scope is
     compared in the canonical form ConvertTo-OERCanonicalScope owns, a pure helper that the apply
     engine shares, so sub: and subscription: with an id, and mg:, are spellings of the scope's path;
@@ -270,23 +289,68 @@ function Test-OERStructureSchema {
         }
     }
 
-    # BL-128 (A5): only groups[] can be renamed through the document. The other handlers never read
-    # previousDisplayName -- they match an entry by its displayName (a package within its catalog, a
-    # policy within its package) -- so a previousDisplayName there would be ignored and the engine would
-    # create a second object beside the one the document means to rename. Refused as an Error until
-    # those sections support it (Sprint 11 step 4). A null value is not declared and is not reported.
-    # The message names the kind with the article its first letter calls for ('an administrative unit',
-    # 'a catalog').
+    # BL-128 (A5): groups, administrative units, catalogs and access packages can be renamed through the
+    # document (Test-SupportedRename below covers the last three). The other two handlers -- a policy
+    # within its package and a review -- never read previousDisplayName, they match an entry by its
+    # displayName, so a previousDisplayName there would be ignored and the engine would create a second
+    # object beside the one the document means to rename. Refused as an Error until those two support it
+    # (Sprint 11 step 4b); it is called for assignmentPolicies and accessReviews only. A null value is not
+    # declared and is not reported. The message names the kind with the article its first letter calls
+    # for ('an assignment policy', 'an access review').
     function Add-UnsupportedRenameFinding {
         param([object]$Node, [string]$Section, [string]$Item, [string]$Path, [string]$Kind)
         if (-not (Test-HasProp -Node $Node -Name 'previousDisplayName')) { return }
         $KindWithArticle = if ($Kind -match '^[aeiou]') { "an $Kind" } else { "a $Kind" }
         Add-Finding -Section $Section -Item $Item -Path "$Path.previousDisplayName" `
-            -Message ("'previousDisplayName' at $Path is not supported for $KindWithArticle yet: only groups can be " +
-                "renamed through the document. Invoke-OERStructure does not read previousDisplayName for " +
-                "$KindWithArticle, so it would create a new $Kind named by displayName beside the existing one " +
-                "instead of renaming it. Remove previousDisplayName, and rename the existing object outside " +
-                "the document first.")
+            -Message ("'previousDisplayName' at $Path is not supported for $KindWithArticle yet: only groups, " +
+                "administrative units, catalogs and access packages can be renamed through the document. " +
+                "Invoke-OERStructure does not read previousDisplayName for $KindWithArticle, so it would " +
+                "create a new $Kind named by displayName beside the existing one instead of renaming it. " +
+                "Remove previousDisplayName, and rename the existing object outside the document first.")
+    }
+
+    # BL-128 (A5): the one reading of what an administrativeUnits, catalogs or accessPackages entry
+    # declares as previousDisplayName, shared by the finding and by the cross-reference rules (11 and
+    # 14) so they cannot disagree. Pure: it adds no finding. State is
+    #   None      the key is absent or an explicit null (not declared);
+    #   Invalid   not a string, or an empty one -- it names no object;
+    #   CaseOnly  equal to the entry's own displayName ignoring case -- Graph matches names without
+    #             regard to case, so both names find one object and nothing is renamed;
+    #   Rename    a non-empty string that differs from displayName ignoring case; Previous holds it.
+    function Get-RenameDeclaration {
+        param([object]$Node)
+        if (-not (Test-HasProp -Node $Node -Name 'previousDisplayName')) {
+            return [PSCustomObject]@{ State = 'None'; Previous = $null }
+        }
+        $Prev = $Node.previousDisplayName
+        if ($Prev -isnot [string] -or $Prev.Length -eq 0) {
+            return [PSCustomObject]@{ State = 'Invalid'; Previous = $null }
+        }
+        if ((Test-HasProp -Node $Node -Name 'displayName') -and ([string]$Node.displayName -ieq $Prev)) {
+            return [PSCustomObject]@{ State = 'CaseOnly'; Previous = $null }
+        }
+        [PSCustomObject]@{ State = 'Rename'; Previous = $Prev }
+    }
+
+    # BL-128 (A5): administrativeUnits, catalogs and accessPackages rename the object found under
+    # previousDisplayName, with the groups' rules. A non-string or empty value names nothing (Error); one
+    # equal to displayName ignoring case finds the same object, so nothing is renamed and a case-only
+    # rename is not possible through the document (Warning naming the cmdlet that does it). Returns the
+    # previous name to claim in the duplicate check, or $null when there is none to claim.
+    function Test-SupportedRename {
+        param([object]$Node, [string]$Section, [string]$Item, [string]$Path, [string]$SetCommand)
+        $Declaration = Get-RenameDeclaration -Node $Node
+        switch ($Declaration.State) {
+            'Invalid' {
+                Add-Finding -Section $Section -Item $Item -Path "$Path.previousDisplayName" `
+                    -Message "'previousDisplayName' at $Path must be a non-empty string."
+            }
+            'CaseOnly' {
+                Add-Finding -Section $Section -Item $Item -Path "$Path.previousDisplayName" -Severity 'Warning' `
+                    -Message "'previousDisplayName' at $Path equals displayName ignoring case; a case-only rename is not possible through the document -- use $SetCommand -NewDisplayName."
+            }
+        }
+        $Declaration.Previous
     }
 
     # Enum casing has a single owner: Resolve-OERStructureEnumCasing. This validator deliberately
@@ -784,6 +848,8 @@ function Test-OERStructureSchema {
                 $AUPath = "administrativeUnits[$I]"
                 $AUItem = if (Test-HasProp -Node $AU -Name 'displayName') { $AU.displayName } else { "administrativeUnits[$I]" }
 
+                $AUConsequence = 'Both entries reconcile one administrative unit, so each would undo the other''s settings and, ' +
+                    'under -Prune, remove the members and scoped roles the other declares.'
                 if (-not (Test-HasProp -Node $AU -Name 'displayName')) {
                     Add-Finding -Section 'administrativeUnits' -Item $AUItem -Path $AUPath `
                         -Message "'displayName' is required at $AUPath."
@@ -791,11 +857,18 @@ function Test-OERStructureSchema {
                     Add-DuplicateEntryFinding -Seen $AUSeen -Key ([string]$AU.displayName) -Index $I `
                         -Section 'administrativeUnits' -Item $AUItem -Path $AUPath `
                         -What "display name '$($AU.displayName)'" `
-                        -Consequence ('Both entries reconcile one administrative unit, so each would undo the other''s settings and, ' +
-                            'under -Prune, remove the members and scoped roles the other declares.')
+                        -Consequence $AUConsequence
                 }
-                Add-UnsupportedRenameFinding -Node $AU -Section 'administrativeUnits' -Item $AUItem -Path $AUPath `
-                    -Kind 'administrative unit'
+                # A unit renamed through the document is found under its previousDisplayName too, so that
+                # name is a claim of its own, checked after the displayName claim just as the groups' is.
+                $AUPrev = Test-SupportedRename -Node $AU -Section 'administrativeUnits' -Item $AUItem -Path $AUPath `
+                    -SetCommand 'Set-OERAdministrativeUnit'
+                if ($AUPrev) {
+                    Add-DuplicateEntryFinding -Seen $AUSeen -Key $AUPrev -Index $I `
+                        -Section 'administrativeUnits' -Item $AUItem -Path "$AUPath.previousDisplayName" `
+                        -What "display name '$AUPrev'" `
+                        -Consequence $AUConsequence
+                }
 
                 foreach ($AUBoolProp in @('dynamic', 'restricted', 'hiddenMembership')) {
                     if (Test-HasProp -Node $AU -Name $AUBoolProp) {
@@ -880,6 +953,8 @@ function Test-OERStructureSchema {
                 $CatPath = "catalogs[$I]"
                 $CatItem = if (Test-HasProp -Node $Cat -Name 'displayName') { $Cat.displayName } else { "catalogs[$I]" }
 
+                $CatConsequence = 'Both entries reconcile one catalog, so each would undo the other''s settings and, ' +
+                    'under -Prune, remove the resources the other declares.'
                 if (-not (Test-HasProp -Node $Cat -Name 'displayName')) {
                     Add-Finding -Section 'catalogs' -Item $CatItem -Path $CatPath `
                         -Message "'displayName' is required at $CatPath."
@@ -887,11 +962,17 @@ function Test-OERStructureSchema {
                     Add-DuplicateEntryFinding -Seen $CatSeen -Key ([string]$Cat.displayName) -Index $I `
                         -Section 'catalogs' -Item $CatItem -Path $CatPath `
                         -What "display name '$($Cat.displayName)'" `
-                        -Consequence ('Both entries reconcile one catalog, so each would undo the other''s settings and, ' +
-                            'under -Prune, remove the resources the other declares.')
+                        -Consequence $CatConsequence
                 }
-                Add-UnsupportedRenameFinding -Node $Cat -Section 'catalogs' -Item $CatItem -Path $CatPath `
-                    -Kind 'catalog'
+                # The previous name is a claim of its own, as for administrative units.
+                $CatPrev = Test-SupportedRename -Node $Cat -Section 'catalogs' -Item $CatItem -Path $CatPath `
+                    -SetCommand 'Set-OERCatalog'
+                if ($CatPrev) {
+                    Add-DuplicateEntryFinding -Seen $CatSeen -Key $CatPrev -Index $I `
+                        -Section 'catalogs' -Item $CatItem -Path "$CatPath.previousDisplayName" `
+                        -What "display name '$CatPrev'" `
+                        -Consequence $CatConsequence
+                }
 
                 if (Test-HasProp -Node $Cat -Name 'externallyVisible') {
                     if ($Cat.externallyVisible -isnot [bool]) {
@@ -973,17 +1054,28 @@ function Test-OERStructureSchema {
                     Add-Finding -Section 'accessPackages' -Item $APItem -Path $APPath `
                         -Message "'catalog' is required at $APPath."
                 }
+                $APConsequence = 'Both entries reconcile one access package, so each would undo the other''s settings and, ' +
+                    'under -Prune, remove the resource role bindings the other declares.'
                 if ((Test-HasProp -Node $AP -Name 'displayName') -and (Test-HasProp -Node $AP -Name 'catalog')) {
                     # A package is identified by its catalog together with its display name: the same
                     # name in two catalogs is two packages.
                     Add-DuplicateEntryFinding -Seen $APSeen -Key "$($AP.catalog)|$($AP.displayName)" -Index $I `
                         -Section 'accessPackages' -Item $APItem -Path $APPath `
                         -What "catalog '$($AP.catalog)' and display name '$($AP.displayName)'" `
-                        -Consequence ('Both entries reconcile one access package, so each would undo the other''s settings and, ' +
-                            'under -Prune, remove the resource role bindings the other declares.')
+                        -Consequence $APConsequence
                 }
-                Add-UnsupportedRenameFinding -Node $AP -Section 'accessPackages' -Item $APItem -Path $APPath `
-                    -Kind 'access package'
+                # The previous name is a claim of its own, within the package's catalog just as the
+                # display name is: it is looked up in that catalog's list, so the same previous name in
+                # another catalog is another package. A package that declares no catalog claims nothing
+                # (the missing catalog is an Error already).
+                $APPrev = Test-SupportedRename -Node $AP -Section 'accessPackages' -Item $APItem -Path $APPath `
+                    -SetCommand 'Set-OERAccessPackage'
+                if ($APPrev -and (Test-HasProp -Node $AP -Name 'catalog')) {
+                    Add-DuplicateEntryFinding -Seen $APSeen -Key "$($AP.catalog)|$APPrev" -Index $I `
+                        -Section 'accessPackages' -Item $APItem -Path "$APPath.previousDisplayName" `
+                        -What "catalog '$($AP.catalog)' and display name '$APPrev'" `
+                        -Consequence $APConsequence
+                }
 
                 if (Test-HasProp -Node $AP -Name 'hidden') {
                     if ($AP.hidden -isnot [bool]) {
@@ -1980,12 +2072,23 @@ function Test-OERStructureSchema {
         ($Document.accessPackages -isnot [string])) {
 
         $DeclaredCatalogs = @()
+        # R11 (Sprint 11 step 4): a catalog that the document renames is declared under its previous name
+        # too -- the name a package may still use for it. Rule 14 gives that package its own Warning,
+        # which replaces this one (two Warnings on one path would say the same thing twice). The rename is
+        # read with Get-RenameDeclaration, as the duplicate check and Rule 14 read it: a non-empty string
+        # that differs from the catalog's own displayName ignoring case. An object id counts here, since a
+        # package may name the catalog by the id it is renamed from, although Rule 14 skips it (R10).
+        $RenamedCatalogPrev = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         if ((Test-HasProp -Node $Document -Name 'catalogs') -and
             ($Document.catalogs -is [System.Collections.IEnumerable]) -and
             ($Document.catalogs -isnot [string])) {
             $DeclaredCatalogs = @($Document.catalogs | Where-Object {
                 Test-HasProp -Node $_ -Name 'displayName'
             } | ForEach-Object { $_.displayName })
+            foreach ($RenamedCatalog in @($Document.catalogs)) {
+                $CatDeclaration = Get-RenameDeclaration -Node $RenamedCatalog
+                if ($CatDeclaration.State -eq 'Rename') { $null = $RenamedCatalogPrev.Add($CatDeclaration.Previous) }
+            }
         }
 
         $APArr = @($Document.accessPackages)
@@ -1993,7 +2096,8 @@ function Test-OERStructureSchema {
             $AP = $APArr[$I]
             if (Test-HasProp -Node $AP -Name 'catalog') {
                 $CatRef = $AP.catalog
-                if ($DeclaredCatalogs -inotcontains $CatRef) {
+                if ($DeclaredCatalogs -inotcontains $CatRef -and
+                    -not ($CatRef -is [string] -and $RenamedCatalogPrev.Contains($CatRef))) {
                     $APItem = if (Test-HasProp -Node $AP -Name 'displayName') { $AP.displayName } else { "accessPackages[$I]" }
                     Add-Finding -Section 'accessPackages' -Item $APItem `
                         -Path "accessPackages[$I].catalog" `
@@ -2147,6 +2251,99 @@ function Test-OERStructureSchema {
             -Message ("'$OmittedKey' is omitted at $OmittedAt. An omitted $OmittedKey key is still reconciled, against an " +
                 "empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an " +
                 'empty array removes them deliberately), or set it to null to leave the collection untouched.')
+    }
+
+    # Rule 14: cross-reference warning -- a reference that still names a renamed object by its previous
+    # name (BL-128, A5; Sprint 11 step 4). A group's administrativeUnit, an access package's catalog and an
+    # access review's accessPackage each name another entry of the document by display name; once that
+    # entry's rename is applied no object carries the previous name any more, so the reference finds
+    # nothing -- the new name, or an object id, is the form that survives. The rename is read as Rule 11
+    # reads it (Get-RenameDeclaration: a non-empty string that differs from the entry's own displayName
+    # ignoring case), and an object id is skipped (R10): a reference by id stays valid after a rename. An
+    # entry with no displayName is skipped too, since it is an Error already and has no new name to point
+    # to. The first entry that renames from the name is the one named. A Warning, never an Error, so no
+    # document that validates today starts failing; for an access package's catalog it REPLACES Rule 11's
+    # "not declared" Warning (R11).
+    function Get-RenamedFrom {
+        param([object]$Document, [string]$Section)
+        $Renamed = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        if ((Test-HasProp -Node $Document -Name $Section) -and
+            ($Document.$Section -is [System.Collections.IEnumerable]) -and
+            ($Document.$Section -isnot [string])) {
+            $Entries = @($Document.$Section)
+            for ($K = 0; $K -lt $Entries.Count; $K++) {
+                $Declaration = Get-RenameDeclaration -Node $Entries[$K]
+                if ($Declaration.State -ne 'Rename') { continue }
+                if (Test-OERGuid -Value $Declaration.Previous) { continue }
+                if (-not (Test-HasProp -Node $Entries[$K] -Name 'displayName')) { continue }
+                if (-not $Renamed.ContainsKey($Declaration.Previous)) {
+                    $Renamed[$Declaration.Previous] = [PSCustomObject]@{ Index = $K; DisplayName = [string]$Entries[$K].displayName }
+                }
+            }
+        }
+        , $Renamed
+    }
+
+    $RenamedUnitFrom = Get-RenamedFrom -Document $Document -Section 'administrativeUnits'
+    $RenamedCatalogFrom = Get-RenamedFrom -Document $Document -Section 'catalogs'
+    $RenamedPackageFrom = Get-RenamedFrom -Document $Document -Section 'accessPackages'
+
+    if ($RenamedUnitFrom.Count -gt 0 -and
+        (Test-HasProp -Node $Document -Name 'groups') -and
+        ($Document.groups -is [System.Collections.IEnumerable]) -and
+        ($Document.groups -isnot [string])) {
+        $RefGroups = @($Document.groups)
+        for ($I = 0; $I -lt $RefGroups.Count; $I++) {
+            if (-not (Test-HasProp -Node $RefGroups[$I] -Name 'administrativeUnit')) { continue }
+            $RefUnit = $RefGroups[$I].administrativeUnit
+            if ($RefUnit -isnot [string] -or -not $RenamedUnitFrom.ContainsKey($RefUnit)) { continue }
+            $RefRename = $RenamedUnitFrom[$RefUnit]
+            $RefGroupName = Get-GroupEntryName -Group $RefGroups[$I]
+            if ($null -eq $RefGroupName) { $RefGroupName = "groups[$I]" }
+            Add-Finding -Section 'groups' -Item $RefGroupName -Path "groups[$I].administrativeUnit" -Severity 'Warning' `
+                -Message ("Group '$RefGroupName' at groups[$I] declares administrativeUnit '$RefUnit', the previousDisplayName of " +
+                    "administrativeUnits[$($RefRename.Index)], which renames that unit to '$($RefRename.DisplayName)'. " +
+                    "Name the unit by its new name '$($RefRename.DisplayName)' or its object id: once the rename is applied " +
+                    "no unit carries '$RefUnit'.")
+        }
+    }
+
+    if ($RenamedCatalogFrom.Count -gt 0 -and
+        (Test-HasProp -Node $Document -Name 'accessPackages') -and
+        ($Document.accessPackages -is [System.Collections.IEnumerable]) -and
+        ($Document.accessPackages -isnot [string])) {
+        $RefPackages = @($Document.accessPackages)
+        for ($I = 0; $I -lt $RefPackages.Count; $I++) {
+            if (-not (Test-HasProp -Node $RefPackages[$I] -Name 'catalog')) { continue }
+            $RefCatalog = $RefPackages[$I].catalog
+            if ($RefCatalog -isnot [string] -or -not $RenamedCatalogFrom.ContainsKey($RefCatalog)) { continue }
+            $RefRename = $RenamedCatalogFrom[$RefCatalog]
+            $RefPackageName = if (Test-HasProp -Node $RefPackages[$I] -Name 'displayName') { [string]$RefPackages[$I].displayName } else { "accessPackages[$I]" }
+            Add-Finding -Section 'accessPackages' -Item $RefPackageName -Path "accessPackages[$I].catalog" -Severity 'Warning' `
+                -Message ("Access package '$RefPackageName' at accessPackages[$I] declares catalog '$RefCatalog', the previousDisplayName of " +
+                    "catalogs[$($RefRename.Index)], which renames that catalog to '$($RefRename.DisplayName)'. " +
+                    "Name the catalog by its new name '$($RefRename.DisplayName)': once the rename is applied no catalog carries " +
+                    "'$RefCatalog', and the package is neither found nor created in it.")
+        }
+    }
+
+    if ($RenamedPackageFrom.Count -gt 0 -and
+        (Test-HasProp -Node $Document -Name 'accessReviews') -and
+        ($Document.accessReviews -is [System.Collections.IEnumerable]) -and
+        ($Document.accessReviews -isnot [string])) {
+        $RefReviews = @($Document.accessReviews)
+        for ($I = 0; $I -lt $RefReviews.Count; $I++) {
+            if (-not (Test-HasProp -Node $RefReviews[$I] -Name 'accessPackage')) { continue }
+            $RefPackage = $RefReviews[$I].accessPackage
+            if ($RefPackage -isnot [string] -or -not $RenamedPackageFrom.ContainsKey($RefPackage)) { continue }
+            $RefRename = $RenamedPackageFrom[$RefPackage]
+            $RefReviewName = if (Test-HasProp -Node $RefReviews[$I] -Name 'displayName') { [string]$RefReviews[$I].displayName } else { "accessReviews[$I]" }
+            Add-Finding -Section 'accessReviews' -Item $RefReviewName -Path "accessReviews[$I].accessPackage" -Severity 'Warning' `
+                -Message ("Access review '$RefReviewName' at accessReviews[$I] declares accessPackage '$RefPackage', the previousDisplayName of " +
+                    "accessPackages[$($RefRename.Index)], which renames that access package to '$($RefRename.DisplayName)'. " +
+                    "Name the access package by its new name '$($RefRename.DisplayName)' or its object id: once the rename is applied " +
+                    "no access package carries '$RefPackage', and the review's target check fails.")
+        }
     }
 
     $Out = [PSCustomObject]@{
