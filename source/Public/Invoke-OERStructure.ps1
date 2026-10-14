@@ -28,12 +28,16 @@ function Invoke-OERStructure {
     the pre-pass could create. The administrativeUnits section below still reconciles that unit's own
     members, scoped roles and other properties in full; the pre-pass only guarantees the object exists
     early enough for the group creation to succeed. An administrativeUnits entry that declares
-    previousDisplayName is never created by the pre-pass, which only resolves both of its names and
-    records the outcome in the run's rename map (one per document) and reports nothing. When its
-    previous name finds the unit, a group created into the unit's new name is created into that unit,
-    by its id, and the administrativeUnits pass then renames the unit. When the rename is refused --
-    both names find different units, or neither finds one -- a group to be created into the unit is
-    not created and is reported Failed, and the administrativeUnits pass reports the refusal.
+    previousDisplayName is never created by the pre-pass, which only resolves both of its names,
+    records the outcome in the run's rename map (one per document) and reports no rename outcome: a
+    lookup that throws is reported as a pre-pass handler error. When its previous name finds the unit,
+    a group created into the unit's new name is created into that unit, by its id, and the
+    administrativeUnits pass then renames the unit. When the rename is refused -- both names find
+    different units, or neither finds one -- a group to be created into the unit is not created and is
+    reported Failed, and the administrativeUnits pass reports the refusal. The same Failed row, naming
+    why, refuses such a group when the run cannot decide the rename: the previous-name lookup threw, or
+    -Include leaves AdministrativeUnits out (and, likewise, an access package in a catalog the document
+    renames when -Include leaves Catalogs out).
 
     Renaming (previousDisplayName): a groups, administrativeUnits, catalogs or accessPackages entry
     that declares previousDisplayName renames the object found under it in place, displayName being
@@ -543,6 +547,29 @@ function Invoke-OERStructure {
         # same run -- a group created into a unit, an access package in a catalog -- which Graph's name
         # lookup cannot find yet. One map per document, passed to the pre-pass and to the four handlers.
         $RenameMap = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+        # R12: a section -Include leaves out decides none of its renames, so a reference to an entry's new
+        # name -- a group created into a unit, an access package in a catalog -- could only be looked up
+        # by name, and while another object carries that name it would land there. Every entry of such a
+        # section that declares previousDisplayName is registered as undecided, so the reference is
+        # refused instead. No read, no row, no write.
+        $UndecidedSection = @(
+            [PSCustomObject]@{ IncludeName = 'AdministrativeUnits'; DocKey = 'administrativeUnits' }
+            [PSCustomObject]@{ IncludeName = 'Catalogs'; DocKey = 'catalogs' }
+        )
+        foreach ($Undecided in $UndecidedSection) {
+            if ($Include -contains $Undecided.IncludeName) { continue }
+            if ($Document.PSObject.Properties.Name -notcontains $Undecided.DocKey) { continue }
+            foreach ($Entry in @($Document.($Undecided.DocKey))) {
+                if (-not (Test-OERDeclaredProperty -Node $Entry -Name 'previousDisplayName')) { continue }
+                if (-not (Test-OERDeclaredProperty -Node $Entry -Name 'displayName')) { continue }
+                # The validator refuses an empty name; skipped here, so no binding error can end the run.
+                if ([string]::IsNullOrEmpty([string]$Entry.displayName) -or [string]::IsNullOrEmpty([string]$Entry.previousDisplayName)) { continue }
+                $null = Resolve-OERStructureRename -Section $Undecided.DocKey -Name ([string]$Entry.displayName) `
+                    -PreviousName ([string]$Entry.previousDisplayName) -Undecided `
+                    -Reason "the $($Undecided.DocKey) section is not selected by -Include, so its rename is not reconciled in this run" -RenameMap $RenameMap
+            }
+        }
 
         # -- Before the first write: omitted collection keys that -Prune still reconciles ------------
         # Five collections are reconciled against an empty declared set when their key is omitted, so

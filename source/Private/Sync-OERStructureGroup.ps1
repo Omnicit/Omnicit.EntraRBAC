@@ -247,9 +247,11 @@ function Sync-OERStructureGroup {
     group's administrativeUnit names a unit the run's rename map (-RenameMap) holds -- an
     administrativeUnits[] entry with previousDisplayName, which the engine's pre-pass resolves and
     registers before this section runs -- the group is created into that unit by its object id. When
-    that unit's rename was refused (both names found different units, or neither found one), the unit
-    the group is to be created into cannot be identified: the item emits one Failed row naming the
-    unit and the refused rename, and nothing is created, read further or written for it. The check
+    that unit's rename was refused (both names found different units, or neither found one), or this
+    run could not decide it (its previous name could not be looked up, or -Include leaves the
+    administrativeUnits section out), the unit the group is to be created into cannot be identified:
+    the item emits one Failed row naming the unit, the refused rename and why (its error id, or what
+    kept the run from deciding it), and nothing is created, read further or written for it. The check
     comes before the create's ShouldProcess gate, so -WhatIf reports the same Failed row, and the row
     carries no error record of its own: the unit's own row carries the refusal. administrativeUnit
     applies only when the group is created, so a group that already exists is not affected either way.
@@ -584,14 +586,17 @@ function Sync-OERStructureGroup {
             # BL-128 (A5): an administrative unit the document renames in this run is found under its
             # previous name, and Graph's name lookup cannot find its new name yet; the engine's pre-pass
             # registered it in the run's rename map, so the group is created into it by id. A unit whose
-            # rename was refused cannot be identified: the group is not created, under -WhatIf too.
+            # rename was refused, or that this run could not decide (R12: its previous name could not be
+            # looked up, or -Include leaves the administrativeUnits section out), cannot be identified:
+            # the group is not created, under -WhatIf too. Reason is the error id, or what kept the run
+            # from deciding.
             $UnitRef = $null
             if (Test-OERDeclaredProperty -Node $Item -Name 'administrativeUnit') {
                 $UnitRef = $Item.administrativeUnit
                 $UnitTarget = Get-OERStructureRenameTarget -Section 'administrativeUnits' -Name ([string]$Item.administrativeUnit) -RenameMap $RenameMap
                 if ($UnitTarget -and $UnitTarget.Refused) {
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
-                        -Detail "group not created: administrative unit '$($Item.administrativeUnit)' was not reconciled in this run -- its rename from '$($UnitTarget.PreviousName)' was refused ($($UnitTarget.ErrorId)), so the unit the group is to be created into cannot be identified"
+                        -Detail "group not created: administrative unit '$($Item.administrativeUnit)' was not reconciled in this run -- its rename from '$($UnitTarget.PreviousName)' was refused ($($UnitTarget.Reason)), so the unit the group is to be created into cannot be identified"
                     return
                 }
                 if ($UnitTarget) { $UnitRef = $UnitTarget.Id }

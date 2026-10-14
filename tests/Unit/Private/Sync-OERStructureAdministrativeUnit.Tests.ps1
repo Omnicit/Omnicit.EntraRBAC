@@ -3005,6 +3005,76 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
             }
         }
 
+        # R12: the entry is marked undecided in the map BEFORE its previous name is looked up. A lookup
+        # that throws leaves that mark -- so a group the run creates into the unit's new name is refused
+        # instead of being created into whatever unit a name lookup finds -- and a decision replaces it.
+        Context 'a rename this run cannot decide (R12)' {
+            It 'leaves a refused entry, with the reason that the previous name could not be looked up, when <Case>, and still throws with nothing written' -ForEach @(
+                @{ Case = 'the previous name matches several units'; Prev = 'AU-Old'; EnsureOnly = $false }
+                @{ Case = 'the previous name matches several units in the pre-pass (-EnsureOnly)'; Prev = 'AU-Old'; EnsureOnly = $true }
+                @{ Case = 'the probe of a previous object id fails with anything but not-found'; Prev = '11111111-1111-1111-1111-111111111111'; EnsureOnly = $false }
+            ) {
+                InModuleScope $script:moduleName -Parameters @{ Prev = $Prev; EnsureOnly = $EnsureOnly } {
+                    param($Prev, $EnsureOnly)
+                    Mock Resolve-OERAdministrativeUnitId {
+                        throw [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Administrative unit display name 'AU-Old' matches 2 units (au-a, au-b)."),
+                            'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'AU-Old')
+                    } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    Mock Invoke-OERGraphRequest { throw 'graph 403' } -ParameterFilter {
+                        $Uri -eq 'v1.0/directory/administrativeUnits/11111111-1111-1111-1111-111111111111?$select=id'
+                    }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = $Prev; description = 'new desc'; members = @('person9@example.com') }
+
+                    { Invoke-SyncAuRenameViaCaller -Item $Item -EnsureOnly:$EnsureOnly -RenameMap $Map -ErrorAction SilentlyContinue } | Should -Throw
+                    Should -Invoke New-OERAdministrativeUnit -Times 0
+                    Should -Invoke Get-OERAdministrativeUnit -Times 0
+                    Should -Invoke Set-OERAdministrativeUnit -Times 0
+                    Should -Invoke Add-OERAdministrativeUnitMember -Times 0
+                    $Map.Count | Should -Be 1
+                    $Entry = $Map['administrativeunits|au-new']
+                    $Entry.Refused | Should -BeTrue
+                    $Entry.Id | Should -BeNullOrEmpty
+                    $Entry.ErrorId | Should -BeNullOrEmpty
+                    $Entry.Reason | Should -BeExactly 'its previous name could not be looked up'
+                    $Entry.PreviousName | Should -BeExactly $Prev
+                }
+            }
+
+            It 'removes an earlier undecided mark when the decision is Current (the new name already finds the unit)' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-id' } -ParameterFilter { $DisplayName -eq 'AU-New' }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name 'AU-New' -PreviousName 'AU-Old' -Undecided -Reason 'an earlier mark' -RenameMap $Map
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; description = 'old desc' }
+                    $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    @($Err).Count | Should -Be 0
+                    $r.Count | Should -Be 1
+                    $r[0].Action | Should -BeExactly 'Unchanged'
+                    $Map.Count | Should -Be 0
+                }
+            }
+
+            It 'replaces an earlier undecided mark with the unit id when the decision is a Rename' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name 'AU-New' -PreviousName 'AU-Old' -Undecided -Reason 'an earlier mark' -RenameMap $Map
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old' }
+                    $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -EnsureOnly -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    @($Err).Count | Should -Be 0
+                    $r.Count | Should -Be 0
+                    $Map.Count | Should -Be 1
+                    $Map['administrativeunits|au-new'].Id | Should -BeExactly 'au-old-id'
+                    $Map['administrativeunits|au-new'].Refused | Should -BeFalse
+                    $Map['administrativeunits|au-new'].Reason | Should -BeNullOrEmpty
+                }
+            }
+        }
+
         # BL-07 with a rename: the groups section runs before this pass, so a group declared into the unit
         # by the unit's PREVIOUS name is created, and recorded, while the unit still carries that name;
         # this pass then renames the unit. The member prune pass must still recognise the record, or a

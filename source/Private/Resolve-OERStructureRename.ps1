@@ -24,11 +24,20 @@ function Resolve-OERStructureRename {
 
     With -RenameMap, the outcome is registered in the run-scoped map Invoke-OERStructure keeps for one
     document, under the key '<section>|<new name>' in lower case: Rename as the object's id, Conflict and
-    NotFound as refused with their ErrorId, Current not at all. Get-OERStructureRenameTarget reads it,
-    so a reference to the new name later in the same run (an access package's catalog, a group's
-    administrativeUnit when the group is created) reaches the object the document renames, or is refused
-    when its rename was. The registration is made when the decision is, so under -WhatIf too and before
-    the rename is sent.
+    NotFound as refused with their ErrorId (which is also the entry's Reason), and Current by removing
+    any entry already registered for the key. Get-OERStructureRenameTarget reads it, so a reference to
+    the new name later in the same run (an access package's catalog, a group's administrativeUnit when
+    the group is created) reaches the object the document renames, or is refused when its rename was.
+    The registration is made when the decision is, so under -WhatIf too and before the rename is sent.
+
+    -Undecided registers a rename the run cannot decide (decision R12): a refused entry with no id and
+    no ErrorId, whose Reason is the text given, and returns Outcome Undecided (Id, RenameFrom,
+    ErrorRecord and Result all $null). A reference to the new name is then refused instead of being
+    looked up by name, which while another object carries that name would reach that object. The
+    administrative unit and catalog handlers register it before they look up the previous name, so a
+    lookup that throws leaves it and the decision after the lookup replaces it; Invoke-OERStructure
+    registers it for every entry of a section -Include leaves out. Without -RenameMap it registers
+    nothing.
 
     .PARAMETER Section
     The document section of the entry: administrativeUnits, catalogs or accessPackages.
@@ -53,21 +62,63 @@ function Resolve-OERStructureRename {
     .PARAMETER RenameMap
     The run-scoped rename map Invoke-OERStructure creates once per document. Optional.
 
+    .PARAMETER Undecided
+    Registers the rename as one this run cannot decide, instead of deciding it; requires -Reason.
+
+    .PARAMETER Reason
+    With -Undecided: why the rename cannot be decided, as a clause the readers print in their Failed row.
+
     .EXAMPLE
     $Rename = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Id $null -PreviousId $OldId -RenameMap $Map
     Returns Outcome Rename with Id $OldId, and registers 'catalogs|cat-new' as $OldId in $Map.
+
+    .EXAMPLE
+    $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Undecided -Reason 'its previous name could not be looked up' -RenameMap $Map
+    Registers 'catalogs|cat-new' in $Map as refused with that reason, until a decision replaces it.
     #>
     [OutputType([PSCustomObject])]
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Decide')]
     param(
         [Parameter(Mandatory)][ValidateSet('administrativeUnits', 'catalogs', 'accessPackages')][string]$Section,
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][string]$PreviousName,
-        [AllowNull()][AllowEmptyString()][string]$Id,
-        [AllowNull()][AllowEmptyString()][string]$PreviousId,
-        [AllowNull()][AllowEmptyString()][string]$Catalog,
+        [Parameter(ParameterSetName = 'Decide')][AllowNull()][AllowEmptyString()][string]$Id,
+        [Parameter(ParameterSetName = 'Decide')][AllowNull()][AllowEmptyString()][string]$PreviousId,
+        [Parameter(ParameterSetName = 'Decide')][AllowNull()][AllowEmptyString()][string]$Catalog,
+        [Parameter(Mandatory, ParameterSetName = 'Undecided')][switch]$Undecided,
+        [Parameter(Mandatory, ParameterSetName = 'Undecided')][string]$Reason,
         [System.Collections.Generic.Dictionary[string, object]]$RenameMap
     )
+    $Key = ('{0}|{1}' -f $Section, $Name).ToLowerInvariant()
+
+    # R12: a rename this run cannot decide -- its previous name could not be looked up, or -Include
+    # leaves its section out. Registered as refused, so a reference to the new name is refused rather
+    # than looked up by name; a decision for the same key replaces it.
+    if ($Undecided) {
+        if ($null -ne $RenameMap) {
+            $Marker = [PSCustomObject]@{
+                Section      = $Section
+                Name         = $Name
+                PreviousName = $PreviousName
+                Id           = $null
+                Refused      = $true
+                ErrorId      = $null
+                Reason       = $Reason
+            }
+            $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.StructureRenameTarget')
+            $RenameMap[$Key] = $Marker
+        }
+        $Pending = [PSCustomObject]@{
+            Outcome     = 'Undecided'
+            Id          = $null
+            RenameFrom  = $null
+            ErrorRecord = $null
+            Result      = $null
+        }
+        $Pending.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.StructureRename')
+        return $Pending
+    }
+
     $Kind = switch ($Section) {
         'administrativeUnits' { @{ Capital = 'Administrative unit'; One = 'administrative unit'; Many = 'administrative units'; Article = 'an'; Prefix = 'AdministrativeUnit' } }
         'catalogs'            { @{ Capital = 'Catalog'; One = 'catalog'; Many = 'catalogs'; Article = 'a'; Prefix = 'Catalog' } }
@@ -76,7 +127,6 @@ function Resolve-OERStructureRename {
     $Where = if ($Section -eq 'accessPackages' -and $Catalog) { " in catalog '$Catalog'" } else { '' }
     $HasId = -not [string]::IsNullOrEmpty($Id)
     $HasPrev = -not [string]::IsNullOrEmpty($PreviousId)
-    $Key = ('{0}|{1}' -f $Section, $Name).ToLowerInvariant()
 
     $Outcome = if ($HasId -and $HasPrev -and ($Id -ine $PreviousId)) { 'Conflict' }
     elseif (-not $HasId -and -not $HasPrev) { 'NotFound' }
@@ -105,14 +155,20 @@ function Resolve-OERStructureRename {
             -ErrorRecord $ErrRec
     }
 
-    if ($null -ne $RenameMap -and $Outcome -ne 'Current') {
+    if ($null -ne $RenameMap -and $Outcome -eq 'Current') {
+        # The new name finds the object: a reference to it needs no map, and an earlier mark for this
+        # key (an undecided one, registered before the lookups) no longer holds.
+        $null = $RenameMap.Remove($Key)
+    } elseif ($null -ne $RenameMap) {
+        $RefusedId = $(if ($ErrRec) { "$($Kind.Prefix)Rename$Outcome" } else { $null })
         $Entry = [PSCustomObject]@{
             Section      = $Section
             Name         = $Name
             PreviousName = $PreviousName
             Id           = $(if ($Outcome -eq 'Rename') { [string]$PreviousId } else { $null })
             Refused      = ($Outcome -ne 'Rename')
-            ErrorId      = $(if ($ErrRec) { "$($Kind.Prefix)Rename$Outcome" } else { $null })
+            ErrorId      = $RefusedId
+            Reason       = $RefusedId
         }
         $Entry.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.StructureRenameTarget')
         $RenameMap[$Key] = $Entry

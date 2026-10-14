@@ -6152,6 +6152,46 @@ Describe 'Sync-OERStructureAccessPackage -previousDisplayName and the rename map
             }
         }
 
+        It 'fails a package in a catalog whose rename this run could not decide, naming why, reading and writing nothing for it (R12, WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ UseWhatIf = $false }
+            @{ UseWhatIf = $true }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ UseWhatIf = $UseWhatIf } {
+                param($UseWhatIf)
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.Dictionary[string, object]]$RenameMap)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -RenameMap $RenameMap
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { 'ap-elsewhere' }
+                # Another catalog may carry the new name: the package must not land there.
+                Mock Get-OERAccessPackage { @() }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP' } }
+                Mock Get-OERCatalogResource { @() }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Undecided `
+                    -Reason 'its previous name could not be looked up' -RenameMap $Map
+                $Item = [PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT-New'; resourceRoles = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' }) }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -RenameMap $Map -WhatIf:$UseWhatIf -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly ("catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (its previous name could not be looked up), " +
+                    'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
+                $r[0].Error | Should -BeNullOrEmpty
+                @($Err).Count | Should -Be 0
+                Should -Invoke Get-OERAccessPackage -Times 0
+                Should -Invoke Resolve-OERAccessPackageId -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+                Should -Invoke Get-OERCatalogResource -Times 0
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+            }
+        }
+
         It 'fails a package that declares previousDisplayName in a catalog the same plan creates with AccessPackageRenameNotFound, planning no create' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncApViaCaller {

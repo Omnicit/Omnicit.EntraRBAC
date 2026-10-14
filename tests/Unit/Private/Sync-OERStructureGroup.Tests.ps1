@@ -2424,6 +2424,38 @@ Describe 'Sync-OERStructureGroup' {
             }
         }
 
+        It 'reports one Failed row naming why, and creates nothing, when the run could not decide the unit''s rename (R12, <Mode>)' -ForEach @(
+            @{ Mode = 'run' }
+            @{ Mode = 'WhatIf' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Mode = $Mode } {
+                param($Mode)
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[object]]$Created, [System.Collections.Generic.Dictionary[string, object]]$Map)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -CreatedUnitMembership $Created -RenameMap $Map
+                }
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name 'AU-New' -PreviousName 'AU-Old' -Undecided `
+                    -Reason 'the administrativeUnits section is not selected by -Include, so its rename is not reconciled in this run' -RenameMap $Map
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Item = [PSCustomObject]@{ displayName = 'grp-new'; administrativeUnit = 'AU-New'; members = @('person1@example.com') }
+                $Errs = $null
+                $Run = @{ Item = $Item; Created = $Created; Map = $Map; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Errs' }
+                if ($Mode -eq 'WhatIf') { $Run.WhatIf = $true }
+                $r = @(Invoke-SyncGroupViaCaller @Run)
+
+                $r.Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' was refused " +
+                    '(the administrativeUnits section is not selected by -Include, so its rename is not reconciled in this run), so the unit the group is to be created into cannot be identified')
+                $r[0].Error | Should -BeNullOrEmpty
+                @($Errs).Count | Should -Be 0
+                Should -Invoke New-OERGroup -Times 0
+                $Created.Count | Should -Be 0
+            }
+        }
+
         It 'creates the group into the unit by the name the document gives when <Label>' -ForEach @(
             @{ Label = 'no map is passed'; Fill = 'none' }
             @{ Label = 'the map is empty'; Fill = 'empty' }

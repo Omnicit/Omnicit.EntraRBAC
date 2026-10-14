@@ -1539,6 +1539,73 @@ Describe 'Sync-OERStructureCatalog' {
             }
         }
 
+        # R12: the entry is marked undecided in the map BEFORE its previous name is looked up. A lookup
+        # that throws leaves that mark -- so an access package declared in the catalog's new name is
+        # refused instead of landing in whatever catalog a name lookup finds -- and a decision replaces it.
+        Context 'a rename this run cannot decide (R12)' {
+            It 'leaves a refused entry, with the reason that the previous name could not be looked up, when <Case>, and still throws with nothing written' -ForEach @(
+                @{ Case = 'the previous name matches several catalogs'; Prev = 'CAT-Old' }
+                @{ Case = 'the probe of a previous object id fails with anything but not-found'; Prev = '11111111-1111-1111-1111-111111111111' }
+            ) {
+                InModuleScope $script:moduleName -Parameters @{ Prev = $Prev } {
+                    param($Prev)
+                    Mock Resolve-OERCatalogId {
+                        throw [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Catalog display name 'CAT-Old' matches 2 catalogs (cat-a, cat-b)."),
+                            'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'CAT-Old')
+                    } -ParameterFilter { $DisplayName -eq 'CAT-Old' }
+                    Mock Invoke-OERGraphRequest { throw 'graph 403' } -ParameterFilter {
+                        $Uri -eq 'v1.0/identityGovernance/entitlementManagement/catalogs/11111111-1111-1111-1111-111111111111'
+                    }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'CAT-New'; previousDisplayName = $Prev; description = 'new desc'; resources = @() }
+
+                    { Invoke-SyncCatRenameViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue } | Should -Throw
+                    Should -Invoke New-OERCatalog -Times 0
+                    Should -Invoke Get-OERCatalog -Times 0
+                    Should -Invoke Set-OERCatalog -Times 0
+                    Should -Invoke Get-OERCatalogResource -Times 0
+                    $Map.Count | Should -Be 1
+                    $Entry = $Map['catalogs|cat-new']
+                    $Entry.Refused | Should -BeTrue
+                    $Entry.Id | Should -BeNullOrEmpty
+                    $Entry.ErrorId | Should -BeNullOrEmpty
+                    $Entry.Reason | Should -BeExactly 'its previous name could not be looked up'
+                    $Entry.PreviousName | Should -BeExactly $Prev
+                }
+            }
+
+            It 'removes an earlier undecided mark when the decision is Current (the new name already finds the catalog)' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERCatalogId { 'cat-id' } -ParameterFilter { $DisplayName -eq 'CAT-New' }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Undecided -Reason 'an earlier mark' -RenameMap $Map
+                    $Item = [PSCustomObject]@{ displayName = 'CAT-New'; previousDisplayName = 'CAT-Old'; description = 'old desc' }
+                    $r = @(Invoke-SyncCatRenameViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    @($Err).Count | Should -Be 0
+                    @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq 'catalog properties match' }).Count | Should -Be 1
+                    $Map.Count | Should -Be 0
+                }
+            }
+
+            It 'replaces an earlier undecided mark with the catalog id when the decision is a Rename' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERCatalogId { 'cat-old-id' } -ParameterFilter { $DisplayName -eq 'CAT-Old' }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Undecided -Reason 'an earlier mark' -RenameMap $Map
+                    $Item = [PSCustomObject]@{ displayName = 'CAT-New'; previousDisplayName = 'CAT-Old' }
+                    $null = @(Invoke-SyncCatRenameViaCaller -Item $Item -RenameMap $Map -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    @($Err).Count | Should -Be 0
+                    $Map.Count | Should -Be 1
+                    $Map['catalogs|cat-new'].Id | Should -BeExactly 'cat-old-id'
+                    $Map['catalogs|cat-new'].Refused | Should -BeFalse
+                    $Map['catalogs|cat-new'].Reason | Should -BeNullOrEmpty
+                }
+            }
+        }
+
         It 'leaves an entry with no previousDisplayName as it was: one lookup, no probe, a create when the catalog is missing' {
             InModuleScope $script:moduleName {
                 $Item = [PSCustomObject]@{ displayName = 'CAT-New' }

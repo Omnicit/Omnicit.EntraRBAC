@@ -239,6 +239,7 @@ Describe 'Resolve-OERStructureRename' {
             $Result.Entry.Id | Should -BeExactly 'p'
             $Result.Entry.Refused | Should -BeFalse
             $Result.Entry.ErrorId | Should -BeNullOrEmpty
+            $Result.Entry.Reason | Should -BeNullOrEmpty
         }
         It 'registers a Conflict as refused with the <Prefix>RenameConflict id and no object id' {
             $Result = InModuleScope $script:moduleName -Parameters @{ Section = $Section } {
@@ -251,6 +252,7 @@ Describe 'Resolve-OERStructureRename' {
             $Result.Entry.Refused | Should -BeTrue
             $Result.Entry.Id | Should -BeNullOrEmpty
             $Result.Entry.ErrorId | Should -BeExactly "${Prefix}RenameConflict"
+            $Result.Entry.Reason | Should -BeExactly "${Prefix}RenameConflict"
             $Result.Entry.PreviousName | Should -BeExactly 'Old-Name'
         }
         It 'registers a NotFound as refused with the <Prefix>RenameNotFound id and no object id' {
@@ -263,6 +265,7 @@ Describe 'Resolve-OERStructureRename' {
             $Result.Entry.Refused | Should -BeTrue
             $Result.Entry.Id | Should -BeNullOrEmpty
             $Result.Entry.ErrorId | Should -BeExactly "${Prefix}RenameNotFound"
+            $Result.Entry.Reason | Should -BeExactly "${Prefix}RenameNotFound"
         }
         It 'registers nothing for a Current outcome' {
             $Result = InModuleScope $script:moduleName -Parameters @{ Section = $Section } {
@@ -272,6 +275,28 @@ Describe 'Resolve-OERStructureRename' {
                 $Map.Count
             }
             $Result | Should -Be 0
+        }
+        It 'removes, for a Current outcome, an earlier entry registered for its key, and only that one (<Earlier>)' -ForEach @(
+            @{ Earlier = 'undecided' }
+            @{ Earlier = 'refused' }
+        ) {
+            $Result = InModuleScope $script:moduleName -Parameters @{ Section = $Section; Earlier = $Earlier } {
+                param($Section, $Earlier)
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                if ($Earlier -eq 'undecided') {
+                    $null = Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Undecided -Reason 'its previous name could not be looked up' -RenameMap $Map
+                } else {
+                    $null = Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Id $null -PreviousId $null -RenameMap $Map
+                }
+                $null = Resolve-OERStructureRename -Section $Section -Name 'Other-Name' -PreviousName 'Old-Name' -Id $null -PreviousId 'p' -RenameMap $Map
+                $Before = $Map.Count
+                $null = Resolve-OERStructureRename -Section $Section -Name 'NEW-name' -PreviousName 'Old-Name' -Id 'x' -PreviousId $null -RenameMap $Map
+                [PSCustomObject]@{ Before = $Before; After = $Map.Count; Gone = -not $Map.ContainsKey(('{0}|new-name' -f $Section).ToLowerInvariant()); Kept = $Map.ContainsKey(('{0}|other-name' -f $Section).ToLowerInvariant()) }
+            }
+            $Result.Before | Should -Be 2
+            $Result.After | Should -Be 1
+            $Result.Gone | Should -BeTrue
+            $Result.Kept | Should -BeTrue
         }
         It 'returns the same outcome without a map as with one' {
             $Result = InModuleScope $script:moduleName -Parameters @{ Section = $Section } {
@@ -297,7 +322,85 @@ Describe 'Resolve-OERStructureRename' {
         }
     }
 
+    # R12: a rename the run cannot decide -- the previous name could not be looked up, or -Include leaves
+    # the section out -- is registered as refused with a reason, so a reference to the new name is refused
+    # instead of looked up by name. A decision for the same key replaces it.
+    Context 'Undecided (<Section>)' -ForEach $script:Kinds {
+        It 'registers a refused entry with the reason, no object id and no error id, under the lower-cased section|name key' {
+            $Result = InModuleScope $script:moduleName -Parameters @{ Section = $Section } {
+                param($Section)
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section $Section -Name 'New-NAME' -PreviousName 'Old-Name' -Undecided -Reason 'its previous name could not be looked up' -RenameMap $Map
+                [PSCustomObject]@{ Count = $Map.Count; Key = @($Map.Keys)[0]; Entry = @($Map.Values)[0] }
+            }
+            $Result.Count | Should -Be 1
+            $Result.Key | Should -BeExactly ($Section.ToLowerInvariant() + '|new-name')
+            $Result.Entry.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureRenameTarget'
+            $Result.Entry.Section | Should -BeExactly $Section
+            $Result.Entry.Name | Should -BeExactly 'New-NAME'
+            $Result.Entry.PreviousName | Should -BeExactly 'Old-Name'
+            $Result.Entry.Refused | Should -BeTrue
+            $Result.Entry.Id | Should -BeNullOrEmpty
+            $Result.Entry.ErrorId | Should -BeNullOrEmpty
+            $Result.Entry.Reason | Should -BeExactly 'its previous name could not be looked up'
+        }
+        It 'returns the Undecided outcome with nothing to act on and nothing to report' {
+            $Hit = InModuleScope $script:moduleName -Parameters @{ Section = $Section } {
+                param($Section)
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Undecided -Reason 'r' -RenameMap $Map
+            }
+            $Hit.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureRename'
+            $Hit.Outcome | Should -BeExactly 'Undecided'
+            $Hit.Id | Should -BeNullOrEmpty
+            $Hit.RenameFrom | Should -BeNullOrEmpty
+            $Hit.ErrorRecord | Should -BeNullOrEmpty
+            $Hit.Result | Should -BeNullOrEmpty
+        }
+        It 'registers nothing and returns the same outcome without a map' {
+            $Hit = InModuleScope $script:moduleName -Parameters @{ Section = $Section } {
+                param($Section)
+                Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Undecided -Reason 'r'
+            }
+            $Hit.Outcome | Should -BeExactly 'Undecided'
+        }
+        It 'is replaced by the decision made afterwards for the same key: <Decision>' -ForEach @(
+            @{ Decision = 'Rename'; Id = ''; PreviousId = 'p'; Refused = $false; WantId = 'p'; WantReason = '' }
+            @{ Decision = 'Conflict'; Id = 'a'; PreviousId = 'b'; Refused = $true; WantId = ''; WantReason = 'Conflict' }
+            @{ Decision = 'NotFound'; Id = ''; PreviousId = ''; Refused = $true; WantId = ''; WantReason = 'NotFound' }
+        ) {
+            $Entry = InModuleScope $script:moduleName -Parameters @{ Section = $Section; Id = $Id; PreviousId = $PreviousId } {
+                param($Section, $Id, $PreviousId)
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Undecided -Reason 'its previous name could not be looked up' -RenameMap $Map
+                $null = Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Id $Id -PreviousId $PreviousId -RenameMap $Map
+                if ($Map.Count -ne 1) { throw "expected one entry, found $($Map.Count)" }
+                @($Map.Values)[0]
+            }
+            $Entry.Refused | Should -Be $Refused
+            if ($WantId) { $Entry.Id | Should -BeExactly $WantId } else { $Entry.Id | Should -BeNullOrEmpty }
+            if ($WantReason) {
+                $Entry.Reason | Should -BeExactly "${Prefix}Rename$WantReason"
+                $Entry.ErrorId | Should -BeExactly "${Prefix}Rename$WantReason"
+            } else {
+                $Entry.Reason | Should -BeNullOrEmpty
+            }
+        }
+    }
+
     Context 'Parameter contract' {
+        It 'refuses an empty reason for an undecided rename' {
+            InModuleScope $script:moduleName {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                { Resolve-OERStructureRename -Section 'catalogs' -Name 'N' -PreviousName 'O' -Undecided -Reason '' -RenameMap $Map -ErrorAction Stop } | Should -Throw
+                $Map.Count | Should -Be 0
+            }
+        }
+        It 'refuses -Undecided together with the ids of a decision' {
+            InModuleScope $script:moduleName {
+                { Resolve-OERStructureRename -Section 'catalogs' -Name 'N' -PreviousName 'O' -Undecided -Reason 'r' -Id 'a' -ErrorAction Stop } | Should -Throw
+            }
+        }
         It 'refuses a section other than the three it serves' {
             InModuleScope $script:moduleName {
                 { Resolve-OERStructureRename -Section 'groups' -Name 'N' -PreviousName 'O' -ErrorAction Stop } | Should -Throw

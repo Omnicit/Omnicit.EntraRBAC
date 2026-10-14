@@ -34,7 +34,10 @@ function Sync-OERStructureCatalog {
     any request: an id that no longer names a catalog counts as not matching, so a stale id never
     reports a false conflict (with displayName resolving, the item is applied normally; with it not
     resolving, the item fails as above), and any other failure of that read throws, again with
-    nothing created or renamed.
+    nothing created or renamed. With -RenameMap, the entry is registered as undecided before its
+    previous name is looked up, and the decision replaces that mark; when the lookup throws the mark
+    stays, so an access package declared in the catalog's new name in the same run is refused rather
+    than read or created in whatever catalog a name lookup finds.
 
     Microsoft Graph's displayName lookup can follow a rename with a delay. On the run that renames
     the catalog, a reference to the NEW name elsewhere in the same document can therefore fail to
@@ -112,8 +115,11 @@ function Sync-OERStructureCatalog {
     The run-scoped rename map Invoke-OERStructure creates once per document and passes to this handler,
     to Sync-OERStructureGroup, to Sync-OERStructureAdministrativeUnit and to the access package handler.
     For an entry that declares previousDisplayName, Resolve-OERStructureRename registers the outcome
-    under 'catalogs|<new name>' in lower case: the id of the catalog the entry renames, or a refused
-    entry when its rename conflicts or finds nothing. The registration is made when the decision is, so
+    under 'catalogs|<new name>' in lower case: the id of the catalog the entry renames, a refused entry
+    when its rename conflicts or finds nothing, and no entry when the new name already finds the
+    catalog; before the previous name is looked up the entry is marked undecided (refused, with the
+    reason that its previous name could not be looked up), a mark only a lookup that throws leaves in
+    place. The registration is made when the decision is, so
     under -WhatIf too and before the rename is sent; Get-OERStructureRenameTarget reads it, so an access
     package declared in the renamed catalog is read and created against the catalog's id. Optional:
     without it the decision is the same and nothing is registered.
@@ -162,6 +168,13 @@ function Sync-OERStructureCatalog {
         $RenameFrom = $null
         if (Test-OERDeclaredProperty -Node $Item -Name 'previousDisplayName') {
             $PrevName = [string]$Item.previousDisplayName
+            # R12: marked undecided BEFORE the previous name is looked up. The decision below replaces
+            # the mark (Current removes it); a lookup that throws leaves it, so an access package declared
+            # in the catalog's new name in this run is refused instead of landing in whatever catalog a
+            # name lookup finds. The new-name lookup above is outside this rule: when it throws, a
+            # reference to the new name throws the same way in its own lookup.
+            $null = Resolve-OERStructureRename -Section 'catalogs' -Name $Name -PreviousName $PrevName `
+                -Undecided -Reason 'its previous name could not be looked up' -RenameMap $RenameMap
             if (Test-OERGuid -Value $PrevName) {
                 # An object id: Resolve-OERCatalogId returns a GUID verbatim, with no request, so it
                 # would "find" a catalog that was deleted. One read settles it; the not-found answer is

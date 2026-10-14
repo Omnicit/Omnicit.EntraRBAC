@@ -67,6 +67,7 @@ Describe 'Get-OERStructureRenameTarget' {
             $Entry.Id | Should -BeExactly 'p1'
             $Entry.Refused | Should -BeFalse
             $Entry.ErrorId | Should -BeNullOrEmpty
+            $Entry.Reason | Should -BeNullOrEmpty
         }
         It 'finds the entry under a name that differs in letter case' {
             $Entry = InModuleScope $script:moduleName {
@@ -104,6 +105,20 @@ Describe 'Get-OERStructureRenameTarget' {
             $Entry.Refused | Should -BeTrue
             $Entry.Id | Should -BeNullOrEmpty
             $Entry.ErrorId | Should -BeExactly 'CatalogRenameConflict'
+            $Entry.Reason | Should -BeExactly 'CatalogRenameConflict'
+        }
+        It 'returns the refused entry an undecided rename registered, with its Reason and no ErrorId (R12)' {
+            $Entry = InModuleScope $script:moduleName {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name 'AU-New' -PreviousName 'AU-Old' -Undecided `
+                    -Reason 'its previous name could not be looked up' -RenameMap $Map
+                Get-OERStructureRenameTarget -Section 'administrativeUnits' -Name 'au-new' -RenameMap $Map
+            }
+            $Entry.Refused | Should -BeTrue
+            $Entry.Id | Should -BeNullOrEmpty
+            $Entry.ErrorId | Should -BeNullOrEmpty
+            $Entry.Reason | Should -BeExactly 'its previous name could not be looked up'
+            $Entry.PreviousName | Should -BeExactly 'AU-Old'
         }
         It 'returns the refused entry a NotFound registered, with its ErrorId' {
             $Entry = InModuleScope $script:moduleName {
@@ -114,6 +129,7 @@ Describe 'Get-OERStructureRenameTarget' {
             $Entry.Refused | Should -BeTrue
             $Entry.Id | Should -BeNullOrEmpty
             $Entry.ErrorId | Should -BeExactly 'AdministrativeUnitRenameNotFound'
+            $Entry.Reason | Should -BeExactly 'AdministrativeUnitRenameNotFound'
         }
         It 'returns $null for a name whose entry was Current (nothing registered)' {
             InModuleScope $script:moduleName {

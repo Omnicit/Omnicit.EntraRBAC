@@ -46,9 +46,11 @@ function Sync-OERStructureAccessPackage {
     the catalog -- the package list, the package create, the catalog resource read and the resource
     role add -- passes the id the catalogs handler registered for it. The rows still name the
     catalog as the document does. A catalog whose rename was refused (a conflict, or neither name
-    found) is not the catalog the document means, whatever now carries its new name: the package
-    gets one Failed row naming the refused rename and its error id, and nothing is created, read or
-    written for it. That row publishes no error record of its own; the catalog's own row carries it.
+    found), or that this run could not decide (its previous name could not be looked up, or -Include
+    leaves the catalogs section out), is not the catalog the document means, whatever now carries its
+    new name: the package gets one Failed row naming the refused rename and why (its error id, or what
+    kept the run from deciding it), and nothing is created, read or written for it. That row
+    publishes no error record of its own; a refused rename's error is on the catalog's own row.
 
     Once the package has been resolved (or created), every downstream call that has to identify it --
     the property re-read, the resourceRoleScopes read, the resource role add and prune, the assignment
@@ -221,13 +223,14 @@ function Sync-OERStructureAccessPackage {
     runs as it always has. A real run never fills the list, so it is not affected.
 
     .PARAMETER RenameMap
-    Optional run-scoped rename map Invoke-OERStructure creates once per document and the catalogs
-    handler fills (through Resolve-OERStructureRename) for every catalogs[] entry whose
-    previousDisplayName renames the catalog or is refused. This handler only reads it, through Get-OERStructureRenameTarget, for the
-    entry's catalog: an entry naming the id of a catalog the run renames makes every call that names
-    the catalog pass that id, and an entry naming a refused rename fails the package with nothing
-    created, read or written. When the map is omitted or does not hold the catalog, the catalog is
-    named as the document names it, as it always has been.
+    Optional run-scoped rename map Invoke-OERStructure creates once per document. The catalogs handler
+    fills it (through Resolve-OERStructureRename) for every catalogs[] entry whose previousDisplayName
+    renames the catalog, is refused or cannot be decided, and Invoke-OERStructure marks every such
+    entry undecided when -Include leaves the catalogs section out. This handler only reads it, through
+    Get-OERStructureRenameTarget, for the entry's catalog: an entry naming the id of a catalog the run
+    renames makes every call that names the catalog pass that id, and an entry naming a refused or
+    undecided rename fails the package with nothing created, read or written. When the map is omitted
+    or does not hold the catalog, the catalog is named as the document names it, as it always has been.
 
     .EXAMPLE
     Sync-OERStructureAccessPackage -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
@@ -263,10 +266,13 @@ function Sync-OERStructureAccessPackage {
         # not the catalog the document means, whatever now carries its new name: nothing is read or
         # written for this package. Get-OERStructureRenameTarget owns the map's key.
         $CatalogRef = $Item.catalog
+        # A rename this run could not decide (R12: the catalog's previous name could not be looked up, or
+        # -Include leaves the catalogs section out) is refused the same way; Reason is the error id, or
+        # what kept the run from deciding.
         $CatalogTarget = Get-OERStructureRenameTarget -Section 'catalogs' -Name ([string]$Item.catalog) -RenameMap $RenameMap
         if ($CatalogTarget -and $CatalogTarget.Refused) {
             ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
-                -Detail "catalog '$($Item.catalog)' was not reconciled in this run: its rename from '$($CatalogTarget.PreviousName)' was refused ($($CatalogTarget.ErrorId)), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it"
+                -Detail "catalog '$($Item.catalog)' was not reconciled in this run: its rename from '$($CatalogTarget.PreviousName)' was refused ($($CatalogTarget.Reason)), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it"
             return
         }
         if ($CatalogTarget) { $CatalogRef = $CatalogTarget.Id }
