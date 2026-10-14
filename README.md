@@ -825,15 +825,18 @@ group keeps the alias derived from its old name or declares none. A `mailNicknam
 longer than 64 characters or holds one of `@ ( ) \ [ ] " ; : < > ,`, a space or a tab is an `Error`,
 since Microsoft Graph was measured to refuse each of them; the validator refuses any other white
 space or control character too, which was not measured. `New-OERGroup` refuses to derive an alias
-that would be empty or longer than 64 characters (`DerivedMailNicknameInvalid`). A scope written as a path with a `.` or `..` segment, a `%` escape
-or white space is an `Error` too (the `mg:`, `sub:` and `subscription:` forms are not checked for
-these three).
+that would be empty or longer than 64 characters (`DerivedMailNicknameInvalid`). A scope written as
+a path with a `.` or `..` segment, a `%` escape or white space is an `Error` too (the `mg:`, `sub:`
+and `subscription:` forms are not checked for these three). A scope with white space is refused even
+where an Azure resource name holds a space, so an export that holds a role assignment at such a
+resource is refused until that entry is removed.
 
 `Set-OERAccessPackageAssignmentPolicy`, and `Invoke-OERStructure` through it, keeps a policy's
 custom extension stages, which Microsoft Graph removes on an update that does not send them, and,
 while no `-RequestorScope` is passed, an automatic assignment policy's settings, without which
-Microsoft Graph refuses the update. A stage whose custom extension id cannot be read is refused
-with `InvalidPolicyInput`, also under `-WhatIf`, and no update is sent. A `-WhatIf` plan reports an
+Microsoft Graph refuses the update. `Set-OERAccessPackageAssignmentPolicy` refuses a stage whose
+custom extension id cannot be read with `InvalidPolicyInput`, also under its own `-WhatIf`, and sends
+no update. A `-WhatIf` plan reports an
 access package declared in a catalog the same document creates as `would create access package`
 instead of `Failed`.
 

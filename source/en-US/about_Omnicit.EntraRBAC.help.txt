@@ -246,7 +246,9 @@ RENAMES, MAIL ALIASES AND SCOPE SPELLING
     '.' or '..' segment, a '%' escape or white space is an Error too, beside
     the existing rule against a trailing or doubled '/'. The mg:, sub: and
     subscription: forms are resolved by a lookup and are not checked for those
-    three.
+    three. A scope with white space is refused even where an Azure resource
+    name holds a space, so an export that holds a role assignment at such a
+    resource is refused until that entry is removed.
 
     A -WhatIf plan reports an access package declared in a catalog the same
     document creates as 'would create access package' instead of Failed.

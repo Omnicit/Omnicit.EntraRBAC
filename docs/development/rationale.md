@@ -6930,10 +6930,12 @@ either since Sprint 11 step 2, and `//` draws that rule's `Warning` beside its `
 [#root-scope-is-not-in-the-document](#root-scope-is-not-in-the-document).
 
 **A scope written with a dot segment, a percent escape or white space is refused (A13, BL-141).** The
-slash rule above leaves three more spellings that name another scope than the text says. A scope
-written as an Azure Resource Manager path is sent as written, and the request URI is a `System.Uri`,
-which removes a `.` or `..` segment (reading `\` as `/`) and decodes a `%` escape; no scope carries
-white space. So `/subscriptions/ID/resourceGroups/rg/../other` is sent as
+slash rule above leaves three more spellings. Two of them name another scope than the text says. A
+scope written as an Azure Resource Manager path is sent as written, and the request URI is a
+`System.Uri`, which removes a `.` or `..` segment (reading `\` as `/`) and decodes an escape of an
+unreserved character such as `%2e`; the rule refuses every `%` anyway, whatever it escapes. The third,
+white space, is refused as a whole and is NOT known to name another scope (see the limit below). So
+`/subscriptions/ID/resourceGroups/rg/../other` is sent as
 `/subscriptions/ID/resourceGroups/other`, while the engine groups entries on the canonical form of the
 TEXT, which keeps the segment. Two spellings of one scope then form two groups, and under `-Prune`
 each group's pass can remove what the other declares: the mechanism of BL-01.
@@ -6954,9 +6956,27 @@ checked. The two differ on degenerate text only -- `mg:` followed by a line brea
 after it, is no friendly form to the owner and is checked. The prefix is read in any letter case.
 The slash rule is not exempted: a trailing or doubled `/` is refused in every spelling, `mg:` included.
 
+**The limit of the white space rule: an Azure resource name can hold a space.** Microsoft Learn
+("Naming rules and restrictions for Azure resources") allows white space inside the name of several
+resource types and forbids only a name that ends with a space or a period: for example
+`Microsoft.Sql` `servers/databases` and `servers/elasticPools`, `Microsoft.Insights` `components` and
+`Microsoft.Kusto` `clusters/databases`. `Get-OERInventory` reads role assignments at a subscription or
+a management group without `atScope()`, so an assignment at such a resource below it is exported with
+its scope as Azure Resource Manager returns it, space included. `Test-OERStructure`, and so
+`Invoke-OERStructure`, then refuses the whole document until that entry is removed, and a resource
+whose name holds a space cannot be declared in a document at all. The rule stays as decided (A13): it
+errs in the safe direction, since the document is refused before anything is read or written. The
+white space `Error` message says so and tells the operator to remove the entry, and README, the about
+topic and the schema descriptions state the same limit. This replaces the earlier statement that no
+scope carries white space and that an exported document is not expected to be hit: it was wrong for
+white space, and for a `.` or `..` segment and a `%` escape it was an expectation, not a measurement.
+
 If wrong: a scope with a dot segment, a `%` or white space that an operator wrote on purpose stops
-applying until it is written plainly; Azure Resource Manager returns plain scopes, so an exported
-document is not expected to be hit. Known limit, outside A13: a lone `\`, a `?` and a `#` in a path
+applying until it is written plainly, and an export holding a role assignment at a resource whose name
+holds a space is refused until that entry is removed. Follow-up, recorded and not taken: narrow the
+rule to white space at the start or end of the scope or of a segment, white space other than U+0020,
+and control characters, which would let such an export pass the validator (what the request does with
+a space in a path was not measured). Known limit, outside A13: a lone `\`, a `?` and a `#` in a path
 are not refused. By URI syntax a backslash is read as `/`, and a `?` or `#` ends the path, so a scope holding one may name
 another scope than the text says too; that was not measured against Azure Resource Manager and is left
 as a finding. `/.`, `/..` and `/%2e` in `roleAssignments` now carry this `Error` beside the root scope
@@ -8006,8 +8026,9 @@ removes from an assignment policy on a full PUT. The cmdlet is a read-modify-wri
 policy once, and `ConvertTo-OERPolicyBody` carries whatever the command line did not name into the
 body of the PUT. Until this step that was the scope, the requestor and approval settings, the
 expiration, `reviewSettings` and `questions`, and nothing else the read held. So a description-only
-update of a policy with a custom extension stage removed the stage, and an automatic assignment policy
-could not be updated at all. `Invoke-OERStructure` reaches a policy through the same cmdlet, so it
+update of a policy with a custom extension stage removed the stage, and the update of the measured
+automatic assignment policy (one `attributeRuleMembers` target) was refused (M3).
+`Invoke-OERStructure` reaches a policy through the same cmdlet, so it
 follows the rules below too. The facts marked M1 to M5 were measured live on 2026-10-13 as the test
 identity `oer-live-cc` in the operator's test tenant, and no tenant value is recorded here. The rest
 was derived from the code and proven with mocked tests.
@@ -8052,7 +8073,8 @@ its `id`, and nothing else -- no stage id, no display name, no endpoint configur
 `customExtension`, or one with no `id`, makes the helper throw instead: dropping it would disconnect
 the extension, which is the loss this rule exists to prevent, so the helper fails closed.
 `Set-OERAccessPackageAssignmentPolicy` publishes that as a non-terminating `InvalidPolicyInput`, before
-its `ShouldProcess` gate and so also under `-WhatIf`, and sends no update. An empty or absent list adds
+its `ShouldProcess` gate and so also under `-WhatIf`, and sends no update; the message ends with the
+way forward (read the policy with its custom extension stages, or remove the stage). An empty or absent list adds
 no key, so a policy without stages is PUT exactly as before. If wrong: a policy whose extension id the
 read cannot return (a permission, say) cannot be updated by this cmdlet until that is fixed, which is
 a refusal with nothing sent where the old code sent a silent loss. The shape was measured only for one
@@ -8082,7 +8104,8 @@ would bring the loss back unless the id is read another way.
 
 **What the document cannot say.** `Invoke-OERStructure` has no key for a custom extension stage or for
 automatic assignment, so neither is ever declared: they are only preserved, like `reviewSettings` and
-`questions`.
+`questions`. The automatic assignment settings are preserved only while the entry declares no
+`requestorScope` (Rule 2); an entry that declares one is sent without them.
 
 ## rename-refused-outside-groups
 
@@ -8102,8 +8125,12 @@ rename. The old object stayed in place, unreported.
 **Rule 1 (the refusal; `Test-OERStructureSchema`).** A `previousDisplayName` present and not null on
 an administrative unit, a catalog, an access package, an assignment policy of an access package or an
 access review is an `Error` at `previousDisplayName` under that entry's path, so the whole document is
-refused before authentication and before any write. The message states two facts and no more: renaming
-is not supported there yet, and the engine would create a new object beside the old one. A group keeps
+refused before authentication and before any write. The message states that only groups can be renamed
+through the document, that the engine does not read `previousDisplayName` for that kind and so would
+create a new object named by `displayName` beside the existing one, and the way out (remove the key,
+rename the existing object outside the document first); it names the kind with the article its first
+letter calls for. An earlier wording said the engine "matches by displayName alone", which was inexact
+(a package is matched within its catalog, a policy within its package) and is gone. A group keeps
 its `previousDisplayName`, which is the rename the engine supports. An explicit null is not declared,
 as for every other key (`Test-HasProp` is present and not null), and is not reported. If wrong: a
 document that carried the key in one of those sections used to apply and now fails validation; the fix
@@ -8195,8 +8222,8 @@ control characters by code point. Each rule is its own `Error`, so a value that 
 A non-string value keeps the existing "must be a string" `Error`. A non-ASCII letter and `.` are
 accepted, as Microsoft Graph accepted them (M6). White space other than the space and the tab, and
 control characters other than the tab, were not measured one by one: they follow the measured refusals
-and are refused on the ground that no alias needs them, so the user-facing texts (the schema
-description, the README, the about topic) say that Microsoft Graph was measured to refuse the printable
+and are refused on the ground that no alias needs them, so the user-facing texts (the `Error`'s own
+message, the schema description, the README, the about topic) say that Microsoft Graph was measured to refuse the printable
 set, the space, the tab, the empty string and more than 64 characters, and that the validator refuses
 the rest too. The schema declares `minLength` 1 and `maxLength` 64 and describes the characters, and
 the character set is enforced by the offline validator alone. If wrong: a document whose alias holds such a character that Graph would accept is
