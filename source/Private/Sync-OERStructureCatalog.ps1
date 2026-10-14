@@ -8,15 +8,49 @@ function Sync-OERStructureCatalog {
     the Invoke-OERStructure engine and emits one or more ConvertTo-OERStructureResult records
     describing what was created, updated, removed, skipped, or left unchanged.
 
-    displayName is the match key: an existing catalog is matched and updated by it. Renaming through
-    the document is not possible: this handler uses displayName purely to match, and never calls
-    Set-OERCatalog -NewDisplayName -- a changed displayName creates a new catalog under the new name
-    and leaves the old one in place, unreported.
+    displayName is the match key: an existing catalog is matched and updated by it. To rename a
+    catalog, the document declares its new name as displayName and its current name as
+    previousDisplayName (BL-128), and both names are resolved on every run before anything is read or
+    written. Resolve-OERStructureRename owns the decision, its error ids and its texts:
+    - Both resolve to DIFFERENT catalogs: the item emits exactly one Failed row and a non-terminating
+      CatalogRenameConflict error (category ResourceExists, target the new name), and nothing else is
+      read or written for it -- the document never merges two catalogs.
+    - Only previousDisplayName resolves: that catalog takes the existing-catalog path, and the rename
+      is folded into the step-1 property update (Set-OERCatalog -NewDisplayName, in the same PATCH as
+      every other changed property), reported as one Updated row "renamed catalog '<previous>' to
+      '<new>'". When that update fails, the Failed row is the last one: no resource of the catalog is
+      reconciled.
+    - Both resolve to the SAME catalog, or only displayName resolves: the item is applied normally.
+    - Neither resolves: the item emits exactly one Failed row and a non-terminating
+      CatalogRenameNotFound error (category ObjectNotFound, target the new name), and nothing is
+      created, read or written for it, and under -WhatIf nothing is added to -PlannedCatalog. A
+      document that declares a rename names a catalog that already exists; a catalog is created only
+      by an entry WITHOUT previousDisplayName.
+    A previousDisplayName matching several catalogs throws AmbiguousName, as an ambiguous displayName
+    does, and the item fails with nothing created or renamed. previousDisplayName also accepts the
+    catalog's object id, which is the way to rename a catalog whose old name is ambiguous. An object
+    id is verified with one read (v1.0/identityGovernance/entitlementManagement/catalogs/<id>, with no
+    $select) rather than through Resolve-OERCatalogId, which returns an object id verbatim without
+    any request: an id that no longer names a catalog counts as not matching, so a stale id never
+    reports a false conflict (with displayName resolving, the item is applied normally; with it not
+    resolving, the item fails as above), and any other failure of that read throws, again with
+    nothing created or renamed.
+
+    Microsoft Graph's displayName lookup can follow a rename with a delay. On the run that renames
+    the catalog, a reference to the NEW name elsewhere in the same document can therefore fail to
+    resolve; the access packages section reads the rename map (-RenameMap) for a package declared in
+    the renamed catalog, and a reference by name anywhere else fails loudly and is safe to re-run once
+    the new name resolves. Keep previousDisplayName in the document until the new name resolves: a
+    run after that finds the catalog under displayName and reports it Unchanged, and a re-run inside
+    the window in which neither name resolves yet fails with CatalogRenameNotFound instead of creating
+    a second catalog. Once the new name resolves, remove previousDisplayName: a catalog created later
+    under the old name makes the item fail.
 
     Processing order within a single catalog entry:
 
     1. Create the catalog when absent, or diff and update the mutable description and externallyVisible
-       properties when it already exists.
+       properties (and the display name, when previousDisplayName renames the catalog) when it already
+       exists.
     2. Reconcile declared resources (add missing by type/name; emit Extra or prune undeclared with
        -Prune). A Group or Application resource is matched by OBJECT ID: its declared name (or object
        id) is resolved to the group's, or the enterprise application's service principal's, object
@@ -74,10 +108,26 @@ function Sync-OERStructureCatalog {
     catalog"; Invoke-OERStructure passes one list per run to this handler and to
     Sync-OERStructureAccessPackage, which reads it. Omit it to collect nothing.
 
+    .PARAMETER RenameMap
+    The run-scoped rename map Invoke-OERStructure creates once per document and passes to this handler,
+    to Sync-OERStructureGroup, to Sync-OERStructureAdministrativeUnit and to the access package handler.
+    For an entry that declares previousDisplayName, Resolve-OERStructureRename registers the outcome
+    under 'catalogs|<new name>' in lower case: the id of the catalog the entry renames, or a refused
+    entry when its rename conflicts or finds nothing. The registration is made when the decision is, so
+    under -WhatIf too and before the rename is sent; Get-OERStructureRenameTarget reads it, so an access
+    package declared in the renamed catalog is read and created against the catalog's id. Optional:
+    without it the decision is the same and nothing is registered.
+
     .EXAMPLE
     Sync-OERStructureCatalog -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
     Reconciles one catalog entry from the document, pruning undeclared resources, resolving the
     caller from the engine PSCmdlet.
+
+    .EXAMPLE
+    Sync-OERStructureCatalog -Item $DocItem -Caller $PSCmdlet -RenameMap $RenameMap
+    With an entry whose displayName is 'CAT-IT-Core-EMEA' and whose previousDisplayName is
+    'CAT-IT-Core', renames the catalog found under 'CAT-IT-Core' in the same update as its other
+    changed properties, and registers the catalog's id under 'catalogs|cat-it-core-emea' in the map.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
         'PSShouldProcess', '',
@@ -94,7 +144,8 @@ function Sync-OERStructureCatalog {
         [Parameter(Mandatory)][System.Management.Automation.PSCmdlet]$Caller,
         [switch]$Prune,
         [string]$TenantAlias,
-        [System.Collections.Generic.List[string]]$PlannedCatalog
+        [System.Collections.Generic.List[string]]$PlannedCatalog,
+        [System.Collections.Generic.Dictionary[string, object]]$RenameMap
     )
     process {
         # -- Resolve the display name -------------------------------------------------------
@@ -102,6 +153,36 @@ function Sync-OERStructureCatalog {
 
         # -- Check existence ----------------------------------------------------------------
         $CatId = Resolve-OERCatalogId -DisplayName $Name
+
+        # -- Rename through previousDisplayName (BL-128, A5) -------------------------------
+        # Both names are resolved before anything is read or written for the entry, on every run.
+        # Resolve-OERStructureRename owns the decision, the error ids and the texts. Not wrapped in
+        # try: a name matching several catalogs throws AmbiguousName exactly as an ambiguous
+        # displayName does, and the engine reports the item Failed with nothing written for it.
+        $RenameFrom = $null
+        if (Test-OERDeclaredProperty -Node $Item -Name 'previousDisplayName') {
+            $PrevName = [string]$Item.previousDisplayName
+            if (Test-OERGuid -Value $PrevName) {
+                # An object id: Resolve-OERCatalogId returns a GUID verbatim, with no request, so it
+                # would "find" a catalog that was deleted. One read settles it; the not-found answer is
+                # declared to the transport and means "no catalog under that id", any other failure
+                # throws and the item fails with nothing written. No $select (Ruling R6).
+                $PrevProbe = Invoke-OERGraphRequest -Uri "v1.0/identityGovernance/entitlementManagement/catalogs/$PrevName" `
+                    -ExpectedErrorCode 'CatalogNotFound', 'NotFound'
+                $PrevCatId = if (@($PrevProbe.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') { $null } else { $PrevName }
+            } else {
+                $PrevCatId = Resolve-OERCatalogId -DisplayName $PrevName
+            }
+            $Rename = Resolve-OERStructureRename -Section 'catalogs' -Name $Name -PreviousName $PrevName `
+                -Id $CatId -PreviousId $PrevCatId -RenameMap $RenameMap
+            if ($Rename.Outcome -eq 'Conflict' -or $Rename.Outcome -eq 'NotFound') {
+                $Caller.WriteError($Rename.ErrorRecord)
+                $Rename.Result
+                return
+            }
+            $CatId = $Rename.Id
+            $RenameFrom = $Rename.RenameFrom
+        }
 
         # -- Create or update the catalog object --------------------------------------------
         if (-not $CatId) {
@@ -153,10 +234,16 @@ function Sync-OERStructureCatalog {
             $CurrentResources = @()
 
         } else {
-            # Catalog exists -- diff mutable properties (description, externallyVisible).
+            # Catalog exists -- diff mutable properties (description, externallyVisible) and, when
+            # previousDisplayName renames it, send the new display name in the same update.
             $Cur = Get-OERCatalog -Id $CatId
 
             $UpdateParams = @{}
+            # A rename through previousDisplayName travels in the same PATCH as every other changed
+            # property, so the catalog is renamed and updated in one call.
+            if ($RenameFrom) {
+                $UpdateParams.NewDisplayName = $Name
+            }
             if (Test-OERDeclaredProperty -Node $Item -Name 'description') {
                 if ($Cur.Description -ne $Item.description) {
                     $UpdateParams.Description = $Item.description
@@ -169,17 +256,38 @@ function Sync-OERStructureCatalog {
             }
 
             if ($UpdateParams.Count -gt 0) {
-                if ($Caller.ShouldProcess($Name, 'Update catalog properties')) {
+                # The rename is reported on its own terms; the other changed keys keep the wording
+                # every property update has always had.
+                $PropertyKeys = @($UpdateParams.Keys | Where-Object { $_ -ne 'NewDisplayName' })
+                $PropertyList = $PropertyKeys -join ', '
+                if ($RenameFrom) {
+                    $UpdateAction = "Rename catalog '$RenameFrom' to '$Name'"
+                    $UpdatedDetail = "renamed catalog '$RenameFrom' to '$Name'"
+                    $PlannedDetail = "would rename catalog '$RenameFrom' to '$Name'"
+                    if ($PropertyKeys.Count -gt 0) {
+                        $UpdateAction += " and update catalog properties ($PropertyList)"
+                        $UpdatedDetail += "; updated catalog properties ($PropertyList)"
+                        $PlannedDetail += "; would update catalog properties ($PropertyList)"
+                    }
+                } else {
+                    $UpdateAction = 'Update catalog properties'
+                    $UpdatedDetail = "updated catalog properties ($PropertyList)"
+                    $PlannedDetail = "would update catalog properties ($PropertyList)"
+                }
+                if ($Caller.ShouldProcess($Name, $UpdateAction)) {
                     try {
                         Set-OERCatalog -Id $CatId @UpdateParams -Confirm:$false -ErrorAction Stop | Out-Null
-                        ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Updated' -Detail "updated catalog properties ($($UpdateParams.Keys -join ', '))"
+                        ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Updated' -Detail $UpdatedDetail
                     } catch {
                         Remove-OERErrorRecord -Record $PSItem
                         $Caller.WriteError($PSItem)
                         ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Failed' -Detail "update failed: $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+                        # The catalog still carries its previous name, not the one the document
+                        # declares, so none of its resources is reconciled under the new name.
+                        if ($RenameFrom) { return }
                     }
                 } else {
-                    ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Skipped' -Detail "would update catalog properties ($($UpdateParams.Keys -join ', '))"
+                    ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Skipped' -Detail $PlannedDetail
                 }
             } else {
                 ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Unchanged' -Detail 'catalog properties match'
