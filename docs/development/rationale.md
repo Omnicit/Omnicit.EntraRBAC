@@ -6311,14 +6311,15 @@ single Graph transport never sends, and answers from an index that can lag behin
 (Microsoft Learn, List group members). Measured on 2026-10-14 (measurement B of
 [#roster-identity-and-shared-names](#roster-identity-and-shared-names)): without the header it
 answered `400 Request_UnsupportedQuery` on every group tried; with it, the count equalled the full
-read, which includes service principals, on the five groups read. None of those groups, nor any
-other in the test tenant, had a service principal as a member, so whether `$count` counts one, and
-how far it lags right after a change, is left to that step's live checklist. A count for every group
+read, which includes service principals, on the five groups read; the step's live checklist then
+added a service principal as a member, which `$count` with the header counted and the full read
+counted too, and showed that both counts trail a membership change by seconds (6 s for the eventual
+count, 16 s for the full read, after an add). A count for every group
 is not added: it would cost a request per group, and the transport cannot send the header. The
 roster join is keyed on the object id alone: the display-name fallback it used to have gave a
 non-security group that shared a security group's name that group's count. Cost if wrong: add
-header support to `Invoke-OERGraphRequest` and a `$count` read per group, once the live checklist
-shows that it counts service principals.
+header support to `Invoke-OERGraphRequest` and a `$count` read per group, now that the live checklist
+has shown that it counts service principals.
 
 **R4 (the partial signal).** The export's group read has its own `IncompleteReads` entry, placed
 first, naming the same triples `Get-OERInventory` would have named; its causes, deduplicated and
@@ -8768,15 +8769,17 @@ a rename.
 Sprint 11 step 5 (BL-131 and BL-142, decision A17) gave every `groupsRoster.json` row the group's
 object id and type, counted the names groups share over every group in the tenant, left out the
 assignment policies of one access package that share a name, and made the export write a reference
-to an object whose name is shared by that object's id. This anchor records the problem, the two
+to an object whose name is shared by that object's id. This anchor records the problem, the three
 measurements, the rulings with what each costs if it is wrong, the one named deviation from a
 single-owner rule, and the known limits. `Get-OERGroupNameIndex` is the single owner of which groups
 in the tenant carry a display name, `Get-OERGroupReference` of how the export names a group it
 references as a principal, and `Get-OERSharedNameCause` of the cause text, which now carries the
 count (CLAUDE.md, Code Style). No ErrorId and no public parameter was added or changed (A9);
-`Get-OERGroup`'s output gained three properties, which A17 allows. Apart from measurements A and B,
-nothing here was measured live: the rules were derived from the code and proven with mocked tests,
-and the step's live checklist follows.
+`Get-OERGroup`'s output gained three properties, which A17 allows. Apart from measurements A, B and
+C, nothing here was measured on its own: the rules were derived from the code and proven with mocked
+tests, and the step's live checklist,
+`docs/live-verification/feat-roster-identity-and-shared-names-checklist.md`, records the live runs
+and names the cases that could not be run live.
 
 **The problem.** Microsoft Entra ID does not keep display names unique, and the apply engine refuses
 a name that more than one live object answers to, with nothing written. The export already left out
@@ -8789,8 +8792,9 @@ first three wrote a document that the apply engine refused in part:
    refused when applied.
 2. Two assignment policies of one access package that shared a name were both written, and the
    validator left them unreported (Ruling P4 of [#rename-policies-and-reviews](#rename-policies-and-reviews)).
-3. A reference was written by name even when the name was shared: an access package's catalog, an
-   access review's access package or assignment policy
+3. A reference was written by name even when the name was shared: an access package's catalog (a
+   pair of catalogs of one name that Microsoft Graph no longer lets anyone make, measurement C, but
+   that a tenant can still hold from before), an access review's access package or assignment policy
    ([#access-review-target](#access-review-target)), and a group named as the principal of a role
    assignment or a directory role assignment. Each such entry was refused when applied until it was
    edited by hand to an id.
@@ -8813,12 +8817,32 @@ no extra request.
 WITH it, the count equalled the full read -- the member list joined with its
 `microsoft.graph.servicePrincipal` cast -- on the five groups read (0, 1, 1, 2 and 5 members), and so
 did the inline `$count=true&$top=1`; the `$count` body arrives as a string. No group in the test
-tenant had a service principal as a member (97 reads), so whether `$count` counts a service
-principal, and how long it lags right after a change, is measured in this step's live checklist with
-prefixed objects (sections 1.2 and 1.3); the controller adds the outcome here after the live run.
+tenant had a service principal as a member (97 reads), so the two open parts were measured in this
+step's live checklist, `docs/live-verification/feat-roster-identity-and-shared-names-checklist.md`
+(checks 1.2 and 1.3; live, the test tenant, `oer-live-cc`, 2026-10-14), with prefixed objects.
+A service principal (1.2): a security group whose only member was a service principal listed 0
+members with the v1.0 member list, which leaves the service principal out, 1 with the
+`microsoft.graph.servicePrincipal` cast and 1 in the module's full read, which joins the two;
+`members/$count` with `ConsistencyLevel: eventual` answered 1, so it counts the service principal
+and equals the full read, and without the header it answered `400 Request_UnsupportedQuery`. Right
+after a change (1.3): a second member was added to a group and removed again. After the add, both
+reads still showed the old count at once; the eventual count showed the new one at 6 s, the full read
+only at 16 s. After the remove both showed the old count at once and the new one at 6 s. So in this
+tenant the eventual count trailed a change no more than the full read did; both trail by seconds.
 Decision, unchanged: no member count for every group in this step -- it would cost a request per
 group, and the module's single Graph transport cannot send the header
 ([#export-group-selection](#export-group-selection), R3).
+
+**Measurement C (catalog names; live, the test tenant, `oer-live-cc`, 2026-10-14, check 0.2 of the
+same checklist).** Microsoft Graph refuses to create a catalog whose name another catalog carries,
+letter case aside (`400 DuplicateCatalog`, for the exact name and for a name differing only in
+letter case), and refuses to rename a catalog to such a name (`409 DuplicateKey`). So two catalogs
+that share a name cannot be made today; a tenant may still hold such a pair from before this refusal
+(not measured). BL-39's twin-catalog case (a package written with its catalog's id, R-5) is
+therefore proved offline only (the checklist's B.8), and the guard that fails a package re-created
+into another catalog was proved live on the older case: a package declared in a uniquely named
+catalog while a package of the same name exists in another catalog (check 3.5, one `Failed` row,
+nothing written).
 
 **R-1 (the roster shape).** `ConvertTo-OERGroup`, the single owner of the group shape, gains
 `MailEnabled` (after `SecurityEnabled`), `Visibility` and `CreatedDateTime` (last). A boolean
@@ -8913,8 +8937,8 @@ namesakes never in `inventory.json`'s scope.
 
 **R-4 (texts that carry the controller's numbers).** Task 4, measurement B written into R3 of
 [#export-group-selection](#export-group-selection), was batched with the texts of Task 5 into one
-dispatch, and the outcome of the live checklist is added after the live run by a small follow-up:
-both are texts that carry numbers only the controller holds. Cost if wrong: none beyond one batched
+dispatch, and the outcome of the live checklist (measurements B and C) was added after the live run by
+a small follow-up: both are texts that carry numbers only the controller holds. Cost if wrong: none beyond one batched
 review.
 
 **R-5 (a package's catalog, and `-Catalog`).** An access package whose catalog's name another
@@ -8924,8 +8948,10 @@ name in two such catalogs are two entries and not a collision; the unread paths 
 name it the same way. The catalogs themselves are left out as before. The names are counted over the
 catalogs the export read, with no extra lookup: `-Catalog` given as an id reads that catalog alone,
 so a package in it keeps the catalog's name even when another catalog in the tenant carries it, and
-given as a name it reads every catalog Microsoft Graph matches by that name, which are counted. Cost
-if wrong: a package in a filtered catalog whose name another catalog shares is written by name and
+given as a name it reads every catalog Microsoft Graph matches by that name, which are counted. Such
+a pair of catalogs can be held only by a tenant that made it before Microsoft Graph refused to create
+or rename a catalog to a name another carries (measurement C), so the rule serves those tenants and
+has no live case in the test tenant. Cost if wrong: a package in a filtered catalog whose name another catalog shares is written by name and
 refused when applied (`AmbiguousName`, nothing written).
 
 **R-6 (what this step does not cover).** A group named as a PIM for Groups eligibility principal, as
@@ -8973,7 +8999,8 @@ in the whole tenant, so re-creating a package declared in catalog A while exactl
 name exists in catalog B returned B's package, and `Sync-OERStructureAccessPackage` reported it
 `Created` and went on to write the declared resource roles and assignment policies to it. The gap is
 older than this step, for every catalog named uniquely; the catalog id written here let it reach a
-package whose catalog's name is shared (refused as ambiguous before). The handler now compares the
+package whose catalog's name is shared (refused as ambiguous before), a pair only a tenant from
+before Microsoft Graph's refusal can hold (measurement C). The handler now compares the
 catalog of the package `New-OERAccessPackage` returns with the declared catalog, as ids without
 regard to letter case -- an id as written, a name looked up once with `Resolve-OERCatalogId` -- and
 when they differ reports the entry as one `Failed` row and returns, with nothing written to that
@@ -8989,5 +9016,5 @@ order. A group row at the root scope alone makes `Get-OERInventory` read the lis
 verbose line of R-3c says "every group principal" even when only root-scope rows met it. (e) The policies of a
 package that is itself left out for a shared name are still reported, and two same-named packages of
 one catalog that each hold a same-named pair of policies report the policy name twice, the same way:
-noise, since neither package is written. (f) Whether `$count` counts a service principal is open
-until the live checklist (measurement B).
+noise, since neither package is written. (f) Closed by the live checklist (measurement B): `$count` counts a
+service principal, and it trails a membership change by seconds, as the full read does.
