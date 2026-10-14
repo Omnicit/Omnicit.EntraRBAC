@@ -25,11 +25,14 @@ function Set-OERAccessPackageAssignmentPolicy {
     object. Supports -WhatIf and -Confirm. The duration parameters also accept the module-standard
     -DurationDays / -DurationHours names.
 
-    At least one property beyond the mandatory -DisplayName must be supplied or a non-terminating
-    NothingToUpdate error is emitted. Because -DisplayName is Mandatory it is re-sent on every call and
-    cannot by itself signal an update, so this means a rename-only call (-Id and -DisplayName alone) is
-    refused. To rename, pair -DisplayName with any other property -- for example, re-sending the current
-    -Description -- so the call carries an update.
+    A call that supplies no updatable property beyond the mandatory -DisplayName is a rename when
+    -DisplayName differs from the live policy's display name: it is sent as the usual full update, with
+    every other setting carried forward from the live policy as described above (custom extension stages
+    and automatic assignment settings included). When -DisplayName equals the live display name,
+    compared ignoring case, such a call emits a non-terminating NothingToUpdate error after its one read
+    of the live policy and sends no update; a failed read is reported as itself, not as NothingToUpdate.
+    A change of letter case alone is therefore not sent; together with any other updatable property it
+    is.
 
     Because reviewSettings is carried forward on every update, a policy whose Lifecycle access review has
     been deleted can no longer be updated at all: Graph validates the referenced definition and answers
@@ -42,11 +45,13 @@ function Set-OERAccessPackageAssignmentPolicy {
     The assignment policy id (GUID) to update.
 
     .PARAMETER DisplayName
-    The policy display name. Mandatory and re-sent on every call (a full PUT), but accepts pipeline
-    input by property name so a tagged Omnicit.EntraRBAC.AssignmentPolicy object from
+    The policy display name. Mandatory and sent on every call (a full PUT), and accepts pipeline input
+    by property name so a tagged Omnicit.EntraRBAC.AssignmentPolicy object from
     Get-OERAccessPackageAssignmentPolicy pipes straight into an update without repeating the name by
-    hand. Still counts toward the NothingToUpdate rename-only refusal: pass at least one other
-    updatable property to make a real change.
+    hand. A value that differs from the live policy's display name renames the policy, on its own or
+    together with other properties. Supplied with no other updatable property and equal to the live
+    name (compared ignoring case), it reports NothingToUpdate after the policy is read once, and no
+    update is sent.
 
     .PARAMETER Description
     Optional policy description. When omitted the existing description is preserved; an explicit
@@ -122,6 +127,14 @@ function Set-OERAccessPackageAssignmentPolicy {
     Changes only the expiration to 90 days. -RequestorScope is omitted, so the policy's live
     allowedTargetScope and specificAllowedTargets (for example a SpecificDirectoryUsers scope with its
     approved user and group list) are preserved unchanged rather than being reset to a default scope.
+
+    .EXAMPLE
+    Set-OERAccessPackageAssignmentPolicy -Id $polId -DisplayName 'Contractors (external)'
+
+    Renames the policy. No other property is supplied, so every other setting -- requestor scope,
+    approval, expiration, custom extension stages and automatic assignment settings among them -- is
+    carried forward from the live policy. Run with the policy's current name instead, the call reports
+    NothingToUpdate and sends no update.
     #>
     [CmdletBinding(SupportsShouldProcess)]
     [OutputType([PSCustomObject])]
@@ -165,28 +178,17 @@ function Set-OERAccessPackageAssignmentPolicy {
         Initialize-OERAuth @AuthParams
     }
     process {
-        # -DisplayName is Mandatory, so it is re-sent on every call and cannot by itself signal an
-        # update -- a call carrying only -Id and -DisplayName would otherwise be a full PUT of the
-        # policy's current state, indistinguishable in the caller's output from a real change. BREAKING
-        # consequence, stated here rather than hidden: a rename-only call is now refused (issue #47).
+        # -DisplayName is Mandatory, so it is sent on every call. When it is the only property bound,
+        # whether the call is an update depends on the live policy (A16, Sprint 11 step 4b): a
+        # -DisplayName that differs from the live displayName is a rename, sent as the full update
+        # below with everything else carried forward; one equal to it, ignoring case, is NothingToUpdate.
+        # That decision needs the live name, so it is taken after the read below, not here. (Issue #47
+        # refused every call with -DisplayName alone; A16 replaced that.)
         $UpdatableBound = @(
             'Description', 'RequestorScope', 'RequestorSettings', 'ApprovalStage', 'RequireApproval',
             'RequireRequestorJustification', 'RequireApprovalForUpdate', 'DurationInDays', 'DurationInHours',
             'ExpirationDateTime', 'DisableAssignmentNotifications') |
             Where-Object { $PSBoundParameters.ContainsKey($_) }
-        if (-not $UpdatableBound) {
-            Write-CmdletError `
-                -Message ([System.Exception]::new(
-                    'No updatable property beyond the mandatory -DisplayName was supplied. Pass at least one ' +
-                    'of -Description, -RequestorScope, -RequestorSettings, -ApprovalStage, -RequireApproval, ' +
-                    '-RequireRequestorJustification, -RequireApprovalForUpdate, -DurationInDays, ' +
-                    '-DurationInHours, -ExpirationDateTime, or -DisableAssignmentNotifications.')) `
-                -ErrorId 'NothingToUpdate' `
-                -Category InvalidArgument `
-                -TargetObject $Id `
-                -Cmdlet $PSCmdlet
-            return
-        }
 
         # Three-way expiration mutual exclusion: at most one of DurationInDays, DurationInHours, ExpirationDateTime.
         $ExpirationCount = 0
@@ -240,6 +242,28 @@ function Set-OERAccessPackageAssignmentPolicy {
             $PSCmdlet.WriteError($PSItem)
             return
         }
+
+        # A16 (Sprint 11 step 4b): with no updatable property beyond -DisplayName, the call is
+        # NothingToUpdate only when -DisplayName equals the live displayName ignoring case -- the full
+        # update would then re-send the policy's own state. A differing name falls through to the PUT
+        # as any update does. Decided on the read above, so no second request is made; a failed read
+        # was reported as itself in its catch and never reaches this point.
+        if (-not $UpdatableBound -and $null -ne $Existing -and [string]$Existing.displayName -ieq $DisplayName) {
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "-DisplayName equals the current display name of assignment policy '$Id' (compared " +
+                    'ignoring case) and no other updatable property was supplied, so there is nothing to ' +
+                    'update. To rename the policy, pass a different -DisplayName; to update it, pass at ' +
+                    'least one of -Description, -RequestorScope, -RequestorSettings, -ApprovalStage, ' +
+                    '-RequireApproval, -RequireRequestorJustification, -RequireApprovalForUpdate, ' +
+                    '-DurationInDays, -DurationInHours, -ExpirationDateTime, or -DisableAssignmentNotifications.')) `
+                -ErrorId 'NothingToUpdate' `
+                -Category InvalidArgument `
+                -TargetObject $Id `
+                -Cmdlet $PSCmdlet
+            return
+        }
+
         $PackageId = $Existing.accessPackage.id
         if (-not $PackageId) {
             Write-CmdletError -Message ([System.Exception]::new("Could not determine the access package for policy '$Id'.")) `

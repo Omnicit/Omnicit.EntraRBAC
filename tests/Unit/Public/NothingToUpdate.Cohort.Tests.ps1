@@ -18,20 +18,26 @@ BeforeDiscovery {
     # indistinguishable to a caller.
     #
     # Two members of the cohort carry predicates that are narrower than "any parameter", both by
-    # design (issue #47, Philip's call):
-    #   - Set-OERAccessPackageAssignmentPolicy's -DisplayName is Mandatory and is re-sent on every call,
-    #     so it cannot itself signal an update. The predicate is "no property beyond -DisplayName", so a
-    #     rename-only call (-Id and -DisplayName alone) is refused BY DESIGN. Do not read that as a bug
-    #     to "fix" in a later audit.
+    # design:
+    #   - Set-OERAccessPackageAssignmentPolicy's -DisplayName is Mandatory and is sent on every call,
+    #     so whether it alone is an update depends on the live policy (decision A16, Sprint 11 step
+    #     4b). The predicate is "no updatable property beyond -DisplayName AND -DisplayName equals the
+    #     live displayName, compared ignoring case": a -DisplayName that differs is a rename and is
+    #     sent as a full update. Deciding that needs the live name, so this one member is NOT refused
+    #     before any request: it reads the policy once (the read its update makes anyway) and writes
+    #     nothing. Its case carries LivePolicy, the answer to that read, which moves it from the
+    #     "issues no request" It to the It that asserts exactly one read and no write. (Issue #47 had
+    #     refused every call with -DisplayName alone, a rename included; A16 replaced that.)
     #   - Set-OERAccessReviewDefinition deliberately excludes -EndDate and -Occurrences from its
     #     updatable set: neither changes anything unless -Recurrence and -StartDate are also supplied,
     #     so a call carrying only one of them would still be a no-op.
     #
-    # Two members also place the guard somewhere other than the first statement of process, again by
-    # design, so a more specific pre-existing error keeps priority: Set-OERConfiguration guards AFTER
-    # its InvalidTenantAlias check (a path-traversal guard on a mandatory parameter), and
-    # Set-OERAccessReviewDefinition guards AFTER its MutuallyExclusiveParameter check (-EndDate with
-    # -Occurrences).
+    # Three members also place the guard somewhere other than the first statement of process, again
+    # by design: Set-OERConfiguration guards AFTER its InvalidTenantAlias check (a path-traversal guard
+    # on a mandatory parameter) and Set-OERAccessReviewDefinition AFTER its MutuallyExclusiveParameter
+    # check (-EndDate with -Occurrences), so a more specific pre-existing error keeps priority; and
+    # Set-OERAccessPackageAssignmentPolicy guards AFTER its read of the live policy, which its
+    # predicate needs (A16), so a failed read is reported as itself.
     $script:NothingToUpdateCases = @(
         @{
             Cmdlet = 'Set-OERAdministrativeUnit'
@@ -114,10 +120,18 @@ BeforeDiscovery {
             }
         }
         @{
-            # -DisplayName is Mandatory on this cmdlet, so it must be supplied even though the guard's
-            # predicate deliberately excludes it -- see the BeforeDiscovery header comment above.
-            Cmdlet = 'Set-OERAccessPackageAssignmentPolicy'
-            Invoke = {
+            # -DisplayName is Mandatory on this cmdlet, so it must be supplied. Under A16 (Sprint 11
+            # step 4b) it is NothingToUpdate only when it equals the live policy's displayName ignoring
+            # case, so LivePolicy answers the cmdlet's one read with a policy named as -DisplayName,
+            # and the case is asserted by the one-read It below, not the no-request one -- see the
+            # BeforeDiscovery header comment above.
+            Cmdlet     = 'Set-OERAccessPackageAssignmentPolicy'
+            LivePolicy = @{
+                id            = 'a8888888-0000-0000-0000-000000000008'
+                displayName   = 'Policy'
+                accessPackage = @{ id = 'a9999999-0000-0000-0000-000000000009' }
+            }
+            Invoke     = {
                 Set-OERAccessPackageAssignmentPolicy -Id 'a8888888-0000-0000-0000-000000000008' -DisplayName 'Policy' `
                     -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
@@ -188,7 +202,7 @@ Describe 'The no-updatable-property guard reports one id across the whole Set-* 
         $CaseRoster.Count | Should -Be 12
     }
 
-    It '<Cmdlet> reports NothingToUpdate and issues no request when no updatable property is supplied' -ForEach $script:NothingToUpdateCases {
+    It '<Cmdlet> reports NothingToUpdate and issues no request when no updatable property is supplied' -ForEach @($script:NothingToUpdateCases | Where-Object { -not $_.LivePolicy }) {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
         Mock -ModuleName $script:moduleName Invoke-OERArmRequest {}
@@ -202,6 +216,25 @@ Describe 'The no-updatable-property guard reports one id across the whole Set-* 
         @($Err | Where-Object { $_.FullyQualifiedErrorId -in @("NoUpdateSpecified,$Cmdlet", "NoChange,$Cmdlet") }).Count | Should -Be 0
         # The guard refuses the call outright: nothing reached Graph or ARM.
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0 -Exactly
+    }
+
+    It '<Cmdlet> reports NothingToUpdate after exactly one read of the live name, and writes nothing, when -DisplayName equals it and no other updatable property is supplied' -ForEach @($script:NothingToUpdateCases | Where-Object { $_.LivePolicy }) {
+        # A16 (Sprint 11 step 4b): this member's predicate needs the live displayName, so "issues no
+        # request" cannot hold for it. What holds instead: the one read its update makes anyway, and
+        # nothing written -- see the BeforeDiscovery header comment above.
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $LivePolicy }
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest {}
+
+        $Err = & $Invoke
+
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -eq "NothingToUpdate,$Cmdlet" }).Count | Should -Be 1
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -in @("NoUpdateSpecified,$Cmdlet", "NoChange,$Cmdlet") }).Count | Should -Be 0
+        # Exactly one request in all, and it was the read; no write of any kind reached Graph or ARM.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -in @('PUT', 'POST', 'PATCH', 'DELETE') }
         Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0 -Exactly
     }
 
