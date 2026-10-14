@@ -8,15 +8,46 @@ function Sync-OERStructureAdministrativeUnit {
     It is called by the Invoke-OERStructure engine and emits one or more ConvertTo-OERStructureResult
     records describing what was created, updated, removed, skipped, or left unchanged.
 
-    displayName is the match key: an existing unit is matched and updated by it. Renaming through
-    the document is not possible: this handler uses displayName purely to match, and never calls
-    Set-OERAdministrativeUnit -NewDisplayName -- a changed displayName creates a new unit under the
-    new name and leaves the old one in place, unreported.
+    displayName is the match key: an existing unit is matched and updated by it. To rename a unit,
+    the document declares its new name as displayName and its current name as previousDisplayName
+    (BL-128), and both names are resolved on every run before anything is read or written.
+    Resolve-OERStructureRename owns the decision, its error ids and its texts:
+    - Both resolve to DIFFERENT units: the item emits exactly one Failed row and a non-terminating
+      AdministrativeUnitRenameConflict error (category ResourceExists, target the new name), and
+      nothing else is read or written for it -- the document never merges two units.
+    - Only previousDisplayName resolves: that unit takes the existing-unit path, and the rename is
+      folded into the step-1 property update (Set-OERAdministrativeUnit -NewDisplayName, in the same
+      PATCH as every other changed property), reported as one Updated row "renamed administrative
+      unit '<previous>' to '<new>'". When that update fails, the Failed row is the last one: no member
+      or scoped role of the unit is reconciled.
+    - Both resolve to the SAME unit, or only displayName resolves: the item is applied normally.
+    - Neither resolves: the item emits exactly one Failed row and a non-terminating
+      AdministrativeUnitRenameNotFound error (category ObjectNotFound, target the new name), and
+      nothing is created, read or written for it. A document that declares a rename names a unit that
+      already exists; a unit is created only by an entry WITHOUT previousDisplayName.
+    A previousDisplayName matching several units throws AmbiguousName, as an ambiguous displayName
+    does, and the item fails with nothing created or renamed. previousDisplayName also accepts the
+    unit's object id, which is the way to rename a unit whose old name is ambiguous. An object id is
+    verified with one read (v1.0/directory/administrativeUnits/<id>?$select=id): an id that no longer
+    names a unit counts as not matching, so a stale id never reports a false conflict (with
+    displayName resolving, the item is applied normally; with it not resolving, the item fails as
+    above), and any other failure of that read throws, again with nothing created or renamed.
+
+    Microsoft Graph's displayName lookup can follow a rename with a delay. On the run that renames
+    the unit, a reference to the NEW name elsewhere in the same document can therefore fail to
+    resolve; the groups section reads the rename map (-RenameMap) for a group it creates into a
+    renamed unit, and a reference by name anywhere else fails loudly and is safe to re-run once the
+    new name resolves. Keep previousDisplayName in the document until the new name resolves: a run
+    after that finds the unit under displayName and reports it Unchanged, and a re-run inside the
+    window in which neither name resolves yet fails with AdministrativeUnitRenameNotFound instead of
+    creating a second unit. Once the new name resolves, remove previousDisplayName: a unit created
+    later under the old name makes the item fail.
 
     Processing order within a single administrative unit:
     1. Create the unit when absent (including -Dynamic/-MembershipRule/-MembershipRuleProcessingState
-       and -HiddenMembership when declared), or diff and update the mutable properties (description,
-       membershipType, membershipRule, membershipRuleProcessingState, and visibility in both directions)
+       and -HiddenMembership when declared), or diff and update the mutable properties (the display
+       name when previousDisplayName renames the unit, description, membershipType, membershipRule,
+       membershipRuleProcessingState, and visibility in both directions)
        when it already exists. A membershipType conversion to dynamic carries the declared membershipRule
        in the same Set-OERAdministrativeUnit call, so the unit is never momentarily dynamic with no rule;
        when no rule is declared and the live unit has none, the conversion is reported as Failed instead.
@@ -137,7 +168,13 @@ function Sync-OERStructureAdministrativeUnit {
     dispatch loop, to create an administrative unit that a declared group is about to be created into
     (New-OERGroup -AdministrativeUnit) -- the normal dispatch order runs groups before administrative
     units so an AU can reference a group as a member, which would otherwise leave the AU missing on a
-    first apply and fail the whole group entry.
+    first apply and fail the whole group entry. An entry that declares previousDisplayName is the one
+    exception: the pre-pass resolves both names, registers the outcome in -RenameMap and returns with
+    no record and no write -- it never creates a unit for an entry that declares a rename, since a
+    unit found only under its previous name is the one the document renames, and one found under
+    neither is a rename that fails. The administrativeUnits pass reports the rename, the conflict or
+    the not-found, so the same refusal is never reported twice; what the pre-pass registered is what
+    the groups section reads for a group created into the unit.
 
     .PARAMETER Item
     One element from the administrativeUnits[] array in the structure document, as a PSCustomObject
@@ -177,7 +214,8 @@ function Sync-OERStructureAdministrativeUnit {
     already exists. Used by the Invoke-OERStructure engine's pre-pass to guarantee an administrative
     unit exists before a declared group is created into it, ahead of the normal groups-before-
     administrativeUnits dispatch order. Every other Sync-OERStructure* handler signature is unchanged
-    by this switch.
+    by this switch. An entry that declares previousDisplayName is only resolved and registered in
+    -RenameMap: nothing is created, nothing is written and no record is emitted for it.
 
     .PARAMETER CreatedUnitMembership
     The run-scoped list Invoke-OERStructure creates once per document and passes to this handler and
@@ -185,6 +223,16 @@ function Sync-OERStructureAdministrativeUnit {
     group it creates into an administrative unit. The member Extra/prune pass withholds a recorded
     group's membership of this unit under -Prune; see the BL-07 paragraph above. Optional: without
     it no member is withheld on this account. The -EnsureOnly pre-pass does not need it.
+
+    .PARAMETER RenameMap
+    The run-scoped rename map Invoke-OERStructure creates once per document and passes to this handler
+    (its -EnsureOnly pre-pass call included), to Sync-OERStructureGroup and to the catalog and access
+    package handlers. For an entry that declares previousDisplayName, Resolve-OERStructureRename
+    registers the outcome under 'administrativeunits|<new name>' in lower case: the id of the unit the
+    entry renames, or a refused entry when its rename conflicts or finds nothing. The registration is
+    made when the decision is, so under -WhatIf too and before the rename is sent;
+    Get-OERStructureRenameTarget reads it. Optional: without it the decision is the same and nothing is
+    registered.
 
     .EXAMPLE
     Sync-OERStructureAdministrativeUnit -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
@@ -195,6 +243,12 @@ function Sync-OERStructureAdministrativeUnit {
     Sync-OERStructureAdministrativeUnit -Item $DocItem -Caller $PSCmdlet -EnsureOnly
     Creates the administrative unit if it does not already exist and returns immediately; emits
     nothing at all if it is already present.
+
+    .EXAMPLE
+    Sync-OERStructureAdministrativeUnit -Item $DocItem -Caller $PSCmdlet -RenameMap $RenameMap
+    With an entry whose displayName is 'au_hr_emea' and whose previousDisplayName is 'au_hr', renames
+    the unit found under 'au_hr' in the same update as its other changed properties, and registers the
+    unit's id under 'administrativeunits|au_hr_emea' in the map.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
         'PSShouldProcess', '',
@@ -212,7 +266,8 @@ function Sync-OERStructureAdministrativeUnit {
         [switch]$Prune,
         [string]$TenantAlias,
         [switch]$EnsureOnly,
-        [System.Collections.Generic.List[object]]$CreatedUnitMembership
+        [System.Collections.Generic.List[object]]$CreatedUnitMembership,
+        [System.Collections.Generic.Dictionary[string, object]]$RenameMap
     )
     process {
         # A property that is present but NULL counts as UNDECLARED, exactly as the offline validator's
@@ -249,6 +304,40 @@ function Sync-OERStructureAdministrativeUnit {
 
         # -- Check existence ----------------------------------------------------------------
         $Auid = Resolve-OERAdministrativeUnitId -DisplayName $Name
+
+        # -- Rename through previousDisplayName (BL-128, A5) -------------------------------
+        # Both names are resolved before anything is read or written for the entry, on every run.
+        # Resolve-OERStructureRename owns the decision, the error ids and the texts. Not wrapped in
+        # try: a name matching several units throws AmbiguousName exactly as an ambiguous displayName
+        # does, and the engine reports the item Failed with nothing written for it.
+        $RenameFrom = $null
+        if (Test-DeclHas -Node $Item -Name 'previousDisplayName') {
+            $PrevName = [string]$Item.previousDisplayName
+            if (Test-OERGuid -Value $PrevName) {
+                # An object id: Resolve-OERAdministrativeUnitId would look it up as a display name. One
+                # read settles it; the not-found answer is declared to the transport and means "no unit
+                # under that id", any other failure throws and the item fails with nothing written.
+                $PrevProbe = Invoke-OERGraphRequest -Uri "v1.0/directory/administrativeUnits/$PrevName`?`$select=id" `
+                    -ExpectedErrorCode 'Request_ResourceNotFound', 'ResourceNotFound'
+                $PrevAuid = if (@($PrevProbe.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') { $null } else { $PrevName }
+            } else {
+                $PrevAuid = Resolve-OERAdministrativeUnitId -DisplayName $PrevName
+            }
+            $Rename = Resolve-OERStructureRename -Section 'administrativeUnits' -Name $Name -PreviousName $PrevName `
+                -Id $Auid -PreviousId $PrevAuid -RenameMap $RenameMap
+            # The pre-pass follows the previous name: it never creates a unit for an entry that
+            # declares a rename, and it reports nothing -- the administrativeUnits pass reports the
+            # rename, the conflict or the not-found. What it found is in the rename map, where the
+            # groups section reads it for a group created into the unit.
+            if ($EnsureOnly) { return }
+            if ($Rename.Outcome -eq 'Conflict' -or $Rename.Outcome -eq 'NotFound') {
+                $Caller.WriteError($Rename.ErrorRecord)
+                $Rename.Result
+                return
+            }
+            $Auid = $Rename.Id
+            $RenameFrom = $Rename.RenameFrom
+        }
 
         # -EnsureOnly stops here when the unit already exists: it exists solely so the engine's
         # pre-pass can create an administrative unit a declared group is about to be created into,
@@ -423,6 +512,12 @@ function Sync-OERStructureAdministrativeUnit {
             # contradictory 'administrative unit properties match' Unchanged for the same unit.
             $DriftReported = $false
 
+            # A rename through previousDisplayName travels in the same PATCH as every other changed
+            # property, so the unit is renamed and updated in one call.
+            if ($RenameFrom) {
+                $UpdateParams.NewDisplayName = $Name
+            }
+
             # membershipType: Microsoft Graph v1.0 supports changing it on an existing unit via PATCH,
             # and Set-OERAdministrativeUnit now sends it. A unit converted to Dynamic MUST carry a
             # membership rule in the SAME call -- a dynamic unit with no rule is an invalid state.
@@ -498,7 +593,25 @@ function Sync-OERStructureAdministrativeUnit {
                 if ($WhatIfPreference -and $UpdateParams.ContainsKey('MembershipType')) {
                     Write-Warning "Changing the membership type of administrative unit '$Auid' to '$($UpdateParams.MembershipType)'. The unit's existing membership can change as a result; on a Dynamic unit the membership rule owns the membership and members can no longer be added or removed manually."
                 }
-                if ($Caller.ShouldProcess($Name, "Update administrative unit properties ($($UpdateParams.Keys -join ', '))")) {
+                # The rename is reported on its own terms; the other changed keys keep the wording
+                # every property update has always had.
+                $PropertyKeys = @($UpdateParams.Keys | Where-Object { $_ -ne 'NewDisplayName' })
+                $PropertyList = $PropertyKeys -join ', '
+                if ($RenameFrom) {
+                    $UpdateAction = "Rename administrative unit '$RenameFrom' to '$Name'"
+                    $UpdatedDetail = "renamed administrative unit '$RenameFrom' to '$Name'"
+                    $PlannedDetail = "would rename administrative unit '$RenameFrom' to '$Name'"
+                    if ($PropertyKeys.Count -gt 0) {
+                        $UpdateAction += " and update administrative unit properties ($PropertyList)"
+                        $UpdatedDetail += "; updated administrative unit properties ($PropertyList)"
+                        $PlannedDetail += "; would update administrative unit properties ($PropertyList)"
+                    }
+                } else {
+                    $UpdateAction = "Update administrative unit properties ($PropertyList)"
+                    $UpdatedDetail = "updated administrative unit properties ($PropertyList)"
+                    $PlannedDetail = "would update administrative unit properties ($PropertyList)"
+                }
+                if ($Caller.ShouldProcess($Name, $UpdateAction)) {
                     try {
                         Set-OERAdministrativeUnit -Id $Auid @UpdateParams -Confirm:$false -ErrorAction Stop | Out-Null
                         if ($UpdateParams.ContainsKey('MembershipType')) {
@@ -517,14 +630,18 @@ function Sync-OERStructureAdministrativeUnit {
                                 }
                             }
                         }
-                        ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $Name -Action 'Updated' -Detail "updated administrative unit properties ($($UpdateParams.Keys -join ', '))"
+                        ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $Name -Action 'Updated' -Detail $UpdatedDetail
                     } catch {
                         Remove-OERErrorRecord -Record $PSItem
                         $Caller.WriteError($PSItem)
                         ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $Name -Action 'Failed' -Detail "administrative unit update failed: $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+                        # The unit still carries its previous name, not the one the document
+                        # declares, so none of its members or scoped roles is reconciled under the
+                        # new name.
+                        if ($RenameFrom) { return }
                     }
                 } else {
-                    ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $Name -Action 'Skipped' -Detail "would update administrative unit properties ($($UpdateParams.Keys -join ', '))"
+                    ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $Name -Action 'Skipped' -Detail $PlannedDetail
                 }
             } elseif (-not $DriftReported) {
                 ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $Name -Action 'Unchanged' -Detail 'administrative unit properties match'
