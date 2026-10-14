@@ -12,8 +12,10 @@ manual check (class C).
 creates two security groups that share the name `oer-s115-dup`; a security group and a private
 Microsoft 365 group that share the name `oer-s115-mix`; a security group `oer-s115-cnt` whose only
 member is the service principal `oer-live-cc-noperm` (which holds no role through it); a security group
-`oer-s115-req` with no member; two catalogs that share the name `oer-s115-cat`, the first holding the
-hidden access package `oer-s115-ap-a`; a catalog `oer-s115-catu` holding the hidden access package
+`oer-s115-req` with no member; a catalog `oer-s115-cat` holding the hidden access package
+`oer-s115-ap-a`; an empty catalog `oer-s115-cat2` (Microsoft Graph refuses a second catalog whose name another
+carries, letter case aside, on create and on rename, so the planned twin catalogs cannot be made: see 0.2);
+a catalog `oer-s115-catu` holding the hidden access package
 `oer-s115-ap-b` with two assignment policies that share the name `oer-s115-pol`, through which only the
 members of `oer-s115-req` (none) may request; and a tagged resource group `oer-s115-rg`, empty, where the
 first `oer-s115-dup` group is assigned Reader. Section 1 adds the second `oer-s115-dup` group as a member
@@ -30,7 +32,7 @@ paragraph). Every sign-in is app-only, with the certificate; nothing here signs 
 403 as `oer-live-cc` is a stop.
 
 **Permissions.** The objects need the Microsoft Graph application permissions `Group.ReadWrite.All`,
-`GroupMember.ReadWrite.All` and `EntitlementManagement.ReadWrite.All`; the prerequisite script reads them
+which also covers adding a member, and `EntitlementManagement.ReadWrite.All`; the prerequisite script reads them
 and refuses its setup before anything is written when one is missing. The role assignment needs the
 identity's existing Azure role on the test subscription; when Azure Resource Manager refuses it, the
 script says so and carries on without it, and check 2.6 becomes class B. Granting a permission is the
@@ -232,7 +234,7 @@ function Get-S115Bundle {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -256,13 +258,32 @@ Write-OerLiveStep "The worktree's build hands shared names over in an informatio
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main clone; a
 `False` mark -- build the worktree first (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: 2026-10-14 21:46 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree is on this branch at 225f275 with 0 tracked changes, and its build (built from db93fff, the last commit under source/; 225f275 adds only this checklist) carries every mark.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s115] The module loads from a worktree that is not the main clone: True
+[oer-s115] Main clone: branch main; HEAD 491e72e
+[oer-s115] Worktree: branch feat/roster-identity-and-shared-names; HEAD 225f275 docs: add the live checklist for the roster's identity and the shared names; tracked changes: 0
+[oer-s115] The worktree's build lists every group's name once: True
+[oer-s115] The worktree's build names a group principal through the index: True
+[oer-s115] The worktree's build carries the roster's new keys: True
+[oer-s115] The worktree's build writes the README section on shared names: True
+[oer-s115] The worktree's build hands shared names over in an information record: True
+RUNNER: check-S.1 exit code 0; started 2026-10-14T21:45:56Z; took 3 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -276,11 +297,33 @@ Disconnect-OerLive
 True`.
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), or `False`.
 
-Result:
+Result: 2026-10-14 21:46 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only, certificate); identity check passed; the module is the worktree's build (1.2.1).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s115] The module is the worktree's build: True; version 1.2.1
+RUNNER: check-0.1 exit code 0; started 2026-10-14T21:46:33Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 0.2. The prerequisite objects
 
-- [ ] **0.2** The prerequisite script plans, creates, and on a second run finds the whole set and creates nothing.
+- [x] **0.2** The prerequisite script plans, creates, and on a second run finds the whole set and creates nothing.
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS115Prereq.ps1'
@@ -299,13 +342,125 @@ nothing, exit code 0.
 **Failure looks like:** a `Refusing to run` line (read it; nothing was written), a 401/403 (STOP), or an
 `UNAVAILABLE` line (the check it names becomes class B).
 
-Result:
+Result: 2026-10-14 21:54 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, with one deviation measured live. The -WhatIf run planned every object and wrote nothing; the first -Unattended run created the six groups (the Microsoft 365 group included), oer-s115-cat, oer-s115-catu, the two packages, the two policies (the first after one SubjectNotFound retry), the resource group and the role assignment, and added oer-live-cc-noperm to oer-s115-cnt; the second run found the whole set and created only the empty catalog oer-s115-cat2; the third created nothing. MEASURED: Microsoft Graph refuses a catalog whose name another catalog carries, letter case aside, on create (400 DuplicateCatalog, for the exact name and for OER-S115-CAT) and on rename (409 DuplicateKey, oer-s115-cat2 to OER-S115-CAT), so the twin catalogs the checklist planned cannot be made: the twin-catalog case is class B (B.8). Earlier attempts on this run, recorded in the report: a first setup refused (the script asked for GroupMember.ReadWrite.All, which Group.ReadWrite.All covers; nothing written), and a second setup stopped on the DuplicateCatalog after creating six groups and one catalog, which -Teardown removed (counts back at the baseline) before this run.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.2 ===
+[oer-s115] === Initialize-OerS115Prereq.ps1 -WhatIf ===
+[oer-s115] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s115] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s115] What if: Performing the operation "Start the redacted transcript" on target "raw\s115\prereq-20261014-215319Z.log".
+[oer-s115] [oer-s115] Mode: CREATE. Prefix 'oer-s115-'. Objects (fixed): two security groups oer-s115-dup; a security group and a Microsoft 365 group oer-s115-mix; oer-s115-cnt (member: oer-live-cc-noperm); oer-s115-req (no member); two catalogs oer-s115-cat, the first holding oer-s115-ap-a; oer-s115-catu holding oer-s115-ap-b with two policies oer-s115-pol; oer-s115-rg (tagged) with Reader for the first oer-s115-dup group. OerLive 1.0.3.
+[oer-s115] [oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s115] [oer-s115] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s115] [oer-s115] oer-live-cc holds Group.ReadWrite.All: True
+[oer-s115] [oer-s115] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s115] [oer-s115] Found: group 'oer-s115-dup': 2 of 2.
+[oer-s115] [oer-s115] Found: group 'oer-s115-mix': 2 of 2.
+[oer-s115] [oer-s115] Found: group 'oer-s115-cnt': 1 of 1.
+[oer-s115] [oer-s115] Found: group 'oer-s115-req': 1 of 1.
+[oer-s115] [oer-s115] Found: catalog 'oer-s115-cat': 1 of 1.
+[oer-s115] [oer-s115] Found: catalog 'OER-S115-CAT': 0 of 1.
+[oer-s115] [oer-s115] Found: catalog 'oer-s115-cat2': 0 of 1.
+[oer-s115] [oer-s115] Found: catalog 'oer-s115-catu': 1 of 1.
+[oer-s115] [oer-s115] Found: access package 'oer-s115-ap-a': 1 of 1.
+[oer-s115] [oer-s115] Found: access package 'oer-s115-ap-b': 1 of 1.
+[oer-s115] What if: Performing the operation "Create a catalog (Graph v1.0 POST entitlementManagement/catalogs: published, not visible to external users, no resource)" on target "oer-s115-cat2 (cat-2)".
+[oer-s115] [oer-s115] The whole set exists (10 prefixed objects, every one recorded; optional: the Microsoft 365 group True, the twin catalog False, the role assignment True); nothing is created.
+[oer-s115] [oer-s115] WhatIf: nothing was created, removed or written.
+[oer-s115] [oer-s115] Done.
+[oer-s115] exit code: 0
+[oer-s115] === Initialize-OerS115Prereq.ps1 -Unattended ===
+[oer-s115] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s115] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s115] [oer-s115] Transcript (redacted): raw\s115\prereq-20261014-215325Z.log; OerLive 1.0.3.
+[oer-s115] [oer-s115] Mode: CREATE. Prefix 'oer-s115-'. Objects (fixed): two security groups oer-s115-dup; a security group and a Microsoft 365 group oer-s115-mix; oer-s115-cnt (member: oer-live-cc-noperm); oer-s115-req (no member); two catalogs oer-s115-cat, the first holding oer-s115-ap-a; oer-s115-catu holding oer-s115-ap-b with two policies oer-s115-pol; oer-s115-rg (tagged) with Reader for the first oer-s115-dup group. OerLive 1.0.3.
+[oer-s115] [oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s115] [oer-s115] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s115] [oer-s115] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s115] [oer-s115] oer-live-cc holds Group.ReadWrite.All: True
+[oer-s115] [oer-s115] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s115] [oer-s115] Found: group 'oer-s115-dup': 2 of 2.
+[oer-s115] [oer-s115] Found: group 'oer-s115-mix': 2 of 2.
+[oer-s115] [oer-s115] Found: group 'oer-s115-cnt': 1 of 1.
+[oer-s115] [oer-s115] Found: group 'oer-s115-req': 1 of 1.
+[oer-s115] [oer-s115] Found: catalog 'oer-s115-cat': 1 of 1.
+[oer-s115] [oer-s115] Found: catalog 'OER-S115-CAT': 0 of 1.
+[oer-s115] [oer-s115] Found: catalog 'oer-s115-cat2': 0 of 1.
+[oer-s115] [oer-s115] Found: catalog 'oer-s115-catu': 1 of 1.
+[oer-s115] [oer-s115] Found: access package 'oer-s115-ap-a': 1 of 1.
+[oer-s115] [oer-s115] Found: access package 'oer-s115-ap-b': 1 of 1.
+[oer-s115] [oer-s115] Created catalog oer-s115-cat2 (cat-2): 201.
+[oer-s115] [oer-s115] Recorded the id of cat-2 under raw\s115 (not printed).
+[oer-s115] [oer-s115] oer-s115-cat2 (cat-2) is readable by its id: converged after 1 read(s), 0.2 s.
+[oer-s115] [oer-s115] UNAVAILABLE (class B): the twin catalog (the rename of oer-s115-cat2 to OER-S115-CAT) -- answered 409 DuplicateKey -- There is already a duplicated entity.. The run carries on without it; nothing else is tried.
+[oer-s115] [oer-s115] The whole set exists (10 prefixed objects, every one recorded; optional: the Microsoft 365 group True, the twin catalog False, the role assignment True); nothing is created.
+[oer-s115] [oer-s115] Done.
+[oer-s115] exit code: 0
+[oer-s115] === Initialize-OerS115Prereq.ps1 -Unattended ===
+[oer-s115] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s115] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s115] [oer-s115] Transcript (redacted): raw\s115\prereq-20261014-215331Z.log; OerLive 1.0.3.
+[oer-s115] [oer-s115] Mode: CREATE. Prefix 'oer-s115-'. Objects (fixed): two security groups oer-s115-dup; a security group and a Microsoft 365 group oer-s115-mix; oer-s115-cnt (member: oer-live-cc-noperm); oer-s115-req (no member); two catalogs oer-s115-cat, the first holding oer-s115-ap-a; oer-s115-catu holding oer-s115-ap-b with two policies oer-s115-pol; oer-s115-rg (tagged) with Reader for the first oer-s115-dup group. OerLive 1.0.3.
+[oer-s115] [oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s115] [oer-s115] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s115] [oer-s115] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s115] [oer-s115] oer-live-cc holds Group.ReadWrite.All: True
+[oer-s115] [oer-s115] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s115] [oer-s115] Found: group 'oer-s115-dup': 2 of 2.
+[oer-s115] [oer-s115] Found: group 'oer-s115-mix': 2 of 2.
+[oer-s115] [oer-s115] Found: group 'oer-s115-cnt': 1 of 1.
+[oer-s115] [oer-s115] Found: group 'oer-s115-req': 1 of 1.
+[oer-s115] [oer-s115] Found: catalog 'oer-s115-cat': 1 of 1.
+[oer-s115] [oer-s115] Found: catalog 'OER-S115-CAT': 0 of 1.
+[oer-s115] [oer-s115] Found: catalog 'oer-s115-cat2': 1 of 1.
+[oer-s115] [oer-s115] Found: catalog 'oer-s115-catu': 1 of 1.
+[oer-s115] [oer-s115] Found: access package 'oer-s115-ap-a': 1 of 1.
+[oer-s115] [oer-s115] Found: access package 'oer-s115-ap-b': 1 of 1.
+[oer-s115] [oer-s115] The whole set exists (11 prefixed objects, every one recorded; optional: the Microsoft 365 group True, the twin catalog True, the role assignment True); nothing is created.
+[oer-s115] [oer-s115] Done.
+[oer-s115] exit code: 0
+RUNNER: check-0.2 exit code 0; started 2026-10-14T21:53:17Z; took 19 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 1. The member count, measured (BL-130)
 
 ### 1.1. Which group fields Microsoft Graph returns without $select
 
-- [ ] **1.1** `v1.0/groups` without `$select` returns `mailEnabled`, `visibility` and `createdDateTime` on every group, and the step's groups carry the types they were created with.
+- [x] **1.1** `v1.0/groups` without `$select` returns `mailEnabled`, `visibility` and `createdDateTime` on every group, and the step's groups carry the types they were created with.
 
 ```powershell
 Connect-OerLive -Graph
@@ -328,11 +483,41 @@ Disconnect-OerLive
 `createdDateTime` a `DateTime` (the SDK parses it).
 **Failure looks like:** a key absent -- the roster would need `$select` or a read of its own.
 
-Result:
+Result: 2026-10-14 21:55 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. v1.0/groups without $select listed 103 groups (97 plus the step's 6); mailEnabled and createdDateTime present and non-null on all 103, visibility present on all and non-null on 16 (the 15 measured earlier plus the step's Microsoft 365 group). The step's five security groups: securityEnabled True, mailEnabled False, no group type, visibility null; the Microsoft 365 group: securityEnabled False, mailEnabled True, Unified, Private; every createdDateTime arrives as a DateTime. The trailing warning is Disconnect-OER leaving the raw SDK session of Connect-OerLive -Graph (known, S103).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s115] Groups listed: 103
+[oer-s115] Key mailEnabled: present on 103, non-null on 103
+[oer-s115] Key visibility: present on 103, non-null on 16
+[oer-s115] Key createdDateTime: present on 103, non-null on 103
+[oer-s115] oer-s115-cnt (oer-s115-cnt): securityEnabled True; mailEnabled False; groupTypes []; visibility (null); createdDateTime is a DateTime
+[oer-s115] oer-s115-dup (oer-s115-dup-1): securityEnabled True; mailEnabled False; groupTypes []; visibility (null); createdDateTime is a DateTime
+[oer-s115] oer-s115-dup (oer-s115-dup-2): securityEnabled True; mailEnabled False; groupTypes []; visibility (null); createdDateTime is a DateTime
+[oer-s115] oer-s115-mix (oer-s115-mix-m365): securityEnabled False; mailEnabled True; groupTypes [Unified]; visibility Private; createdDateTime is a DateTime
+[oer-s115] oer-s115-mix (oer-s115-mix-sec): securityEnabled True; mailEnabled False; groupTypes []; visibility (null); createdDateTime is a DateTime
+[oer-s115] oer-s115-req (oer-s115-req): securityEnabled True; mailEnabled False; groupTypes []; visibility (null); createdDateTime is a DateTime
+WARNING: Disconnect-OER leaves the Microsoft Graph PowerShell SDK session in this process connected, since Omnicit.EntraRBAC has no record of connecting it. Run Disconnect-MgGraph to end that session.
+RUNNER: check-1.1 exit code 0; started 2026-10-14T21:54:51Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.2. A member count with ConsistencyLevel: eventual against the full read, with a service principal member
 
-- [ ] **1.2** For `oer-s115-cnt`, whose only member is a service principal, `members/$count` with `ConsistencyLevel: eventual` is compared with the full read the module makes.
+- [x] **1.2** For `oer-s115-cnt`, whose only member is a service principal, `members/$count` with `ConsistencyLevel: eventual` is compared with the full read the module makes.
 
 ```powershell
 Connect-OerLive -Graph
@@ -346,11 +531,39 @@ Request_UnsupportedQuery`; whether `CountEventual` equals `FullRead` (the servic
 measurement.
 **Failure looks like:** a refusal -- read the code.
 
-Result:
+Result: 2026-10-14 21:55 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (measurement). oer-s115-cnt, whose only member is the service principal oer-live-cc-noperm: the v1.0 member list returned 0 (it leaves the service principal out), the servicePrincipal cast returned 1, the full read the module makes (both joined) 1; members/$count with ConsistencyLevel: eventual answered 1 -- it counts the service principal, equal to the full read; without the header 400 Request_UnsupportedQuery.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2 ===
+[oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s115] oer-s115-cnt recorded: True
+[oer-s115] 
+MembersList        : 0
+SpList             : 1
+MembersListHoldsSp : 0
+FullRead           : 1
+CountEventual      : 1
+CountNoHeader      : 400 Request_UnsupportedQuery
+WARNING: Disconnect-OER leaves the Microsoft Graph PowerShell SDK session in this process connected, since Omnicit.EntraRBAC has no record of connecting it. Run Disconnect-MgGraph to end that session.
+RUNNER: check-1.2 exit code 0; started 2026-10-14T21:55:04Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.3. The count directly after a membership change
 
-- [ ] **1.3** A second member is added to `oer-s115-cnt` and removed again; the eventual count is read at once and then until it equals the full read.
+- [x] **1.3** A second member is added to `oer-s115-cnt` and removed again; the eventual count is read at once and then until it equals the full read.
 
 ```powershell
 Connect-OerLive -Graph
@@ -379,13 +592,39 @@ Disconnect-OerLive
 is the measurement. Both requests answer 2xx.
 **Failure looks like:** a refusal on the membership change (STOP, a 403 on the app path).
 
-Result:
+Result: 2026-10-14 21:55 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (measurement). Both membership changes answered 2xx. After the add (the second oer-s115-dup group as a member of oer-s115-cnt) both reads first still showed 1; the eventual count showed 2 at 6 s, the full read only at 16 s. After the remove both still showed 2 at once and 1 at 6 s. In this tenant the eventual count lagged no more than the full read did: both trail a change by seconds.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.3 ===
+[oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s115] after the add, 0 s: full read 1; eventual count 1
+[oer-s115] after the add, 6 s: full read 1; eventual count 2
+[oer-s115] after the add, 11 s: full read 1; eventual count 2
+[oer-s115] after the add, 16 s: full read 2; eventual count 2
+[oer-s115] after the remove, 0 s: full read 2; eventual count 2
+[oer-s115] after the remove, 6 s: full read 1; eventual count 1
+WARNING: Disconnect-OER leaves the Microsoft Graph PowerShell SDK session in this process connected, since Omnicit.EntraRBAC has no record of connecting it. Run Disconnect-MgGraph to end that session.
+RUNNER: check-1.3 exit code 0; started 2026-10-14T21:55:19Z; took 26 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 2. An export of the test tenant
 
 ### 2.1. The export, every group read in full
 
-- [ ] **2.1** `Export-OERInventory -AllGroupsDetailed` with the default sections writes the bundle, warns once about the shared names, and writes nothing to the tenant.
+- [x] **2.1** `Export-OERInventory -AllGroupsDetailed` with the default sections writes the bundle, warns once about the shared names, and writes nothing to the tenant.
 
 ```powershell
 Connect-OerLive -Arm
@@ -407,18 +646,54 @@ Disconnect-OerLive
 ```
 
 **Expect:** a bundle; the request line with `writes: 0` for Microsoft Graph and Azure Resource Manager;
-exactly ONE shared-name warning, naming at least 4 names and 8 objects (the step's four: `oer-s115-dup`,
-`oer-s115-mix`, `oer-s115-cat`, and `oer-s115-pol` in `oer-s115-ap-b`; more when the tenant holds other
-shared names); `groups/oer-s115-dup`, `groups/oer-s115-mix`, `catalogs/oer-s115-cat` and
+exactly ONE shared-name warning, naming at least 3 names and 6 objects (the step's three: `oer-s115-dup`,
+`oer-s115-mix`, and `oer-s115-pol` in `oer-s115-ap-b`; more when the tenant holds other shared names);
+`groups/oer-s115-dup`, `groups/oer-s115-mix` and
 `accessPackages/oer-s115-ap-b/assignmentPolicies/oer-s115-pol` among the IncompleteReads entries; the
 errors only `InventoryPartial`.
 **Failure looks like:** no warning, or two; a write; a missing entry.
 
-Result:
+Result: 2026-10-14 21:59 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The bundle was written; exactly ONE shared-name warning, 3 names carried by 6 objects (the step's oer-s115-dup, oer-s115-mix and oer-s115-pol in oer-s115-ap-b; the tenant holds no other shared name); groups/oer-s115-dup, groups/oer-s115-mix and accessPackages/oer-s115-ap-b/assignmentPolicies/oer-s115-pol among the IncompleteReads entries. No write: the 11 POSTs counted are v1.0/directoryObjects/getByIds, a read sent as POST; Azure Resource Manager 10 requests, 0 writes; no token request. The errors are InventoryPartial (the inner one, shown, and the export's own) and two AuthorizationFailed records of the management-group listing this identity is refused (measured in earlier steps), named in the README as '<management groups: the listing failed>' -- not this step's.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+ERROR: Get-OERInventory: This inventory is PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name,
+ERROR: or were left out because two or more live objects share a name, and are not stated as facts in the document (an
+ERROR: accessReviews entry named as unread may still carry an id where a name could not be read). Unread:
+ERROR: accessPackages/oer-s115-ap-b/assignmentPolicies/oer-s115-pol. A section reported here by its name alone could not be
+ERROR: read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles,
+ERROR: resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched; do
+ERROR: not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot. Causes: 2 live objects
+ERROR: share the name accessPackages/oer-s115-ap-b/assignmentPolicies/oer-s115-pol (compared without regard to letter case),
+ERROR: so none of them is written: the apply engine refuses an ambiguous name..
+[oer-s115] token requests: 0; Microsoft Graph requests: 761, writes: 11 (POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds); Azure Resource Manager requests: 10, writes: 0
+[oer-s115] Bundle written: True; groups 93; catalogs 8; access packages 8; role assignments 14; roster 103
+[oer-s115] Shared-name warnings: 1
+[oer-s115] Warning: Export-OERInventory: left out of inventory.json and the per-area files every object whose name another object of its kind shares, since the apply engine refuses an ambiguous name: 3 name(s), carried by 6 object(s) in all. README.md lists each name, how many objects carry it and its section under 'Names two or more objects share'.
+[oer-s115] IncompleteReads entries naming the step's objects: groups/oer-s115-dup | groups/oer-s115-mix | accessPackages/oer-s115-ap-b/assignmentPolicies/oer-s115-pol
+[oer-s115] Errors: InventoryPartial, AuthorizationFailed, AuthorizationFailed, InventoryPartial
+RUNNER: check-2.1 exit code 0; started 2026-10-14T21:55:56Z; took 221 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.2. The roster carries id and type, and tells same-named groups apart
 
-- [ ] **2.2** Every row of `groupsRoster.json` carries the 11 keys in order; the two `oer-s115-dup` rows and the two `oer-s115-mix` rows differ by `id` and carry their own type.
+- [x] **2.2** Every row of `groupsRoster.json` carries the 11 keys in order; the two `oer-s115-dup` rows and the two `oer-s115-mix` rows differ by `id` and carry their own type.
 
 ```powershell
 $Bundle = (Get-S115Bundle).FullName
@@ -444,11 +719,30 @@ mailEnabled True; groupTypes [Unified]; visibility Private`; every `createdDateT
 `groupTypes` an array on every row (`True`).
 **Failure looks like:** a missing key, one id for two rows, a `createdDateTime` that is not UTC ISO 8601.
 
-Result:
+Result: 2026-10-14 22:00 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. 103 rows, every row with the 11 keys in order; oer-s115-dup and oer-s115-mix each have two rows with two distinct ids, each id one the prerequisite script recorded (dup-1, dup-2; mix-sec, mix-m365); the security rows securityEnabled True, mailEnabled False, groupTypes [], visibility null; the Microsoft 365 row securityEnabled False, mailEnabled True, groupTypes [Unified], visibility Private; every createdDateTime ISO 8601 UTC; groupTypes an array on every row; memberCount null for the four (left out for a shared name, or not security-enabled), as documented.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.2 ===
+[oer-s115] Rows: 103; every row carries the 11 keys in order: True
+[oer-s115] oer-s115-dup: rows 2; distinct ids 2
+[oer-s115]   the row of dup-2: securityEnabled True; mailEnabled False; groupTypes []; visibility (null); createdDateTime ISO 8601 UTC; memberCount null
+[oer-s115]   the row of dup-1: securityEnabled True; mailEnabled False; groupTypes []; visibility (null); createdDateTime ISO 8601 UTC; memberCount null
+[oer-s115] oer-s115-mix: rows 2; distinct ids 2
+[oer-s115]   the row of mix-m365: securityEnabled False; mailEnabled True; groupTypes [Unified]; visibility Private; createdDateTime ISO 8601 UTC; memberCount null
+[oer-s115]   the row of mix-sec: securityEnabled True; mailEnabled False; groupTypes []; visibility (null); createdDateTime ISO 8601 UTC; memberCount null
+[oer-s115] groupTypes is written as a JSON array on every row: True
+RUNNER: check-2.2 exit code 0; started 2026-10-14T21:59:57Z; took 1 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.3. The README names each shared name with its count and section
 
-- [ ] **2.3** `README.md` has the section "Names two or more objects share", with one bullet per shared name, its count and its section.
+- [x] **2.3** `README.md` has the section "Names two or more objects share", with one bullet per shared name, its count and its section.
 
 ```powershell
 $Bundle = (Get-S115Bundle).FullName
@@ -463,16 +757,32 @@ Write-OerLiveStep "Bullets in the section: $(@($Section -split "`r?`n" | Where-O
 ```
 
 **Expect:** the section is there; the bullets `` `oer-s115-dup` -- 2 objects, section `groups` ``,
-`` `oer-s115-mix` -- 2 objects, section `groups` ``, `` `oer-s115-cat` -- 2 objects, section `catalogs` `` and
+`` `oer-s115-mix` -- 2 objects, section `groups` `` and
 `` `oer-s115-ap-b/oer-s115-pol` -- 2 objects, section `assignmentPolicies` ``; the number of bullets equals the
 names the warning in 2.1 counted.
 **Failure looks like:** the section missing, a count other than 2, a name missing.
 
-Result:
+Result: 2026-10-14 22:00 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
-### 2.4. inventory.json leaves the shared names out and names a left-out catalog by its id
+```text
+Verdict: PASS. The README section 'Names two or more objects share' is there with exactly 3 bullets, the step's: oer-s115-dup -- 2 objects, section groups; oer-s115-mix -- 2 objects, section groups (the security group and the Microsoft 365 group); oer-s115-ap-b/oer-s115-pol -- 2 objects, section assignmentPolicies. The count matches the warning's 3 names and 6 objects. No catalog bullet: two catalogs of one name cannot be made in this tenant (0.2).
 
-- [ ] **2.4** `inventory.json` holds none of the shared-name objects; `oer-s115-ap-a` names its catalog by the catalog's id; `oer-s115-ap-b` holds no `oer-s115-pol` policy; unique names are written as before.
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.3 ===
+[oer-s115] The section is there: True
+[oer-s115] Bullet: - `oer-s115-dup` -- 2 objects, section `groups`
+[oer-s115] Bullet: - `oer-s115-mix` -- 2 objects, section `groups`
+[oer-s115] Bullet: - `oer-s115-ap-b/oer-s115-pol` -- 2 objects, section `assignmentPolicies`
+[oer-s115] Bullets in the section: 3
+RUNNER: check-2.3 exit code 0; started 2026-10-14T22:00:09Z; took 1 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
+
+### 2.4. inventory.json leaves the shared names out and writes unique names as before
+
+- [x] **2.4** `inventory.json` holds none of the shared-name objects; `oer-s115-ap-b` holds no `oer-s115-pol` policy; unique names -- the groups `oer-s115-cnt` and `oer-s115-req`, the catalogs and `oer-s115-ap-a`'s catalog -- are written as before.
 
 ```powershell
 $Bundle = (Get-S115Bundle).FullName
@@ -481,24 +791,46 @@ Write-OerLiveStep "Groups named oer-s115-dup or oer-s115-mix: $(@($Doc.groups | 
 Write-OerLiveStep "Groups named oer-s115-cnt or oer-s115-req (unique names, written as before): $(@($Doc.groups | Where-Object { $_.displayName -in 'oer-s115-cnt', 'oer-s115-req' }).Count)"
 Write-OerLiveStep "Catalogs named oer-s115-cat: $(@($Doc.catalogs | Where-Object { $_.displayName -eq 'oer-s115-cat' }).Count); named oer-s115-catu: $(@($Doc.catalogs | Where-Object { $_.displayName -eq 'oer-s115-catu' }).Count)"
 $ApA = @($Doc.accessPackages | Where-Object { $_.displayName -eq 'oer-s115-ap-a' })
-Write-OerLiveStep "oer-s115-ap-a entries: $($ApA.Count); its catalog is the id of the first oer-s115-cat: $(@($ApA | Where-Object { ([string]$_.catalog).ToLowerInvariant() -eq $Ids['cat-1'] }).Count -eq 1)"
+Write-OerLiveStep "oer-s115-ap-a entries: $($ApA.Count); its catalog: $(@($ApA.catalog) -join ',') (written by name: $(@($ApA | Where-Object { $_.catalog -ceq 'oer-s115-cat' }).Count -eq 1))"
+Write-OerLiveStep "Catalogs named oer-s115-cat2: $(@($Doc.catalogs | Where-Object { $_.displayName -eq 'oer-s115-cat2' }).Count)"
 $ApB = @($Doc.accessPackages | Where-Object { $_.displayName -eq 'oer-s115-ap-b' })
 Write-OerLiveStep "oer-s115-ap-b entries: $($ApB.Count); its catalog: $(@($ApB.catalog) -join ','); its policies named oer-s115-pol: $(@($ApB.assignmentPolicies | Where-Object { $_.displayName -eq 'oer-s115-pol' }).Count); policies written: $(@($ApB.assignmentPolicies).Count)"
 Write-OerLiveStep "Any catalog reference written as an object id in the document: $(@($Doc.accessPackages | Where-Object { [string]$_.catalog -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-' }).Count)"
 ```
 
 **Expect:** 0 groups named `oer-s115-dup` or `oer-s115-mix`; 2 groups `oer-s115-cnt`/`oer-s115-req`
-(security groups, `-AllGroupsDetailed`); 0 catalogs `oer-s115-cat` and 1 `oer-s115-catu`; one
-`oer-s115-ap-a` entry whose catalog is the first catalog's id (`True`); one `oer-s115-ap-b` entry with catalog
-`oer-s115-catu` and no policy (0 named, 0 written).
-**Failure looks like:** a shared-name group or catalog in the document, `oer-s115-ap-a` named by the shared
-catalog name, a `oer-s115-pol` policy written.
+(security groups, `-AllGroupsDetailed`); 1 catalog `oer-s115-cat`, 1 `oer-s115-catu` and 1 `oer-s115-cat2`;
+one `oer-s115-ap-a` entry whose catalog is written by name (`True`), since no other catalog carries it; one
+`oer-s115-ap-b` entry with catalog `oer-s115-catu` and no policy (0 named, 0 written); 0 catalog references
+written as an object id. A catalog written by its id needs two catalogs of one name, which this tenant
+refuses to hold (0.2): class B (B.8).
+**Failure looks like:** a shared-name group in the document, a unique name written by id, a `oer-s115-pol`
+policy written.
 
-Result:
+Result: 2026-10-14 22:00 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. inventory.json holds no group named oer-s115-dup or oer-s115-mix; the unique oer-s115-cnt and oer-s115-req are written (2, -AllGroupsDetailed); the catalogs oer-s115-cat, oer-s115-catu and oer-s115-cat2 once each; oer-s115-ap-a with its catalog written by name, oer-s115-cat, as before (no other catalog carries the name); oer-s115-ap-b with catalog oer-s115-catu, no oer-s115-pol policy and assignmentPolicies [] (read back below; the block's 'policies written: 1' is its own counting artefact); 0 catalog references written as an object id. The catalog-by-id case is class B (B.8).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.4 ===
+[oer-s115] Groups named oer-s115-dup or oer-s115-mix: 0
+[oer-s115] Groups named oer-s115-cnt or oer-s115-req (unique names, written as before): 2
+[oer-s115] Catalogs named oer-s115-cat: 1; named oer-s115-catu: 1
+[oer-s115] oer-s115-ap-a entries: 1; its catalog: oer-s115-cat (written by name: True)
+[oer-s115] Catalogs named oer-s115-cat2: 1
+[oer-s115] oer-s115-ap-b entries: 1; its catalog: oer-s115-catu; its policies named oer-s115-pol: 0; policies written: 1
+[oer-s115] Any catalog reference written as an object id in the document: 0
+RUNNER: check-2.4 exit code 0; started 2026-10-14T22:00:12Z; took 1 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+READ-BACK (controller, same bundle): the oer-s115-ap-b entry of inventory.json reads displayName oer-s115-ap-b; catalog oer-s115-catu; hidden true; resourceRoles []; assignmentPolicies [] -- the 'policies written: 1' above is the block's own member enumeration counting the empty array as one item (@($ApB.assignmentPolicies) over a one-element array), not a written policy.
+```
 
 ### 2.5. A group with a shared name as a principal is written by its id
 
-- [ ] **2.5** The Reader role assignment at `oer-s115-rg` names the first `oer-s115-dup` group by its object id, with principalType Group.
+- [x] **2.5** The Reader role assignment at `oer-s115-rg` names the first `oer-s115-dup` group by its object id, with principalType Group.
 
 ```powershell
 $Bundle = (Get-S115Bundle).FullName
@@ -515,11 +847,25 @@ Write-OerLiveStep "Role assignments whose principal is oer-s115-dup by name: $(@
 `Group`, written directly after `principal` (keys `scope,role,principal,principalType`); 0 by name.
 **Failure looks like:** the principal written as `oer-s115-dup`, or principalType missing.
 
-Result:
+Result: 2026-10-14 22:00 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. One role assignment at oer-s115-rg: role Reader, principal the first oer-s115-dup group's object id (True), principalType Group directly after principal (keys scope, role, principal, principalType); 0 role assignments name oer-s115-dup by name.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.5 ===
+[oer-s115] Role assignments at oer-s115-rg: 1
+[oer-s115] role Reader; the principal is the first oer-s115-dup group's id: True; principalType Group; keys scope,role,principal,principalType
+[oer-s115] Role assignments whose principal is oer-s115-dup by name: 0
+RUNNER: check-2.5 exit code 0; started 2026-10-14T22:00:14Z; took 1 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.6. The export without -AllGroupsDetailed reports the same shared names
 
-- [ ] **2.6** The default export (groups decided by relevance) warns once and lists the same names in its README.
+- [x] **2.6** The default export (groups decided by relevance) warns once and lists the same names in its README.
 
 ```powershell
 Connect-OerLive -Arm
@@ -543,34 +889,92 @@ Disconnect-OerLive
 **Failure looks like:** a name missing because its group was not relevant (the count is made over every
 listed group, R8).
 
-Result:
+Result: 2026-10-14 22:03 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The default export (groups decided by relevance) made 359 Microsoft Graph requests against 761 with -AllGroupsDetailed, wrote nothing (the 11 POSTs are getByIds reads; ARM 10 requests, 0 writes), warned ONCE with the same counts (3 names, 6 objects) and listed the same three bullets: the step's groups are not relevant, and the names are still counted over every listed group (R8).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.6 ===
+[oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+ERROR: Get-OERInventory: This inventory is PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name,
+ERROR: or were left out because two or more live objects share a name, and are not stated as facts in the document (an
+ERROR: accessReviews entry named as unread may still carry an id where a name could not be read). Unread:
+ERROR: accessPackages/oer-s115-ap-b/assignmentPolicies/oer-s115-pol. A section reported here by its name alone could not be
+ERROR: read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles,
+ERROR: resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched; do
+ERROR: not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot. Causes: 2 live objects
+ERROR: share the name accessPackages/oer-s115-ap-b/assignmentPolicies/oer-s115-pol (compared without regard to letter case),
+ERROR: so none of them is written: the apply engine refuses an ambiguous name..
+[oer-s115] token requests: 0; Microsoft Graph requests: 359, writes: 11 (POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds, POST v1.0/directoryObjects/getByIds); Azure Resource Manager requests: 10, writes: 0
+[oer-s115] Shared-name warnings: 1
+[oer-s115] Warning: Export-OERInventory: left out of inventory.json and the per-area files every object whose name another object of its kind shares, since the apply engine refuses an ambiguous name: 3 name(s), carried by 6 object(s) in all. README.md lists each name, how many objects carry it and its section under 'Names two or more objects share'.
+[oer-s115] Bullet: - `oer-s115-dup` -- 2 objects, section `groups`
+[oer-s115] Bullet: - `oer-s115-mix` -- 2 objects, section `groups`
+[oer-s115] Bullet: - `oer-s115-ap-b/oer-s115-pol` -- 2 objects, section `assignmentPolicies`
+RUNNER: check-2.6 exit code 0; started 2026-10-14T22:00:52Z; took 142 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 3. The exported document applies
 
 ### 3.1. The validator accepts the export
 
-- [ ] **3.1** `Test-OERStructure` on the exported `inventory.json` is valid, with no Error.
+- [x] **3.1** `Test-OERStructure` on the exported `inventory.json` is valid, with no Error.
 
 ```powershell
 Connect-OerLive -Arm
 Start-S115NoPrompt
 $Bundle = (Get-S115Bundle).FullName
 $V = Test-OERStructure -Path (Join-Path $Bundle 'inventory.json')
-Write-OerLiveStep "Valid: $($V.Valid); errors: $(@($V.Errors).Count); warnings: $(@($V.Warnings).Count)"
-foreach ($F in @($V.Errors)) { Write-OerLiveStep "Error at $($F.Path): $($F.Message)" }
-foreach ($F in @($V.Warnings | Where-Object { "$($_.Path) $($_.Message)" -like '*oer-s115-*' -or [string]$_.Item -like 'oer-s115-*' })) { Write-OerLiveStep "Warning at $($F.Path): $($F.Message)" }
+Write-OerLiveStep "Valid: $($V.Valid); findings: $(@($V.Errors).Count) (Error $(@($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count), Warning $(@($V.Errors | Where-Object { $_.Severity -eq 'Warning' }).Count))"
+foreach ($F in @($V.Errors | Where-Object { $_.Severity -eq 'Error' })) { Write-OerLiveStep "Error at $($F.Path): $($F.Message)" }
+foreach ($F in @($V.Errors | Where-Object { $_.Severity -ne 'Error' -and ("$($_.Path) $($_.Message)" -like '*oer-s115-*' -or [string]$_.Item -like 'oer-s115-*') })) { Write-OerLiveStep "$($F.Severity) at $($F.Path): $($F.Message)" }
 Disconnect-OerLive
 ```
 
-**Expect:** `Valid: True; errors: 0`; for `oer-s115-ap-a` at most the Warning that its catalog (by id) is not
-declared in the document ("It may already exist in the tenant").
+**Expect:** `Valid: True; errors: 0`; no Warning about the step's entries (every catalog they name is in the
+document).
 **Failure looks like:** an Error.
 
-Result:
+Result: 2026-10-14 22:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Test-OERStructure on the exported inventory.json (the -AllGroupsDetailed bundle of 2.1): Valid True with 0 findings, no Error and no Warning. (A first run of this block read a Warnings property the result does not have; the validator returns every finding in Errors with a Severity. Fixed in the block and run again.)
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.1 ===
+[oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s115] Valid: True; findings: 0 (Error 0, Warning 0)
+RUNNER: check-3.1 exit code 0; started 2026-10-14T22:18:03Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.2. The plan of the whole export: no AmbiguousName, and nothing written
 
-- [ ] **3.2** `Invoke-OERStructure -WhatIf` on the exported document, twice: no AmbiguousName, no Failed row for anything the export wrote, only Unchanged for the step's entries, and no write.
+- [x] **3.2** `Invoke-OERStructure -WhatIf` on the exported document, twice: no AmbiguousName, no Failed row for anything the export wrote, only Unchanged for the step's entries, and no write.
 
 ```powershell
 Connect-OerLive -Arm
@@ -582,25 +986,86 @@ foreach ($Pass in 1, 2) {
     $Rows = @(Invoke-OERStructure -Path (Join-Path $Bundle 'inventory.json') -WhatIf -ErrorVariable E -ErrorAction SilentlyContinue 3>$null 6>$null)
     Write-OerLiveStep "Pass $($Pass): $(Get-S115Sent)"
     Stop-S115Count
-    Write-OerLiveStep "Pass $($Pass): rows $($Rows.Count); by status: $(($Rows | Group-Object Status | Sort-Object Name | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', ')"
+    Write-OerLiveStep "Pass $($Pass): rows $($Rows.Count); by action: $(($Rows | Group-Object Action | Sort-Object Name | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', ')"
     Write-OerLiveStep "Pass $($Pass): AmbiguousName records: $(@($E | Where-Object { [string]$_.FullyQualifiedErrorId -like '*Ambiguous*' }).Count); error ids: $(@($E | ForEach-Object { ([string]$_.FullyQualifiedErrorId -split ',')[0] } | Sort-Object -Unique) -join ', ')"
-    foreach ($Row in @($Rows | Where-Object { [string]$_.Item -like 'oer-s115-*' -or [string]$_.Detail -like '*oer-s115-*' })) { Write-OerLiveStep "Pass $($Pass): $($Row.Section) | $($Row.Item) | $($Row.Status) | $($Row.Detail)" }
-    foreach ($Row in @($Rows | Where-Object { $_.Status -eq 'Failed' })) { Write-OerLiveStep "Pass $($Pass) FAILED: $($Row.Section) | $($Row.Item) | $($Row.Detail)" }
+    foreach ($Row in @($Rows | Where-Object { [string]$_.Item -like 'oer-s115-*' -or [string]$_.Detail -like '*oer-s115-*' })) { Write-OerLiveStep "Pass $($Pass): $($Row.Section) | $($Row.Item) | $($Row.Action) | $($Row.Detail)" }
+    foreach ($Row in @($Rows | Where-Object { $_.Action -eq 'Failed' })) { Write-OerLiveStep "Pass $($Pass) FAILED: $($Row.Section) | $($Row.Item) | $($Row.Detail)" }
 }
 Disconnect-OerLive
 ```
 
 **Expect:** both passes the same: `writes: 0`; 0 AmbiguousName records; no Failed row; the step's rows
-(`oer-s115-catu`, `oer-s115-ap-a`, `oer-s115-ap-b`, the role assignment at `oer-s115-rg`, `oer-s115-cnt`,
-`oer-s115-req`) Unchanged, apart from two Extra rows on `oer-s115-ap-b` that report the two `oer-s115-pol`
+(`oer-s115-cat`, `oer-s115-catu`, `oer-s115-cat2`, `oer-s115-ap-a`, `oer-s115-ap-b`, the role assignment at
+`oer-s115-rg`, `oer-s115-cnt`, `oer-s115-req`) Unchanged, apart from two Extra rows on `oer-s115-ap-b` that report the two `oer-s115-pol`
 policies the export left out as still in force (the engine never removes an assignment policy).
 **Failure looks like:** an AmbiguousName record or a Failed row for an entry the export wrote.
 
-Result:
+Result: 2026-10-14 22:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS for the step's claim, with 6 Failed rows that are not this step's. Both passes identical: 466 rows (Unchanged 391, Skipped 67, Extra 2, Failed 6); 0 AmbiguousName records; writes 0 (Microsoft Graph 1044 requests, Azure Resource Manager 42); no token request. Every row of the step's entries is Unchanged -- oer-s115-cnt (properties, and its service principal member), oer-s115-req, the catalogs oer-s115-cat, oer-s115-catu and oer-s115-cat2, the packages oer-s115-ap-a and oer-s115-ap-b, and the Reader role assignment at oer-s115-rg written with the group's id -- apart from the two expected Extra rows on oer-s115-ap-b for the left-out oer-s115-pol policies. The 6 Failed rows are role assignments at two management groups that this identity may not read (AuthorizationFailed on the role assignment read at that scope; the export already named the management-group listing as unread): a known limit of oer-live-cc, outside the step, and the plan wrote nothing for them. Management group and principal names in those 6 lines are masked by the controller (MG-1, MG-2, principal-1..5). The Skipped rows are pre-existing (dynamic groups' members and similar), unchanged between passes. A first run of this block printed no status (it read a Status property; the rows carry Action), fixed in the block and run again.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.2 ===
+[oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s115] Pass 1: token requests: 0; Microsoft Graph requests: 1044, writes: 0; Azure Resource Manager requests: 42, writes: 0
+[oer-s115] Pass 1: rows 466; by action: Extra 2, Failed 6, Skipped 67, Unchanged 391
+[oer-s115] Pass 1: AmbiguousName records: 0; error ids: , AuthorizationFailed
+[oer-s115] Pass 1: groups | oer-s115-cnt | Unchanged | group properties match
+[oer-s115] Pass 1: groups | oer-s115-cnt | Unchanged | member '00000000-0000-0000-0000-000000000001' already present
+[oer-s115] Pass 1: groups | oer-s115-req | Unchanged | group properties match
+[oer-s115] Pass 1: catalogs | oer-s115-cat2 | Unchanged | catalog properties match
+[oer-s115] Pass 1: catalogs | oer-s115-catu | Unchanged | catalog properties match
+[oer-s115] Pass 1: catalogs | oer-s115-cat | Unchanged | catalog properties match
+[oer-s115] Pass 1: accessPackages | oer-s115-ap-b | Unchanged | access package properties match
+[oer-s115] Pass 1: accessPackages | oer-s115-ap-b | Extra | undeclared assignmentPolicy 'oer-s115-pol' is still in force (the engine never removes assignment policies; use Remove-OERAccessPackageAssignmentPolicy)
+[oer-s115] Pass 1: accessPackages | oer-s115-ap-b | Extra | undeclared assignmentPolicy 'oer-s115-pol' is still in force (the engine never removes assignment policies; use Remove-OERAccessPackageAssignmentPolicy)
+[oer-s115] Pass 1: accessPackages | oer-s115-ap-a | Unchanged | access package properties match
+[oer-s115] Pass 1: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000002 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s115-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s115-rg'
+[oer-s115] Pass 1 FAILED: roleAssignments | Owner -> principal-1 @ /providers/Microsoft.Management/managementGroups/MG-1 | could not read role assignments at that scope: AuthorizationFailed (the identity holds no read at that management group; names masked by the controller)
+[oer-s115] Pass 1 FAILED: roleAssignments | Owner -> principal-2 @ /providers/Microsoft.Management/managementGroups/MG-1 | could not read role assignments at that scope: AuthorizationFailed (the identity holds no read at that management group; names masked by the controller)
+[oer-s115] Pass 1 FAILED: roleAssignments | User Access Administrator -> principal-3 @ /providers/Microsoft.Management/managementGroups/MG-2 | could not read role assignments at that scope: AuthorizationFailed (the identity holds no read at that management group; names masked by the controller)
+[oer-s115] Pass 1 FAILED: roleAssignments | User Access Administrator -> principal-1 @ /providers/Microsoft.Management/managementGroups/MG-2 | could not read role assignments at that scope: AuthorizationFailed (the identity holds no read at that management group; names masked by the controller)
+[oer-s115] Pass 1 FAILED: roleAssignments | User Access Administrator -> principal-4 @ /providers/Microsoft.Management/managementGroups/MG-2 | could not read role assignments at that scope: AuthorizationFailed (the identity holds no read at that management group; names masked by the controller)
+[oer-s115] Pass 1 FAILED: roleAssignments | Log Analytics Contributor -> principal-5 @ /providers/Microsoft.Management/managementGroups/MG-2 | could not read role assignments at that scope: AuthorizationFailed (the identity holds no read at that management group; names masked by the controller)
+[oer-s115] Pass 2: token requests: 0; Microsoft Graph requests: 1044, writes: 0; Azure Resource Manager requests: 42, writes: 0
+[oer-s115] Pass 2: rows 466; by action: Extra 2, Failed 6, Skipped 67, Unchanged 391
+[oer-s115] Pass 2: AmbiguousName records: 0; error ids: , AuthorizationFailed
+[oer-s115] Pass 2: groups | oer-s115-cnt | Unchanged | group properties match
+[oer-s115] Pass 2: groups | oer-s115-cnt | Unchanged | member '00000000-0000-0000-0000-000000000001' already present
+[oer-s115] Pass 2: groups | oer-s115-req | Unchanged | group properties match
+[oer-s115] Pass 2: catalogs | oer-s115-cat2 | Unchanged | catalog properties match
+[oer-s115] Pass 2: catalogs | oer-s115-catu | Unchanged | catalog properties match
+[oer-s115] Pass 2: catalogs | oer-s115-cat | Unchanged | catalog properties match
+[oer-s115] Pass 2: accessPackages | oer-s115-ap-b | Unchanged | access package properties match
+[oer-s115] Pass 2: accessPackages | oer-s115-ap-b | Extra | undeclared assignmentPolicy 'oer-s115-pol' is still in force (the engine never removes assignment policies; use Remove-OERAccessPackageAssignmentPolicy)
+[oer-s115] Pass 2: accessPackages | oer-s115-ap-b | Extra | undeclared assignmentPolicy 'oer-s115-pol' is still in force (the engine never removes assignment policies; use Remove-OERAccessPackageAssignmentPolicy)
+[oer-s115] Pass 2: accessPackages | oer-s115-ap-a | Unchanged | access package properties match
+[oer-s115] Pass 2: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000002 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s115-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s115-rg'
+[oer-s115] Pass 2 FAILED: roleAssignments | Owner -> principal-1 @ /providers/Microsoft.Management/managementGroups/MG-1 | could not read role assignments at that scope: AuthorizationFailed (the identity holds no read at that management group; names masked by the controller)
+[oer-s115] Pass 2 FAILED: roleAssignments | Owner -> principal-2 @ /providers/Microsoft.Management/managementGroups/MG-1 | could not read role assignments at that scope: AuthorizationFailed (the identity holds no read at that management group; names masked by the controller)
+[oer-s115] Pass 2 FAILED: roleAssignments | User Access Administrator -> principal-3 @ /providers/Microsoft.Management/managementGroups/MG-2 | could not read role assignments at that scope: AuthorizationFailed (the identity holds no read at that management group; names masked by the controller)
+[oer-s115] Pass 2 FAILED: roleAssignments | User Access Administrator -> principal-1 @ /providers/Microsoft.Management/managementGroups/MG-2 | could not read role assignments at that scope: AuthorizationFailed (the identity holds no read at that management group; names masked by the controller)
+[oer-s115] Pass 2 FAILED: roleAssignments | User Access Administrator -> principal-4 @ /providers/Microsoft.Management/managementGroups/MG-2 | could not read role assignments at that scope: AuthorizationFailed (the identity holds no read at that management group; names masked by the controller)
+[oer-s115] Pass 2 FAILED: roleAssignments | Log Analytics Contributor -> principal-5 @ /providers/Microsoft.Management/managementGroups/MG-2 | could not read role assignments at that scope: AuthorizationFailed (the identity holds no read at that management group; names masked by the controller)
+RUNNER: check-3.2 exit code 0; started 2026-10-14T22:10:38Z; took 344 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.3. The step's entries applied for real, twice: only Unchanged (G8)
 
-- [ ] **3.3** A document holding only the step's entries from the export -- `oer-s115-catu`, `oer-s115-ap-a` with its catalog's id, `oer-s115-ap-b`, and the role assignment by the group's id -- is applied for real twice; every row is Unchanged and nothing is written.
+- [x] **3.3** A document holding only the step's entries from the export -- the catalogs `oer-s115-cat` and `oer-s115-catu`, the packages `oer-s115-ap-a` and `oer-s115-ap-b`, and the role assignment by the group's id -- is applied for real twice; every row is Unchanged and nothing is written.
 
 ```powershell
 Connect-OerLive -Arm
@@ -609,7 +1074,7 @@ $Bundle = (Get-S115Bundle).FullName
 $Doc = Get-Content -LiteralPath (Join-Path $Bundle 'inventory.json') -Raw | ConvertFrom-Json -DateKind String
 $Part = [ordered]@{ version = $Doc.version }
 if ($Doc.PSObject.Properties.Name -contains 'tenantId') { $Part.tenantId = $Doc.tenantId }
-$Part.catalogs = @($Doc.catalogs | Where-Object { $_.displayName -eq 'oer-s115-catu' })
+$Part.catalogs = @($Doc.catalogs | Where-Object { $_.displayName -in 'oer-s115-cat', 'oer-s115-catu' })
 $Part.accessPackages = @($Doc.accessPackages | Where-Object { $_.displayName -in 'oer-s115-ap-a', 'oer-s115-ap-b' })
 $Part.roleAssignments = @($Doc.roleAssignments | Where-Object { [string]$_.scope -like '*/resourceGroups/oer-s115-rg' })
 $Path = Join-Path $Raw 'apply-s115.json'
@@ -622,7 +1087,7 @@ foreach ($Pass in 1, 2) {
     $Rows = @(Invoke-OERStructure -Path $Path -Confirm:$false -ErrorVariable E -ErrorAction SilentlyContinue 3>$null 6>$null)
     Write-OerLiveStep "Pass $($Pass): $(Get-S115Sent)"
     Stop-S115Count
-    foreach ($Row in $Rows) { Write-OerLiveStep "Pass $($Pass): $($Row.Section) | $($Row.Item) | $($Row.Status) | $($Row.Detail)" }
+    foreach ($Row in $Rows) { Write-OerLiveStep "Pass $($Pass): $($Row.Section) | $($Row.Item) | $($Row.Action) | $($Row.Detail)" }
     Write-OerLiveStep "Pass $($Pass): error ids: $(@($E | ForEach-Object { ([string]$_.FullyQualifiedErrorId -split ',')[0] } | Sort-Object -Unique) -join ', ')"
 }
 Disconnect-OerLive
@@ -633,11 +1098,51 @@ Unchanged (the catalog, both packages, the role assignment), apart from the two 
 `oer-s115-ap-b` that report the left-out `oer-s115-pol` policies as still in force; no error.
 **Failure looks like:** a write, a Created or Updated row, an AmbiguousName or a Failed row.
 
-Result:
+Result: 2026-10-14 22:17 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (G8). The step's entries from the export -- the catalogs oer-s115-cat and oer-s115-catu, the packages oer-s115-ap-a and oer-s115-ap-b, and the Reader role assignment at oer-s115-rg naming the group by its id with principalType Group -- applied for real twice: both passes identical, every row Unchanged apart from the two Extra rows on oer-s115-ap-b reporting the left-out oer-s115-pol policies as still in force; writes 0 (Microsoft Graph 18 requests, Azure Resource Manager 3); no error; no token request.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.3 ===
+[oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s115] Entries: catalogs 2, access packages 2, role assignments 1; every role assignment scope is the step's resource group: True
+[oer-s115] Pass 1: token requests: 0; Microsoft Graph requests: 18, writes: 0; Azure Resource Manager requests: 3, writes: 0
+[oer-s115] Pass 1: catalogs | oer-s115-catu | Unchanged | catalog properties match
+[oer-s115] Pass 1: catalogs | oer-s115-cat | Unchanged | catalog properties match
+[oer-s115] Pass 1: accessPackages | oer-s115-ap-b | Unchanged | access package properties match
+[oer-s115] Pass 1: accessPackages | oer-s115-ap-b | Extra | undeclared assignmentPolicy 'oer-s115-pol' is still in force (the engine never removes assignment policies; use Remove-OERAccessPackageAssignmentPolicy)
+[oer-s115] Pass 1: accessPackages | oer-s115-ap-b | Extra | undeclared assignmentPolicy 'oer-s115-pol' is still in force (the engine never removes assignment policies; use Remove-OERAccessPackageAssignmentPolicy)
+[oer-s115] Pass 1: accessPackages | oer-s115-ap-a | Unchanged | access package properties match
+[oer-s115] Pass 1: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000002 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s115-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s115-rg'
+[oer-s115] Pass 1: error ids: 
+[oer-s115] Pass 2: token requests: 0; Microsoft Graph requests: 18, writes: 0; Azure Resource Manager requests: 3, writes: 0
+[oer-s115] Pass 2: catalogs | oer-s115-catu | Unchanged | catalog properties match
+[oer-s115] Pass 2: catalogs | oer-s115-cat | Unchanged | catalog properties match
+[oer-s115] Pass 2: accessPackages | oer-s115-ap-b | Unchanged | access package properties match
+[oer-s115] Pass 2: accessPackages | oer-s115-ap-b | Extra | undeclared assignmentPolicy 'oer-s115-pol' is still in force (the engine never removes assignment policies; use Remove-OERAccessPackageAssignmentPolicy)
+[oer-s115] Pass 2: accessPackages | oer-s115-ap-b | Extra | undeclared assignmentPolicy 'oer-s115-pol' is still in force (the engine never removes assignment policies; use Remove-OERAccessPackageAssignmentPolicy)
+[oer-s115] Pass 2: accessPackages | oer-s115-ap-a | Unchanged | access package properties match
+[oer-s115] Pass 2: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000002 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s115-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s115-rg'
+[oer-s115] Pass 2: error ids:
+RUNNER: check-3.3 exit code 0; started 2026-10-14T22:17:05Z; took 11 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.4. The validator refuses two policies of one name in a package
 
-- [ ] **3.4** A document whose `oer-s115-ap-b` declares both `oer-s115-pol` policies is refused offline with an Error.
+- [x] **3.4** A document whose `oer-s115-ap-b` declares both `oer-s115-pol` policies is refused offline with an Error.
 
 ```powershell
 $Doc = [ordered]@{
@@ -651,19 +1156,32 @@ $Path = Join-Path $Raw 'dup-policies-s115.json'
 $Doc | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $Path -Encoding utf8
 Import-Module (Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psd1') | Select-Object -First 1).FullName -Force
 $V = Test-OERStructure -Path $Path
-Write-OerLiveStep "Valid: $($V.Valid); errors: $(@($V.Errors).Count)"
-foreach ($F in @($V.Errors)) { Write-OerLiveStep "Error at $($F.Path): $($F.Message)" }
+Write-OerLiveStep "Valid: $($V.Valid); findings: $(@($V.Errors).Count) (Error $(@($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count))"
+foreach ($F in @($V.Errors | Where-Object { $_.Severity -eq 'Error' })) { Write-OerLiveStep "Error at $($F.Path): $($F.Message)" }
 ```
 
 **Expect:** `Valid: False`, one Error at `accessPackages[0].assignmentPolicies[1]` naming
 `accessPackages[0].assignmentPolicies[0]` (the names differ only in letter case). Offline: no sign-in.
 **Failure looks like:** `Valid: True`.
 
-Result:
+Result: 2026-10-14 22:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
-### 3.5. A package missing from its catalog is never written into its twin
+```text
+Verdict: PASS. Offline, no sign-in: Valid False with exactly one Error, at accessPackages[0].assignmentPolicies[1], naming accessPackages[0].assignmentPolicies[0] (the names differ only in letter case). The two other findings are Warnings unrelated to the rule (the catalog is not declared in this small document, and resourceRoles is omitted). (A first run listed all three under 'Error'; fixed in the block -- it now lists the Errors by Severity -- and run again.)
 
-- [ ] **3.5** A document declares `oer-s115-ap-a` in the SECOND `oer-s115-cat` catalog (by id), where it does not exist, while `oer-s115-ap-a` exists in the first: the plan says it would create it, and the real run reports Failed and writes nothing.
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.4 ===
+[oer-s115] Valid: False; findings: 3 (Error 1)
+[oer-s115] Error at accessPackages[0].assignmentPolicies[1]: accessPackages[0].assignmentPolicies[1] declares the same display name 'OER-S115-POL' as accessPackages[0].assignmentPolicies[0] (compared without regard to letter case). Both entries reconcile one assignment policy of the access package, so each would undo the other's settings. Keep one entry.
+RUNNER: check-3.4 exit code 0; started 2026-10-14T22:18:10Z; took 2 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
+
+### 3.5. A package missing from its catalog is never written into another catalog's package
+
+- [x] **3.5** A document declares `oer-s115-ap-a` in the empty catalog `oer-s115-cat2` (by id), where it does not exist, while `oer-s115-ap-a` exists in `oer-s115-cat`: the plan says it would create it, and the real run reports Failed and writes nothing.
 
 ```powershell
 Connect-OerLive -Arm
@@ -674,7 +1192,7 @@ $Doc = [ordered]@{
 }
 $Path = Join-Path $Raw 'twin-s115.json'
 $Doc | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $Path -Encoding utf8
-Write-OerLiveStep "The second oer-s115-cat recorded: $([bool]$Ids['cat-2']); oer-s115-ap-a recorded in the first: $([bool]$Ids['ap-a'])"
+Write-OerLiveStep "oer-s115-cat2 recorded: $([bool]$Ids['cat-2']); oer-s115-ap-a recorded in the first: $([bool]$Ids['ap-a'])"
 foreach ($Mode in 'plan', 'run') {
     Start-S115Count
     $E = $null
@@ -685,31 +1203,62 @@ foreach ($Mode in 'plan', 'run') {
     }
     Write-OerLiveStep "$($Mode): $(Get-S115Sent)"
     Stop-S115Count
-    foreach ($Row in $Rows) { Write-OerLiveStep "$($Mode): $($Row.Section) | $($Row.Item) | $($Row.Status) | $($Row.Detail)" }
+    foreach ($Row in $Rows) { Write-OerLiveStep "$($Mode): $($Row.Section) | $($Row.Item) | $($Row.Action) | $($Row.Detail)" }
 }
 $Pol = Invoke-OerLiveGraph -All -Uri ("$Em/assignmentPolicies?`$filter={0}" -f [uri]::EscapeDataString("accessPackage/id eq '$($Ids['ap-a'])'"))
 Assert-OerLiveOk -Response $Pol -Activity 'Reading the policies of oer-s115-ap-a' | Out-Null
 Write-OerLiveStep "oer-s115-ap-a holds $(@(@($Pol.Body['value']) | Where-Object { $null -ne $_ }).Count) assignment policies after the run (it had none)"
 $InCat2 = Invoke-OerLiveGraph -All -Uri ("$Em/accessPackages?`$filter={0}&`$select=id" -f [uri]::EscapeDataString("catalog/id eq '$($Ids['cat-2'])'"))
-Assert-OerLiveOk -Response $InCat2 -Activity 'Listing the packages of the second oer-s115-cat' | Out-Null
-Write-OerLiveStep "Packages in the second oer-s115-cat after the run: $(@(@($InCat2.Body['value']) | Where-Object { $null -ne $_ }).Count)"
+Assert-OerLiveOk -Response $InCat2 -Activity 'Listing the packages of oer-s115-cat2' | Out-Null
+Write-OerLiveStep "Packages in oer-s115-cat2 after the run: $(@(@($InCat2.Body['value']) | Where-Object { $null -ne $_ }).Count)"
 Disconnect-OerLive
 ```
 
 **Expect:** the plan one row `would create access package` (the plan never calls the create, so it cannot
 see the twin) and `writes: 0`; the real run ONE `Failed` row whose detail names a package of that name in
 another catalog, and `writes: 0` for Microsoft Graph and Azure Resource Manager; `oer-s115-ap-a` still holds 0
-policies, and the second catalog still holds 0 packages.
+policies, and `oer-s115-cat2` still holds 0 packages. (Two catalogs of one name cannot be made in this
+tenant, 0.2, so this is the older case the guard also closes: a package declared in a uniquely named catalog
+whose name a package in another catalog carries.)
 **Failure looks like:** a `Created` row, a write, or a policy on `oer-s115-ap-a` -- the guard did not hold
 (everything stays inside the prefix).
 
-Result:
+Result: 2026-10-14 22:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. A document declaring oer-s115-ap-a in the empty catalog oer-s115-cat2 (by id), while oer-s115-ap-a exists in oer-s115-cat: the plan gave one row 'would create access package' (Skipped) with 0 writes, since the plan never calls the create; the real run gave ONE Failed row -- not created in that catalog, a package of that name already exists in another catalog and New-OERAccessPackage returned it, nothing written to it -- with 0 writes (Microsoft Graph 3 requests); oer-s115-ap-a still holds 0 policies and oer-s115-cat2 0 packages. Without the guard this run would have reported Created and written to oer-s115-ap-a.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.5 ===
+[oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s115] oer-s115-cat2 recorded: True; oer-s115-ap-a recorded in the first: True
+What if: Performing the operation "Create access package" on target "oer-s115-ap-a".
+[oer-s115] plan: token requests: 0; Microsoft Graph requests: 1, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s115] plan: accessPackages | oer-s115-ap-a | Skipped | would create access package oer-s115-ap-a
+[oer-s115] run: token requests: 0; Microsoft Graph requests: 3, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s115] run: accessPackages | oer-s115-ap-a | Failed | access package 'oer-s115-ap-a' was not created in catalog '00000000-0000-0000-0000-000000000004': a package of that name already exists in another catalog (00000000-0000-0000-0000-000000000005), and New-OERAccessPackage returned it (00000000-0000-0000-0000-000000000006); nothing was written to it
+[oer-s115] oer-s115-ap-a holds 0 assignment policies after the run (it had none)
+[oer-s115] Packages in oer-s115-cat2 after the run: 0
+RUNNER: check-3.5 exit code 0; started 2026-10-14T22:18:25Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## T. Teardown
 
 ### T.1. Remove every oer-s115- object
 
-- [ ] **T.1** The prerequisite script's teardown removes the role assignment, the resource group, the Microsoft 365 group and every other prefixed object, and the sweep finds none.
+- [x] **T.1** The prerequisite script's teardown removes the role assignment, the resource group, the Microsoft 365 group and every other prefixed object, and the sweep finds none.
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS115Prereq.ps1'
@@ -727,11 +1276,127 @@ two packages, the three catalogs and the six groups, purges the Microsoft 365 gr
 code 0.
 **Failure looks like:** a RESIDUE line (exit code 3): name it in the report.
 
-Result:
+Result: 2026-10-14 22:20 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The -WhatIf teardown removed nothing; the real one removed the Reader role assignment and oer-s115-rg, the Microsoft 365 group (204 at the first attempt) and, through OerLive's fixed order, the PIM for Groups row that listed oer-live-cc-noperm's direct membership of oer-s115-cnt, the two policies, the two packages, the three catalogs and the other five groups (removed 14, residue 0), and purged the Microsoft 365 group from the deleted items (204). The last, printing sweep still listed three groups already deleted (204) -- a listing replica behind the deletes; the counts equal the baseline and T.2 reads nothing left. Exit code 0. (Before this run's setup, an earlier partial setup was torn down the same way: removed 8, residue 0, counts at the baseline.) The prerequisite script's mode line still says 'two catalogs oer-s115-cat'; the objects it made are the ones 0.2 lists.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[oer-s115] === Initialize-OerS115Prereq.ps1 -Teardown -WhatIf ===
+[oer-s115] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s115] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s115] What if: Performing the operation "Start the redacted transcript" on target "raw\s115\teardown-20261014-221845Z.log".
+[oer-s115] [oer-s115] Mode: REMOVE. Prefix 'oer-s115-'. Objects (fixed): two security groups oer-s115-dup; a security group and a Microsoft 365 group oer-s115-mix; oer-s115-cnt (member: oer-live-cc-noperm); oer-s115-req (no member); two catalogs oer-s115-cat, the first holding oer-s115-ap-a; oer-s115-catu holding oer-s115-ap-b with two policies oer-s115-pol; oer-s115-rg (tagged) with Reader for the first oer-s115-dup group. OerLive 1.0.3.
+[oer-s115] [oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s115] [oer-s115] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s115] What if: Performing the operation "Remove the Reader role assignment (Azure Resource Manager DELETE roleAssignments)" on target "oer-s115-rg".
+[oer-s115] What if: Performing the operation "Delete the resource group (Azure Resource Manager DELETE)" on target "oer-s115-rg".
+[oer-s115] What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups), retried while Graph refuses it" on target "oer-s115-mix (Microsoft 365)".
+[oer-s115] [oer-s115] Teardown of 'oer-s115-': users 0, groups 6, access packages 2, catalogs 3; administrative units 0 and app registrations 0 are reported only.
+[oer-s115] [oer-s115] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s115] [oer-s115] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s115] What if: Performing the operation "Remove (Graph beta schedule request, adminRemove)" on target "oer-s115-cnt: PIM for Groups member assignment of a principal".
+[oer-s115] What if: Performing the operation "Remove (Graph beta schedule request, adminRemove)" on target "oer-s115-mix: PIM for Groups owner assignment of a principal".
+[oer-s115] [oer-s115] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s115] What if: Performing the operation "Delete (Graph v1.0 DELETE assignmentPolicies)" on target "oer-s115-ap-b: assignment policy 'oer-s115-pol'".
+[oer-s115] What if: Performing the operation "Delete (Graph v1.0 DELETE assignmentPolicies)" on target "oer-s115-ap-b: assignment policy 'oer-s115-pol'".
+[oer-s115] What if: Performing the operation "Delete the access package (Graph v1.0 DELETE accessPackages)" on target "oer-s115-ap-b".
+[oer-s115] What if: Performing the operation "Delete the access package (Graph v1.0 DELETE accessPackages)" on target "oer-s115-ap-a".
+[oer-s115] What if: Performing the operation "Delete the catalog (Graph v1.0 DELETE catalogs)" on target "oer-s115-cat2".
+[oer-s115] What if: Performing the operation "Delete the catalog (Graph v1.0 DELETE catalogs)" on target "oer-s115-catu".
+[oer-s115] What if: Performing the operation "Delete the catalog (Graph v1.0 DELETE catalogs)" on target "oer-s115-cat".
+[oer-s115] [oer-s115] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s115] [oer-s115] Teardown 5/6: the prefixed groups.
+[oer-s115] What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s115-cnt".
+[oer-s115] What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s115-dup".
+[oer-s115] What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s115-dup".
+[oer-s115] What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s115-mix".
+[oer-s115] What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s115-mix".
+[oer-s115] What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s115-req".
+[oer-s115] [oer-s115] Teardown 6/6: the prefixed users.
+[oer-s115] [oer-s115] Teardown of 'oer-s115-': removed 0, residue 0, unreadable 0 (WhatIf: nothing was removed).
+[oer-s115] [oer-s115] WhatIf: nothing was created, removed or written.
+[oer-s115] [oer-s115] Done.
+[oer-s115] exit code: 0
+[oer-s115] === Initialize-OerS115Prereq.ps1 -Teardown -Unattended ===
+[oer-s115] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s115] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s115] [oer-s115] Transcript (redacted): raw\s115\teardown-20261014-221904Z.log; OerLive 1.0.3.
+[oer-s115] [oer-s115] Mode: REMOVE. Prefix 'oer-s115-'. Objects (fixed): two security groups oer-s115-dup; a security group and a Microsoft 365 group oer-s115-mix; oer-s115-cnt (member: oer-live-cc-noperm); oer-s115-req (no member); two catalogs oer-s115-cat, the first holding oer-s115-ap-a; oer-s115-catu holding oer-s115-ap-b with two policies oer-s115-pol; oer-s115-rg (tagged) with Reader for the first oer-s115-dup group. OerLive 1.0.3.
+[oer-s115] [oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s115] [oer-s115] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s115] [oer-s115] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s115] [oer-s115] Teardown A: removed the Reader role assignment at oer-s115-rg.
+[oer-s115] [oer-s115] oer-s115-rg is gone: not yet (read 1, 0.2 s, likely replication delay) -- reading again in 2 s.
+[oer-s115] [oer-s115] oer-s115-rg is gone: converged after 2 read(s), 2.6 s.
+[oer-s115] [oer-s115] Teardown A: deleted oer-s115-rg.
+[oer-s115] [oer-s115] Teardown B: DELETE the Microsoft 365 group oer-s115-mix: 204  after 1 attempt(s), 0.2 s.
+[oer-s115] [oer-s115] the Microsoft 365 group oer-s115-mix is no longer listed: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s115] [oer-s115] the Microsoft 365 group oer-s115-mix is no longer listed: converged after 2 read(s), 2.2 s.
+[oer-s115] [oer-s115] Teardown of 'oer-s115-': users 0, groups 6, access packages 2, catalogs 3; administrative units 0 and app registrations 0 are reported only.
+[oer-s115] [oer-s115] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s115] [oer-s115] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s115] [oer-s115] Removed: oer-s115-cnt: PIM for Groups member assignment of a principal (201).
+[oer-s115] [oer-s115] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s115] [oer-s115] Deleted: oer-s115-ap-b: assignment policy 'oer-s115-pol' (204).
+[oer-s115] [oer-s115] Deleted: oer-s115-ap-b: assignment policy 'oer-s115-pol' (204).
+[oer-s115] [oer-s115] Deleted: access package oer-s115-ap-b (204, 1 attempt(s)).
+[oer-s115] [oer-s115] Deleted: access package oer-s115-ap-a (204, 1 attempt(s)).
+[oer-s115] [oer-s115] Deleted: catalog oer-s115-cat2 (204, 1 attempt(s)).
+[oer-s115] [oer-s115] Deleted: catalog oer-s115-catu (204, 1 attempt(s)).
+[oer-s115] [oer-s115] Deleted: catalog oer-s115-cat (204, 1 attempt(s)).
+[oer-s115] [oer-s115] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s115] [oer-s115] Teardown 5/6: the prefixed groups.
+[oer-s115] [oer-s115] Deleted: group oer-s115-cnt (204).
+[oer-s115] [oer-s115] Deleted: group oer-s115-dup (204).
+[oer-s115] [oer-s115] Deleted: group oer-s115-dup (204).
+[oer-s115] [oer-s115] Deleted: group oer-s115-mix (204).
+[oer-s115] [oer-s115] Deleted: group oer-s115-mix (404).
+[oer-s115] [oer-s115] Deleted: group oer-s115-req (204).
+[oer-s115] [oer-s115] Teardown 6/6: the prefixed users.
+[oer-s115] [oer-s115] Teardown of 'oer-s115-': removed 14, residue 0, unreadable 0.
+[oer-s115] [oer-s115] Teardown D: purge of the Microsoft 365 group: 204  after 1 attempt(s).
+[oer-s115] [oer-s115] no 'oer-s115-' object is listed: not yet (read 1, 0.4 s, likely replication delay) -- reading again in 2 s.
+[oer-s115] [oer-s115] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s115-' is left.
+[oer-s115] [oer-s115] no 'oer-s115-' object is listed: converged after 2 read(s), 2.7 s.
+[oer-s115] [oer-s115] Sweep: group 'oer-s115-cnt' (00000000-0000-0000-0000-000000000007) carries the prefix.
+[oer-s115] [oer-s115] Sweep: group 'oer-s115-mix' (00000000-0000-0000-0000-000000000008) carries the prefix.
+[oer-s115] [oer-s115] Sweep: group 'oer-s115-req' (00000000-0000-0000-0000-000000000009) carries the prefix.
+[oer-s115] [oer-s115] Resource group oer-s115-rg exists after the teardown: False
+[oer-s115] [oer-s115] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s115] [oer-s115] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s115] [oer-s115] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s115] [oer-s115] Removed the recorded ids.
+[oer-s115] [oer-s115] Done.
+[oer-s115] exit code: 0
+RUNNER: check-T.1 exit code 0; started 2026-10-14T22:18:43Z; took 55 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### T.2. Read back
 
-- [ ] **T.2** A read-only pass finds no prefixed object, no resource group and no residue row of this step.
+- [x] **T.2** A read-only pass finds no prefixed object, no resource group and no residue row of this step.
 
 ```powershell
 & pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS115Prereq.ps1') -ReadBack *>&1 | ForEach-Object { Write-OerLiveStep ([string]$_) }
@@ -742,7 +1407,46 @@ Write-OerLiveStep "exit code: $LASTEXITCODE"
 baseline; 0 residue rows with this step's prefix.
 **Failure looks like:** anything left.
 
-Result:
+Result: 2026-10-14 22:20 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Read-only: no prefixed object left (0, 0 unread collections), oer-s115-rg does not exist, the counts equal the baseline (groups 97, catalogs 5, access packages 6), and raw\residue.json holds 5 rows, none with this step's prefix (they are older rows of other prefixes).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.2 ===
+[oer-s115] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s115] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s115] [oer-s115] Transcript (redacted): raw\s115\readback-20261014-221952Z.log; OerLive 1.0.3.
+[oer-s115] [oer-s115] Mode: READ BACK. Prefix 'oer-s115-'. Objects (fixed): two security groups oer-s115-dup; a security group and a Microsoft 365 group oer-s115-mix; oer-s115-cnt (member: oer-live-cc-noperm); oer-s115-req (no member); two catalogs oer-s115-cat, the first holding oer-s115-ap-a; oer-s115-catu holding oer-s115-ap-b with two policies oer-s115-pol; oer-s115-rg (tagged) with Reader for the first oer-s115-dup group. OerLive 1.0.3.
+[oer-s115] [oer-s115] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg5\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s115] [oer-s115] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s115] [oer-s115] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s115] [oer-s115] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s115-' is left.
+[oer-s115] [oer-s115] Read-back: resource group oer-s115-rg exists: False
+[oer-s115] [oer-s115] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s115] [oer-s115] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s115] [oer-s115] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s115] [oer-s115] Read-back: residue row: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:09Z, attempts 3: 404 SubjectNotFound The subject is not found.; read back: still listed -- OerLive: Residue: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal': read back after the 'does not exist' answer -- not converged within budget (180 s, 10 reads).
+[oer-s115] [oer-s115] Read-back: residue row: PIM for Groups assignment 'opim-s1-grp: PIM for Groups owner assignment of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:12Z, attempts 3: 403 UnauthorizedAccessException {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup,PrivilegedAccess.ReadWrite.AzureADGroup,PrivilegedAssignmentSchedule.Remove.AzureADGroup.","instanceAnnotations":[]}
+[oer-s115] [oer-s115] Read-back: residue row: PIM for Groups eligibility 'opim-s2-grp: PIM for Groups member eligibility of a principal' (prefix opim-s2-), first refused 2026-10-10T23:39:01Z, attempts 1: 400 BadRequest {"error":{"code":"Request_BadRequest","message":"The source resource object or one of the objects being referenced do not exist.","innerError":{"date":"2026-10-10T23:39:01","request-id":"00000000-0000-0000-0000-000000000010","client-request-id":"00000000-0000-0000-0000-000000000011"}}}
+[oer-s115] [oer-s115] Read-back: residue row: user 'opim-s2-live-user@example.com' (prefix opim-s2-), first refused 2026-10-10T23:39:02Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s115] [oer-s115] Read-back: residue row: user 'opim-s2-live-user@example.com' (prefix opim-s2-), first refused 2026-10-11T14:55:13Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s115] [oer-s115] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 5, of them with this step's prefix: 0.
+[oer-s115] [oer-s115] Done.
+[oer-s115] exit code: 0
+RUNNER: check-T.2 exit code 0; started 2026-10-14T22:19:50Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## B. Proved offline only (class B)
 
@@ -771,7 +1475,13 @@ Each line names the unit tests that hold the claim; the gate (`./build.ps1 -Task
   group carries its name (BL-131, Task 3c)".
 - **B.6 The twin-catalog guard with the catalog named by a unique display name, a failed catalog lookup, and a
   genuine create.** `tests/Unit/Private/Sync-OERStructureAccessPackage.Tests.ps1` and
-  `Invoke-OERStructure.Tests.ps1`; 3.5 runs the by-id case live.
+  `Invoke-OERStructure.Tests.ps1`; 3.5 runs the by-id case live, with a uniquely named catalog.
+- **B.8 A package in a catalog whose name another catalog carries is written with the catalog's id, and
+  applies (BL-39).** Microsoft Graph refuses to create or rename a catalog to a name another catalog carries,
+  letter case aside (0.2: 400 `DuplicateCatalog`, 409 `DuplicateKey`), so the pair cannot be made in the test
+  tenant. `Get-OERInventory.Tests.ps1` (the BL-39 tests) and `Invoke-OERStructure.Tests.ps1`, Describe
+  "Invoke-OERStructure applies what an export writes by id: a package's catalog and a review's access package
+  and assignment policy (BL-39, BL-142)".
 - **B.7 The texts.** `tests/QA/docsync.tests.ps1` and `about.tests.ps1` (README and the about topic agree and
   name every cmdlet), `dochygiene.tests.ps1` (no tenant value, no tag-like bracket), `module.tests.ps1` (help,
   the changelog and its budget).
