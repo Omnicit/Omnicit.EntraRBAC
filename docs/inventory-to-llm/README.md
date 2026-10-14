@@ -363,7 +363,8 @@ other policy row does.
 `previousDisplayName` also accepts the object id. For a unit, a catalog and an access review the
 apply engine checks with one read that the id still names one: an id that no longer exists counts as
 not matching, like an old name nobody carries any more. For an access review that rests on the
-not-found codes the read declares, which are not measured yet: a not-found answer under any other
+not-found codes the read declares: Microsoft Graph was measured to answer an id that names no review
+with 404 and an empty error code, which the read takes as not found; a not-found answer under any other
 code fails the entry, with nothing written. For an access package the id is matched only
 against the packages of the declared catalog, and for an assignment policy only against the policies
 of its package, which are already read, so the id of one in another catalog or package, or of a

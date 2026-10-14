@@ -55,11 +55,12 @@ function Invoke-OERStructure {
     counts as not matching; a package id is matched only against the packages of the declared
     catalog, and a policy id only against the policies of its access package, both already read; an
     access review id is read once, by id, and a not-found answer under one of the codes that read
-    declares (NotFound, ResourceNotFound, Request_ResourceNotFound; not measured live yet), or an
-    answer with no object, counts as not matching, while any other failure of the read fails the
-    entry with nothing written. An access review found under either name is updated or renamed only
-    when it passes the AccessReviews target check below, and after a rename the definition read back
-    must carry the new name exactly, letter case included, or the entry is reported Failed.
+    declares (NotFound, ResourceNotFound, Request_ResourceNotFound; measured live, Graph answers 404
+    with an empty error code, which the transport reads as NotFound), or an answer with no object,
+    counts as not matching, while any other failure of the read fails the entry with nothing written.
+    An access review found under either name is updated or renamed only when it passes the
+    AccessReviews target check below, and after a rename the definition read back must carry the
+    new name exactly, letter case included, or the entry is reported Failed.
 
     Microsoft Graph's name lookup can follow a rename with a delay, so keep previousDisplayName in the
     document until the new name resolves (a run after that reports the object Unchanged; a run inside

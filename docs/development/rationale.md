@@ -8589,7 +8589,8 @@ or not its package is renamed, under the name keys alone, since nothing is read 
 wrong: a review that names the new name of a package or policy whose entry stopped would be looked up
 by name and could reach another object that carries it. The cost, accepted, is step 4's: while
 `-Include` leaves the section out and the entry still declares `previousDisplayName`, every review
-that names the new name is refused, even when the rename was done in an earlier run.
+that names the new name by name is refused, even when the rename was done in an earlier run (a review
+that names the package by object id looks a policy up by name, P6).
 
 **D5 (a review reads the map).** `Sync-OERStructureAccessReview` takes `-RenameMap` and reads it,
 before any Graph call for the entry, for its `accessPackage` (by name; a GUID is an object id and not a
@@ -8718,9 +8719,17 @@ the tenant-wide package lookup of the target check (`AmbiguousName`) or of the c
 lookup and says it would create it. (c) A `Rename` registered before a later refusal or failure of the policy
 update keeps the id of the policy found under its previous name, so a review in the same run is
 checked against that policy while it still carries its old name; step 4 set that precedent for
-packages and catalogs. (d) The not-found codes of the access review probe by id (D6) are declared, not
-measured: a not-found answer under another code makes the entry `Failed` with nothing written, the
-safe direction, and the live run of this step is to measure which code Graph sends. (e) A rename that
+packages and catalogs. (d) The not-found codes of the access review probe by id (D6): measured live on
+2026-10-14 (`docs/live-verification/feat-rename-policies-and-reviews-checklist.md`, 4.3), Microsoft Graph
+answers an id that names no review with 404, an EMPTY error code and the message "Fusion batch response 0
+returned not found for review" with the id, so the transport derives `NotFound` from the status and the
+declared `NotFound` matches; `ResourceNotFound` and `Request_ResourceNotFound` are not what Graph sends
+and stay declared only as a margin. A not-found answer under another code still makes the entry
+`Failed` with nothing written, the safe direction. The same run measured that a wrapper of
+`Invoke-MgGraphRequest` (the checklist's counting proxy, a global function) breaks that path: the
+transport's `-StatusCodeVariable` is then set in the wrapper's scope, the status cannot be read, an answer
+with an empty code reads as `GraphError` and the entry is `Failed` with the error as itself -- safe, but
+not the not-found decision. (e) A rename that
 changes the letter case only is not decided through `previousDisplayName` for a policy or a review
 either: both names find the one object (for a review, as far as the server's name filter ignores
 case, which is not measured), so no rename is decided, and the validator warns. A policy is still
