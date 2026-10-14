@@ -33,20 +33,34 @@ function Invoke-OERStructure {
     lookup that throws is reported as a pre-pass handler error. The groups section reads that outcome;
     see the same-run references below.
 
-    Renaming (previousDisplayName): a groups, administrativeUnits, catalogs or accessPackages entry
-    that declares previousDisplayName renames the object found under it in place, displayName being
-    the new name; an access package is matched within the catalog it declares. Both names are looked
-    up before anything is read or written for the entry. The object found only under
-    previousDisplayName is renamed in the same update as every other property that changed, and its
-    children are then reconciled as usual (when that update fails they are not). When the two names
-    find different objects the entry fails with GroupRenameConflict, AdministrativeUnitRenameConflict,
-    CatalogRenameConflict or AccessPackageRenameConflict and nothing is changed; when neither finds
-    one it fails with the matching GroupRenameNotFound, AdministrativeUnitRenameNotFound,
-    CatalogRenameNotFound or AccessPackageRenameNotFound and nothing is created, since a rename names
-    an object that exists and an object is created only by an entry WITHOUT previousDisplayName.
-    previousDisplayName also accepts the object id: a group, unit or catalog id is verified with one
-    read, an id that no longer names an object counts as not matching, and a package id is matched
-    only against the packages of the declared catalog.
+    Renaming (previousDisplayName): a groups, administrativeUnits, catalogs, accessPackages or
+    accessReviews entry, or an assignmentPolicies entry of an access package, that declares
+    previousDisplayName renames the object found under it in place, displayName being the new name;
+    an access package is matched within the catalog it declares, an assignment policy within its
+    access package, and an access review in the whole tenant. Both names are looked up before
+    anything else is read or written for the object. The object found only under previousDisplayName
+    is renamed in the same update as every other property that changed, and its children are then
+    reconciled as usual (when that update fails they are not). When the two names find different
+    objects the entry fails with GroupRenameConflict, AdministrativeUnitRenameConflict,
+    CatalogRenameConflict, AccessPackageRenameConflict, AssignmentPolicyRenameConflict or
+    AccessReviewRenameConflict and nothing is changed; when neither finds one it fails with the
+    matching GroupRenameNotFound, AdministrativeUnitRenameNotFound, CatalogRenameNotFound,
+    AccessPackageRenameNotFound, AssignmentPolicyRenameNotFound or AccessReviewRenameNotFound and
+    nothing is created, since a rename names an object that exists and an object is created only by
+    an entry WITHOUT previousDisplayName. That includes an assignment policy that declares
+    previousDisplayName in an access package the same run creates. A policy's rows, these refusals
+    included, are rows of its access package's entry. A previous name that several objects carry is
+    refused: declare it as the object id then. previousDisplayName also accepts the object id: a
+    group, unit or catalog id is verified with one read, and an id that no longer names an object
+    counts as not matching; a package id is matched only against the packages of the declared
+    catalog, and a policy id only against the policies of its access package, both already read; an
+    access review id is read once, by id, and a not-found answer under one of the codes that read
+    declares (NotFound, ResourceNotFound, Request_ResourceNotFound; not measured live yet), or an
+    answer with no object, counts as not matching, while any other failure of the read fails the
+    entry with nothing written. An access
+    review found under either name is updated or renamed only when it passes the AccessReviews target
+    check below, and the definition read back after the update must carry the new name exactly,
+    letter case included, or the entry is reported Failed.
 
     Microsoft Graph's name lookup can follow a rename with a delay, so keep previousDisplayName in the
     document until the new name resolves (a run after that reports the object Unchanged; a run inside
@@ -60,8 +74,14 @@ function Invoke-OERStructure {
     document renames, reach the renamed object by its object id, through the run's rename map; name
     the object by its new name in those references. An assignment policy is matched within the access
     package as the review names it: by the package's new name, or by the package's object id, which
-    the map knows only once the accessPackages entry has decided the policy's rename -- until then a
-    review naming the package by id looks the policy up by name, as before. When the rename is
+    the map holds for the policy once the accessPackages entry knows that package's id (the package
+    found, both packages of a refused rename conflict, every candidate of an ambiguous name or
+    previous name). Until then a review that names the package by id looks the policy up by name, as
+    before: so it does when the entry stopped before it knew any package id (its catalog refused, a
+    failed read of the catalog's packages, a package rename that found neither name), when the entry
+    stopped at a display name several packages of its catalog carry (the package under its previous
+    name is not looked up by then), or when -Include leaves out the AccessPackages section, whose
+    marks name the package by its name alone. When the rename is
     refused, or the run cannot decide it, the reference is refused instead of being looked up by
     name, which could land in another object that carries the new name: such a group, every such
     package and such a review are reported Failed, under -WhatIf too, with nothing created or written
@@ -76,13 +96,16 @@ function Invoke-OERStructure {
     rows say why), or the rename of an administrativeUnits, catalogs or accessPackages entry -- an
     assignment policy of such an entry included -- whose section -Include leaves out (for which
     nothing is read, written or reported). While -Include leaves the section out and the entry still
-    declares previousDisplayName, every such reference to its new name is refused -- for a catalog
-    every package declared in it, and for an access package or assignment policy every access review
-    that names it, existing ones included -- even when the rename was done in an earlier run: include
-    the section, or remove previousDisplayName once the new name resolves. A refusal because -Include
+    declares previousDisplayName, every reference by its new name is refused -- for a catalog every
+    package declared in it, and for an access package or assignment policy every access review that
+    names it by that name (one that names the package by object id looks a policy up by name, as
+    above), existing ones included -- even when the rename was done in an earlier run: include the
+    section, or remove previousDisplayName once the new name resolves. A refusal because -Include
     leaves the section out publishes no error record, only the Failed row, so -ErrorAction Stop and
     $? do not see it: check the rows. Test-OERStructure warns on a reference that still names a
-    renamed object by its previous name.
+    renamed object by its previous name, and refuses a document in which an access review names by
+    display name an access package that two or more accessPackages entries declare while one of them
+    is renamed (the map keys a package by its name alone): name that package by its object id.
 
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
@@ -226,7 +249,8 @@ function Invoke-OERStructure {
     object above), and any other name is resolved as New-OERAccessReviewDefinition resolves it. A
     review that does not is reported Failed with the error AccessReviewScopeMismatch, and nothing is
     written to it; a review that reviews no access package at all is refused with no access package
-    or assignment policy lookup. A name that matches nothing is reported Failed with
+    or assignment policy lookup. A name compared as the map's id is named by that id in the error the
+    check publishes, and the Failed row says which declared name was read as which id. A name that matches nothing is reported Failed with
     AccessPackageNotFound or AssignmentPolicyNotFound, and a lookup that fails (an ambiguous name, a
     403) with its own error, and nothing is written either. An
     access package name is not unique in the tenant, nor an assignment policy name in its access
@@ -372,8 +396,9 @@ function Invoke-OERStructure {
     Restricts the sections the engine dispatches. Defaults to all nine sections. Pass a subset to limit
     the apply run (for example -Include Groups,Catalogs to skip Azure sections). A section left out
     still matters when its entries declare previousDisplayName: a group created into such a unit, an
-    access package in such a catalog, or an access review of such an access package or of such an
-    assignment policy, is reported Failed with no error record (see Renaming above).
+    access package in such a catalog, or an access review that names such an access package or such
+    an assignment policy by its new name, is reported Failed with no error record (see References to
+    a renamed object above).
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. Without it

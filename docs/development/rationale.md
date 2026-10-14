@@ -8485,8 +8485,9 @@ with nothing written. The step also made an access review that names an access p
 assignment policy renamed in the same run reach it through the run's rename map, made
 `Set-OERAccessPackageAssignmentPolicy` rename a policy given `-DisplayName` alone (A16), and stopped
 the catalogs handler from taking a failed read for an empty fact (BL-144). This anchor records the
-rules (D1 to D7), the rulings made while planning (P3 to P6) with what each costs if it is wrong, and
-the known limits. Unchanged by this step: `-Prune` never removes an assignment policy or an access
+rules (D1 to D7), the rulings made while planning (P3 to P6) and on the review of the first version
+(the marks under a package id in D4, and Rule 15) with what each costs if it is wrong, and the known
+limits. Unchanged by this step: `-Prune` never removes an assignment policy or an access
 review, the export never writes `previousDisplayName`, `NothingToUpdate` stays the published id for
 "nothing to update", and no public parameter or output type was added; the four ids in D1 are the
 only new ones. The rules were derived from the code and proven with mocked tests; nothing here has
@@ -8503,7 +8504,8 @@ the package. The map key of a policy is `assignmentPolicies|<package>|<policy>` 
 package term being the package's display name as its accessPackages entry declares it; when the
 package's id is known at decision time, the same outcome is registered under the key built with the
 id as well (the same entry, and a `Current` removes both), so a review that names the package by
-object id finds it. An undecided mark is registered under the name key only.
+object id finds it. An undecided mark is registered the same way: under the name key, and under the
+id key for a package id given with it (D4).
 `Get-OERStructureRenameTarget` reads the policy keys with `-AccessPackage` (the package's name or
 id) and does not serve `accessReviews`. If wrong: a second owner of the policy decision would word
 the refusals its own way, and a key built in a third place would drift from the two that build it.
@@ -8569,16 +8571,25 @@ replaces its mark: the package's under `accessPackages|<name>`, a policy's under
 (D1). Every early return leaves the marks no decision has replaced yet -- the catalog refused, a
 failed or ambiguous lookup, a failed package update that renames it, an ambiguous policy name -- so
 a review that names a new name is refused instead of being looked up by name, which could reach
-another object that carries that name. A name that is empty after string conversion is not marked:
-the validator refuses such an entry, and the helper's parameter binding would otherwise end the item
-in the mark block. `Invoke-OERStructure` marks the packages and the policies of a document whose
-`-Include` leaves AccessPackages out, with the reason "the accessPackages section is not selected by
--Include, so its rename is not reconciled in this run", each policy that declares
-`previousDisplayName` whether or not its package is renamed. If wrong: a review that names the new
-name of a package or policy whose entry stopped would be looked up by name and could reach another
-object that carries it. The cost, accepted, is step 4's: while `-Include` leaves the section out and
-the entry still declares `previousDisplayName`, every review that names the new name is refused, even
-when the rename was done in an earlier run.
+another object that carries that name. The first marks know no package id, so they are under the
+name key alone. Every renaming policy is therefore marked again, under the key with a package's id
+as well, as soon as the entry knows the id of a package it may mean: the existing package found,
+before anything else is read or written for it; both packages of a refused rename conflict; and every
+package of the catalog that carries the entry's `displayName`, or its previous name together with the
+one that carries the `displayName`, when that name is refused as ambiguous. Those are the controller's
+two rulings on the review of the first version, which marked by name alone: without the id key, a
+review that names the package by object id looked a policy left undecided up by name within that
+package, where another policy may already carry the new name. Cost: one helper in the handler and
+four places that call it. A name that is empty after string conversion is not marked: the validator
+refuses such an entry, and the helper's parameter binding would otherwise end the item in the mark
+block. `Invoke-OERStructure` marks the packages and the policies of a document whose `-Include`
+leaves AccessPackages out, with the reason "the accessPackages section is not selected by -Include,
+so its rename is not reconciled in this run", each policy that declares `previousDisplayName` whether
+or not its package is renamed, under the name keys alone, since nothing is read for the entry. If
+wrong: a review that names the new name of a package or policy whose entry stopped would be looked up
+by name and could reach another object that carries it. The cost, accepted, is step 4's: while
+`-Include` leaves the section out and the entry still declares `previousDisplayName`, every review
+that names the new name is refused, even when the rename was done in an earlier run.
 
 **D5 (a review reads the map).** `Sync-OERStructureAccessReview` takes `-RenameMap` and reads it,
 before any Graph call for the entry, for its `accessPackage` (by name; a GUID is an object id and not a
@@ -8600,10 +8611,16 @@ the map. If wrong: one argument added later.
 
 **P6 (the policy key with the package id).** A policy's outcome is registered under the package's name
 and, once the package's id is known, under its id, so a review that names the package by object id
-finds the policy's rename. Residual, accepted: an undecided mark has no id key, so a review that names
-the package by object id and the policy by the new name of a policy whose package entry stopped
-before the package was found looks the policy up by name, as before this step. If wrong: one more
-refusal path.
+finds the policy's rename; since the rulings recorded in D4 its undecided marks are too. Residual,
+accepted, in three places: an entry that stops before it knows any package id -- its catalog refused,
+a failed read of the catalog's package list, a package rename that found neither name -- marks its
+policies under the name key alone; an entry that stops at a `displayName` several packages of its
+catalog carry marks them under those packages' ids, but not under the id of a package that carries
+its previous name, which is not looked up by then; and a run whose `-Include` leaves AccessPackages
+out marks them under the name key alone (`Invoke-OERStructure` reads nothing for the entry). A review
+that names such a package by object id and a policy by its new name then looks the policy up by name
+within that package, as before this step: a package the entry could not find or did not reach, or
+was not run for. If wrong: one more refusal path.
 
 **D6 (a review renamed).** Both names are looked up in the whole tenant, each the way `displayName`
 always is (the same lookup, filter and refusal of a name several definitions carry), the new name
@@ -8654,13 +8671,36 @@ review names -- by its `displayName`, or by the name or object id it renames fro
 since once the rename is applied no policy of the package carries the old name and the review's
 target check fails. The schema declares `previousDisplayName` on both items as a non-empty string.
 
+**Rule 15 (a package name two entries declare; the controller's ruling on the review of the first
+version).** The run's rename map keys a package, and the policies within it, by the package's display
+name alone, while a package is identified by its catalog together with its name: two accessPackages
+entries with one display name in two catalogs are two packages that share those keys, so a later
+entry's mark or decision would replace an earlier one's, and a review that names the package by that
+name would reach whichever entry registered last. `Test-OERStructureSchema` therefore refuses, as an
+Error at `accessReviews[i].accessPackage`, a review whose `accessPackage` is a name, not an object id,
+that two or more accessPackages entries declare as their `displayName` or as a `previousDisplayName`
+that renames, while at least one of those entries renames its package; the message names the entries
+and says to name the access package by its object id. `Invoke-OERStructure` refuses a document that
+fails validation before it signs in or writes anything. When none of those entries renames its
+package nothing is reported, and the review's apply-time lookup refuses the ambiguous name
+(`AmbiguousName`) as before. No error id and no schema change. Cost if wrong: a document that was
+unambiguous to its author -- two same-named packages, one of them renamed -- must name the review's
+package by its object id.
+
 **Known limits.** (a) A map key joins display names with `|`, so a `|` inside a name can make two keys
-collide: a package `A|B` with a policy `C` and a package `A` with a policy `B|C` share one key, and
-both would need a `previousDisplayName` in one document to meet; so can a package whose display name
-is spelled like another package's object id. (b) Two accessPackages entries with one display name in
-different catalogs share the package-name key, so a later entry's decision replaces the earlier
-one's; a review names a package in the whole tenant, where two packages with one name are ambiguous
-anyway (`AmbiguousName`). (c) A `Rename` registered before a later refusal or failure of the policy
+collide, and one rename and one review reference are enough to meet it: a package `A|B` whose policy
+is renamed to `C` registers the key that a review naming package `A` and policy `B|C` reads, and that
+review then gets the id of the policy of `A|B`, which its target check compares with the live
+review's policy and refuses when they differ; so can a package whose display name is spelled like
+another package's object id. (b) Two accessPackages entries with one display name in different
+catalogs share the package-name key and the policy keys built on it. Rule 15 refuses offline every
+document in which a review names that name while one of those entries renames its package, so an
+applied document never has a review read a package key two entries share. When neither entry renames
+its package but both rename a policy to one new name, the two still share that policy's name key; a
+review that names the package by that name is then refused, by the refused entry the key holds or by
+the tenant-wide package lookup of the target check (`AmbiguousName`) or of the create
+(`AmbiguousAccessPackageName`), except that a plan for a review that does not exist yet reaches no
+lookup and says it would create it. (c) A `Rename` registered before a later refusal or failure of the policy
 update keeps the id of the policy found under its previous name, so a review in the same run is
 checked against that policy while it still carries its old name; step 4 set that precedent for
 packages and catalogs. (d) The not-found codes of the access review probe by id (D6) are declared, not
