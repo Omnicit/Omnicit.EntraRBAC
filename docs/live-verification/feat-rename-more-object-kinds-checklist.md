@@ -224,7 +224,9 @@ function Get-S114Id {
         'package' { "$Em/accessPackages?`$select=id,displayName" }
         'group' { "v1.0/groups?`$filter=$([uri]::EscapeDataString("displayName eq '$Name'"))&`$select=id,displayName" }
     }
-    , @(@(Get-S114List -Uri $Uri) | Where-Object { [string]$_['displayName'] -ceq $Name } | ForEach-Object { ([string]$_['id']).ToLowerInvariant() })
+    # Unwrapped: every caller wraps the result in @() (a returned , @() would nest, and an empty result
+    # would then count as one).
+    @(Get-S114List -Uri $Uri) | Where-Object { [string]$_['displayName'] -ceq $Name } | ForEach-Object { ([string]$_['id']).ToLowerInvariant() }
 }
 
 function Get-S114Snapshot {
