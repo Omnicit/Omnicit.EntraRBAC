@@ -3761,34 +3761,44 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
         BeforeDiscovery {
             $script:OutsideGroupCase = @(
                 @{
-                    Where = 'an administrative unit'
-                    Kind  = 'administrative unit'
-                    Path  = 'administrativeUnits[0].previousDisplayName'
-                    Json  = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "au-new", "previousDisplayName": "au-old" } ] }'
+                    Where   = 'an administrative unit'
+                    Kind    = 'administrative unit'
+                    Article = 'an'
+                    At      = 'administrativeUnits[0]'
+                    Path    = 'administrativeUnits[0].previousDisplayName'
+                    Json    = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "au-new", "previousDisplayName": "au-old" } ] }'
                 }
                 @{
-                    Where = 'a catalog'
-                    Kind  = 'catalog'
-                    Path  = 'catalogs[0].previousDisplayName'
-                    Json  = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-new", "previousDisplayName": "cat-old" } ] }'
+                    Where   = 'a catalog'
+                    Kind    = 'catalog'
+                    Article = 'a'
+                    At      = 'catalogs[0]'
+                    Path    = 'catalogs[0].previousDisplayName'
+                    Json    = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-new", "previousDisplayName": "cat-old" } ] }'
                 }
                 @{
-                    Where = 'an access package'
-                    Kind  = 'access package'
-                    Path  = 'accessPackages[0].previousDisplayName'
-                    Json  = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap-new", "catalog": "cat-x", "previousDisplayName": "ap-old" } ] }'
+                    Where   = 'an access package'
+                    Kind    = 'access package'
+                    Article = 'an'
+                    At      = 'accessPackages[0]'
+                    Path    = 'accessPackages[0].previousDisplayName'
+                    Json    = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap-new", "catalog": "cat-x", "previousDisplayName": "ap-old" } ] }'
                 }
                 @{
-                    Where = 'an assignment policy'
-                    Kind  = 'assignment policy'
-                    Path  = 'accessPackages[0].assignmentPolicies[0].previousDisplayName'
-                    Json  = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap-new", "catalog": "cat-x", "assignmentPolicies": [ { "displayName": "pol-new", "previousDisplayName": "pol-old" } ] } ] }'
+                    Where   = 'an assignment policy'
+                    Kind    = 'assignment policy'
+                    Article = 'an'
+                    At      = 'accessPackages[0].assignmentPolicies[0]'
+                    Path    = 'accessPackages[0].assignmentPolicies[0].previousDisplayName'
+                    Json    = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap-new", "catalog": "cat-x", "assignmentPolicies": [ { "displayName": "pol-new", "previousDisplayName": "pol-old" } ] } ] }'
                 }
                 @{
-                    Where = 'an access review'
-                    Kind  = 'access review'
-                    Path  = 'accessReviews[0].previousDisplayName'
-                    Json  = '{ "version": "1.0", "accessReviews": [ { "displayName": "rev-new", "accessPackage": "ap-x", "assignmentPolicy": "pol-x", "previousDisplayName": "rev-old" } ] }'
+                    Where   = 'an access review'
+                    Kind    = 'access review'
+                    Article = 'an'
+                    At      = 'accessReviews[0]'
+                    Path    = 'accessReviews[0].previousDisplayName'
+                    Json    = '{ "version": "1.0", "accessReviews": [ { "displayName": "rev-new", "accessPackage": "ap-x", "assignmentPolicy": "pol-x", "previousDisplayName": "rev-old" } ] }'
                 }
             )
         }
@@ -3804,8 +3814,24 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
                 $Hit[0].Severity | Should -BeExactly 'Error'
                 $Hit[0].Message | Should -Match 'not supported'
                 $Hit[0].Message | Should -Match ('would create a new ' + [regex]::Escape($Kind))
+                # The message no longer says the engine matches by displayName "alone": a package is matched
+                # within its catalog and a policy within its package, so that was inexact.
+                $Hit[0].Message | Should -Not -Match 'alone'
                 # It is the only Error of the document: the entry is otherwise valid.
                 @($V.Errors | Where-Object Severity -eq 'Error').Count | Should -Be 1
+            }
+        }
+
+        It 'words the refusal on <Where> exactly, with the article <Article> before the kind' -ForEach $script:OutsideGroupCase {
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Kind = $Kind; Article = $Article; At = $At; Path = $Path } {
+                param($Doc, $Kind, $Article, $At, $Path)
+                $Hit = @((Test-OERStructureSchema -Document $Doc).Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Message | Should -BeExactly ("'previousDisplayName' at $At is not supported for $Article $Kind yet: only groups can be renamed " +
+                    "through the document. Invoke-OERStructure does not read previousDisplayName for $Article $Kind, so it would " +
+                    "create a new $Kind named by displayName beside the existing one instead of renaming it. " +
+                    'Remove previousDisplayName, and rename the existing object outside the document first.')
             }
         }
 
@@ -3924,7 +3950,34 @@ Describe 'Test-OERStructureSchema group mailNickname (BL-132)' {
             $V = Get-NickFinding -Doc $Doc
             $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
             $Hit.Count | Should -Be 1
-            $Hit[0].Message | Should -BeLike "*contains '@', U+0020, U+0009, which Microsoft Graph refuses in a mail alias*"
+            $Hit[0].Message | Should -BeLike "*contains '@', U+0020, U+0009, which the validator refuses in a mail alias*"
+        }
+
+        It 'words the refusal as the validator''s own and says only what Microsoft Graph was measured to refuse' {
+            # Measured (M6): Graph refused the printable set, a space and a tab. Any other white space and
+            # any control character is refused by the validator and was not measured, so the message must
+            # not say that Graph refuses them (an earlier text said Graph refuses all white space and all
+            # control characters).
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = 'a@b'; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeExactly ("'mailNickname' at groups[0] contains '@', which the validator refuses in a mail alias " +
+                "(Microsoft Graph was measured to refuse @ ( ) \ [ ] `" ; : < > , a space and a tab; " +
+                'other white space and control characters are refused too).')
+            $Hit[0].Message | Should -Not -BeLike '*which Microsoft Graph refuses*'
+        }
+
+        It 'names a white space or control character Graph was not measured to refuse the same way (<Case>)' -ForEach @(
+            @{ Case = 'a no-break space'; Value = "a$([char]0xA0)b"; Named = 'U+00A0' }
+            @{ Case = 'a line feed'; Value = "a$([char]10)b"; Named = 'U+000A' }
+            @{ Case = 'a bell'; Value = "a$([char]7)b"; Named = 'U+0007' }
+        ) {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = $Value; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeLike "*contains $Named, which the validator refuses in a mail alias (Microsoft Graph was measured to refuse*other white space and control characters are refused too).*"
         }
 
         It 'reports the length and a refused character as two Errors when both apply' {
@@ -4736,10 +4789,12 @@ Describe 'Test-OERStructureSchema warns about a role assignment at the root scop
 Describe 'Test-OERStructureSchema refuses a dot segment, a percent escape or white space in an Azure scope (A13, BL-141)' {
     # A scope written as an Azure Resource Manager path is sent as written, and the request URI
     # resolves a '.' or '..' segment (with '/' or '\' as the separator, since System.Uri reads '\' as
-    # '/'), decodes a '%' escape, and no scope carries white space. Such a spelling names another scope
-    # than the text says, while the engine groups entries on the text's canonical form, so two spellings
-    # of one scope would form two groups and each prune pass could remove what the other declares. It is
-    # an Error at the entry's scope path in roleAssignments and roleManagementPolicies. The mg:, sub: and
+    # '/') and decodes an escape of an unreserved character (every '%' is refused). Such a spelling names
+    # another scope than the text says, while the engine groups entries on the text's canonical form, so
+    # two spellings of one scope would form two groups and each prune pass could remove what the other
+    # declares. White space is refused as a whole, as the safe direction, although an Azure resource name
+    # may hold a space; the message says so (the limit, decision A13). Each is an Error at the entry's
+    # scope path in roleAssignments and roleManagementPolicies. The mg:, sub: and
     # subscription: forms are exempt: they name a management group or subscription by id, name or display
     # name (which may hold spaces) and are resolved by a lookup, never sent as written. No id below is
     # version-4 shaped.
@@ -4811,6 +4866,9 @@ Describe 'Test-OERStructureSchema refuses a dot segment, a percent escape or whi
             @{ Section = $Section; Case = 'a leading space'; Scope = ' /subscriptions/11111111-1111-1111-1111-111111111111' }
             @{ Section = $Section; Case = 'a trailing tab'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111$([char]9)" }
             @{ Section = $Section; Case = 'a line feed'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111$([char]10)" }
+            # The limit the message states: an Azure resource name may hold a space (Microsoft Learn lists, for
+            # example, Microsoft.Sql databases), and a role assignment at such a resource is refused too.
+            @{ Section = $Section; Case = 'a space in a resource name'; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Sql/servers/srv1/databases/my db' }
         }
     ) {
         $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
@@ -4818,7 +4876,8 @@ Describe 'Test-OERStructureSchema refuses a dot segment, a percent escape or whi
         $Errs.Count | Should -Be 1
         $Errs[0].Section | Should -BeExactly $Section
         $Errs[0].Path | Should -BeExactly "$Section[0].scope"
-        $Errs[0].Message | Should -BeExactly "'scope' at $Section[0] must be written without white space. Got: '$Scope'."
+        $Errs[0].Message | Should -BeExactly ("'scope' at $Section[0] must be written without white space. Got: '$Scope'. " +
+            'An Azure resource whose name holds white space cannot be declared in a document; remove the entry.')
         $V.Valid | Should -BeFalse
     }
 

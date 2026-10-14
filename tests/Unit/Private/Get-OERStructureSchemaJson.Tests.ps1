@@ -1173,6 +1173,10 @@ Describe 'Get-OERStructureSchemaJson renames, mail aliases and scope spelling (B
             foreach ($Name in $Scopes.Keys) {
                 $Scopes[$Name] | Should -Match ([regex]::Escape("without a trailing or doubled '/', without a '.' or '..' segment, without a '%' escape and without white space")) -Because "the $Name scope names the spellings"
                 $Scopes[$Name] | Should -Match ([regex]::Escape('The mg:, sub: and subscription: forms are resolved by a lookup and never sent as written, so only the rule about ''/'' applies to them.')) -Because "the $Name scope names the exempt forms"
+                # White space is refused as a whole, not because the request would name another scope, so
+                # a resource whose name holds a space cannot be declared: the description says so.
+                $Scopes[$Name] | Should -Match ([regex]::Escape('white space is refused as a whole, so an Azure resource whose name holds a space cannot be declared.')) -Because "the $Name scope states the limit"
+                $Scopes[$Name] | Should -Not -Match ([regex]::Escape('refuses each of them as an Error, since the request would name another scope')) -Because "the $Name scope no longer gives that reason for white space"
             }
         }
     }

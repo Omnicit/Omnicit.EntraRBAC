@@ -541,6 +541,15 @@ Describe 'ConvertTo-OERPolicyBody custom extension stages (Sprint 11 step 3)' {
         }
     }
 
+    It 'tells the operator what to do next, and that no update was sent' {
+        InModuleScope Omnicit.EntraRBAC {
+            $Existing = @{ customExtensionStageSettings = @(@{ stage = 'assignmentRequestCreated' }) }
+
+            { ConvertTo-OERPolicyBody -DisplayName 'P' -AccessPackageId 'ap-1' -Existing $Existing } |
+                Should -Throw "*whose custom extension id was not read, so it cannot be carried forward and the update would remove it. No update was sent; read the policy with its custom extension stages (or remove the stage) before updating it."
+        }
+    }
+
     It 'fails closed on the second stage when only the first read its extension id' {
         InModuleScope Omnicit.EntraRBAC {
             $Existing = @{

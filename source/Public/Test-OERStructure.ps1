@@ -31,9 +31,9 @@ function Test-OERStructure {
 
     A previousDisplayName is read only on a groups entry, where Invoke-OERStructure renames the group
     it names. On an administrativeUnits, catalogs or accessPackages entry, on an assignmentPolicies
-    entry of an access package, or on an accessReviews entry it is an Error: those sections match an
-    entry by displayName alone, so Invoke-OERStructure would create a new object under the new
-    displayName beside the existing one instead of renaming it. Remove the key and rename the
+    entry of an access package, or on an accessReviews entry it is an Error: Invoke-OERStructure does
+    not read previousDisplayName there, so it would create a new object under the new displayName
+    beside the existing one instead of renaming it. Remove the key and rename the
     existing object outside the document first. An explicit null counts as not declared.
 
     A top-level tenantId, when present, must be a string holding a canonical GUID (an explicit null, a

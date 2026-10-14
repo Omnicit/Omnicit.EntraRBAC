@@ -440,7 +440,7 @@ function Get-OERStructureSchemaJson {
         "type": "object",
         "required": [ "scope", "role", "principal" ],
         "properties": {
-          "scope": { "type": "string", "description": "The Azure scope of the assignment: a path such as /subscriptions/ID/resourceGroups/NAME, or the mg:, sub: or subscription: form. A path is written without a trailing or doubled '/', without a '.' or '..' segment, without a '%' escape and without white space: Test-OERStructure refuses each of them as an Error, since the request would name another scope than the one written. The mg:, sub: and subscription: forms are resolved by a lookup and never sent as written, so only the rule about '/' applies to them." },
+          "scope": { "type": "string", "description": "The Azure scope of the assignment: a path such as /subscriptions/ID/resourceGroups/NAME, or the mg:, sub: or subscription: form. A path is written without a trailing or doubled '/', without a '.' or '..' segment, without a '%' escape and without white space: Test-OERStructure refuses each of them as an Error. A '.' or '..' segment and a '%' escape would make the request name another scope than the one written; white space is refused as a whole, so an Azure resource whose name holds a space cannot be declared. The mg:, sub: and subscription: forms are resolved by a lookup and never sent as written, so only the rule about '/' applies to them." },
           "role": { "type": "string" },
           "principal": { "type": "string" },
           "principalType": { "type": "string", "enum": [ "User", "Group", "ServicePrincipal" ] },
@@ -456,7 +456,7 @@ function Get-OERStructureSchemaJson {
         "type": "object",
         "required": [ "scope", "role" ],
         "properties": {
-          "scope": { "type": "string", "description": "The Azure scope of the policy: a path such as /subscriptions/ID/resourceGroups/NAME, or the mg:, sub: or subscription: form. A path is written without a trailing or doubled '/', without a '.' or '..' segment, without a '%' escape and without white space: Test-OERStructure refuses each of them as an Error, since the request would name another scope than the one written. The mg:, sub: and subscription: forms are resolved by a lookup and never sent as written, so only the rule about '/' applies to them." },
+          "scope": { "type": "string", "description": "The Azure scope of the policy: a path such as /subscriptions/ID/resourceGroups/NAME, or the mg:, sub: or subscription: form. A path is written without a trailing or doubled '/', without a '.' or '..' segment, without a '%' escape and without white space: Test-OERStructure refuses each of them as an Error. A '.' or '..' segment and a '%' escape would make the request name another scope than the one written; white space is refused as a whole, so an Azure resource whose name holds a space cannot be declared. The mg:, sub: and subscription: forms are resolved by a lookup and never sent as written, so only the rule about '/' applies to them." },
           "role": { "type": "string" },
           "allowPermanentEligibility": { "type": "boolean" },
           "eligibleDurationDays": { "type": "integer", "minimum": 1, "maximum": 3650 },

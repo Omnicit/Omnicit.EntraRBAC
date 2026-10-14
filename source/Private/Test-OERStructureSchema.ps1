@@ -68,9 +68,9 @@ function Test-OERStructureSchema {
     unknown keys without comment, except previousDisplayName: only groups can be renamed through the
     document, so a previousDisplayName declared on an administrativeUnits, catalogs or accessPackages
     entry, on an assignmentPolicies entry of an access package, or on an accessReviews entry is an
-    Error (BL-128), since those sections match an entry by displayName alone and Invoke-OERStructure
-    would create a new object under the new displayName beside the existing one instead of renaming
-    it. An explicit null is not declared and is not reported. An accessPackages assignmentPolicies entry declaring requireApproval true together
+    Error (BL-128), since Invoke-OERStructure does not read previousDisplayName there and would create
+    a new object under the new displayName beside the existing one instead of renaming it. An explicit
+    null is not declared and is not reported. An accessPackages assignmentPolicies entry declaring requireApproval true together
     with an empty approvalStages array is a Warning naming the measured outcome: Microsoft Graph refuses
     the write with InvalidApprovalStages ("If approval is required, a valid list of stages must be
     provided."), so the assignment policy is reported Failed and left completely unchanged and the
@@ -126,10 +126,12 @@ function Test-OERStructureSchema {
     A groups[] entry's mailNickname, when present, must be a string (Error) of 1 to 64 characters
     (BL-132): an empty one is an Error, one longer than 64 characters is an Error naming its length, and
     one containing any of @ ( ) \ [ ] " ; : < > , white space or a control character is an Error naming
-    each such character (white space and control characters by code point), since Microsoft Graph
-    refuses all of them (measured 2026-10-13); a non-ASCII letter is accepted, as Microsoft Graph accepts
-    it. A mail alias does not follow a rename and none is derived again, so a groups[] entry that
-    declares a previousDisplayName different from its displayName (ignoring case) is a Warning at its
+    each such character (white space and control characters by code point). Microsoft Graph was measured
+    (2026-10-13) to refuse the printable set, a space, a tab, the empty string and 65 characters; the
+    validator refuses any other white space and any other control character too, which was not
+    measured. A non-ASCII letter is accepted, as Microsoft Graph accepts it. A mail alias does not
+    follow a rename and none is derived again, so a groups[] entry that declares a previousDisplayName
+    different from its displayName (ignoring case) is a Warning at its
     mailNickname path when it declares no mailNickname (it keeps its current alias) or declares one that
     equals, ignoring case, the alias Get-OERDerivedMailNickname derives from the previousDisplayName.
     A groups[] entry declaring a non-empty administrativeUnit whose matching administrativeUnits[]
@@ -175,10 +177,15 @@ function Test-OERStructureSchema {
     be pruned and '//' would become the root, and the document is refused instead. A roleAssignments
     or roleManagementPolicies scope that is written as an Azure path and holds a '.' or '..' segment
     (split at '/' and at '\', since the request URI reads '\' as '/'), a '%' escape or white space is
-    an Error at the entry's scope path for each of the three (A13, BL-141): the request URI resolves
-    the segment, decodes the escape and so names another scope than the text says, while the engine
-    groups entries on the text's canonical form, so two spellings of one scope would each prune what
-    the other declares. A scope in the mg:, sub: or subscription: form is exempt, as
+    an Error at the entry's scope path for each of the three (A13, BL-141). The request URI resolves
+    a segment and decodes an escape of an unreserved character (such as %2e), so it names another
+    scope than the text says, while the engine groups entries on the text's canonical form, so two
+    spellings of one scope would each prune what the other declares; every '%' is refused, whatever it
+    escapes. White space is refused as a whole, as the safe direction, although an Azure resource name
+    can hold a space (a Microsoft.Sql database, for instance, per Microsoft Learn's naming rules): a
+    role assignment at such a resource, as Get-OERInventory exports it below a subscription or a
+    management group, is refused until that entry is removed, and a resource whose name holds a space
+    cannot be declared in a document. A scope in the mg:, sub: or subscription: form is exempt, as
     ConvertTo-OERScopeSplat reads the form: it names a management group or subscription by id, name or
     display name (a display name may contain spaces), a lookup resolves it, and it is never sent as
     written. A lone '\', '?' and '#' are not refused by this rule. A roleAssignments
@@ -261,18 +268,23 @@ function Test-OERStructureSchema {
         }
     }
 
-    # BL-128 (A5): only groups[] can be renamed through the document. The other sections match an
-    # entry by displayName alone, so a previousDisplayName there would be ignored and the engine would
+    # BL-128 (A5): only groups[] can be renamed through the document. The other handlers never read
+    # previousDisplayName -- they match an entry by its displayName (a package within its catalog, a
+    # policy within its package) -- so a previousDisplayName there would be ignored and the engine would
     # create a second object beside the one the document means to rename. Refused as an Error until
     # those sections support it (Sprint 11 step 4). A null value is not declared and is not reported.
+    # The message names the kind with the article its first letter calls for ('an administrative unit',
+    # 'a catalog').
     function Add-UnsupportedRenameFinding {
         param([object]$Node, [string]$Section, [string]$Item, [string]$Path, [string]$Kind)
         if (-not (Test-HasProp -Node $Node -Name 'previousDisplayName')) { return }
+        $KindWithArticle = if ($Kind -match '^[aeiou]') { "an $Kind" } else { "a $Kind" }
         Add-Finding -Section $Section -Item $Item -Path "$Path.previousDisplayName" `
-            -Message ("'previousDisplayName' at $Path is not supported for $Kind yet: only groups can be renamed " +
-                "through the document. Invoke-OERStructure matches $Kind by displayName alone, so it would " +
-                "create a new $Kind named by displayName beside the existing one instead of renaming it. " +
-                "Remove previousDisplayName, and rename the existing object outside the document first.")
+            -Message ("'previousDisplayName' at $Path is not supported for $KindWithArticle yet: only groups can be " +
+                "renamed through the document. Invoke-OERStructure does not read previousDisplayName for " +
+                "$KindWithArticle, so it would create a new $Kind named by displayName beside the existing one " +
+                "instead of renaming it. Remove previousDisplayName, and rename the existing object outside " +
+                "the document first.")
     }
 
     # Enum casing has a single owner: Resolve-OERStructureEnumCasing. This validator deliberately
@@ -486,10 +498,12 @@ function Test-OERStructureSchema {
                     }
                 }
 
-                # BL-132: Microsoft Graph accepts a mailNickname of 1 to 64 characters without
-                # @ ( ) \ [ ] " ; : < > , white space or a control character (measured 2026-10-13 against a
-                # security group; Microsoft Learn's group resource lists the same printable set). A non-ASCII
-                # letter was accepted, so it is not refused here. A non-string value was reported above.
+                # BL-132: Microsoft Graph was measured (2026-10-13, PATCH on a security group) to refuse
+                # @ ( ) \ [ ] " ; : < > , a space, a tab, the empty string and 65 characters; Microsoft
+                # Learn's group resource lists the same printable set. The validator also refuses any other
+                # white space and any other control character, which was not measured (no alias needs them).
+                # A non-ASCII letter was accepted by Graph, so it is not refused here. A non-string value
+                # was reported above.
                 if ((Test-HasProp -Node $G -Name 'mailNickname') -and $G.mailNickname -is [string]) {
                     $Nick = [string]$G.mailNickname
                     if ($Nick.Length -eq 0) {
@@ -507,8 +521,9 @@ function Test-OERStructureSchema {
                                 if ([char]::IsWhiteSpace($_) -or [char]::IsControl($_)) { 'U+{0:X4}' -f [int]$_ } else { "'$_'" }
                             }) -join ', '
                         Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.mailNickname" `
-                            -Message ("'mailNickname' at $GPath contains $Shown, which Microsoft Graph refuses in a mail alias " +
-                                '(it refuses @ ( ) \ [ ] " ; : < > , white space and control characters).')
+                            -Message ("'mailNickname' at $GPath contains $Shown, which the validator refuses in a mail alias " +
+                                '(Microsoft Graph was measured to refuse @ ( ) \ [ ] " ; : < > , a space and a tab; ' +
+                                'other white space and control characters are refused too).')
                     }
                 }
 
@@ -1504,10 +1519,20 @@ function Test-OERStructureSchema {
 
     # A13 (BL-141): a scope written as an Azure Resource Manager path is sent as written, and the request
     # URI resolves a '.' or '..' segment (with '/' or '\' as the separator, since System.Uri reads '\' as
-    # '/'), decodes a '%' escape, and no scope carries white space. Such a spelling names another scope
-    # than the text says, while the engine groups entries on the text's canonical form, so two spellings
-    # of one scope would form two groups and each prune pass could remove what the other declares (the
-    # mechanism of BL-01). Refused as an Error, in the form of the slash rule above. The mg:, sub: and
+    # '/') and decodes an escape of an unreserved character such as %2e (every '%' is refused here,
+    # whatever it escapes). Such a spelling names another scope than the text says, while the engine
+    # groups entries on the text's canonical form, so two spellings of one scope would form two groups
+    # and each prune pass could remove what the other declares (the mechanism of BL-01). White space is
+    # refused as a whole, as the safe direction, although it is NOT known to name another scope: an
+    # Azure resource name can hold a space (Microsoft Learn, "Naming rules and restrictions for Azure
+    # resources": Microsoft.Sql servers/databases and elasticPools, Microsoft.Insights components,
+    # Microsoft.Kusto databases), and Get-OERInventory reads role assignments at a subscription or a
+    # management group without atScope(), so a role assignment at such a resource is exported with its
+    # scope as Azure returns it and is refused here until that entry is removed. A resource whose name
+    # holds a space therefore cannot be declared in a document. Recorded option, not taken: narrow the
+    # white space rule to white space at the start or end of the scope or of a segment, white space other
+    # than U+0020, and control characters (docs/development/rationale.md#role-assignment-key).
+    # Refused as an Error, in the form of the slash rule above. The mg:, sub: and
     # subscription: forms are exempt: they name a management group or subscription by id, name or
     # display name (a display name may contain spaces) and are resolved by a lookup, never sent as
     # written. ConvertTo-OERScopeSplat owns that syntax, so the exemption asks it: only a scope it
@@ -1528,7 +1553,7 @@ function Test-OERStructureSchema {
         }
         if (@($ScopeText.ToCharArray() | Where-Object { [char]::IsWhiteSpace($_) }).Count -gt 0) {
             Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message "'scope' at $Path must be written without white space. Got: '$ScopeText'."
+                -Message "'scope' at $Path must be written without white space. Got: '$ScopeText'. An Azure resource whose name holds white space cannot be declared in a document; remove the entry."
         }
     }
 

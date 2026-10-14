@@ -325,7 +325,7 @@ function ConvertTo-OERPolicyBody {
                 $Extension = $StageSetting['customExtension']
                 $ExtensionId = if ($Extension -is [System.Collections.IDictionary]) { [string]$Extension['id'] } else { '' }
                 if ([string]::IsNullOrWhiteSpace($ExtensionId)) {
-                    throw "The existing policy has a custom extension stage '$([string]$StageSetting['stage'])' whose custom extension id was not read, so it cannot be carried forward and the update would remove it."
+                    throw "The existing policy has a custom extension stage '$([string]$StageSetting['stage'])' whose custom extension id was not read, so it cannot be carried forward and the update would remove it. No update was sent; read the policy with its custom extension stages (or remove the stage) before updating it."
                 }
                 $Ref = @{ id = $ExtensionId }
                 if ($Extension['@odata.type']) { $Ref['@odata.type'] = [string]$Extension['@odata.type'] }

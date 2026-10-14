@@ -896,6 +896,7 @@ Describe 'Set-OERAccessPackageAssignmentPolicy keeps custom extension stages and
             $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
             $Own[0].TargetObject | Should -Be 'ap-1'
             $Own[0].Exception.Message | Should -BeLike "Invalid policy input: The existing policy has a custom extension stage 'assignmentRequestCreated' whose custom extension id was not read*"
+            $Own[0].Exception.Message | Should -BeLike '*No update was sent; read the policy with its custom extension stages (or remove the stage) before updating it.'
             # The path was reached (the live policy was read, once) and nothing was written.
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
                 (-not $Method -or $Method -eq 'GET') -and $Uri -ceq $script:S11GetUri
