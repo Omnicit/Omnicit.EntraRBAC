@@ -270,10 +270,11 @@ resolves, remove `previousDisplayName`: a group created later under the old name
 fail. `Get-OERInventory` never exports `previousDisplayName`, and `Test-OERStructure` reports an empty
 or non-string one as an error and one equal to `displayName` (ignoring case) as a warning -- a
 case-only rename is not possible through the document; use `Set-OERGroup -NewDisplayName`.
-Only a group can be renamed through the document. `Test-OERStructure` reports `previousDisplayName`
-on an administrative unit, a catalog, an access package, an assignment policy of an access package
-or an access review as an error: renaming is not supported there yet, and `Invoke-OERStructure`
-would create a new object beside the old one. A group's `mailNickname` does not follow a rename: a
+An administrative unit, a catalog and an access package are renamed the same way: see "Renaming an
+administrative unit, a catalog or an access package" below. `Test-OERStructure` reports
+`previousDisplayName` on an assignment policy of an access package or on an access review as an
+error: renaming is not supported there yet, and `Invoke-OERStructure` would create a new object
+beside the old one. A group's `mailNickname` does not follow a rename: a
 renamed group keeps its alias unless the document declares one, which is 1 to 64 characters without
 `@ ( ) \ [ ] " ; : < > ,` or white space.
 
@@ -306,6 +307,78 @@ id. An entry the export can name by nothing the apply engine accepts -- a ShareP
 name, say -- makes the package's `resourceRoles` (or the catalog's `resources`) an explicit `null`,
 named in `InventoryPartial`. The export never writes an empty name: `Test-OERStructure` refuses an
 empty or blank `resource`, `role`, `name` or `principal`, and `schema.json` an empty one.
+
+## Renaming an administrative unit, a catalog or an access package
+
+An administrative unit, a catalog and an access package are renamed with the key and the rules a
+group uses. Declare the new name as `displayName` and the current name, or the object id, as
+`previousDisplayName`. An access package is matched within the `catalog` it declares:
+
+```json
+{
+  "catalogs": [
+    { "displayName": "CAT-IT-Core-EMEA", "previousDisplayName": "CAT-IT-Core" }
+  ],
+  "accessPackages": [
+    { "displayName": "AP-Helpdesk-EMEA", "previousDisplayName": "AP-Helpdesk", "catalog": "CAT-IT-Core-EMEA" }
+  ]
+}
+```
+
+Every apply run looks up both names before it reads or writes anything, with the same outcomes as for
+a group:
+
+- **Only `previousDisplayName` matches.** That object is renamed to `displayName`, in the same update
+  as any other property that changed, and reported `Updated`. Its members and scoped roles (a unit),
+  resources (a catalog) or resource roles and assignment policies (a package) are then reconciled as
+  usual. If the update fails, the entry is `Failed` and none of those is reconciled. Under `-WhatIf`
+  the row is `Skipped` with `would rename`, and they are planned against the object found under its
+  previous name.
+- **Both names match, and they are different objects.** The entry fails with
+  `AdministrativeUnitRenameConflict`, `CatalogRenameConflict` or `AccessPackageRenameConflict` and
+  nothing is changed for it -- the document never merges two objects. Rename or delete one of them,
+  or remove `previousDisplayName`.
+- **Neither name matches.** The entry fails with `AdministrativeUnitRenameNotFound`,
+  `CatalogRenameNotFound` or `AccessPackageRenameNotFound` and nothing is created: a document that
+  declares a rename names an object that already exists. To create a new one, declare it without
+  `previousDisplayName`.
+
+When both names find the same object, or only `displayName` does, the entry is applied as usual.
+
+`previousDisplayName` also accepts the object id. For a unit and a catalog the apply engine checks
+with one read that the id still names one: an id that no longer exists counts as not matching, like
+an old name nobody carries any more. For an access package the id is matched only against the
+packages of the declared catalog, which are already read, so the id of a package in another catalog,
+or of a deleted one, counts as not matching. A name that matches several units or catalogs fails the
+entry with `AmbiguousName`; a name that several packages of the catalog carry fails it with a row
+naming every id. Declare `previousDisplayName` as the object id then.
+
+**Microsoft Graph's name lookup can follow a rename with a delay.** Keep `previousDisplayName` in the
+document until the new name resolves: a run after that finds the object under `displayName` and
+reports it `Unchanged`, and a run inside the window in which neither name resolves yet fails the
+entry with the `RenameNotFound` id and creates nothing. Once the new name resolves, remove
+`previousDisplayName`: an object created later under the old name would make the entry fail.
+
+**References in the same document.** Name a renamed unit or catalog by its NEW name. When the same
+document renames it, `Invoke-OERStructure` reaches it by its object id, so a group created into the
+renamed unit (`administrativeUnit`) and an access package declared in the renamed catalog (`catalog`)
+neither fail while the new name does not resolve yet nor create anything beside it, also in a
+`-WhatIf` plan. When the rename of the unit or the catalog was refused (a conflict, or neither name
+found), the group or the package is `Failed` and nothing is created, read or written for it; the
+unit's or the catalog's own row carries the error id. An access review's `accessPackage` does not
+follow a package's rename yet: named by the new name, it can fail with `AccessPackageNotFound` in the
+plan and in the run that renames the package, and works on a later run once the new name resolves.
+
+`Test-OERStructure` reports an empty or non-string `previousDisplayName` as an error, and one equal
+to `displayName` (ignoring case) as a warning -- a case-only rename is not possible through the
+document; use `Set-OERAdministrativeUnit`, `Set-OERCatalog` or `Set-OERAccessPackage -NewDisplayName`.
+Two entries of a section that claim one name, as `displayName` or `previousDisplayName`, are an error.
+It also warns on a reference that still uses a renamed object's previous name: a group's
+`administrativeUnit`, an access package's `catalog` and an access review's `accessPackage`; a
+`previousDisplayName` that is an object id raises none, since a reference by id stays valid.
+`Get-OERInventory` never exports `previousDisplayName`, and `-Prune` never deletes a unit, a catalog
+or an access package. A changed `displayName` WITHOUT `previousDisplayName` still creates a new
+object and leaves the old one in place.
 
 ## Directory roles
 

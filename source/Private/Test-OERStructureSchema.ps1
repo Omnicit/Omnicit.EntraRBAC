@@ -166,14 +166,14 @@ function Test-OERStructureSchema {
     entry whose catalog, or an accessReviews[] entry whose accessPackage equals, ignoring case, the
     previousDisplayName of an entry of that section that renames the object (a non-empty string that
     differs from the entry's displayName ignoring case). Once the rename is applied no object carries
-    the previous name, so the Warning says to name the object by its new name or its object id. The
-    first entry that renames from the name is the one named. A previousDisplayName that is an object id
-    is skipped, since a reference by id stays valid after a rename, and so is an entry without a
-    displayName. For an access package's catalog this Warning replaces Rule 11's "Catalog is not
-    declared" Warning, which is not written for a catalog that is a renamed catalog's previousDisplayName
-    (an object id included). A second top-level entry whose key matches an
-    earlier one, compared without regard to letter case, is an Error at the later entry's path
-    that names the earlier entry's index, since the two describe one live object and applying both
+    the previous name, so the Warning says to name the object by its new name (the unit and access
+    package Warnings add: or its object id). The first entry that renames from the name is the one
+    named. A previousDisplayName that is an object id is skipped, since a reference by id stays valid
+    after a rename, and so is an entry without a displayName. For an access package's catalog this
+    Warning replaces Rule 11's "Catalog is not declared" Warning, which is not written for a catalog
+    that is a renamed catalog's previousDisplayName (an object id included). A second top-level entry
+    whose key matches an earlier one, compared without regard to letter case, is an Error at the later
+    entry's path that names the earlier entry's index, since the two describe one live object and applying both
     makes each undo the other, or through a child collection removes what the other declared, on
     every run. The keys are: for groups, the group name (displayName, or for a template-based entry
     the name Resolve-OERName computes from template and tokens; an entry whose name cannot be

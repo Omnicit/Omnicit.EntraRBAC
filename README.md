@@ -816,12 +816,28 @@ tenant, nor an assignment policy name in its access package, and the export writ
 when such a name is shared, the entry is reported `Failed` with `AmbiguousName` until it gives the
 package or the policy by id. Give a new review a display name no other review in the tenant uses.
 
-Only a group can be renamed through the document (`previousDisplayName`). `Test-OERStructure`
-reports `previousDisplayName` in `administrativeUnits`, `catalogs`, `accessPackages`, their
-`assignmentPolicies` and `accessReviews` as an `Error`: renaming is not supported there yet, and
-`Invoke-OERStructure` would create a new object beside the old one. A group's mail alias does not
-follow a rename: declare `mailNickname` for the new name, and the validator warns when a renamed
-group keeps the alias derived from its old name or declares none. A `mailNickname` that is empty,
+A group, an administrative unit, a catalog and an access package (within its catalog) are renamed in
+place through the document: declare the new name as `displayName` and the current name, or the
+object id, as `previousDisplayName`. Every run looks up both names before it reads or writes
+anything. The object found only under `previousDisplayName` is renamed in the same update as any
+other changed property. When both names find different objects the entry fails with
+`GroupRenameConflict`, `AdministrativeUnitRenameConflict`, `CatalogRenameConflict` or
+`AccessPackageRenameConflict` and nothing is changed; when neither finds one it fails with the
+matching `GroupRenameNotFound`, `AdministrativeUnitRenameNotFound`, `CatalogRenameNotFound` or
+`AccessPackageRenameNotFound` and nothing is created. When the rename itself fails, the object's
+children (members, scoped roles, resources, resource roles, assignment policies) are not
+reconciled, and under `-WhatIf` the plan says `would rename` and plans them against the object
+found under its previous name. Microsoft Graph's name lookup can follow a rename with a delay: keep
+`previousDisplayName` in the document until the new name resolves. In the same document, a group
+created into a renamed unit and an access package declared in a renamed catalog reach it by its
+object id, so name the unit or the catalog by its new name; an access review's `accessPackage` does
+not follow a package's rename yet, and can fail with `AccessPackageNotFound` in the run that renames
+the package. `Test-OERStructure` reports `previousDisplayName` in `assignmentPolicies` and
+`accessReviews` as an `Error`: renaming is not supported there yet, and `Invoke-OERStructure` would
+create a new object beside the old one. It warns on a reference that still names a renamed object by
+its previous name. A group's mail alias does not follow a rename: declare `mailNickname` for the new
+name, and the validator warns when a renamed group keeps the alias derived from its old name or
+declares none. A `mailNickname` that is empty,
 longer than 64 characters or holds one of `@ ( ) \ [ ] " ; : < > ,`, a space or a tab is an `Error`,
 since Microsoft Graph was measured to refuse each of them; the validator refuses any other white
 space or control character too, which was not measured. `New-OERGroup` refuses to derive an alias
