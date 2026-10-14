@@ -70,6 +70,10 @@ function Sync-OERStructureAccessPackage {
     1. Create the access package when absent, or diff and update the mutable description and the
        hidden flag when it already exists (and its displayName, when previousDisplayName renames
        it). The catalog property is creation-only and is never changed on an existing package.
+       New-OERAccessPackage looks for an existing package by name in the whole tenant, so when the
+       package has to be created while a package of that name exists in another catalog, it returns
+       that package: the entry is then one Failed row, and nothing is written to that package or for
+       the entry.
 
     2. Reconcile declared resourceRoles (add missing bindings; emit Extra or prune undeclared
        bindings with -Prune, or report them Skipped while a declared resource cannot be resolved --
@@ -284,14 +288,15 @@ function Sync-OERStructureAccessPackage {
     id, and a name that already finds the object removes the mark. The registration is made when the
     decision is, so under -WhatIf too and before the rename is sent. A mark that no decision replaces --
     the entry stopped first: the catalog refused, a failed or ambiguous lookup, a refused package
-    rename, a failed package re-read, a failed package update that renames it, a failed read of its
-    resource role bindings, of the catalog's resources or of its policies, an ambiguous policy name --
-    stays, so a reference to the new name later in this run, read through Get-OERStructureRenameTarget,
-    is refused instead of being looked up by name. A policy of an entry that stopped before it knew any
-    package id -- the catalog refused, a failed package list read, a package rename that found neither
-    name -- is marked under the package's name only, so a reference that names a package by object id
-    then looks the policy up by name within that package, as before this map existed. Without the map
-    nothing is registered.
+    rename, a create that returned another catalog's package, a failed package re-read, a failed
+    package update that renames it, a failed read of its resource role bindings, of the catalog's
+    resources or of its policies, an ambiguous policy name -- stays, so a reference to the new name
+    later in this run, read through Get-OERStructureRenameTarget, is refused instead of being looked
+    up by name. A policy of an entry that stopped before it knew any package id -- the catalog
+    refused, a failed package list read, a package rename that found neither name, a create that
+    returned another catalog's package -- is marked under the package's name only, so a reference
+    that names a package by object id then looks the policy up by name within that package, as
+    before this map existed. Without the map nothing is registered.
 
     .EXAMPLE
     Sync-OERStructureAccessPackage -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
@@ -585,6 +590,35 @@ function Sync-OERStructureAccessPackage {
             if (-not $Created) {
                 ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' -Detail 'New-OERAccessPackage returned no object'
                 return
+            }
+
+            # New-OERAccessPackage looks for an existing package by name in the WHOLE tenant, and returns
+            # the one package of that name it finds, whichever catalog holds it. The declared catalog's
+            # list above did not hold the name, so a package it returns from another catalog -- a twin
+            # catalog's, for example -- was not created here: writing the declared resource roles and
+            # assignment policies to it would change another catalog's package. So the entry fails, with
+            # nothing written to that package or for the entry. The catalogs are compared as ids, without
+            # regard to letter case: Resolve-OERCatalogId returns a catalog id as it is, with no request,
+            # and looks a name up once (a name several catalogs carry was refused when the package list
+            # above was read). An empty CatalogId is a package the create POSTed into the declared
+            # catalog, whose confirmation read did not answer: created there, as before.
+            if (-not [string]::IsNullOrEmpty([string]$Created.CatalogId)) {
+                $DeclaredCatalogId = $null
+                try {
+                    $DeclaredCatalogId = Resolve-OERCatalogId -DisplayName ([string]$CatalogRef)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $Caller.WriteError($PSItem)
+                    ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
+                        -Detail "failed to look up catalog '$($Item.catalog)' to confirm that access package '$Name' ($($Created.Id)), which New-OERAccessPackage returned, belongs to it: $($PSItem.Exception.Message); nothing further was written for it" `
+                        -ErrorRecord $PSItem
+                    return
+                }
+                if ([string]$DeclaredCatalogId -ine [string]$Created.CatalogId) {
+                    ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
+                        -Detail "access package '$Name' was not created in catalog '$($Item.catalog)': a package of that name already exists in another catalog ($($Created.CatalogId)), and New-OERAccessPackage returned it ($($Created.Id)); nothing was written to it"
+                    return
+                }
             }
 
             $ApId = $Created.Id

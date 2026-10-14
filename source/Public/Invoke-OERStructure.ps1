@@ -242,6 +242,11 @@ function Invoke-OERStructure {
     -WhatIf and a real run report the same row. An entry at any other scope in the same document is
     applied and pruned as before. Test-OERStructure reports such an entry as a Warning.
 
+    An access package that has to be created in the catalog it declares while a package of that name
+    exists in another catalog is reported Failed, with nothing written to that package or for the
+    entry, since New-OERAccessPackage, which looks the name up in the whole tenant, returns that
+    package in place of creating one.
+
     AccessReviews target check: an existing access review is found by its display name in the whole
     tenant, and display names are not unique, so the review found can be one of a group, a role or
     another access package. It is updated only when it reviews the access package and the assignment

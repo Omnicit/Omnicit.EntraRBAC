@@ -3757,6 +3757,35 @@ Describe 'Invoke-OERStructure applies what an export writes by id: a package''s 
         @($script:IdTenant.Packages).Count | Should -Be 2
     }
 
+    It 'fails, writing nothing, a package to be created in the catalog its id names while a package of that name is in another catalog (twin catalogs)' {
+        # The catalog the id names does not hold AP-ById; a package of that name exists in another catalog --
+        # the case the export's catalog id makes reachable for two catalogs that share a name.
+        # New-OERAccessPackage's tenant-wide name check finds that package and returns it, read with its
+        # catalog: the entry must fail with nothing written to that package or for the entry.
+        $TwinId = 'aaaa1111-0000-0000-0000-000000000053'
+        $OtherCatalogId = 'eeee5555-0000-0000-0000-000000000052'
+        $script:IdTenant.Packages.Add(@{
+                id = $TwinId; displayName = 'AP-ById'; description = $null; isHidden = $false
+                catalog = @{ id = $OtherCatalogId }
+            })
+
+        $Rows = @(Invoke-OERStructure -Json $script:IdPackageDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-IdRowLine -Row $Rows) | Should -Be @(
+            ("accessPackages|AP-ById|Failed|access package 'AP-ById' was not created in catalog '$($script:IdCatId)': a package of that name " +
+            "already exists in another catalog ($OtherCatalogId), and New-OERAccessPackage returned it ($TwinId); nothing was written to it")
+        )
+        # Reached: the declared catalog was read by its id, and New-OERAccessPackage made its tenant-wide name
+        # check and read the package it found with its catalog.
+        $script:IdTenant.Requests | Should -Contain ("GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=catalog/id eq '$($script:IdCatId)'&`$expand=catalog")
+        $script:IdTenant.Requests | Should -Contain "GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-ById'&`$select=id,displayName"
+        $script:IdTenant.Requests | Should -Contain "GET v1.0/identityGovernance/entitlementManagement/accessPackages/$TwinId`?`$expand=catalog"
+        # Nothing written, and nothing else read for the twin: no resource role or policy read, no catalog lookup.
+        @($script:IdTenant.Posts).Count | Should -Be 0
+        @($script:IdTenant.Requests | Where-Object { $_ -notlike 'GET *' }) | Should -BeNullOrEmpty
+        @($script:IdTenant.Requests | Where-Object { $_ -like '*resourceRoleScopes*' -or $_ -like '*assignmentPolicies*' -or $_ -like '*/catalogs*' }) | Should -BeNullOrEmpty
+        @($script:IdTenant.Packages).Count | Should -Be 2
+    }
+
     It 'creates an access review on its access package and assignment policy ids, and on a second run matches it and reaches Unchanged (BL-142)' {
         $Validation = Test-OERStructure -Json $script:IdReviewDoc
         $Validation.Valid | Should -BeTrue

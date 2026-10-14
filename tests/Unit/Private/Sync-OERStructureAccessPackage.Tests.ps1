@@ -735,6 +735,203 @@ Describe 'Sync-OERStructureAccessPackage' {
         }
     }
 
+    Context 'a package New-OERAccessPackage returns from another catalog (twin catalogs)' {
+        # New-OERAccessPackage looks for an existing package by name in the WHOLE tenant and returns the one
+        # package of that name it finds, whichever catalog holds it. When the declared catalog X does not
+        # hold the package and a package of that name exists in catalog Y, that is Y's package: the entry
+        # must fail with nothing written to it, nor anything else for the entry. Each It proves the create
+        # was reached (New-OERAccessPackage called once), so a negative below is never vacuous. Fixture ids
+        # are not version-4 shaped.
+
+        It 'fails the entry and writes nothing when the catalog is declared by id' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                # Catalog X holds no package named AP-Twin; New-OERAccessPackage returns catalog Y's.
+                Mock Get-OERAccessPackage { @() }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-twin'; DisplayName = 'AP-Twin'; CatalogId = 'cccc0000-0000-0000-0000-0000000000c2' } }
+                Mock Invoke-OERGraphRequest { throw "unexpected Graph request: $Uri" }
+                Mock Get-OERCatalogResource { [PSCustomObject]@{ DisplayName = 'role_sec_x'; OriginId = 'grp-1'; Id = 'res-1' } }
+                Mock Resolve-OERGroupId { 'grp-1' }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                $Item = [PSCustomObject]@{
+                    displayName        = 'AP-Twin'
+                    catalog            = 'cccc0000-0000-0000-0000-0000000000c1'
+                    resourceRoles      = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' })
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Default'; approvalStages = @([PSCustomObject]@{ durationDays = 7; manager = $true }) })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly ("access package 'AP-Twin' was not created in catalog 'cccc0000-0000-0000-0000-0000000000c1': a package of that " +
+                    'name already exists in another catalog (cccc0000-0000-0000-0000-0000000000c2), and New-OERAccessPackage returned it (ap-twin); nothing was written to it')
+                @($Err).Count | Should -Be 0
+                # Reached: the create was asked for in the declared catalog.
+                Should -Invoke New-OERAccessPackage -Times 1 -Exactly
+                Should -Invoke New-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cccc0000-0000-0000-0000-0000000000c1' -and $DisplayName -eq 'AP-Twin' }
+                # Nothing written to Y's package, and nothing read for it: a catalog id needs no lookup.
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke Get-OERCatalogResource -Times 0
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+            }
+        }
+
+        It 'fails the entry and writes nothing when the catalog is declared by a unique display name' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @() }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-twin'; DisplayName = 'AP-Twin'; CatalogId = 'cat-y-id' } }
+                # The real Resolve-OERCatalogId looks the declared name up once: one catalog carries it.
+                Mock Invoke-OERGraphRequest {
+                    if ($Uri -like 'v1.0/identityGovernance/entitlementManagement/catalogs?*') {
+                        return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = 'cat-x-id'; displayName = 'CAT-X' }) }
+                    }
+                    throw "unexpected Graph request: $Uri"
+                }
+                Mock Get-OERCatalogResource { [PSCustomObject]@{ DisplayName = 'role_sec_x'; OriginId = 'grp-1'; Id = 'res-1' } }
+                Mock Resolve-OERGroupId { 'grp-1' }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                $Item = [PSCustomObject]@{
+                    displayName        = 'AP-Twin'
+                    catalog            = 'CAT-X'
+                    resourceRoles      = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' })
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Default'; approvalStages = @([PSCustomObject]@{ durationDays = 7; manager = $true }) })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly ("access package 'AP-Twin' was not created in catalog 'CAT-X': a package of that name already exists in " +
+                    'another catalog (cat-y-id), and New-OERAccessPackage returned it (ap-twin); nothing was written to it')
+                @($Err).Count | Should -Be 0
+                Should -Invoke New-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'CAT-X' -and $DisplayName -eq 'AP-Twin' }
+                # The one catalog lookup, and no other request.
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Uri -eq "v1.0/identityGovernance/entitlementManagement/catalogs?`$filter=displayName eq 'CAT-X'&`$select=id,displayName"
+                }
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke Get-OERCatalogResource -Times 0
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 0
+            }
+        }
+
+        It 'fails the entry, scrubbed and with nothing further written, when the declared catalog name cannot be looked up' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Get-OERAccessPackage { @() }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-twin'; DisplayName = 'AP-Twin'; CatalogId = 'cat-y-id' } }
+                Mock Invoke-OERGraphRequest { throw 'graph 503' }
+                Mock Remove-OERErrorRecord { }
+                Mock Get-OERCatalogResource { [PSCustomObject]@{ DisplayName = 'role_sec_x'; OriginId = 'grp-1'; Id = 'res-1' } }
+                Mock Resolve-OERGroupId { 'grp-1' }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                $Item = [PSCustomObject]@{
+                    displayName        = 'AP-Twin'
+                    catalog            = 'CAT-X'
+                    resourceRoles      = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' })
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Default'; approvalStages = @([PSCustomObject]@{ durationDays = 7; manager = $true }) })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly ("failed to look up catalog 'CAT-X' to confirm that access package 'AP-Twin' (ap-twin), which " +
+                    'New-OERAccessPackage returned, belongs to it: graph 503; nothing further was written for it')
+                $r[0].Error.Exception.Message | Should -BeExactly 'graph 503'
+                # The handler publishes the failure once, through its caller; -ErrorVariable also holds the
+                # records the inner layers left on their way up, which this does not count.
+                @($Err | Where-Object { ([string]$_.FullyQualifiedErrorId).EndsWith(',Invoke-SyncApViaCaller') }).Count | Should -Be 1
+                Should -Invoke New-OERAccessPackage -Times 1 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
+                # The handler's own catch scrubs first (the lookup is mocked at the transport, below it).
+                Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke Get-OERCatalogResource -Times 0
+            }
+        }
+
+        It 'creates the package as before when New-OERAccessPackage returns one of the declared catalog (<Case>)' -ForEach @(
+            @{ Case = 'declared by id, in another letter case'; Catalog = 'CCCC0000-0000-0000-0000-0000000000C1'; CatalogId = 'cccc0000-0000-0000-0000-0000000000c1'; Lookups = 0 }
+            @{ Case = 'declared by name'; Catalog = 'CAT-X'; CatalogId = 'CAT-X-ID'; Lookups = 1 }
+            @{ Case = 'declared by name, no catalog in the create response'; Catalog = 'CAT-X'; CatalogId = $null; Lookups = 0 }
+            @{ Case = 'declared by id, an empty catalog in the create response'; Catalog = 'cccc0000-0000-0000-0000-0000000000c1'; CatalogId = ''; Lookups = 0 }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Catalog = $Catalog; CatalogId = $CatalogId; Lookups = $Lookups } {
+                param($Catalog, $CatalogId, $Lookups)
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Get-OERAccessPackage { @() }
+                $script:TwinCreated = [PSCustomObject]@{ Id = 'ap-new'; DisplayName = 'AP-Twin'; CatalogId = $CatalogId }
+                Mock New-OERAccessPackage { $script:TwinCreated }
+                Mock Invoke-OERGraphRequest {
+                    if ($Uri -like 'v1.0/identityGovernance/entitlementManagement/catalogs?*') {
+                        return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = 'cat-x-id'; displayName = 'CAT-X' }) }
+                    }
+                    throw "unexpected Graph request: $Uri"
+                }
+                Mock Get-OERCatalogResource { [PSCustomObject]@{ DisplayName = 'role_sec_x'; OriginId = 'grp-1'; Id = 'res-1' } }
+                Mock Resolve-OERGroupId { 'grp-1' }
+                Mock Add-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName   = 'AP-Twin'
+                    catalog       = $Catalog
+                    resourceRoles = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 2
+                $r[0].Action | Should -BeExactly 'Created'
+                $r[0].Detail | Should -BeExactly 'created access package AP-Twin (ap-new)'
+                $r[1].Action | Should -BeExactly 'Created'
+                $r[1].Detail | Should -BeExactly "added resourceRole 'Member' on 'role_sec_x'"
+                @($Err).Count | Should -Be 0
+                Should -Invoke New-OERAccessPackage -Times 1 -Exactly
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-new' -and $ResourceOriginId -eq 'grp-1' }
+                Should -Invoke Invoke-OERGraphRequest -Times $Lookups -Exactly
+            }
+        }
+    }
+
     It 'existing assignmentPolicy with a differing scope is updated via Set-OERAccessPackageAssignmentPolicy (Updated)' {
         InModuleScope $script:moduleName {
             function Invoke-SyncApViaCaller {
