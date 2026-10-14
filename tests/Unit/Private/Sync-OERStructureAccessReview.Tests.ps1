@@ -4684,6 +4684,56 @@ Describe 'Sync-OERStructureAccessReview renames a review through previousDisplay
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
         }
     }
+
+    Context 'a rename decision that cannot be made, in a script with no try' {
+
+        # With no try anywhere on the stack a call that fails to bind only skips its statement, so the
+        # handler carries on after it. The entry's empty previousDisplayName (refused by the validator,
+        # reachable only through this private entry point) makes the decision call fail to bind: the entry
+        # must get no row at all -- no update and no create, which a declared previousDisplayName never
+        # reaches -- and its binding error is its report. Pester mocks do not cross the runspace boundary,
+        # so the script installs its own fakes in its copy of the module scope, and the answering host
+        # records any 'What if:' line (OERConfirmHost).
+
+        It 'reports no row and writes nothing, in a plan and in a run, when the decision call fails to bind' {
+            $Scenario = {
+                Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+                $Module = Get-Module Omnicit.EntraRBAC
+                & $Module {
+                    $script:NoTryWrites = [System.Collections.Generic.List[string]]::new()
+                    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+                    Set-Item -Path function:script:Invoke-OERGraphRequest -Value { param([string]$Uri) throw "no Graph request expected: $Uri" }
+                    Set-Item -Path function:script:Get-OERAccessReviewTargetMismatch -Value { }
+                    Set-Item -Path function:script:Set-OERAccessReviewDefinition -Value { $script:NoTryWrites.Add('Set') }
+                    Set-Item -Path function:script:New-OERAccessReviewDefinition -Value {
+                        $script:NoTryWrites.Add('New')
+                        [pscustomobject]@{ Id = 'cccc3333-0000-0000-0000-000000000031' }
+                    }
+                    # No review carries either name.
+                    Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value { [CmdletBinding()] param($Filter) }
+                    function script:Invoke-SyncArNoTry {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item)
+                        Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet
+                    }
+                }
+                $Item = [pscustomobject]@{ displayName = 'R new'; previousDisplayName = ''; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'; reviewers = @() }
+                'PLAN'
+                & $Module { param($Item) Invoke-SyncArNoTry -Item $Item -WhatIf } $Item | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+                'RUN'
+                & $Module { param($Item) Invoke-SyncArNoTry -Item $Item -Confirm:$false } $Item | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+                'WRITES:' + (& $Module { $script:NoTryWrites -join ',' })
+                'END'
+            }
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -Script $Scenario
+
+            @($Run.Output) | Should -Be @('PLAN', 'RUN', 'WRITES:', 'END')
+            @($Run.Errors).Count | Should -Be 2
+            foreach ($ErrorText in $Run.Errors) { $ErrorText | Should -BeLike "*parameter 'PreviousName'*" }
+            @($Run.Events | Where-Object { $_ -like 'Line: What if:*' }).Count | Should -Be 0
+            @($Run.Prompts).Count | Should -Be 0
+        }
+    }
 }
 
 # BL-128 part 2 (Sprint 11 step 4b, D5). An access review's accessPackage and assignmentPolicy are read in

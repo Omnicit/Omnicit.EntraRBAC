@@ -519,8 +519,20 @@ function Sync-OERStructureAccessReview {
                 $PrevDefinition = $PrevLookup.Definition
             }
 
+            # Reset first, and stop when no decision came back. A call that fails to bind (an empty name
+            # or previous name, which the validator refuses) is a statement-terminating error: under
+            # Invoke-OERStructure the engine's catch ends the item, but with no try anywhere on the
+            # stack execution carries on with no decision in $Rename. Read as "no rename" the entry
+            # would go on to an update, or to a create, which a declared previousDisplayName must never
+            # reach, so a missing decision stops the entry with nothing written for it; the binding
+            # error is its report. The reset is the access package handler's, where a loop would
+            # otherwise carry one policy's decision over to the next. This process block decides once,
+            # so today the reset changes nothing (measured: an equivalent mutant); it keeps the null
+            # check meaning "no decision from this call" should the block ever decide more than once.
+            $Rename = $null
             $Rename = Resolve-OERStructureRename -Section 'accessReviews' -Name $Name -PreviousName $PrevName `
                 -Id ([string]$Existing.Id) -PreviousId ([string]$PrevDefinition.Id)
+            if ($null -eq $Rename) { return }
             if ($Rename.Outcome -eq 'Conflict' -or $Rename.Outcome -eq 'NotFound') {
                 # Nothing is created or written for the entry, under -WhatIf too: a document that
                 # declares a rename names a review that exists, and never merges two reviews.
