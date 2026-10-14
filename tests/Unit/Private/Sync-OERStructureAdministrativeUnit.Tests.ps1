@@ -2461,10 +2461,12 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                         [PSCustomObject]$Item,
                         [switch]$Prune,
                         [switch]$EnsureOnly,
-                        [System.Collections.Generic.Dictionary[string, object]]$RenameMap
+                        [System.Collections.Generic.Dictionary[string, object]]$RenameMap,
+                        [System.Collections.Generic.List[object]]$Created
                     )
                     $Extra = @{}
                     if ($PSBoundParameters.ContainsKey('RenameMap')) { $Extra.RenameMap = $RenameMap }
+                    if ($PSBoundParameters.ContainsKey('Created')) { $Extra.CreatedUnitMembership = $Created }
                     Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune -EnsureOnly:$EnsureOnly @Extra
                 }
             }
@@ -2999,6 +3001,99 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
 
                     Should -Invoke Set-OERAdministrativeUnit -Times 0
                     $Map['administrativeunits|au-new'].Id | Should -BeExactly 'au-old-id'
+                }
+            }
+        }
+
+        # BL-07 with a rename: the groups section runs before this pass, so a group declared into the unit
+        # by the unit's PREVIOUS name is created, and recorded, while the unit still carries that name;
+        # this pass then renames the unit. The member prune pass must still recognise the record, or a
+        # -Prune run removes the membership the same run created. Only the previous name of THIS rename
+        # counts. The unit holds the recorded group and one member nobody recorded or declared.
+        Context 'a group created into the unit by its previous name in the same run (BL-07)' {
+            BeforeEach {
+                InModuleScope $script:moduleName {
+                    Mock Get-OERAdministrativeUnit {
+                        param($AdministrativeUnit)
+                        $GroupMember = [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = 'grp-new'; Type = 'group' }
+                        $UserMember = [PSCustomObject]@{ Id = 'u-extra'; DisplayName = 'Extra'; Type = 'user' }
+                        [PSCustomObject]@{ Id = $AdministrativeUnit; DisplayName = 'AU-Old'; Description = $null; Members = @($GroupMember, $UserMember); ScopedRoles = @() }
+                    }
+                }
+            }
+
+            It 'keeps the membership under -Prune, prunes the unrecorded member, and renames, for a record naming the unit <Label>' -ForEach @(
+                @{ Label = 'by the previous name'; Unit = 'AU-Old' }
+                @{ Label = 'by the previous name in another letter case'; Unit = 'au-old' }
+                @{ Label = 'by the new name'; Unit = 'AU-New' }
+            ) {
+                InModuleScope $script:moduleName -Parameters @{ Unit = $Unit } {
+                    param($Unit)
+                    Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    $Created = [System.Collections.Generic.List[object]]::new()
+                    $Created.Add([PSCustomObject]@{ AdministrativeUnit = $Unit; GroupId = '88888888-8888-8888-8888-888888888888'; Label = 'grp-new' })
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; members = @(); scopedRoles = $null }
+                    $Records = @(Invoke-SyncAuRenameViaCaller -Item $Item -Prune -Created $Created -ErrorAction Stop -WarningAction SilentlyContinue)
+
+                    # The pass reached the removal path and removed the unrecorded member, from the unit
+                    # found under the previous name; the recorded group's membership was not removed.
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $AdministrativeUnit -eq 'au-old-id' -and $MemberId -eq 'u-extra' }
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 0 -ParameterFilter { $MemberId -eq '88888888-8888-8888-8888-888888888888' }
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly
+                    $Withheld = @($Records | Where-Object { $_.Action -eq 'Skipped' })
+                    $Withheld.Count | Should -Be 1
+                    $Withheld[0].Item | Should -BeExactly 'AU-New'
+                    $Withheld[0].Detail | Should -BeLike "prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'grp-new'*"
+                    @($Records | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared member 'u-extra'" }).Count | Should -Be 1
+                    @($Records | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "renamed administrative unit 'AU-Old' to 'AU-New'" }).Count | Should -Be 1
+                    Should -Invoke Set-OERAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $AdministrativeUnit -eq 'au-old-id' -and $NewDisplayName -eq 'AU-New' }
+                }
+            }
+
+            It 'reports the membership Extra without -Prune, removing nothing, for a record naming the unit by the previous name' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    $Created = [System.Collections.Generic.List[object]]::new()
+                    $Created.Add([PSCustomObject]@{ AdministrativeUnit = 'AU-Old'; GroupId = '88888888-8888-8888-8888-888888888888'; Label = 'grp-new' })
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; members = @(); scopedRoles = $null }
+                    $Records = @(Invoke-SyncAuRenameViaCaller -Item $Item -Created $Created -ErrorAction Stop)
+
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 0
+                    @($Records | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 0
+                    @($Records | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -eq "undeclared member '88888888-8888-8888-8888-888888888888' (use -Prune to remove)" }).Count | Should -Be 1
+                    @($Records | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -eq "undeclared member 'u-extra' (use -Prune to remove)" }).Count | Should -Be 1
+                }
+            }
+
+            It 'still prunes the membership under -Prune when the entry renames nothing and the record names a name that is not the unit''s own' {
+                InModuleScope $script:moduleName {
+                    # No previousDisplayName: the unit is found under its own name, 'AU-Old' is no name of
+                    # this unit, so a record naming it is another unit's and only the previous name of a
+                    # rename THIS entry declares counts.
+                    Mock Resolve-OERAdministrativeUnitId { 'au-new-id' } -ParameterFilter { $DisplayName -eq 'AU-New' }
+                    $Created = [System.Collections.Generic.List[object]]::new()
+                    $Created.Add([PSCustomObject]@{ AdministrativeUnit = 'AU-Old'; GroupId = '88888888-8888-8888-8888-888888888888'; Label = 'grp-new' })
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; members = @(); scopedRoles = $null }
+                    $Records = @(Invoke-SyncAuRenameViaCaller -Item $Item -Prune -Created $Created -ErrorAction Stop -WarningAction SilentlyContinue)
+
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq '88888888-8888-8888-8888-888888888888' }
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'u-extra' }
+                    @($Records | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 0
+                    @($Records | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 2
+                }
+            }
+
+            It 'still prunes the membership under -Prune when the record names a unit that is not the one renamed' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    $Created = [System.Collections.Generic.List[object]]::new()
+                    $Created.Add([PSCustomObject]@{ AdministrativeUnit = 'AU-Other'; GroupId = '88888888-8888-8888-8888-888888888888'; Label = 'grp-new' })
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; members = @(); scopedRoles = $null }
+                    $Records = @(Invoke-SyncAuRenameViaCaller -Item $Item -Prune -Created $Created -ErrorAction Stop -WarningAction SilentlyContinue)
+
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq '88888888-8888-8888-8888-888888888888' }
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'u-extra' }
+                    @($Records | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 0
                 }
             }
         }

@@ -107,8 +107,11 @@ function Sync-OERStructureAdministrativeUnit {
     membership in the run-scoped list the engine passes to both handlers as -CreatedUnitMembership.
     In the member Extra/prune pass, straight after the unresolved-entry rule above and before the
     -Prune branch, a live member whose id is a recorded group's id, recorded for this unit by its
-    display name (compared ignoring case) or its object id (a reference that parses as a GUID, braced
-    or dash-less included, is compared as one, as New-OERGroup reads it), is withheld under -Prune:
+    display name (compared ignoring case; when this run renames the unit through previousDisplayName,
+    a record naming the unit by the previous name it is renamed from counts too, since the groups
+    section creates the group before this pass renames the unit) or its object id (a reference that
+    parses as a GUID, braced or dash-less included, is compared as one, as New-OERGroup reads it), is
+    withheld under -Prune:
     it is reported Skipped with a Detail that starts "prune withheld:", with no warning, no
     ShouldProcess prompt and no Remove-OERAdministrativeUnitMember call
     (ConvertTo-OERPruneWithheldResult owns the text).
@@ -221,8 +224,10 @@ function Sync-OERStructureAdministrativeUnit {
     The run-scoped list Invoke-OERStructure creates once per document and passes to this handler and
     to Sync-OERStructureGroup, which adds one record (AdministrativeUnit, GroupId, Label) for every
     group it creates into an administrative unit. The member Extra/prune pass withholds a recorded
-    group's membership of this unit under -Prune; see the BL-07 paragraph above. Optional: without
-    it no member is withheld on this account. The -EnsureOnly pre-pass does not need it.
+    group's membership of this unit under -Prune; see the BL-07 paragraph above. A record naming the
+    unit by its display name matches the name the unit carries in the document and, when this run
+    renames the unit through previousDisplayName, the previous name it is renamed from. Optional:
+    without it no member is withheld on this account. The -EnsureOnly pre-pass does not need it.
 
     .PARAMETER RenameMap
     The run-scoped rename map Invoke-OERStructure creates once per document and passes to this handler
@@ -735,11 +740,16 @@ function Sync-OERStructureAdministrativeUnit {
                         # read the way New-OERGroup read it: a reference that parses as a GUID (-as
                         # [guid], braced and dash-less forms included) is the unit's object id and is
                         # compared as a GUID with this unit's id; any other reference is a display name,
-                        # compared ignoring case. Under -Prune the candidate is withheld; without -Prune
-                        # the helper returns nothing and it is reported Extra as before.
+                        # compared ignoring case with the name the unit carries in the document and, when
+                        # this run renames the unit (previousDisplayName), with the previous name it is
+                        # renamed from: the groups section runs first, so a group declared into the unit
+                        # by that previous name is recorded under it, and the unit is renamed only now.
+                        # Only the previous name of THIS rename counts. Under -Prune the candidate is
+                        # withheld; without -Prune the helper returns nothing and it is reported Extra as
+                        # before.
                         $CreatedHere = @($CreatedUnitMembership | Where-Object {
                                 $CreatedUnitGuid = [string]$_.AdministrativeUnit -as [guid]
-                                ($_.GroupId -ieq $CurId) -and $(if ($null -ne $CreatedUnitGuid) { $CreatedUnitGuid -eq $AuidGuid } else { [string]$_.AdministrativeUnit -ieq $Name })
+                                ($_.GroupId -ieq $CurId) -and $(if ($null -ne $CreatedUnitGuid) { $CreatedUnitGuid -eq $AuidGuid } else { ([string]$_.AdministrativeUnit -ieq $Name) -or ($RenameFrom -and ([string]$_.AdministrativeUnit -ieq $RenameFrom)) })
                             })
                         if ($CreatedHere.Count -gt 0) {
                             $Withheld = ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item $Name -Candidate "undeclared member '$CurId'" `
