@@ -164,7 +164,8 @@ function Get-OERInventory {
     to letter case; otherwise, or when the listing of every group fails, it is written by its object
     id with principalType Group, which Invoke-OERStructure resolves verbatim. The listing is the one
     described below, made at most once per call, when the Groups section read at least one group or
-    when a section holds a group principal, and shared by both; when it fails, the verbose stream
+    when a section holds a group principal whose name was read (one whose name could not be read is
+    written by its object id with no listing), and shared by both; when it fails, the verbose stream
     says so and no group principal is reported unread, since an object id names the group exactly.
     A role assignment at the Azure root scope '/', above every management group and subscription in
     the tenant, is left out of the RoleAssignments section: it is elevated
@@ -488,7 +489,10 @@ function Get-OERInventory {
                         $UnreadCollections.Add($Unread)
                         $NameCause = Get-OERSharedNameCause -Path $Unread -Count $Count[$K]
                         # Every cause is written to the verbose stream as it is seen, like at every other
-                        # Add-UnreadCause site: this one is added last, so it is the first the cap drops.
+                        # Add-UnreadCause site. The cap keeps causes in the order they are added: the five
+                        # calls made once every section is read add theirs last, so the cap drops those
+                        # first, while the assignment policies' call adds its causes as each access package
+                        # is read, ahead of the causes of the sections read after it.
                         Write-Verbose "Get-OERInventory: $NameCause"
                         Add-UnreadCause -Cause $NameCause -Target $Unread
                         $SharedNameList.Add([PSCustomObject]@{ Section = $Section; Name = $ReportedName; Count = $Count[$K] })
@@ -523,7 +527,8 @@ function Get-OERInventory {
         # BL-131 (Task 3c): how a group named as a principal in the RoleAssignments and
         # DirectoryRoleAssignments sections is written -- its display name only when no other group in
         # the tenant carries that name, otherwise its object id (Get-OERGroupReference owns the rule).
-        # Called once per group row, so the index is read only when a section holds a group principal.
+        # Called once per group row, so the index is read only when a section holds a group principal
+        # whose name was read.
         # When the index could not be read, every group principal is written by its object id: an
         # exact reference the apply engine resolves verbatim, so nothing is missing from the document
         # and nothing is reported unread (R-3c). That is said once per invocation, on the verbose
@@ -531,6 +536,10 @@ function Get-OERInventory {
         $GroupPrincipalNote = @{ Written = $false }
         function Get-GroupPrincipalReference {
             param([string]$Id, [string]$Name)
+            # A blank name, or a name that is the id itself (a principal whose name could not be
+            # resolved), is written as the id whatever the index holds -- Get-OERGroupReference returns
+            # the id for both -- so the index is not read for it.
+            if ([string]::IsNullOrWhiteSpace($Name) -or $Name -ceq $Id) { return $Id }
             $PrincipalIndex = Get-GroupNameIndexOnce
             if ($PrincipalIndex.Read -ne $true -and -not $GroupPrincipalNote.Written) {
                 $GroupPrincipalNote.Written = $true

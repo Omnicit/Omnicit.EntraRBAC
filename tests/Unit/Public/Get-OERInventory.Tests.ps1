@@ -4407,6 +4407,30 @@ Describe 'Get-OERInventory' {
             Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
         }
 
+        It 'writes a group principal whose name <Case> by its object id, with no index read' -ForEach @(
+            @{ Case = 'could not be read'; Blank = $false; Lookups = 2 }
+            @{ Case = 'was read blank'; Blank = $true; Lookups = 1 }
+        ) {
+            # The name each section holds for the group is its object id (no name was read) or blank, and
+            # Get-OERGroupReference returns the id for either whatever the index holds: the listing of every
+            # group is not read for it.
+            $Unnamed = 'eeee2222-0000-0000-0000-000000000009'
+            if ($Blank) { $script:GpNames[$Unnamed] = ' ' }
+            $Ra = New-GpRa -PrincipalId $Unnamed -PrincipalType 'Group'
+            $Ra.PrincipalDisplayName = $null
+            $script:GpRas = @($Ra)
+            $script:GpEligible = @(New-GpDirRow -PrincipalId $Unnamed -ScheduleId 's-1')
+            $InvErr = $null
+            $Inv = Get-OERInventory -Include RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM -ErrorVariable InvErr
+            @($InvErr) | Should -BeNullOrEmpty
+            # Reach proof: the sections asked for the group's name (each section while the shared cache did
+            # not hold it) and wrote the group by its object id with principalType Group.
+            @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @("$Unnamed|Group")
+            @($Inv.directoryRoleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @("$Unnamed|Group")
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times $Lookups -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
+        }
+
         It 'writes a directory role group whose name another group carries by its object id, and a unique one by its name' {
             $script:GpEligible = @(
                 New-GpDirRow -PrincipalId $script:GpOps -ScheduleId 's-1'
