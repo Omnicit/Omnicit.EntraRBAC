@@ -293,7 +293,8 @@ document.
     previousDisplayName: the unit found under previousDisplayName alone is renamed in place. When
     both names match different units the entry fails and nothing is changed (two units are never
     merged), and when neither matches the entry fails and nothing is created: a rename names an
-    existing unit. A NEW unit is declared without previousDisplayName.
+    existing unit. A NEW unit is declared without previousDisplayName; a changed displayName WITHOUT
+    it still creates a new unit and leaves the old one in place, unreported.
   - Microsoft Graph's name lookup can follow a unit's rename with a delay, as it does a group's: keep
     previousDisplayName in the proposal, and tell the operator in the rationale to wait until the
     new name resolves before applying again. When a proposal renames a unit, a group created into
@@ -316,7 +317,8 @@ document.
     previousDisplayName: the catalog found under previousDisplayName alone is renamed in place.
     When both names match different catalogs the entry fails and nothing is changed (two catalogs
     are never merged), and when neither matches the entry fails and nothing is created: a rename
-    names an existing catalog. A NEW catalog is declared without previousDisplayName.
+    names an existing catalog. A NEW catalog is declared without previousDisplayName; a changed
+    displayName WITHOUT it still creates a new catalog and leaves the old one in place, unreported.
   - Microsoft Graph's name lookup can follow a catalog's rename with a delay: keep
     previousDisplayName in the proposal, and tell the operator in the rationale to wait until the
     new name resolves before applying again. When a proposal renames a catalog, every access

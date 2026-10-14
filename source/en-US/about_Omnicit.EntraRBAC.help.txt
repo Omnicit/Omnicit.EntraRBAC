@@ -245,14 +245,24 @@ RENAMES, MAIL ALIASES AND SCOPE SPELLING
 
     Microsoft Graph's name lookup can follow a rename with a delay: keep
     previousDisplayName in the document until the new name resolves. In the
-    same run, a group created into a renamed unit and an access package
-    declared in a renamed catalog reach it by its object id, so name the unit
-    or the catalog by its new name; that holds for the sections -Include
-    selects (a unit needs Groups and AdministrativeUnits, a catalog needs
-    Catalogs), and with them left out the new name is resolved by name, as
-    before. An access review's accessPackage does not follow a package's
-    rename yet, and can fail with AccessPackageNotFound in the run that
-    renames the package.
+    same run, a group that is created into a renamed unit and an access
+    package declared in a renamed catalog find the renamed unit or catalog by
+    its object id, so name the unit or the catalog by its new name in those
+    references. When the rename is refused, or the run cannot decide it (the
+    previous name could not be looked up, or -Include leaves out the
+    AdministrativeUnits or Catalogs section that holds the entry), the group
+    that would be created and every package of the catalog are Failed and
+    nothing is created or written for them, instead of being looked up by
+    name; a group that already exists is not affected. While -Include leaves
+    the section out and the entry still declares previousDisplayName, that
+    holds for every such reference, for a catalog every package declared in
+    it, existing ones included, even when the rename was done in an earlier
+    run: include the section, or remove previousDisplayName once the new name
+    resolves. A refusal because -Include leaves the section out publishes no
+    error record, only the Failed row, so -ErrorAction Stop and $? do not see
+    it: check the rows. An access review's accessPackage does not follow a
+    package's rename yet, and can fail with AccessPackageNotFound in the run
+    that renames the package.
 
     Test-OERStructure reports previousDisplayName in assignmentPolicies and
     accessReviews as an Error: renaming is not supported there yet, and

@@ -28,10 +28,10 @@ stray white space, and warns when a renamed group keeps its alias. `New-OERGroup
 underivable alias. `-WhatIf` plans a package in a new catalog as created.
 
 `Invoke-OERStructure` renames administrative units, catalogs and access packages through
-`previousDisplayName`, like groups: the object found only under its previous name is renamed with its
-other changes; when both names find different objects, or neither finds one, the entry fails and
-writes nothing. In the same run, a group created into a renamed unit and a package in a renamed
-catalog reach it by id.
+`previousDisplayName`, like groups: the object found only under its previous name is renamed; if both
+names find different objects, or neither finds one, the entry fails and writes nothing. In the same
+run, a group created into a renamed unit and a package in a renamed catalog find the renamed object
+by id.
 
 ## [1.2.0] - 2026-10-11
 

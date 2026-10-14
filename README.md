@@ -827,28 +827,43 @@ matching `GroupRenameNotFound`, `AdministrativeUnitRenameNotFound`, `CatalogRena
 `AccessPackageRenameNotFound` and nothing is created. When the rename itself fails, the object's
 children (members, scoped roles, resources, resource roles, assignment policies) are not
 reconciled, and under `-WhatIf` the plan says `would rename` and plans them against the object
-found under its previous name. Microsoft Graph's name lookup can follow a rename with a delay: keep
-`previousDisplayName` in the document until the new name resolves. In the same run, a group created
-into a renamed unit and an access package declared in a renamed catalog reach it by its object id, so
-name the unit or the catalog by its new name; that holds for the sections `-Include` selects (a unit
-needs `Groups` and `AdministrativeUnits`, a catalog needs `Catalogs`), and with them left out the new
-name is resolved by name, as before. An access review's `accessPackage` does not follow a package's
-rename yet, and can fail with `AccessPackageNotFound` in the run that renames the package. `Test-OERStructure` reports `previousDisplayName` in `assignmentPolicies` and
-`accessReviews` as an `Error`: renaming is not supported there yet, and `Invoke-OERStructure` would
-create a new object beside the old one. It warns on a reference that still names a renamed object by
-its previous name. A group's mail alias does not follow a rename: declare `mailNickname` for the new
-name, and the validator warns when a renamed group keeps the alias derived from its old name or
-declares none. A `mailNickname` that is empty,
-longer than 64 characters or holds one of `@ ( ) \ [ ] " ; : < > ,`, a space or a tab is an `Error`,
-since Microsoft Graph was measured to refuse each of them; the validator refuses any other white
-space or control character too, which was not measured. `New-OERGroup` refuses to derive an alias
-that would be empty or longer than 64 characters (`DerivedMailNicknameInvalid`). A scope written as
-a path is an `Error` too when it holds a `.` or `..` segment, a `%`, a `\`, a `?` or a `#`, white
-space at the start or end of the scope or of a segment, white space other than a space, or a control
-character (the `mg:`, `sub:` and `subscription:` forms are not checked for these). One or more spaces
-between other characters of a segment are accepted, since an Azure resource name can hold them, so an
-export that holds a role assignment at such a resource applies. A resource whose name holds one of
-the refused characters, which a few resource types allow, cannot be declared: remove its entry.
+found under its previous name.
+
+Microsoft Graph's name lookup can follow a rename with a delay: keep `previousDisplayName` in the
+document until the new name resolves. In the same run, a group that is created into a renamed unit
+and an access package declared in a renamed catalog find the renamed unit or catalog by its object
+id, so name the unit or the catalog by its new name in those references. When the rename is refused,
+or the run cannot decide it (the previous name could not be looked up, or `-Include` leaves out the
+`AdministrativeUnits` or `Catalogs` section that holds the entry), the group that would be created
+and every package of the catalog are `Failed` and nothing is created or written for them, instead of
+being looked up by name; a group that already exists is not affected. While `-Include` leaves the
+section out and the entry still declares `previousDisplayName`, that holds for every such reference,
+for a catalog every package declared in it, existing ones included, even when the rename was done in
+an earlier run: include the section, or remove `previousDisplayName` once the new name resolves. A
+refusal because `-Include` leaves the section out publishes no error record, only the `Failed` row,
+so `-ErrorAction Stop` and `$?` do not see it: check the rows. An access review's
+`accessPackage` does not follow a package's rename yet, and can fail with `AccessPackageNotFound` in
+the run that renames the package.
+
+`Test-OERStructure` reports `previousDisplayName` in `assignmentPolicies` and `accessReviews` as an
+`Error`: renaming is not supported there yet, and `Invoke-OERStructure` would create a new object
+beside the old one. It warns on a reference that still names a renamed object by its previous name.
+
+A group's mail alias does not follow a rename: declare `mailNickname` for the new name, and the
+validator warns when a renamed group keeps the alias derived from its old name or declares none. A
+`mailNickname` that is empty, longer than 64 characters or holds one of `@ ( ) \ [ ] " ; : < > ,`, a
+space or a tab is an `Error`, since Microsoft Graph was measured to refuse each of them; the
+validator refuses any other white space or control character too, which was not measured.
+`New-OERGroup` refuses to derive an alias that would be empty or longer than 64 characters
+(`DerivedMailNicknameInvalid`).
+
+A scope written as a path is an `Error` too when it holds a `.` or `..` segment, a `%`, a `\`, a `?`
+or a `#`, white space at the start or end of the scope or of a segment, white space other than a
+space, or a control character (the `mg:`, `sub:` and `subscription:` forms are not checked for
+these). One or more spaces between other characters of a segment are accepted, since an Azure
+resource name can hold them, so an export that holds a role assignment at such a resource applies. A
+resource whose name holds one of the refused characters, which a few resource types allow, cannot be
+declared: remove its entry.
 
 `Set-OERAccessPackageAssignmentPolicy`, and `Invoke-OERStructure` through it, keeps a policy's
 custom extension stages, which Microsoft Graph removes on an update that does not send them, and,

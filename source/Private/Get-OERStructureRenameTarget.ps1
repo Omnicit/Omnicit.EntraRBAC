@@ -10,10 +10,13 @@ function Get-OERStructureRenameTarget {
     first. $null means the map says nothing: resolve the name as before. An entry with Refused false
     carries the id of the object the document renames in this run (found under its previous name,
     whether or not the rename has been sent yet, -WhatIf included), so the reference uses that id
-    instead of a name lookup that cannot find the new name yet. An entry with Refused true means that
-    entry's rename failed with a conflict or found nothing (ErrorId), so the object the document means
-    cannot be identified and the referring entry must not act. The key is '<section>|<name>' in lower
-    case, built exactly as Resolve-OERStructureRename builds it.
+    instead of a name lookup that cannot find the new name yet. An entry with Refused true means the
+    object the document means cannot be identified, so the referring entry must not act. It is either
+    a rename that failed with a conflict or found nothing (ErrorId and Reason are the error id), or an
+    undecided mark (R12: no ErrorId, and a Reason saying that the entry's section is not selected by
+    -Include, or that its previous name could not be looked up). Readers print Reason in their
+    Failed row. The key is '<section>|<name>' in lower case, built exactly as
+    Resolve-OERStructureRename builds it.
 
     .PARAMETER Section
     The section of the referenced object: administrativeUnits, catalogs or accessPackages.

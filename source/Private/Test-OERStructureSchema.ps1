@@ -173,9 +173,9 @@ function Test-OERStructureSchema {
     Warning replaces Rule 11's "Catalog is not declared" Warning, which is not written for a catalog
     that is a renamed catalog's previousDisplayName (an object id included). A second top-level entry
     whose key matches an earlier one, compared without regard to letter case, is an Error at the later
-    entry's path that names the earlier entry's index, since the two describe one live object and applying both
-    makes each undo the other, or through a child collection removes what the other declared, on
-    every run. The keys are: for groups, the group name (displayName, or for a template-based entry
+    entry's path that names the earlier entry's index, since the two describe one live object and
+    applying both makes each undo the other, or through a child collection removes what the other
+    declared, on every run. The keys are: for groups, the group name (displayName, or for a template-based entry
     the name Resolve-OERName computes from template and tokens; an entry whose name cannot be
     computed, for instance through an unknown token, claims no name) together with a declared
     previousDisplayName, which is compared against the names and previous names of every earlier

@@ -52,24 +52,36 @@ function Invoke-OERStructure {
     an object that exists and an object is created only by an entry WITHOUT previousDisplayName.
     previousDisplayName also accepts the object id: a group, unit or catalog id is verified with one
     read, an id that no longer names an object counts as not matching, and a package id is matched
-    only against the packages of the declared catalog. Microsoft Graph's name lookup can follow a
-    rename with a delay, so keep previousDisplayName in the document until the new name resolves (a
-    run after that reports the object Unchanged; a run inside the window in which neither name
-    resolves yet fails with the RenameNotFound id and creates nothing), then remove it. Within one
-    run, a group created into a unit the document renames and an access package declared in a
-    catalog the document renames reach the renamed object by its object id, through the run's rename
-    map; name the unit or catalog by its new name in those references. When that rename is refused
-    the group or package is reported Failed, under -WhatIf too, with nothing created, read or written
-    for it, and the unit's or catalog's own row carries the error. The map is filled only by the
-    sections -Include selects -- the pre-pass needs both Groups and AdministrativeUnits, and a
-    catalog's rename is registered only when Catalogs is included -- so with those sections left out
-    a reference to the new name is resolved by name, as before. An access review's accessPackage is
-    not translated through the map yet: named by the package's new name, it can fail with
+    only against the packages of the declared catalog.
+
+    Microsoft Graph's name lookup can follow a rename with a delay, so keep previousDisplayName in the
+    document until the new name resolves (a run after that reports the object Unchanged; a run inside
+    the window in which neither name resolves yet fails with the RenameNotFound id and creates
+    nothing), then remove it. A displayName changed WITHOUT previousDisplayName still creates a new
+    object beside the old one, which -Prune never deletes.
+
+    References to a renamed object in the same run: a group that would be created into a unit the
+    document renames, and every access package declared in a catalog the document renames, reach the
+    renamed object by its object id, through the run's rename map; name the unit or catalog by its new
+    name in those references. When the rename is refused, or the run cannot decide it, the reference
+    is refused instead of being looked up by name, which could land in another object that carries
+    the new name: such a group and every such package are reported Failed, under -WhatIf too, with
+    nothing created or written for them (a package is not read either), and the unit's or catalog's
+    own row carries the error when its rename was refused. A group that already exists is not
+    affected, since administrativeUnit applies only when a group is created.
+
+    A rename the run cannot decide is one whose previous-name lookup threw, or one of an
+    administrativeUnits or catalogs entry whose section -Include leaves out (for which nothing is
+    read, written or reported). While -Include leaves the section out and the entry still declares
+    previousDisplayName, every such reference to its new name is refused -- for a catalog every
+    package declared in it, existing ones included -- even when the rename was done in an earlier
+    run: include the section, or remove previousDisplayName once the new name resolves. A refusal
+    because -Include leaves the section out publishes no error record, only the Failed row, so
+    -ErrorAction Stop and $? do not see it: check the rows. An access review's accessPackage is not
+    translated through the map yet: named by the package's new name, it can fail with
     AccessPackageNotFound in the run (and the -WhatIf plan) that renames the package, until Graph's
-    lookup finds the new name. A displayName changed WITHOUT previousDisplayName still creates a new
-    object beside the old one, which -Prune never deletes. Test-OERStructure warns on a reference
-    that still names a renamed object by its previous name, and refuses previousDisplayName on an
-    assignmentPolicies or accessReviews entry.
+    lookup finds the new name. Test-OERStructure warns on a reference that still names a renamed object by its previous name,
+    and refuses previousDisplayName on an assignmentPolicies or accessReviews entry.
 
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next

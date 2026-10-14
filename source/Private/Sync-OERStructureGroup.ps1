@@ -252,9 +252,11 @@ function Sync-OERStructureGroup {
     administrativeUnits section out), the unit the group is to be created into cannot be identified:
     the item emits one Failed row naming the unit, the refused rename and why (its error id, or what
     kept the run from deciding it), and nothing is created, read further or written for it. The check
-    comes before the create's ShouldProcess gate, so -WhatIf reports the same Failed row, and the row
-    carries no error record of its own: the unit's own row carries the refusal. administrativeUnit
-    applies only when the group is created, so a group that already exists is not affected either way.
+    comes before the create's ShouldProcess gate, so -WhatIf reports the same Failed row. That row
+    publishes no error record of its own: a refused rename's error is on the unit's own row, and a
+    rename the run did not reconcile because -Include leaves the administrativeUnits section out
+    publishes no error record at all, only this Failed row. administrativeUnit applies only when the
+    group is created, so a group that already exists is not affected either way.
 
     Service principals (decision A9): a live member or owner whose ObjectType is servicePrincipal is
     never removed from the group. Microsoft Graph's v1.0 member and owner lists leave service

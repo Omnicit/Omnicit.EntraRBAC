@@ -6831,10 +6831,11 @@ parameter or output type was added.
 previous name resolved to (each empty when nothing matched) and decides: both resolve to DIFFERENT
 objects (ids compared ignoring case) is `Conflict`; neither is `NotFound`; only the previous name is
 `Rename`; the new name alone, or both names on one object, is `Current`. `Conflict` and `NotFound` give
-one Failed row and a non-terminating error whose target is the new name -- `AdministrativeUnitRenameConflict`,
-`CatalogRenameConflict` and `AccessPackageRenameConflict` (category `ResourceExists`),
-`AdministrativeUnitRenameNotFound`, `CatalogRenameNotFound` and `AccessPackageRenameNotFound` (category
-`ObjectNotFound`) -- with nothing read or written for the entry. `Rename` makes the handler act on the
+one Failed row and a non-terminating error whose target is the new name --
+`AdministrativeUnitRenameConflict`, `CatalogRenameConflict` and `AccessPackageRenameConflict`
+(category `ResourceExists`), `AdministrativeUnitRenameNotFound`, `CatalogRenameNotFound` and
+`AccessPackageRenameNotFound` (category `ObjectNotFound`) -- with nothing read or written for the
+entry. `Rename` makes the handler act on the
 object found under the previous name and send the new name in the same `Set-OER<Kind> -NewDisplayName`
 call as every other changed property, so a rename and a property change are one update. The groups
 handler keeps its own, older decision with the same shape. If wrong: three handlers deciding the same
@@ -6850,13 +6851,14 @@ reports. The cost is the same too: an entry written to create an object that als
 not-found answer is declared to the transport (`-ExpectedErrorCode`): a result carrying the type name
 `Omnicit.EntraRBAC.GraphExpectedError` means no object under that id, and any other failure throws, so
 the item fails with nothing written. The read is needed since `Resolve-OERCatalogId` returns an object
-id verbatim without a request, and the unit resolver would look the id up as a display name; a deleted
-object's id would otherwise be taken for a hit. An id that no longer names an object counts as not
-matching: never a conflict, and never a create -- with `displayName` not matching either, the entry
-fails with `RenameNotFound`. The unit probe is `v1.0/directory/administrativeUnits/` followed by the id
-and `?$select=id`, with the codes `Request_ResourceNotFound` and `ResourceNotFound` (the group probe's
-set, not yet measured for a unit). The catalog probe is `v1.0/identityGovernance/entitlementManagement/catalogs/`
-followed by the id, with no `$select` (the read `Get-OERCatalog -Id` makes), and the codes
+id verbatim without a request, so a deleted catalog's id would otherwise be taken for a hit, and the
+unit resolver looks an id up as a display name, so it would never find a unit by id. An id that no
+longer names an object counts as not matching: never a conflict, and never a create -- with
+`displayName` not matching either, the entry fails with `RenameNotFound`. The unit probe is
+`v1.0/directory/administrativeUnits/` followed by the id and `?$select=id`, with the codes
+`Request_ResourceNotFound` and `ResourceNotFound` (the group probe's set, not yet measured for a unit).
+The catalog probe is `v1.0/identityGovernance/entitlementManagement/catalogs/` followed by the id,
+with no `$select` (the read `Get-OERCatalog -Id` makes), and the codes
 `CatalogNotFound` and `NotFound`: Graph answers a missing catalog id with `CatalogNotFound` (measured
 live, 2026-10-02), and `NotFound` is the transport's status-derived label. If a code is wrong: a
 not-found answer under an unknown code throws and the item is Failed with nothing written, the safe
@@ -6884,23 +6886,21 @@ as `-RenameMap` to the pre-pass call and to the groups, administrativeUnits, cat
 handlers. The key is the section, a pipe and the entry's NEW displayName, in lower case, built in two
 places only: `Resolve-OERStructureRename` registers, `Get-OERStructureRenameTarget` reads. A `Rename`
 registers the id of the object found under the previous name; a `Conflict` or `NotFound` registers a
-refused entry with its error id; `Current` registers nothing. The registration is made when the decision
-is, so under `-WhatIf` too and before the rename is sent. Two readers use it. An access package reads
-the entry for its `catalog`: an id makes every call that names the catalog (the package list, the
-package create, the catalog resource read, the resource role add) pass that id; a refused entry gives
-the package one Failed row naming the catalog's refused rename, with nothing read or written. A group
-being CREATED reads the entry for its `administrativeUnit`: an id makes `New-OERGroup` receive the
-unit's id; a refused entry gives one Failed row before the create gate, also under `-WhatIf`. Why a map:
-without it a package in a catalog renamed by the same document fails in the `-WhatIf` plan, where the
-rename is not sent and the new name resolves to nothing, and in the first real run while Graph's name
-lookup lags (`CatalogNotFound`), and works in the next; a group created into a renamed unit fails the
-same way. The map is one engine variable and two reader calls. It is filled only by the sections
-`-Include` selects: the pre-pass runs only when both `Groups` and `AdministrativeUnits` are selected and
-present, and only for a unit a declared group names, and a catalog registers only when `Catalogs` is
-selected, so with those left out a reference to the new name is resolved by name, as before. A group
-that already exists is not touched either way, since `administrativeUnit` applies only on create. If wrong: the plan reports `Failed` rows
-for references that the real run satisfies, and the real run fails them once.
-
+refused entry with its error id as the reason; `Current` registers nothing, and removes an entry
+registered earlier for the key (R12, below). The registration is made when the decision is, so under
+`-WhatIf` too and before the rename is sent. Two readers use it. An access package reads the entry for
+its `catalog`: an id makes every call that names the catalog (the package list, the package create,
+the catalog resource read, the resource role add) pass that id; a refused entry gives the package one
+Failed row naming the catalog's refused rename and its reason, with nothing created, read or written.
+A group being CREATED reads the entry for its `administrativeUnit`: an id makes `New-OERGroup` receive
+the unit's id; a refused entry gives one Failed row before the create gate, also under `-WhatIf`. A
+group that already exists is not touched either way, since `administrativeUnit` applies only on
+create. Why a map: without it a package in a catalog renamed by the same document fails in the
+`-WhatIf` plan, where the rename is not sent and the new name resolves to nothing, and in the first
+real run while Graph's name lookup lags (`CatalogNotFound`), and works in the next; a group created
+into a renamed unit fails the same way. The map is one engine variable and two reader calls. If wrong:
+the plan reports `Failed` rows for references that the real run satisfies, and the real run fails
+them once.
 **An access review does not read the map (R3).** An access review's `accessPackage` is not translated
 through the map in this step, since the review handler belongs to step 4b. A review that names a package
 by the new name the package gets in the same run can fail in the plan and in the first run with
@@ -6914,9 +6914,41 @@ that declares `previousDisplayName` it resolves both names, registers the outcom
 returns with no record and no write: it never creates a unit for an entry that declares a rename, since
 a unit found only under its previous name is the one the document renames and one found under neither
 is a rename that fails. The administrativeUnits pass then reports the rename, the conflict or the
-not-found. If wrong: the same conflict would be reported twice, once by the pre-pass and once by the
-main pass, for one unit.
+not-found. The one thing the pre-pass can report is a lookup that throws, which the engine writes as a
+pre-pass handler error. If wrong: the same conflict would be reported twice, once by the pre-pass and
+once by the main pass, for one unit.
 
+**A rename the run cannot decide refuses its references (R12).** Before R12 a reference that the map
+held nothing for was looked up by name. That is wrong whenever the run could not decide the rename:
+Graph's lookup finds the new name only after the rename, so the lookup returns nothing, or another
+object that already carries the new name, and a group would be created into that unit or a package
+read from and created in that catalog. R12 registers such a rename in the map as a refused entry with
+no id, no error id and a reason, in two places. The unit and catalog handlers register the reason
+"its previous name could not be looked up" before they look the previous name up: the decision after
+the lookup replaces the mark (a `Current` removes it), and a lookup that throws leaves it in place,
+while the engine reports the throw as the item's handler error (a pre-pass handler error for the
+pre-pass). And `Invoke-OERStructure` registers, for every entry that declares both `displayName` and
+`previousDisplayName` in an administrativeUnits or catalogs section that `-Include` leaves out, the
+reason "the administrativeUnits section is not selected by -Include, so its rename is not reconciled
+in this run" (the section name is the document key), with no read, no row and no write. The new-name
+lookup of the unit or catalog itself is outside the rule: when it throws, a reference to the new name
+throws in its own lookup too.
+
+The readers print the entry's reason in their Failed row -- the error id of a refused rename, or one
+of those two texts -- so a group that would be created into the unit, and every package declared in
+the catalog, is refused instead of landing wherever a name lookup leads. A group that already exists
+is unaffected, and the error of a refused rename stays on the unit's or catalog's own row. The
+reference rows publish no error record of their own, and a rename left undecided by `-Include` has no
+row and no error record at all, so that refusal reaches the operator as a Failed row only:
+`-ErrorAction Stop` and `$?` do not see it. If wrong: a reference to a new name that another object
+already carries would be created into, or read from, that other object, with nothing to say so. The
+cost, accepted: while `-Include` leaves the section out and the entry still declares
+`previousDisplayName`, every reference to its new name is refused -- for a catalog every package
+declared in it, existing ones included, and for a unit every group that would be created into it --
+even when the rename was done in an earlier run, since the run cannot know. A run that selects Groups
+but not AdministrativeUnits, or AccessPackages but not Catalogs, therefore refuses what it resolved by
+name before R12. The remedy is to include the section, or to remove `previousDisplayName` once the new
+name resolves.
 **The validator (R10, R11).** `Test-OERStructureSchema` accepts `previousDisplayName` on the three kinds
 with the groups' rules: a value that is not a non-empty string is an Error; one equal to `displayName`
 ignoring case is a Warning, since both names find one object and a case-only rename is not possible
@@ -6925,8 +6957,8 @@ through the document (`Set-OERAdministrativeUnit`, `Set-OERCatalog` and `Set-OER
 within its catalog. It keeps step 3's Error for an assignment policy and an access review, naming the
 four kinds that can be renamed. A reference that still names a renamed object by its previous name is a
 Warning at the reference -- a group's `administrativeUnit`, a package's `catalog`, a review's
-`accessPackage` -- saying to name the object by its new name (the unit and package Warnings add: or its
-object id). It is a Warning, never an Error, so no document that validates today starts failing. R10:
+`accessPackage` -- saying to name the object by its new name (the group's and the review's Warnings
+add: or its object id). It is a Warning, never an Error, so no document that validates today starts failing. R10:
 the Warning skips a `previousDisplayName` that is an object id, since a reference by id is still valid
 after a rename, and one that equals the entry's own `displayName`. R11: for a package whose `catalog` is
 a declared catalog's `previousDisplayName`, the rename-reference Warning REPLACES the "Catalog is not
@@ -6936,10 +6968,11 @@ of as renamed, or sees two Warnings for one reference.
 
 **Cost, accepted.** A package in a catalog renamed by the same document is found through the
 catalog's id, which needs the catalog entry to run before the package: the engine's section order
-already does. A reference by name from a section that does not read the map (an access review), or
-from a run whose `-Include` leaves out the section that registers the rename, still waits for Graph's
-lookup. And a `displayName` changed WITHOUT `previousDisplayName` still creates a new
-object beside the old one, silently, as before.
+already does. A reference by name from a section that does not read the map (an access review) still
+waits for Graph's lookup. A package that declares `previousDisplayName` in a catalog the `-WhatIf` plan
+would create is not planned as created (step 3, Rule 2): nothing can be renamed in a catalog that does
+not exist yet, so it fails with `AccessPackageRenameNotFound`. And a `displayName` changed WITHOUT
+`previousDisplayName` still creates a new object beside the old one, silently, as before.
 
 ## role-assignment-key
 
@@ -8277,16 +8310,18 @@ where the engine cannot rename, and made a `-WhatIf` plan report a package in a 
 created. This anchor records the problem, the rules, and what each costs if it is wrong. Nothing here
 was measured live; the rules were derived from the code and proven with mocked tests. Sprint 11 step 4
 later made administrative units, catalogs and access packages renameable (`## rename-more-object-kinds`),
-so Rule 1 below now refuses the key on an assignment policy and an access review only; Rule 2 and Rule 3
-are unaffected.
+so Rule 1 below now refuses the key on an assignment policy and an access review only. Rule 3 is
+unaffected. Rule 2 holds except that an access package declaring `previousDisplayName` in a catalog the
+plan would create is not planned as created: nothing can be renamed in a catalog that does not exist
+yet, so it fails with `AccessPackageRenameNotFound`.
 
-**The problem (BL-128).** Until step 4 only the groups handler read `previousDisplayName`. The other sections --
-`administrativeUnits`, `catalogs`, `accessPackages` and an access package's `assignmentPolicies`, and
-`accessReviews` -- match an entry by its `displayName` (a package within its catalog, a policy within
-its package) and create what they do not find. A document that declared `previousDisplayName` there,
-copied from a group rename say, was accepted without a word: the key was ignored, nothing was found
-under the new name, and the engine created a second object beside the one the operator meant to
-rename. The old object stayed in place, unreported.
+**The problem (BL-128).** Until step 4 only the groups handler read `previousDisplayName`. The other
+sections -- `administrativeUnits`, `catalogs`, `accessPackages` and an access package's
+`assignmentPolicies`, and `accessReviews` -- match an entry by its `displayName` (a package within
+its catalog, a policy within its package) and create what they do not find. A document that declared
+`previousDisplayName` there, copied from a group rename say, was accepted without a word: the key was
+ignored, nothing was found under the new name, and the engine created a second object beside the one
+the operator meant to rename. The old object stayed in place, unreported.
 
 **Rule 1 (the refusal; `Test-OERStructureSchema`).** Step 3 made a `previousDisplayName` present and
 not null on an administrative unit, a catalog, an access package, an assignment policy of an access

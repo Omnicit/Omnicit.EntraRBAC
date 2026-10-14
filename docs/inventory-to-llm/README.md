@@ -349,9 +349,10 @@ When both names find the same object, or only `displayName` does, the entry is a
 with one read that the id still names one: an id that no longer exists counts as not matching, like
 an old name nobody carries any more. For an access package the id is matched only against the
 packages of the declared catalog, which are already read, so the id of a package in another catalog,
-or of a deleted one, counts as not matching. A name that matches several units or catalogs fails the
-entry with `AmbiguousName`; a name that several packages of the catalog carry fails it with a row
-naming every id. Declare `previousDisplayName` as the object id then.
+or of a deleted one, counts as not matching. A previous name that matches several units or catalogs
+fails the entry with `AmbiguousName`, as an ambiguous `displayName` does; one that several packages
+of the catalog carry fails it with a row naming every id. Declare `previousDisplayName` as the
+object id then.
 
 **Microsoft Graph's name lookup can follow a rename with a delay.** Keep `previousDisplayName` in the
 document until the new name resolves: a run after that finds the object under `displayName` and
@@ -360,17 +361,31 @@ entry with the `RenameNotFound` id and creates nothing. Once the new name resolv
 `previousDisplayName`: an object created later under the old name would make the entry fail.
 
 **References in the same run.** Name a renamed unit or catalog by its NEW name. When the same
-document renames it, `Invoke-OERStructure` reaches it by its object id: a group created into the
-renamed unit (`administrativeUnit`) is created into it, and an access package declared in the
-renamed catalog (`catalog`) is read and created in it, also in a `-WhatIf` plan, where the rename is
-not sent: Microsoft Graph's lookup cannot find the new name yet. That holds for the sections
-`-Include` selects: a unit needs `Groups` and `AdministrativeUnits` both, a catalog needs `Catalogs`,
-and with them left out the new name is resolved by name, as before. When the rename of the unit or the
-catalog was refused (a conflict, or neither name found), the group or the package is `Failed`, under
-`-WhatIf` too, and nothing is created, read or written for it; the unit's or the catalog's own row
-carries the error id. An access review's `accessPackage` does not
-follow a package's rename yet: named by the new name, it can fail with `AccessPackageNotFound` in the
-plan and in the run that renames the package, and works on a later run once the new name resolves.
+document renames it, `Invoke-OERStructure` finds the renamed unit or catalog by its object id: a
+group that is created into the renamed unit (`administrativeUnit`) is created into it, and an access
+package declared in the renamed catalog (`catalog`) is read, and created or planned, in it, also in a
+`-WhatIf` plan, where the rename is not sent. Microsoft Graph's lookup cannot find the new name yet.
+
+**A rename the run cannot settle refuses its references.** When the rename of the unit or the
+catalog is refused (a conflict, or neither name found), or the run cannot decide it (the previous
+name could not be looked up, or `-Include` leaves out the `AdministrativeUnits` or `Catalogs` section
+that holds the entry), a reference is not looked up by name, since that could land in another object
+that carries the new name. A group that would be created into the unit, and every package declared
+in the catalog, is `Failed`, under `-WhatIf` too, and nothing is created or written for it (a package
+is not read either); the unit's or the catalog's own row carries the error id when its rename was
+refused. A group that already exists is reconciled as usual, since `administrativeUnit` applies only
+when a group is created.
+
+While `-Include` leaves the section out and the entry still declares `previousDisplayName`, that
+refusal reaches every reference to the new name -- for a catalog every package declared in it,
+existing ones included -- even when the rename was done in an earlier run: include the section, or
+remove `previousDisplayName` once the new name resolves. A refusal because `-Include` leaves the
+section out publishes no error record, only the `Failed` row, so `-ErrorAction Stop` and `$?` do not
+see it: check the rows.
+
+An access review's `accessPackage` does not follow a package's rename yet:
+named by the new name, it can fail with `AccessPackageNotFound` in the plan and in the run that
+renames the package, and works on a later run once the new name resolves.
 
 `Test-OERStructure` reports an empty or non-string `previousDisplayName` as an error, and one equal
 to `displayName` (ignoring case) as a warning -- a case-only rename is not possible through the
