@@ -381,17 +381,22 @@ function Invoke-S114bApply {
     # One Invoke-OERStructure call -- a -WhatIf plan or a run, with or without -Prune -- counted from its
     # first request to its last. The document is kept under raw\s114b. Warnings are captured on the stream
     # (3>&1), where each is written once, and printed through the redactor.
-    param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][string]$Json, [switch]$Plan, [switch]$Prune)
+    # -NoCount runs without the counting proxies. A proxy is a global function: when the module's
+    # transport calls Invoke-MgGraphRequest with -StatusCodeVariable (its -ExpectedErrorCode path), the
+    # real cmdlet sets that variable in the PROXY's scope, so the transport cannot read the status and an
+    # answer with an empty error code is not matched (measured in 4.3: 404 with an empty code reads as
+    # GraphError under the proxy, as NotFound without it). A check that needs that path counts otherwise.
+    param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][string]$Json, [switch]$Plan, [switch]$Prune, [switch]$NoCount)
     [System.IO.File]::WriteAllText((Join-Path $Raw ('doc-{0}.json' -f ($Label -replace '[^0-9A-Za-z.]', '_'))), $Json, [System.Text.UTF8Encoding]::new($false))
     $Params = @{ Json = $Json; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'E' }
     if ($Plan) { $Params.WhatIf = $true } else { $Params.Confirm = $false }
     if ($Prune) { $Params.Prune = $true }
-    Start-S114bCount
+    if (-not $NoCount) { Start-S114bCount }
     $E = $null
     try {
         $Out = @(Invoke-OERStructure @Params 3>&1)
-        $Sent = Get-S114bSent
-    } finally { Stop-S114bCount }
+        $Sent = if ($NoCount) { "not counted (-NoCount); token requests: $global:S114bTokenCalls" } else { Get-S114bSent }
+    } finally { if (-not $NoCount) { Stop-S114bCount } }
     $Warnings = @($Out | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
     Write-S114bRows -Label $Label -Rows @($Out | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
     Write-OerLiveStep "$Label warnings: $($Warnings.Count)"
@@ -720,7 +725,8 @@ $Rec = Read-S114bIds
 $Ids = $Rec['Ids']
 $After = Get-S114bSnapshot -Ids $Ids
 Write-OerLiveStep "3.4 package name now '$($After.PackageName)'; policies unchanged: $((ConvertTo-Json @($After.PackagePolicies) -Compress) -ceq (ConvertTo-Json @($Rec['Before']['PackagePolicies']) -Compress)); review query unchanged: $($After.ReviewQuery -ceq $Rec['Before']['ReviewQuery']); review settings unchanged: $($After.ReviewSettings -ceq $Rec['Before']['ReviewSettings']); policy A stage(s) $($After.PolAStages.Count), question $($After.PolAQuestion); prefixed objects unchanged: $((ConvertTo-Json @($After.Prefixed) -Compress) -ceq (ConvertTo-Json @($Rec['Before']['Prefixed']) -Compress))"
-Wait-S114bNames -Wanted @(@('package', $ApNew, $Ids.Package, $null))
+# One pair: the leading comma keeps it a pair inside the list instead of four loose values.
+Wait-S114bNames -Wanted @(, @('package', $ApNew, $Ids.Package, ''))
 Disconnect-OerLive
 ```
 
@@ -758,21 +764,28 @@ Result:
 Connect-OerLive -Arm
 Start-S114bNoPrompt
 $Ids = (Read-S114bIds)['Ids']
+# Document A: the policy conflict, and a review of the package that names the conflicting policy's new name
+# (its policy rename is refused, so the review is refused through the run's rename map, R12).
 $Json = New-S114bDocument -Section @{
     accessPackages = @(New-S114bPackageEntry -Name $ApNew -Policies @([ordered]@{ displayName = $PolB; previousDisplayName = $PolANew }))
     accessReviews  = @(New-S114bReviewEntry -Name $RevNew -Previous $GroupRev -Package $ApNew)
 }
-$null = Invoke-S114bApply -Label '4.1 plan' -Json $Json -Plan
-$null = Invoke-S114bApply -Label '4.1 run' -Json $Json
+$null = Invoke-S114bApply -Label '4.1 A plan' -Json $Json -Plan
+$null = Invoke-S114bApply -Label '4.1 A run' -Json $Json
+# Document B: the review conflict alone (its new name and its previous name are two different reviews).
+$Json = New-S114bDocument -Section @{ accessReviews = @(New-S114bReviewEntry -Name $RevNew -Previous $GroupRev -Package $ApNew) }
+$null = Invoke-S114bApply -Label '4.1 B plan' -Json $Json -Plan
+$null = Invoke-S114bApply -Label '4.1 B run' -Json $Json
 $S = Get-S114bSnapshot -Ids $Ids
 Write-OerLiveStep "4.1 names after: $($S.PolAName), $($S.PolBName), $($S.ReviewName), $($S.GroupReviewName); package policies $($S.PackagePolicies.Count); prefixed reviews $($S.Reviews.Count)"
 Disconnect-OerLive
 ```
 
-**Expect:** in the plan and in the run: a Failed row with error `AssignmentPolicyRenameConflict` for
-the policy entry and a Failed row with error `AccessReviewRenameConflict` for the review entry; the other
-rows (the package Unchanged, an Extra row for the undeclared `oer-s114b-pol-a-new`, which the engine
-never removes) write nothing; `writes: 0` each time; the names after are `oer-s114b-pol-a-new`,
+**Expect:** document A, in the plan and in the run: a Failed row with error
+`AssignmentPolicyRenameConflict` for the policy entry, and the review naming that policy refused with a
+Failed row that names the refused rename (no error record of its own); the package Unchanged; no Extra row
+(the engine never removes a policy either way). Document B, in the plan and in the run: one Failed row with
+error `AccessReviewRenameConflict`. `writes: 0` each time; the names after are `oer-s114b-pol-a-new`,
 `oer-s114b-pol-b`, `oer-s114b-ar-new`, `oer-s114b-gr`, two package policies and two prefixed reviews.
 **Failure looks like:** any write, or a changed name.
 
@@ -811,18 +824,29 @@ Result:
 ```powershell
 Connect-OerLive -Arm
 Start-S114bNoPrompt
+$Ids = (Read-S114bIds)['Ids']
 $NoSuch = [guid]::NewGuid().ToString()
 $Probe = Invoke-OerLiveGraph -Uri "$Ar/$NoSuch"
-Write-OerLiveStep "4.3 Microsoft Graph's answer to a review id that names nothing: $($Probe.Status) $($Probe.Code)"
+Write-OerLiveStep "4.3 Microsoft Graph's answer to a review id that names nothing: status $($Probe.Status); body parsed by OerLive: $($null -ne $Probe.Body)"
+# The module's own transport, as the handler calls it, without the counting proxies.
+$Marker = & (Get-Module -Name Omnicit.EntraRBAC) { param($U) Invoke-OERGraphRequest -Uri $U -ExpectedErrorCode 'NotFound', 'ResourceNotFound', 'Request_ResourceNotFound' } "$Ar/$NoSuch"
+Write-OerLiveStep "4.3 the transport's answer: not-found marker $(@($Marker.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError'); declared code matched '$($Marker.ExpectedErrorCode)'; status $($Marker.StatusCode); message '$($Marker.Message)'"
+$Before = Get-S114bSnapshot -Ids $Ids
 $Json = New-S114bDocument -Section @{ accessReviews = @(New-S114bReviewEntry -Name 'oer-s114b-ar-zz' -Previous $NoSuch -Package $ApNew) }
-$null = Invoke-S114bApply -Label '4.3 run' -Json $Json
+$null = Invoke-S114bApply -Label '4.3 run' -Json $Json -NoCount
+$After = Get-S114bSnapshot -Ids $Ids
+Write-OerLiveStep "4.3 nothing written: prefixed reviews $($Before.Reviews.Count) before, $($After.Reviews.Count) after, the same ids: $((ConvertTo-S114bCanonical -Value $Before.Reviews) -ceq (ConvertTo-S114bCanonical -Value $After.Reviews)); review names unchanged: $($Before.ReviewName -ceq $After.ReviewName -and $Before.GroupReviewName -ceq $After.GroupReviewName); review settings unchanged: $($Before.ReviewSettings -ceq $After.ReviewSettings)"
 Disconnect-OerLive
 ```
 
-**Expect:** the probe answers 404 with a code among `NotFound`, `ResourceNotFound` and
-`Request_ResourceNotFound`; the run: one Failed row with error `AccessReviewRenameNotFound`, `writes: 0`.
+**Expect:** the probe answers 404; the transport turns it into the not-found marker with a declared code
+(`NotFound`, `ResourceNotFound` or `Request_ResourceNotFound`); the run, without the counting proxies: one
+Failed row with error `AccessReviewRenameNotFound`; nothing written -- the same two prefixed reviews, their
+names and the package review's settings unchanged.
 **Failure looks like:** a Failed row carrying Microsoft Graph's own error instead (the code is not
 declared: the safe direction, nothing written -- a rule for the handler's declared codes, G11 round).
+Run this check WITHOUT the counting proxies (see `Invoke-S114bApply -NoCount` in H.1): under them an answer
+with an empty error code reads as `GraphError` (measured in the first run of this check).
 
 Result:
 
