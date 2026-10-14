@@ -37,22 +37,33 @@ function Sync-OERStructureAccessReview {
       entry WITHOUT previousDisplayName.
     - Only previousDisplayName finds a definition: that definition is the one the entry updates. It
       passes the target check below like any review found by name, so a review of another access
-      package or assignment policy is refused and never renamed. The new name is sent as -DisplayName
-      in the same Set-OERAccessReviewDefinition call as every other changed field (a rename with no
-      other change still makes that call) and reported as one Updated row "renamed access review
-      '<previous>' to '<new>'", followed by "; updated (<changes>)" when other fields changed; under
-      -WhatIf one Skipped row "would rename access review '<previous>' to '<new>'", followed by
-      "; would update (<changes>)". The definition read back after the write must carry the new name
-      exactly, letter case included, or the row is Failed ("rename not confirmed") and a warning is
-      written.
+      package or assignment policy is refused and never renamed; that Failed row adds where the review
+      was found ("(found under its previousDisplayName '<previous>', id <id>)"). The new name is sent
+      as -DisplayName in the same Set-OERAccessReviewDefinition call as every other changed field (a
+      rename with no other change still makes that call) and reported as one Updated row "renamed
+      access review '<previous>' to '<new>'", followed by "; updated (<changes>)" when other fields
+      changed; under -WhatIf one Skipped row "would rename access review '<previous>' to '<new>'",
+      followed by "; would update (<changes>)". When previousDisplayName is an object id, these texts
+      and the ShouldProcess action name the review by its current name and id instead
+      ("'<current name>' (<id>)"). The definition read back after the write must carry the new name
+      exactly, letter case included. When it does not, the row is Failed and a warning is written:
+      "access review rename not confirmed: ..." when every other field took effect, or the update's
+      own "access review update not confirmed: ..." row, saying "(rename not confirmed)" too, when
+      other fields did not take effect either.
     - Only displayName finds a definition, or both find the same one: the entry is applied normally.
       The rename is already done, so a second run reports Unchanged and sends nothing.
+    A rename that changes the letter case only is not supported through the document, and the validator
+    warns about such an entry: the handler compares display names ignoring case, so both names normally
+    find the one review and the entry is applied with no rename (Get-OERAccessReviewDefinition notes
+    that the server's displayName eq may compare letter case, which is not measured for this endpoint).
+    Set-OERAccessReviewDefinition -DisplayName makes such a change.
     A previousDisplayName that several definitions carry is refused like such a displayName: one Failed
     row and an AmbiguousName error (target the previous name) naming every id, and nothing is written;
     declare previousDisplayName as the object id of the review to rename then. An object id is read
     once, by id (v1.0/identityGovernance/accessReviews/definitions/<id>), and never looked up by name:
-    Graph's not-found answers (NotFound, ResourceNotFound, Request_ResourceNotFound) count as not
-    matching, and any other failure of that read is reported Failed as itself, with nothing written.
+    Graph's not-found answers (NotFound, ResourceNotFound, Request_ResourceNotFound), and an answer
+    with no object at all, count as not matching, and any other failure of that read is reported Failed
+    as itself, with nothing written.
     Keep previousDisplayName in the document until the new name resolves, then remove it: a review
     created later under the previous name would make the entry fail with AccessReviewRenameConflict.
     A rename is decided without the run's rename map: nothing in a document refers to a review by
@@ -380,6 +391,10 @@ function Sync-OERStructureAccessReview {
         # check below runs on it exactly as on a review found under the new name, so a review of
         # another access package or policy is refused and never renamed.
         $RenameFrom = $null
+        # How the rename texts name the review renamed: the previous name as declared, or -- when
+        # previousDisplayName is an object id -- the review's current name with its id, so the row says
+        # which review it was and not only a GUID.
+        $RenameLabel = $null
         if (Test-OERDeclaredProperty -Node $Item -Name 'previousDisplayName') {
             $PrevName = [string]$Item.previousDisplayName
             $PrevDefinition = $null
@@ -389,12 +404,17 @@ function Sync-OERStructureAccessReview {
                 # Any other failure is no evidence either way: it is reported as itself, and nothing is
                 # written for the entry. A hit is shaped by the converter Get-OERAccessReviewDefinition
                 # uses, so it carries Scope, AccessPackageId and AssignmentPolicyId for the target check
-                # and its own id (as Graph spells it) for the decision and the write. The conversion is
-                # inside the try, so an answer that cannot be converted fails the entry the same way.
+                # and its own id (as Graph spells it) for the decision and the write. An answer with no
+                # object at all names no review either, as Set-OERAccessReviewDefinition reads the same
+                # GET, so it is not converted: the decision is then NotFound (or Current, when the new
+                # name found a review), never a conversion failure. The conversion is inside the try,
+                # so an answer that cannot be converted still fails the entry with nothing written.
                 try {
                     $PrevProbe = Invoke-OERGraphRequest -Uri "v1.0/identityGovernance/accessReviews/definitions/$PrevName" `
                         -ExpectedErrorCode 'NotFound', 'ResourceNotFound', 'Request_ResourceNotFound'
-                    if (-not (@($PrevProbe.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError')) {
+                    $PrevNotFound = ($null -eq $PrevProbe) -or
+                        (@($PrevProbe.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError')
+                    if (-not $PrevNotFound) {
                         $PrevDefinition = ConvertTo-OERAccessReviewDefinition -InputObject $PrevProbe
                     }
                 }
@@ -428,6 +448,11 @@ function Sync-OERStructureAccessReview {
             if ($Rename.Outcome -eq 'Rename') {
                 $Existing = $PrevDefinition
                 $RenameFrom = $Rename.RenameFrom
+                $RenameLabel = if (Test-OERGuid -Value $RenameFrom) {
+                    "'$([string]$Existing.DisplayName)' ($([string]$Existing.Id))"
+                } else {
+                    "'$RenameFrom'"
+                }
             }
         }
 
@@ -453,6 +478,12 @@ function Sync-OERStructureAccessReview {
                 } else {
                     "could not resolve the access package or assignment policy of access review '$Name': " +
                     "$($TargetMismatch.Exception.Message); nothing was written"
+                }
+                # The helper names the review by the entry's displayName, which a review found under its
+                # previous name does not carry yet, so the row says where it was found (the record is
+                # the helper's own, unchanged).
+                if ($RenameFrom) {
+                    $MismatchDetail += " (found under its previousDisplayName '$RenameFrom', id $([string]$Existing.Id))"
                 }
                 ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
                     -Detail $MismatchDetail -ErrorRecord $TargetMismatch
@@ -576,13 +607,15 @@ function Sync-OERStructureAccessReview {
             }
 
             # A rename is reported on its own terms; the other changed fields keep the wording every
-            # update has always had. Without a rename every text below is what it always was.
+            # update has always had. Without a rename every text below is what it always was. The review
+            # renamed is named by $RenameLabel: the previous name, or its current name and id when
+            # previousDisplayName is an object id.
             $ChangeList = $Change.Changes -join ', '
             if ($RenameFrom) {
-                $UpdateAction = "Rename access review definition '$RenameFrom' to '$Name'"
-                $PlannedDetail = "would rename access review '$RenameFrom' to '$Name'"
-                $UpdatedDetail = "renamed access review '$RenameFrom' to '$Name'"
-                $UnconfirmedWrite = "access review rename of '$RenameFrom' to '$Name'"
+                $UpdateAction = "Rename access review definition $RenameLabel to '$Name'"
+                $PlannedDetail = "would rename access review $RenameLabel to '$Name'"
+                $UpdatedDetail = "renamed access review $RenameLabel to '$Name'"
+                $UnconfirmedWrite = "access review rename of $RenameLabel to '$Name'"
                 if ($Change.Changed) {
                     $UpdateAction += ' and update it'
                     $PlannedDetail += "; would update ($ChangeList)"
@@ -649,27 +682,35 @@ function Sync-OERStructureAccessReview {
             elseif ($Existing.Status) { [string]$Existing.Status }
             else { 'unknown' }
 
+            # The diff below does not compare displayName (it is the match key, not a declared field), so
+            # a rename is verified on its own: the definition read back must carry the new name EXACTLY,
+            # letter case included. Otherwise the next run would find the review under its previous name
+            # again and report the same rename for ever. When the other fields did not take either, the
+            # one Failed row and its warning say both; without a rename both texts are what they were.
+            $RenameUnconfirmed = $RenameFrom -and ([string]$AfterWrite.DisplayName -cne $Name)
+            $RenameNote = if ($RenameUnconfirmed) {
+                " and is named '$($AfterWrite.DisplayName)', not '$Name' (rename not confirmed)"
+            } else {
+                ''
+            }
+
             $VerifyParams = @{ Declared = $DeclaredItem; Current = $AfterWrite }
             if ($DeclaredReviewer) { $VerifyParams.DeclaredReviewer = $DeclaredReviewer }
             $Verify = Resolve-OERAccessReviewChange @VerifyParams
             if ($Verify.Changed) {
                 Write-Warning ("Sync-OERStructureAccessReview: access review '$Name' -- Microsoft Graph accepted the " +
-                    "update but the definition read back still differs ($($Verify.Changes -join ', ')). The definition " +
+                    "update but the definition read back still differs ($($Verify.Changes -join ', '))$RenameNote. The definition " +
                     "status is '$LiveStatus'. Graph documents that a definition update applies to FUTURE instances " +
                     'only, so a review with no future instance left may accept a write without storing it.')
                 ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
                     -Detail ('access review update not confirmed: Microsoft Graph accepted the write but the definition ' +
-                        "read back still differs ($($Verify.Changes -join ', ')); definition status is '$LiveStatus'")
+                        "read back still differs ($($Verify.Changes -join ', '))$RenameNote; definition status is '$LiveStatus'")
                 return
             }
 
-            # The diff above does not compare displayName (it is the match key, not a declared field), so
-            # a rename is verified on its own: the definition read back must carry the new name EXACTLY,
-            # letter case included. Otherwise the next run would find the review under its previous name
-            # again and report the same rename for ever.
-            if ($RenameFrom -and ([string]$AfterWrite.DisplayName -cne $Name)) {
+            if ($RenameUnconfirmed) {
                 Write-Warning ("Sync-OERStructureAccessReview: access review '$Name' -- Microsoft Graph accepted the " +
-                    "rename from '$RenameFrom' but the definition read back is named '$($AfterWrite.DisplayName)'. The " +
+                    "rename from $RenameLabel but the definition read back is named '$($AfterWrite.DisplayName)'. The " +
                     "definition status is '$LiveStatus'. Graph documents that a definition update applies to FUTURE " +
                     'instances only, so a review with no future instance left may accept a write without storing it.')
                 ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
