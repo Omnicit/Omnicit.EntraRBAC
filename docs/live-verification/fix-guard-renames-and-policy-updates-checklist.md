@@ -2143,10 +2143,10 @@ not know resource types and the request would name that one scope; plain: `valid
 doubled `/` was refused), or a white space `Error` at `roleAssignments[2].scope` (the rule before
 round 1).
 
-Result: 2026-10-14 01:42 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-14 02:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
-Verdict: PASS. The spelled document is invalid with four Errors: a '..' segment at roleAssignments[0], a '%' escape at roleAssignments[1], white space at roleAssignments[2] (with the way out: such a resource cannot be declared; remove the entry) and a '.' segment at roleManagementPolicies[0]. The same resource group written plainly is valid with no finding.
+Verdict: PASS. Round 1's build (A13 narrowed): the spelled document is invalid with three Errors, a '..' segment at roleAssignments[0], a '%' at roleAssignments[1] with the corrected message and the way out, and a '.' segment at roleManagementPolicies[0]. roleAssignments[2], whose resource group name holds a space between other characters, has no finding: in step 3 it was the fourth Error (white space). The same resource group written plainly is valid with no finding.
 
 === Run ===
 [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
@@ -2154,7 +2154,7 @@ Verdict: PASS. The spelled document is invalid with four Errors: a '..' segment 
 [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
 [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
 === CHECK 6.1 ===
-[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3-r1\output\module\Omnicit.EntraRBAC\1.2.1.
 [oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
 [oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
 [oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
@@ -2164,13 +2164,12 @@ Verdict: PASS. The spelled document is invalid with four Errors: a '..' segment 
 [oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
 [oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
 [oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
-[oer-s113] 6.1 spelled valid: False; errors: 4; warnings: 0
+[oer-s113] 6.1 spelled valid: False; errors: 3; warnings: 0
 [oer-s113] 6.1 spelled finding: Error | roleAssignments[0].scope | 'scope' at roleAssignments[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-x/../oer-s113-rg'.
-[oer-s113] 6.1 spelled finding: Error | roleAssignments[1].scope | 'scope' at roleAssignments[1] must be written without a '%' escape: the request would decode it and name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/%2e'.
-[oer-s113] 6.1 spelled finding: Error | roleAssignments[2].scope | 'scope' at roleAssignments[2] must be written without white space. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113 rg'. An Azure resource whose name holds white space cannot be declared in a document; remove the entry.
+[oer-s113] 6.1 spelled finding: Error | roleAssignments[1].scope | 'scope' at roleAssignments[1] must be written without a '%': an escape can let two spellings reach one resource, and the names of most Azure resource types hold no '%'. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/%2e'. A resource whose name holds one cannot be declared in a document; remove the entry.
 [oer-s113] 6.1 spelled finding: Error | roleManagementPolicies[0].scope | 'scope' at roleManagementPolicies[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/./resourceGroups/oer-s113-rg'.
 [oer-s113] 6.1 plain valid: True; errors: 0; warnings: 0
-RUNNER: check-6.1 exit code 0; started 2026-10-14T01:42:31Z; took 4 s.
+RUNNER: check-6.1 exit code 0; started 2026-10-14T02:44:08Z; took 5 s.
 LEAK CHECK: psd1 values surviving redaction: 0
 ```
 
@@ -2205,10 +2204,10 @@ in round 1 (the teardown deleted it), or `role assignments exactly at oer-s113-r
 it exists.
 **Failure looks like:** any request, or a role assignment at the resource group.
 
-Result: 2026-10-14 01:42 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+Result: 2026-10-14 02:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
 ```text
-Verdict: PASS. With -Prune, the plan and the run each wrote one StructureValidationFailed error naming the four findings and no row, with 0 token, 0 Microsoft Graph and 0 Azure Resource Manager requests; afterwards no role assignment exists exactly at oer-s113-rg.
+Verdict: PASS. With -Prune, the plan and the run each wrote one StructureValidationFailed error naming the three findings of 6.1 and no row, with 0 token, 0 Microsoft Graph and 0 Azure Resource Manager requests. Afterwards the resource group oer-s113-rg does not exist (ResourceGroupNotFound; the step's teardown deleted it before round 1), so no role assignment exists at it.
 
 === Run ===
 [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
@@ -2216,7 +2215,7 @@ Verdict: PASS. With -Prune, the plan and the run each wrote one StructureValidat
 [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
 [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
 === CHECK 6.2 ===
-[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3-r1\output\module\Omnicit.EntraRBAC\1.2.1.
 [oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
 [oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
 [oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
@@ -2228,22 +2227,22 @@ Verdict: PASS. With -Prune, the plan and the run each wrote one StructureValidat
 [oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
 [oer-s113] 6.2 plan rows: 0
 [oer-s113] 6.2 plan warnings: 0
-[oer-s113] 6.2 plan error: StructureValidationFailed,Invoke-OERStructure: Structure document failed validation: roleAssignments[0].scope: 'scope' at roleAssignments[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-x/../oer-s113-rg'.; roleAssignments[1].scope: 'scope' at roleAssignments[1] must be written without a '%' escape: the request would decode it and name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/%2e'.; roleAssignments[2].scope: 'scope' at roleAssignments[2] must be written without white space. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113 rg'. An Azure resource whose name holds white space cannot be declared in a document; remove the entry.; roleManagementPolicies[0].scope: 'scope' at roleManagementPolicies[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/./resourceGroups/oer-s113-rg'.
+[oer-s113] 6.2 plan error: StructureValidationFailed,Invoke-OERStructure: Structure document failed validation: roleAssignments[0].scope: 'scope' at roleAssignments[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-x/../oer-s113-rg'.; roleAssignments[1].scope: 'scope' at roleAssignments[1] must be written without a '%': an escape can let two spellings reach one resource, and the names of most Azure resource types hold no '%'. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/%2e'. A resource whose name holds one cannot be declared in a document; remove the entry.; roleManagementPolicies[0].scope: 'scope' at roleManagementPolicies[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/./resourceGroups/oer-s113-rg'.
 [oer-s113] 6.2 plan errors of Invoke-OERStructure: 1; other items in -ErrorVariable (counted, not printed): 0
 [oer-s113] 6.2 plan sent: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0
 [oer-s113] 6.2 run rows: 0
 [oer-s113] 6.2 run warnings: 0
-[oer-s113] 6.2 run error: StructureValidationFailed,Invoke-OERStructure: Structure document failed validation: roleAssignments[0].scope: 'scope' at roleAssignments[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-x/../oer-s113-rg'.; roleAssignments[1].scope: 'scope' at roleAssignments[1] must be written without a '%' escape: the request would decode it and name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/%2e'.; roleAssignments[2].scope: 'scope' at roleAssignments[2] must be written without white space. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113 rg'. An Azure resource whose name holds white space cannot be declared in a document; remove the entry.; roleManagementPolicies[0].scope: 'scope' at roleManagementPolicies[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/./resourceGroups/oer-s113-rg'.
+[oer-s113] 6.2 run error: StructureValidationFailed,Invoke-OERStructure: Structure document failed validation: roleAssignments[0].scope: 'scope' at roleAssignments[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-x/../oer-s113-rg'.; roleAssignments[1].scope: 'scope' at roleAssignments[1] must be written without a '%': an escape can let two spellings reach one resource, and the names of most Azure resource types hold no '%'. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/%2e'. A resource whose name holds one cannot be declared in a document; remove the entry.; roleManagementPolicies[0].scope: 'scope' at roleManagementPolicies[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/./resourceGroups/oer-s113-rg'.
 [oer-s113] 6.2 run errors of Invoke-OERStructure: 1; other items in -ErrorVariable (counted, not printed): 0
 [oer-s113] 6.2 run sent: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0
-[oer-s113] 6.2 role assignments exactly at oer-s113-rg afterwards: 0
-RUNNER: check-6.2 exit code 0; started 2026-10-14T01:42:36Z; took 5 s.
+[oer-s113] 6.2 resource group oer-s113-rg exists afterwards: False (ResourceGroupNotFound), so no role assignment exists at it
+RUNNER: check-6.2 exit code 0; started 2026-10-14T02:44:29Z; took 6 s.
 LEAK CHECK: psd1 values surviving redaction: 0
 ```
 
 ### 6.3. A space inside a resource name is accepted; a trailing space, a tab, a backslash, '?' and '#' are refused
 
-- [ ] **6.3** Since round 1, a scope with spaces between other characters of a resource name is valid in `roleAssignments` and in `roleManagementPolicies`, and a scope with a trailing space, a tab, a `\`, a `?` or a `#` is one `Error` each. No resource named here exists or needs to.
+- [x] **6.3** Since round 1, a scope with spaces between other characters of a resource name is valid in `roleAssignments` and in `roleManagementPolicies`, and a scope with a trailing space, a tab, a `\`, a `?` or a `#` is one `Error` each. No resource named here exists or needs to.
 
 ```powershell
 Connect-OerLive -Arm
@@ -2278,11 +2277,41 @@ ends with `A resource whose name holds ... cannot be declared in a document; rem
 **Failure looks like:** an `Error` in the spaced document (the rule before round 1), or a refused
 scope with no finding (`\`, `?` and `#` were accepted before round 1).
 
-Result:
+Result: 2026-10-14 02:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. A roleAssignments scope at a SQL database named with spaces, one at an Application Insights component named with two spaces in a row, and a roleManagementPolicies scope at the same database are valid with no finding (no such resource exists; the validator reads no tenant). The refused document is invalid with five Errors, one per entry: a trailing space (no code point named), a tab (It contains U+0009), a backslash, a '?' and a '#', each message ending with the way out.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 6.3 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] 6.3 spaced valid: True; errors: 0; warnings: 0
+[oer-s113] 6.3 refused valid: False; errors: 5; warnings: 0
+[oer-s113] 6.3 refused finding: Error | roleAssignments[0].scope | 'scope' at roleAssignments[0] must be written without white space at the start or end of the scope or of a segment, white space other than a space (U+0020) or a control character; a space between other characters of a segment is accepted. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/providers/Microsoft.Sql/servers/oer-s113-sql/databases/oer-s113-db '. A resource whose name holds one of these cannot be declared in a document; remove the entry.
+[oer-s113] 6.3 refused finding: Error | roleAssignments[1].scope | 'scope' at roleAssignments[1] must be written without white space at the start or end of the scope or of a segment, white space other than a space (U+0020) or a control character; a space between other characters of a segment is accepted. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/providers/Microsoft.Sql/servers/oer-s113-sql/databases/oer-s113	db'. It contains U+0009. A resource whose name holds one of these cannot be declared in a document; remove the entry.
+[oer-s113] 6.3 refused finding: Error | roleAssignments[2].scope | 'scope' at roleAssignments[2] must be written without a '\': the request reads it as '/', so the scope would be a second spelling of the one written with '/'. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups\oer-s113-rg'. A resource whose name holds one cannot be declared in a document; remove the entry.
+[oer-s113] 6.3 refused finding: Error | roleAssignments[3].scope | 'scope' at roleAssignments[3] must be written without a '?' or '#': either ends the path of the request, which would then name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/providers/Microsoft.Sql/servers/oer-s113-sql/databases/oer-s113-db?x'. A resource whose name holds one cannot be declared in a document; remove the entry.
+[oer-s113] 6.3 refused finding: Error | roleAssignments[4].scope | 'scope' at roleAssignments[4] must be written without a '?' or '#': either ends the path of the request, which would then name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/providers/Microsoft.Sql/servers/oer-s113-sql/databases/oer-s113-db#1'. A resource whose name holds one cannot be declared in a document; remove the entry.
+RUNNER: check-6.3 exit code 0; started 2026-10-14T02:44:44Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 6.4. Invoke-OERStructure -WhatIf for the refused document sends nothing
 
-- [ ] **6.4** `Invoke-OERStructure -WhatIf -Prune` refuses the document of 6.3 before it signs in and sends no request.
+- [x] **6.4** `Invoke-OERStructure -WhatIf -Prune` refuses the document of 6.3 before it signs in and sends no request.
 
 ```powershell
 Connect-OerLive -Arm
@@ -2297,7 +2326,35 @@ the five findings of 6.3, `token requests: 0; Microsoft Graph requests: 0, write
 Manager requests: 0, writes: 0`.
 **Failure looks like:** any request, or a plan row.
 
-Result:
+Result: 2026-10-14 02:45 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Invoke-OERStructure -WhatIf -Prune refused the document of 6.3 with one StructureValidationFailed error naming its five findings, no plan row and no warning, with 0 token, 0 Microsoft Graph and 0 Azure Resource Manager requests.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 6.4 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3-r1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] 6.4 plan rows: 0
+[oer-s113] 6.4 plan warnings: 0
+[oer-s113] 6.4 plan error: StructureValidationFailed,Invoke-OERStructure: Structure document failed validation: roleAssignments[0].scope: 'scope' at roleAssignments[0] must be written without white space at the start or end of the scope or of a segment, white space other than a space (U+0020) or a control character; a space between other characters of a segment is accepted. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/providers/Microsoft.Sql/servers/oer-s113-sql/databases/oer-s113-db '. A resource whose name holds one of these cannot be declared in a document; remove the entry.; roleAssignments[1].scope: 'scope' at roleAssignments[1] must be written without white space at the start or end of the scope or of a segment, white space other than a space (U+0020) or a control character; a space between other characters of a segment is accepted. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/providers/Microsoft.Sql/servers/oer-s113-sql/databases/oer-s113	db'. It contains U+0009. A resource whose name holds one of these cannot be declared in a document; remove the entry.; roleAssignments[2].scope: 'scope' at roleAssignments[2] must be written without a '\': the request reads it as '/', so the scope would be a second spelling of the one written with '/'. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups\oer-s113-rg'. A resource whose name holds one cannot be declared in a document; remove the entry.; roleAssignments[3].scope: 'scope' at roleAssignments[3] must be written without a '?' or '#': either ends the path of the request, which would then name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/providers/Microsoft.Sql/servers/oer-s113-sql/databases/oer-s113-db?x'. A resource whose name holds one cannot be declared in a document; remove the entry.; roleAssignments[4].scope: 'scope' at roleAssignments[4] must be written without a '?' or '#': either ends the path of the request, which would then name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/providers/Microsoft.Sql/servers/oer-s113-sql/databases/oer-s113-db#1'. A resource whose name holds one cannot be declared in a document; remove the entry.
+[oer-s113] 6.4 plan errors of Invoke-OERStructure: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 6.4 plan sent: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0
+RUNNER: check-6.4 exit code 0; started 2026-10-14T02:44:59Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 7. New-OERGroup refuses an alias it cannot derive
 
