@@ -3784,3 +3784,173 @@ Describe 'Invoke-OERStructure applies what an export writes by id: a package''s 
         @($script:IdTenant.Reviews).Count | Should -Be 1
     }
 }
+
+Describe 'Invoke-OERStructure applies a group principal an export writes by its object id (BL-131, Task 3c)' {
+    # Get-OERInventory writes a group named as a principal in roleAssignments and directoryRoleAssignments
+    # by its object id, with principalType Group, when another group in the tenant carries its name. These
+    # prove such an entry applies: created for that object id, Unchanged on a second run, and the prune pass
+    # keyed on the object id, so the second -Prune run removes nothing. The real engine, the real handlers
+    # and the real principal resolver run (Resolve-OERStructurePrincipal returns a GUID verbatim); the
+    # Microsoft Graph transport refuses every request, so the group is never looked up by name. For
+    # roleAssignments the real ARM cmdlets run against a fake ARM transport that keeps what the first run
+    # writes; for directoryRoleAssignments the directory role readers and writers are faked the same way.
+    # No id below is version-4 shaped.
+    BeforeAll {
+        $script:GpEngGroup = 'eeee4444-0000-0000-0000-000000000001'
+        $script:GpEngOther = 'dddd4444-0000-0000-0000-000000000009'
+        $script:GpEngSignedIn = 'dddd4444-0000-0000-0000-0000000000ff'
+        $script:GpEngSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:GpEngReader = "$($script:GpEngSub)/providers/Microsoft.Authorization/roleDefinitions/bbbb4444-0000-0000-0000-000000000001"
+        $script:GpEngOtherRa = "$($script:GpEngSub)/providers/Microsoft.Authorization/roleAssignments/cccc4444-0000-0000-0000-000000000009"
+        $script:GpEngDirRole = '44444444-0000-0000-0000-000000000001'
+        # The entries as the export writes them.
+        $script:GpEngRaDoc = ('{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", ' +
+            '"role": "Reader", "principal": "eeee4444-0000-0000-0000-000000000001", "principalType": "Group" } ] }')
+        $script:GpEngDirDoc = ('{ "version": "1.0", "directoryRoleAssignments": [ { "role": "Reports Reader", ' +
+            '"principal": "eeee4444-0000-0000-0000-000000000001", "principalType": "Group", "assignmentType": "Eligible" } ] }')
+        function script:ConvertTo-GpEngRowLine {
+            param([object[]]$Row)
+            @($Row | ForEach-Object { '{0}|{1}|{2}' -f $_.Section, $_.Item, $_.Action })
+        }
+        # One eligible directory role schedule, the shape the eligibility reader returns.
+        function script:New-GpEngDirRow {
+            param([string]$PrincipalId, [string]$PrincipalType, [string]$ScheduleId)
+            [PSCustomObject]@{
+                ScheduleId = $ScheduleId; RoleDefinitionId = $script:GpEngDirRole; RoleName = 'Reports Reader'
+                PrincipalId = $PrincipalId; PrincipalDisplayName = 'fixture'; PrincipalType = $PrincipalType
+                DirectoryScopeId = '/'; MemberType = 'Direct'; Status = 'Provisioned'
+                StartDateTime = '2026-01-01T00:00:00Z'; EndDateTime = $null; ExpirationType = 'noExpiration'; DurationDays = $null
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected Graph request: $Uri" }
+    }
+
+    It 'creates a roleAssignments entry for the group''s object id, prunes on the object id, and reaches Unchanged with nothing removed on a second run' {
+        # The validator accepts the entry as the export writes it.
+        $Validation = Test-OERStructure -Json $script:GpEngRaDoc
+        $Validation.Valid | Should -BeTrue
+        @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' }) | Should -BeNullOrEmpty
+
+        # The tenant: at the subscription, one assignment of another principal that the document does not
+        # declare. Each ARM request is logged as '<METHOD> <path>'.
+        $script:GpEngArm = @{
+            Log         = [System.Collections.Generic.List[string]]::new()
+            Puts        = [System.Collections.Generic.List[object]]::new()
+            Assignments = [System.Collections.Generic.List[object]]::new()
+        }
+        $script:GpEngArm.Assignments.Add([PSCustomObject]@{ id = $script:GpEngOtherRa; name = 'cccc4444-0000-0000-0000-000000000009'
+                properties = [PSCustomObject]@{ scope = $script:GpEngSub; principalId = $script:GpEngOther; principalType = 'User'; roleDefinitionId = $script:GpEngReader } })
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest {
+            $RequestMethod = if ($Method) { $Method } else { 'GET' }
+            $script:GpEngArm.Log.Add("$RequestMethod $Path")
+            $AssignmentsPath = "$($script:GpEngSub)/providers/Microsoft.Authorization/roleAssignments"
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:GpEngSub)/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=roleName%20eq%20%27Reader%27") {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:GpEngReader }) }
+            }
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$AssignmentsPath`?api-version=2022-04-01&`$filter=atScope()") {
+                return [PSCustomObject]@{ value = @($script:GpEngArm.Assignments) }
+            }
+            if ($RequestMethod -eq 'PUT' -and $Path -like "$AssignmentsPath/*?api-version=2022-04-01") {
+                $script:GpEngArm.Puts.Add($Body)
+                $Created = [PSCustomObject]@{ id = $Path.Split('?')[0]; name = ($Path.Split('?')[0] -split '/')[-1]
+                    properties = [PSCustomObject]@{ scope = $script:GpEngSub; principalId = $Body.properties.principalId
+                        principalType = $Body.properties.principalType; roleDefinitionId = $Body.properties.roleDefinitionId } }
+                $script:GpEngArm.Assignments.Add($Created)
+                return $Created
+            }
+            if ($RequestMethod -eq 'DELETE') {
+                $Gone = @($script:GpEngArm.Assignments | Where-Object { "$($_.id)?api-version=2022-04-01" -eq $Path })
+                if ($Gone.Count -ne 1) { throw "unexpected ARM delete: $Path" }
+                $null = $script:GpEngArm.Assignments.Remove($Gone[0])
+                return $Gone[0]
+            }
+            throw "unexpected ARM call: $RequestMethod $Path"
+        }
+
+        $First = @(Invoke-OERStructure -Json $script:GpEngRaDoc -Include RoleAssignments -Prune -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-GpEngRowLine -Row $First) | Should -Be @(
+            "roleAssignments|Reader -> $($script:GpEngGroup) @ $($script:GpEngSub)|Created"
+            "roleAssignments|bbbb4444-0000-0000-0000-000000000001 -> $($script:GpEngOther) @ $($script:GpEngSub)|Removed"
+        )
+        # Created for the group's object id, as a group: the id the entry names, never looked up.
+        $script:GpEngArm.Puts.Count | Should -Be 1
+        $script:GpEngArm.Puts[0].properties.principalId | Should -BeExactly $script:GpEngGroup
+        $script:GpEngArm.Puts[0].properties.principalType | Should -BeExactly 'Group'
+        $script:GpEngArm.Puts[0].properties.roleDefinitionId | Should -BeExactly $script:GpEngReader
+        @($script:GpEngArm.Log | Where-Object { $_ -like 'DELETE *' }) | Should -Be @("DELETE $($script:GpEngOtherRa)?api-version=2022-04-01")
+        $FirstCount = $script:GpEngArm.Log.Count
+
+        $Second = @(Invoke-OERStructure -Json $script:GpEngRaDoc -Include RoleAssignments -Prune -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-GpEngRowLine -Row $Second) | Should -Be @("roleAssignments|Reader -> $($script:GpEngGroup) @ $($script:GpEngSub)|Unchanged")
+        # The positive control: the second run read the scope, and wrote and removed nothing -- the prune
+        # pass keyed the created assignment on the group's object id and found it declared.
+        $SecondRequests = @($script:GpEngArm.Log | Select-Object -Skip $FirstCount)
+        $SecondRequests | Should -Contain "GET $($script:GpEngSub)/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()"
+        @($SecondRequests | Where-Object { $_ -notlike 'GET *' }) | Should -BeNullOrEmpty
+        @($script:GpEngArm.Assignments).Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'creates a directoryRoleAssignments entry for the group''s object id, prunes on the object id, and reaches Unchanged with nothing removed on a second run' {
+        $Validation = Test-OERStructure -Json $script:GpEngDirDoc
+        $Validation.Valid | Should -BeTrue
+        @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' }) | Should -BeNullOrEmpty
+
+        # The tenant: one eligible assignment of the role for another principal, which the document does not
+        # declare. The readers filter it by role and principal as the real readers do.
+        $script:GpEngDir = @{
+            Live    = [System.Collections.Generic.List[object]]::new()
+            Created = [System.Collections.Generic.List[object]]::new()
+            Removed = [System.Collections.Generic.List[string]]::new()
+        }
+        $script:GpEngDir.Live.Add((New-GpEngDirRow -PrincipalId $script:GpEngOther -PrincipalType 'User' -ScheduleId 'schedule-9'))
+        Mock -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId {
+            if ($Role -eq 'Reports Reader' -or $Role -eq $script:GpEngDirRole) { $script:GpEngDirRole }
+        }
+        Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment {
+            @($script:GpEngDir.Live | Where-Object {
+                    (-not $Role -or $_.RoleDefinitionId -eq $Role) -and (-not $PrincipalId -or $_.PrincipalId -eq $PrincipalId)
+                })
+        }
+        Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { @() }
+        Mock -ModuleName $script:moduleName New-OEREligibleDirectoryRoleAssignment {
+            $script:GpEngDir.Created.Add([PSCustomObject]@{ Role = $Role; PrincipalId = $PrincipalId; Action = $Action; Permanent = [bool]$Permanent })
+            $script:GpEngDir.Live.Add((New-GpEngDirRow -PrincipalId $PrincipalId -PrincipalType 'Group' -ScheduleId 'schedule-1'))
+        }
+        Mock -ModuleName $script:moduleName Remove-OEREligibleDirectoryRoleAssignment {
+            $script:GpEngDir.Removed.Add("$Role|$PrincipalId")
+            foreach ($Gone in @($script:GpEngDir.Live | Where-Object { $_.RoleDefinitionId -eq $Role -and $_.PrincipalId -eq $PrincipalId })) {
+                $null = $script:GpEngDir.Live.Remove($Gone)
+            }
+        }
+        Mock -ModuleName $script:moduleName Remove-OERActiveDirectoryRoleAssignment { throw 'unexpected removal of an active assignment' }
+        Mock -ModuleName $script:moduleName Get-OERSignedInObjectId { $script:GpEngSignedIn }
+        Mock -ModuleName $script:moduleName Get-OERMemberGroupId { @() }
+
+        $First = @(Invoke-OERStructure -Json $script:GpEngDirDoc -Include DirectoryRoleAssignments -Prune -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        # The section-wide prune pass runs first, then the entry.
+        @(ConvertTo-GpEngRowLine -Row $First) | Should -Be @(
+            "directoryRoleAssignments|Reports Reader -> $($script:GpEngOther) (Eligible)|Removed"
+            "directoryRoleAssignments|Reports Reader -> $($script:GpEngGroup) (Eligible)|Created"
+        )
+        # Created for the group's object id, permanent as declared: the id the entry names, never looked up.
+        @($script:GpEngDir.Created | ForEach-Object { "$($_.Role)|$($_.PrincipalId)|$($_.Action)|$($_.Permanent)" }) |
+            Should -Be @("$($script:GpEngDirRole)|$($script:GpEngGroup)|adminAssign|True")
+        @($script:GpEngDir.Removed) | Should -Be @("$($script:GpEngDirRole)|$($script:GpEngOther)")
+
+        $Second = @(Invoke-OERStructure -Json $script:GpEngDirDoc -Include DirectoryRoleAssignments -Prune -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-GpEngRowLine -Row $Second) | Should -Be @("directoryRoleAssignments|Reports Reader -> $($script:GpEngGroup) (Eligible)|Unchanged")
+        # The positive control: the prune pass read the pair once in each run -- in the second, with the
+        # group's own assignment live -- and kept it, since it keyed it on the group's object id.
+        Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 2 -Exactly -ParameterFilter { $Role -eq $script:GpEngDirRole -and -not $PrincipalId }
+        @($script:GpEngDir.Created).Count | Should -Be 1
+        @($script:GpEngDir.Removed).Count | Should -Be 1
+        @($script:GpEngDir.Live | ForEach-Object { $_.PrincipalId }) | Should -Be @($script:GpEngGroup)
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+}

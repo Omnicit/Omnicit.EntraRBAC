@@ -159,7 +159,13 @@ function Get-OERInventory {
     carries the hidden flag so a hidden package stays
     hidden across a round-trip. The RoleAssignments projection carries the ABAC condition,
     conditionVersion and description so a condition-scoped assignment is not exported as an
-    unconditioned one. A role assignment at the Azure root scope '/', above every management group
+    unconditioned one. In RoleAssignments and DirectoryRoleAssignments, a group is written by its
+    display name only when no other group in the tenant carries that name, compared without regard
+    to letter case; otherwise, or when the listing of every group fails, it is written by its object
+    id with principalType Group, which Invoke-OERStructure resolves verbatim. The listing is the one
+    described below, made at most once per call and only when a section holds a group principal;
+    when it fails, the verbose stream says so and nothing is reported unread, since an object id
+    names the group exactly. A role assignment at the Azure root scope '/', above every management group
     and subscription in the tenant, is left out of the RoleAssignments section: it is elevated
     access, a finding to review rather than part of the RBAC model a document describes, and
     Invoke-OERStructure never creates or removes one. A read at a management group or a subscription
@@ -189,8 +195,9 @@ function Get-OERInventory {
     scoped to an administrative unit are never exported, by the same rule Invoke-OERStructure matches
     and prunes by (Select-OERManagedDirectoryRoleAssignment). A user is named by its user principal
     name and a group by its display name, each falling back to the object id when no name can be
-    read; a service principal, or a principal of unknown type, is named by its object id, and
-    principalType is carried whenever the type is known. Entra does not keep group display names
+    read, and a group by its object id as well when another group in the tenant carries its display
+    name, as described above; a service principal, or a principal of unknown type, is named by its
+    object id, and principalType is carried whenever the type is known. Entra does not keep group display names
     unique, so a group whose display name matches, without regard to letter case, that of another
     principal holding the same role and assignment type is named by its object id instead (still with
     principalType Group): two entries with the same role, principal and assignmentType would be
@@ -226,7 +233,8 @@ function Get-OERInventory {
     matches by that name, and when that is more than one, their packages are written with the
     catalog ids. A group's name is counted among every group in the tenant -- one extra paged
     listing of every group's id and display name, made once when the Groups section read at least
-    one group -- so a security group that shares its name with a Microsoft 365 group or a
+    one group, and shared with the group principals of RoleAssignments and DirectoryRoleAssignments
+    -- so a security group that shares its name with a Microsoft 365 group or a
     distribution group, which the default filter never reads, is left out too; the reported cause
     names how many live objects carry the name. When that listing fails, groupNames is reported
     unread through the InventoryPartial
@@ -496,22 +504,37 @@ function Get-OERInventory {
         # BL-131: the index of every group in the tenant by display name (Get-OERGroupNameIndex, one
         # paged listing of every group's id and display name), built at most ONCE per invocation and
         # only when a section asks for it. Any section may call this; the first call reads the index
-        # and every later call returns the same object. When the listing fails, the cause is recorded
-        # once (verbose, the cause list, and 'groupNames' in the unread list), so whichever section
-        # needed it ends the run in InventoryPartial, and the caller counts without it. Kept in a
-        # holder, since a local function cannot assign a variable of this block.
+        # and every later call returns the same object, so the Groups section and the principals of
+        # the RoleAssignments and DirectoryRoleAssignments sections share one listing. A failed
+        # listing is returned as it is (Read false, with its message), and each caller decides what
+        # it means: the Groups section counts names, so it reports 'groupNames' unread; a group
+        # principal is written by its object id instead, which is exact, so nothing is unread there
+        # (Get-GroupPrincipalReference). Kept in a holder, since a local function cannot assign a
+        # variable of this block.
         $GroupNameIndexHolder = @{ Index = $null }
         function Get-GroupNameIndexOnce {
             if ($null -ne $GroupNameIndexHolder.Index) { return $GroupNameIndexHolder.Index }
-            $Built = Get-OERGroupNameIndex
-            $GroupNameIndexHolder.Index = $Built
-            # Reported here, on the one build, so 'groupNames' is named once however many sections ask.
-            if ($Built.Read -ne $true) {
-                Write-Verbose "Get-OERInventory: $($Built.Message)"
-                Add-UnreadCause -Cause $Built.Message
-                $UnreadCollections.Add('groupNames')
+            $GroupNameIndexHolder.Index = Get-OERGroupNameIndex
+            $GroupNameIndexHolder.Index
+        }
+
+        # BL-131 (Task 3c): how a group named as a principal in the RoleAssignments and
+        # DirectoryRoleAssignments sections is written -- its display name only when no other group in
+        # the tenant carries that name, otherwise its object id (Get-OERGroupReference owns the rule).
+        # Called once per group row, so the index is read only when a section holds a group principal.
+        # When the index could not be read, every group principal is written by its object id: an
+        # exact reference the apply engine resolves verbatim, so nothing is missing from the document
+        # and nothing is reported unread (R-3c). That is said once per invocation, on the verbose
+        # stream, whichever section meets it first.
+        $GroupPrincipalNote = @{ Written = $false }
+        function Get-GroupPrincipalReference {
+            param([string]$Id, [string]$Name)
+            $PrincipalIndex = Get-GroupNameIndexOnce
+            if ($PrincipalIndex.Read -ne $true -and -not $GroupPrincipalNote.Written) {
+                $GroupPrincipalNote.Written = $true
+                Write-Verbose "Get-OERInventory: $($PrincipalIndex.Message); every group principal is written by its object id."
             }
-            $Built
+            Get-OERGroupReference -Id $Id -Name $Name -Index $PrincipalIndex
         }
 
         # Reads the display name of the access package or assignment policy an access review points
@@ -652,11 +675,18 @@ function Get-OERInventory {
             # this section read, since the apply engine refuses a name a Microsoft 365 group or a
             # distribution group shares as well. The index is read after the section, so its cause (when
             # it fails) follows the section's own, and only when there is a group to count: a section
-            # that read none has no name to count. A failed index is reported by Get-GroupNameIndexOnce,
-            # and the names are then counted over the groups read, as before.
+            # that read none has no name to count. A failed index is reported here, once -- verbose,
+            # the cause list and 'groupNames' in the unread list -- since the names are then counted
+            # over the groups read only, which may miss a name another group shares.
             if ($Groups.Count -gt 0) {
                 $GroupNameIndex = Get-GroupNameIndexOnce
-                if ($GroupNameIndex.Read -eq $true) { $GroupExternalIds = $GroupNameIndex.IdsByName }
+                if ($GroupNameIndex.Read -eq $true) {
+                    $GroupExternalIds = $GroupNameIndex.IdsByName
+                } else {
+                    Write-Verbose "Get-OERInventory: $($GroupNameIndex.Message)"
+                    Add-UnreadCause -Cause $GroupNameIndex.Message
+                    $UnreadCollections.Add('groupNames')
+                }
             }
         }
 
@@ -1219,19 +1249,31 @@ function Get-OERInventory {
                     } else {
                         $Ra.PrincipalId
                     }
+                    # Normalize the ARM principal type to the apply schema enum
+                    # (User|Group|ServicePrincipal). A user UPN / group name routes via the apply
+                    # @-heuristic, so principalType is emitted only for a service principal (a name
+                    # cannot disambiguate one) and for a group written by its object id (below).
+                    # ForeignGroup -- a B2B / cross-tenant group -- maps to Group; any other ARM type
+                    # (e.g. Device) is omitted rather than emitting an invalid enum value that would
+                    # fail Test-OERStructure validation.
+                    $PrincipalType = if ($Ra.PrincipalType -eq 'ForeignGroup') { 'Group' } else { [string]$Ra.PrincipalType }
+                    # BL-131 (Task 3c): a group is written by its display name only when no other group
+                    # in the tenant carries that name (Get-OERGroupReference), since the apply engine
+                    # refuses a group name more than one live group answers to; otherwise by its object
+                    # id with principalType Group, directly after principal, which Invoke-OERStructure
+                    # resolves verbatim. Decided here, before the root-scope split and the collision
+                    # pass below, which run on the name chosen here.
+                    $GroupById = $false
+                    if ($PrincipalType -eq 'Group' -and $Ra.PrincipalId) {
+                        $PrincipalName = Get-GroupPrincipalReference -Id ([string]$Ra.PrincipalId) -Name ([string]$PrincipalName)
+                        $GroupById = ([string]$PrincipalName -eq [string]$Ra.PrincipalId)
+                    }
                     $Proj = [ordered]@{
                         scope     = $Ra.Scope
                         role      = $(if ($Ra.RoleName) { $Ra.RoleName } else { $Ra.RoleDefinitionId })
                         principal = $PrincipalName
                     }
-                    # Normalize the ARM principal type to the apply schema enum
-                    # (User|Group|ServicePrincipal). A user UPN / group name routes via the apply
-                    # @-heuristic, so principalType is emitted only for a service principal (a name
-                    # cannot disambiguate one). ForeignGroup -- a B2B / cross-tenant group -- maps to
-                    # Group; any other ARM type (e.g. Device) is omitted rather than emitting an invalid
-                    # enum value that would fail Test-OERStructure validation.
-                    $PrincipalType = if ($Ra.PrincipalType -eq 'ForeignGroup') { 'Group' } else { [string]$Ra.PrincipalType }
-                    if ($PrincipalType -eq 'ServicePrincipal') {
+                    if ($PrincipalType -eq 'ServicePrincipal' -or $GroupById) {
                         $Proj.principalType = $PrincipalType
                     }
                     # ABAC condition and the free-text description are writable by New-OERRoleAssignment
@@ -1731,7 +1773,11 @@ function Get-OERInventory {
 
             # A user by its UPN and a group by its display name, each falling back to the object id
             # when no name was read; a service principal, or a principal of unknown type, by its
-            # object id, which the apply engine resolves verbatim.
+            # object id, which the apply engine resolves verbatim. BL-131 (Task 3c): a group keeps its
+            # display name only when no other group in the tenant carries it (Get-OERGroupReference),
+            # since the apply engine refuses a group name more than one live group answers to; it is
+            # otherwise written by its object id, before the collision pass below. principalType Group
+            # is written for it either way.
             $DirectoryPrincipals = [string[]]::new($DirectoryKept.Count)
             for ($Index = 0; $Index -lt $DirectoryKept.Count; $Index++) {
                 $DirectoryRow = $DirectoryKept[$Index].Row
@@ -1740,6 +1786,9 @@ function Get-OERInventory {
                     [string]$PrincipalNameCache[$DirectoryPrincipalId]
                 } else {
                     $DirectoryPrincipalId
+                }
+                if ([string]$DirectoryRow.PrincipalType -eq 'Group' -and $DirectoryPrincipalId) {
+                    $DirectoryPrincipals[$Index] = Get-GroupPrincipalReference -Id $DirectoryPrincipalId -Name $DirectoryPrincipals[$Index]
                 }
             }
             # Entra does not keep group display names unique, so two groups holding one role and kind
