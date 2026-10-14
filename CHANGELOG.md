@@ -41,8 +41,8 @@ updated.
 
 `groupsRoster.json` rows now carry each group's id, type, visibility and creation time. Inventories
 count shared group names tenant-wide, leave out same-named policies of one package
-(`Test-OERStructure` now refuses them), write references to shared names by id, and the export
-README lists each name with its count.
+(`Test-OERStructure` now refuses them) and name a shared catalog, review target or role-assignment
+group by id; the export README lists each name and count.
 
 ## [1.2.0] - 2026-10-11
 

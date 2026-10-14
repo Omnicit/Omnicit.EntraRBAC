@@ -72,7 +72,9 @@ Describe 'Get-OERInventoryPromptTemplate' {
         InModuleScope $script:moduleName {
             $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
             # The Inputs bullet of the README names the section that lists the shared names.
-            $T | Should -Match ([regex]::Escape('And it lists, under "Names two or more objects share", every name that two or more objects of one kind carry, with how many: each object that carries one is absent from inventory.json (see "An OBJECT ID where the document otherwise carries a name" below)'))
+            $T | Should -Match ([regex]::Escape('And it lists, under "Names two or more objects share", every name the export left out because two or more objects of one kind carry it, with how many: each object that carries one is absent from inventory.json (see "An OBJECT ID where the document otherwise carries a name" below)'))
+            # The README lists only the names the export LEFT OUT (R-3d), never every name objects share.
+            $T | Should -Not -Match ([regex]::Escape('every name that two or more objects of one kind carry'))
             # The four places an id stands where a name is expected, what it means, and to keep it.
             $T | Should -Match ([regex]::Escape("An OBJECT ID where the document otherwise carries a name -- an access package's catalog, an access review's accessPackage or assignmentPolicy, or a roleAssignments or directoryRoleAssignments principal written with principalType Group -- most often means that two or more objects share that name (for a group, two or more groups anywhere in the tenant, Microsoft 365 and distribution groups included), so the apply engine would refuse the name as ambiguous."))
             $T | Should -Match ([regex]::Escape('It can also mean that the name could not be read, and for an access review that the object no longer exists. Keep such an id as it is in every proposal: the apply engine resolves an object id as the object itself, so never replace it with a name.'))

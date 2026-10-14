@@ -699,7 +699,7 @@ Describe 'Get-OERInventoryReadme (names two or more objects share, BL-131)' {
             param([string]$Section, [string]$Name, [int]$Count)
             [PSCustomObject]@{ Section = $Section; Name = $Name; Count = $Count }
         }
-        $script:SharedProse = 'Microsoft Entra ID does not keep display names unique, and `Invoke-OERStructure` refuses a name that more than one live object answers to. So every object whose name another object of its kind shares, compared without regard to letter case, is left out of `inventory.json` and the per-area files -- all of them -- and is named under "What this export could not read" too. Groups are counted over every group in the tenant, Microsoft 365 groups and distribution groups included, so a security group that shares its name with one of those is left out as well; when the group roster could not be read (`groupsRoster` under "What this export could not read"), groups are counted among the security groups the export read. An assignment policy''s name is counted among the policies of its own access package only, and is listed with section `assignmentPolicies` as `<package>/<policy>`. A reference to such an object elsewhere in the document is written as the object''s id: the catalog of an access package, the access package and assignment policy of an access review, and a group named as the principal of a role assignment or a directory role assignment, written with `principalType` `Group`. Leaving them out of the export changes nothing in the tenant.'
+        $script:SharedProse = 'Microsoft Entra ID does not keep display names unique, and `Invoke-OERStructure` refuses a name that more than one live object answers to. So every object whose name another object of its kind shares, compared without regard to letter case, is left out of `inventory.json` and the per-area files -- all of them -- and is named under "What this export could not read" too. Groups are counted over every group in the tenant, Microsoft 365 groups and distribution groups included, so a security group that shares its name with one of those is left out as well; when the group roster could not be read (`groupsRoster` under "What this export could not read"), groups are counted among the security groups the export read. An access package''s name is counted among the packages of its catalog, and an assignment policy''s among the policies of its own access package only; a policy is listed with section `assignmentPolicies` as `<package>/<policy>`. The name of an administrative unit, a catalog or an access review is counted among the ones this export read, an access review''s among the access-package reviews it captured. A reference to such an object elsewhere in the document is written as the object''s id: the catalog of an access package, the access package and assignment policy of an access review, and a group named as the principal of a role assignment or a directory role assignment, written with `principalType` `Group`. Leaving them out of the export changes nothing in the tenant.'
         $script:SharedNone = 'None. No two objects this export read share a name.'
     }
 
@@ -712,12 +712,15 @@ Describe 'Get-OERInventoryReadme (names two or more objects share, BL-131)' {
         @(Get-SharedBullets -Section $Section).Count | Should -Be 0
     }
 
-    It 'says that an assignment policy''s name is counted within its own access package, and how it is listed (Sprint 11 step 5)' {
+    It 'says where the name of each kind is counted, an assignment policy''s within its own access package, and how a policy is listed (Sprint 11 step 5)' {
         $Collapsed = (Get-SharedSection -Readme (Get-SharedReadme)) -replace '\s+', ' '
-        $Collapsed | Should -Match ([regex]::Escape('An assignment policy''s name is counted among the policies of its own access package only, and is listed with section `assignmentPolicies` as `<package>/<policy>`.'))
-        # It follows the sentence on how groups are counted and precedes the one on references by id.
-        $Collapsed.IndexOf('An assignment policy''s name is counted') | Should -BeGreaterThan $Collapsed.IndexOf('groups are counted among the security groups the export read.')
-        $Collapsed.IndexOf('An assignment policy''s name is counted') | Should -BeLessThan $Collapsed.IndexOf('A reference to such an object elsewhere')
+        $Collapsed | Should -Match ([regex]::Escape('An access package''s name is counted among the packages of its catalog, and an assignment policy''s among the policies of its own access package only; a policy is listed with section `assignmentPolicies` as `<package>/<policy>`.'))
+        # The other kinds are counted among the objects the export read, never over the whole tenant.
+        $Collapsed | Should -Match ([regex]::Escape('The name of an administrative unit, a catalog or an access review is counted among the ones this export read, an access review''s among the access-package reviews it captured.'))
+        # They follow the sentence on how groups are counted and precede the one on references by id.
+        $Collapsed.IndexOf('An access package''s name is counted') | Should -BeGreaterThan $Collapsed.IndexOf('groups are counted among the security groups the export read.')
+        $Collapsed.IndexOf('The name of an administrative unit, a catalog or an access review') | Should -BeGreaterThan $Collapsed.IndexOf('An access package''s name is counted')
+        $Collapsed.IndexOf('The name of an administrative unit, a catalog or an access review') | Should -BeLessThan $Collapsed.IndexOf('A reference to such an object elsewhere')
         # The group principal written by id is the one of a role assignment or a directory role
         # assignment: a group named elsewhere (an eligibility principal, a reviewer) keeps its name.
         $Collapsed | Should -Not -Match ([regex]::Escape('and a group named as a principal, written'))

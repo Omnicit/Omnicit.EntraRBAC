@@ -1164,10 +1164,13 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   per invocation. It never throws and never writes an error record: it returns `Read`, `IdsByName`
   (a name, compared without regard to letter case, to the lower-cased ids that carry it; `$null` when
   the listing failed, never an empty index) and `Message`. **`Get-OERGroupReference` is the single
-  owner of how the export names a group it references as a principal**: its display name only when
-  the index was read and exactly this group carries the name; otherwise its object id, written with
-  `principalType` `Group` in `roleAssignments` and `directoryRoleAssignments`. Never re-implement
-  either inline. `Why: docs/development/rationale.md#roster-identity-and-shared-names`
+  owner of how the export names a group it references as the principal of a role assignment or a
+  directory role assignment**: its display name only when the index was read and exactly this group
+  carries the name; otherwise its object id, written with `principalType` `Group` in
+  `roleAssignments` and `directoryRoleAssignments`. A group named as an eligibility principal, a
+  reviewer, a catalog resource or a resource role is outside it and keeps its display name (R-6).
+  Never re-implement either inline.
+  `Why: docs/development/rationale.md#roster-identity-and-shared-names`
 - **`Test-OERRolePolicyModified` is the single owner of whether an Azure role management policy has
   been changed** -- the list row's `policyAssignmentProperties.policy` (carried as `PolicyMetadata`
   by `Get-OERRoleManagementPolicyForScope`, with no request of its own) with a non-empty

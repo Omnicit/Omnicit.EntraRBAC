@@ -165,8 +165,9 @@ function Get-OERInventory {
     id with principalType Group, which Invoke-OERStructure resolves verbatim. The listing is the one
     described below, made at most once per call, when the Groups section read at least one group or
     when a section holds a group principal, and shared by both; when it fails, the verbose stream
-    says so and no group principal is reported unread, since an object id names the group exactly. A role assignment at the Azure root scope '/', above every management group
-    and subscription in the tenant, is left out of the RoleAssignments section: it is elevated
+    says so and no group principal is reported unread, since an object id names the group exactly.
+    A role assignment at the Azure root scope '/', above every management group and subscription in
+    the tenant, is left out of the RoleAssignments section: it is elevated
     access, a finding to review rather than part of the RBAC model a document describes, and
     Invoke-OERStructure never creates or removes one. A read at a management group or a subscription
     returns it as inherited. One warning names every such assignment, each by role and principal and,
@@ -197,13 +198,14 @@ function Get-OERInventory {
     name and a group by its display name, each falling back to the object id when no name can be
     read, and a group by its object id as well when another group in the tenant carries its display
     name, as described above; a service principal, or a principal of unknown type, is named by its
-    object id, and principalType is carried whenever the type is known. Entra does not keep group display names
-    unique, so a group whose display name matches, without regard to letter case, that of another
-    principal holding the same role and assignment type is named by its object id instead (still with
-    principalType Group): two entries with the same role, principal and assignmentType would be
-    refused by the validator. A time-bound assignment carries durationDays reconstructed from the
-    schedule window the same way the apply engine measures it, so a re-applied export is Unchanged; a
-    permanent one carries neither durationDays nor permanent. Two live schedules for one role,
+    object id, and principalType is carried whenever the type is known. Entra does not keep group
+    display names unique, so a group whose display name matches, without regard to letter case,
+    that of another principal holding the same role and assignment type is named by its object id
+    instead (still with principalType Group): two entries with the same role, principal and
+    assignmentType would be refused by the validator. A time-bound assignment carries durationDays
+    reconstructed from the schedule window the same way the apply engine measures it, so a
+    re-applied export is Unchanged; a permanent one carries neither durationDays nor permanent. Two
+    live schedules for one role,
     principal and kind export only the first this read returns, with a warning: Invoke-OERStructure
     compares against the first schedule Microsoft Graph returns for that role and principal, which is
     not guaranteed to be the same one, so such an entry may report a change when applied.

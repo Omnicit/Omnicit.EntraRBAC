@@ -6337,7 +6337,9 @@ is ANDed as `securityEnabled eq true and (...)` around the operator's text, and 
 not the guard, since an expression can close them (`x eq 1) or (securityEnabled eq false` lists every
 group the second operand matches). The guard is the post-read check, `-SecurityEnabledOnly`: only a
 group whose `securityEnabled` the read shows as a boolean true stays, dropped straight after the list
-is read and before the shared names are counted and the relevance is decided. A blank or white-space
+is read and before the shared names are counted (among the listed groups; see
+[#roster-identity-and-shared-names](#roster-identity-and-shared-names)) and the relevance is decided.
+A blank or white-space
 filter is refused at binding (the BL-96 pattern). The parameter is declared last, since the
 cmdlet's parameters carry no `Position` and positional binding follows declaration order. It applies
 to the Groups section only. Cost if wrong: escape or parse the expression, which would refuse valid
@@ -8764,7 +8766,7 @@ a rename.
 ## roster-identity-and-shared-names
 
 Sprint 11 step 5 (BL-131 and BL-142, decision A17) gave every `groupsRoster.json` row the group's
-object id and type, counted the names objects share over every group in the tenant, left out the
+object id and type, counted the names groups share over every group in the tenant, left out the
 assignment policies of one access package that share a name, and made the export write a reference
 to an object whose name is shared by that object's id. This anchor records the problem, the two
 measurements, the rulings with what each costs if it is wrong, the one named deviation from a
@@ -8827,8 +8829,8 @@ taken as UTC and never converted from local time, and an unreadable value empty,
 Each roster row keeps its five keys and gains, after them, `id`, `securityEnabled`, `mailEnabled`,
 `groupTypes` (always an array of strings, empty for a group that is neither a Microsoft 365 group nor
 dynamic), `visibility` and `createdDateTime`, read from the converted object and never from the raw
-response. `inventory.json` stays without object ids. Cost if wrong: the roster reads three raw fields
-itself, and `Get-OERGroup` does not show them.
+response. `inventory.json` stays without an id key on its entries. Cost if wrong: the roster reads
+three raw fields itself, and `Get-OERGroup` does not show them.
 
 **R-1b (the table view).** The Group table view keeps its four columns, and the new properties show
 with `Format-List` or `Select-Object *`: seven columns no longer fit a console. Cost if wrong: one more
@@ -8962,7 +8964,9 @@ a name in a review, where the engine then reads it as an id and not as the name;
 engine, reported as a finding and not fixed here: `New-OERAccessPackage` looks a package up by name in
 the whole tenant, so re-creating a package declared in catalog A while exactly one package of that
 name exists in catalog B returns B's package, and `Sync-OERStructureAccessPackage` then reports it
-`Created` and writes the declared policies to it. It existed before this step for every catalog named
+`Created` and attempts to write the declared resource roles and assignment policies to it, the
+resource roles through `Add-OERAccessPackageResourceRole` with A's catalog. It existed before this
+step for every catalog named
 uniquely; the catalog id written here lets it reach a package whose catalog name is shared (refused as
 ambiguous before), and only after that package was deleted from its own catalog. (d) A group row at
 the root scope alone makes `Get-OERInventory` read the listing of every group, and the verbose line

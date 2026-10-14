@@ -54,9 +54,9 @@ PowerShell module.
   listed there is unknown, not empty. README.md also lists, under "Role assignments at the root
   scope (elevated access)", the role assignments at the Azure root scope / that this export read and
   left out of inventory.json: findings to review (see roleAssignments[] below). And it lists, under
-  "Names two or more objects share", every name that two or more objects of one kind carry, with how
-  many: each object that carries one is absent from inventory.json (see "An OBJECT ID where the
-  document otherwise carries a name" below)
+  "Names two or more objects share", every name the export left out because two or more objects of
+  one kind carry it, with how many: each object that carries one is absent from inventory.json (see
+  "An OBJECT ID where the document otherwise carries a name" below)
 - inventory.json -- the current state, within this document's coverage limits (see below), in the
   exact apply schema. Your proposals reshape this.
 - groupsRoster.json -- every group in the tenant, of every type: one row per group with its id,

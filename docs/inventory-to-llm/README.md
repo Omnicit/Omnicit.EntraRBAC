@@ -691,7 +691,10 @@ access package. A group's name is counted over every group in the tenant, Micros
 distribution groups included: `Export-OERInventory` counts over its roster, and `Get-OERInventory`
 makes one more paged listing of every group's id and display name, at most once per call; when that
 listing fails, `groupNames` is reported unread and the names are counted among the groups read. An
-assignment policy's name is counted among the policies of its own access package only. Leaving an
+access package's name is counted among the packages of its catalog, an assignment policy's among the
+policies of its own access package only, and the name of an administrative unit, a catalog or an
+access review among the ones read (with `Get-OERInventory -Catalog`, only the catalogs it reads; an
+access review among the access-package reviews captured). Leaving an
 object out changes nothing in the tenant: `-Prune` acts on child collections only, and the apply
 engine never removes an assignment policy.
 

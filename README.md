@@ -921,9 +921,12 @@ Each `groupsRoster.json` row also carries the group's `id`, its type (`securityE
 `mailEnabled` and `groupTypes`), `visibility` and `createdDateTime`, so two groups that share a name
 can be told apart. Display names are not unique in Microsoft Entra ID, and `Invoke-OERStructure`
 refuses a name more than one live object answers to, so `Get-OERInventory` and `Export-OERInventory`
-leave out every object whose name another object of its kind shares, letter case aside: a group's
-name is counted over every group in the tenant, Microsoft 365 and distribution groups included, and
-an assignment policy's among the policies of its own access package. The export warns once, and its
+leave out every object whose name another object of its kind shares, letter case aside. A group's
+name is counted over every group in the tenant, Microsoft 365 and distribution groups included; an
+access package's among the packages of its catalog; an assignment policy's among the policies of its
+own access package; and the name of an administrative unit, a catalog or an access review among the
+ones read (with `Get-OERInventory -Catalog`, only the catalogs it reads; an access review among the
+access-package reviews captured). The export warns once, and its
 `README.md` lists each name, with how many objects carry it, under "Names two or more objects
 share". An access package's `catalog`, an access review's `accessPackage` or `assignmentPolicy`, and
 a group named as the principal of a role assignment or a directory role assignment (with
