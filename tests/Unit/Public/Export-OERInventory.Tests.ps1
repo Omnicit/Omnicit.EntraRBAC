@@ -429,9 +429,84 @@ Describe 'Export-OERInventory (the roster is complete, the apply document is not
         ($Roster | Where-Object { $_.displayName -eq 'SyncedTeam' }).onPremisesSynced | Should -BeTrue
         ($Roster | Where-Object { $_.displayName -eq 'role_sec_admin' }).onPremisesSynced | Should -BeFalse
         ($Roster | Where-Object { $_.displayName -eq 'FormerlySynced' }).onPremisesSynced | Should -BeFalse
-        # The key sits after dynamic and before memberCount, the order the roster is read in.
+        # The key sits after dynamic and before memberCount, the order the roster is read in; the
+        # identity and type keys (BL-130) come last, in the order the help lists them.
         [string[]]$Names = @($Roster[0].PSObject.Properties.Name)
-        $Names | Should -Be @('displayName', 'roleAssignable', 'dynamic', 'onPremisesSynced', 'memberCount')
+        $Names | Should -Be @(
+            'displayName', 'roleAssignable', 'dynamic', 'onPremisesSynced', 'memberCount',
+            'id', 'securityEnabled', 'mailEnabled', 'groupTypes', 'visibility', 'createdDateTime'
+        )
+    }
+
+    It 'tells two roster groups of one display name apart by id and gives each its own type (BL-130)' {
+        # Two groups named alike: a security group (no groupTypes, mail disabled, no visibility) and a
+        # Microsoft 365 group (Unified, mail enabled, Private). Before BL-130 their roster rows were
+        # told apart by nothing at all. The mock hands over the converter's property names and
+        # values, which is what the roster reads.
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            param($Group, $Filter, $All, $IncludeMembers, $IncludeOwners, $IncludePimEligibility, $TenantId)
+            [PSCustomObject]@{
+                Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Marketing'; GroupType = 'Regular'
+                IsAssignableToRole = $false; SecurityEnabled = $true; MailEnabled = $false; GroupTypes = @()
+                Visibility = $null; CreatedDateTime = '2026-01-02T03:04:05Z'
+            }
+            [PSCustomObject]@{
+                Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Marketing'; GroupType = 'Regular'
+                IsAssignableToRole = $false; SecurityEnabled = $false; MailEnabled = $true; GroupTypes = @('Unified')
+                Visibility = 'Private'; CreatedDateTime = '2026-02-03T04:05:06Z'
+            }
+        }
+        $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups
+        $RosterPath = Join-Path $Result.BundlePath 'groupsRoster.json'
+        $Raw = Get-Content $RosterPath -Raw
+        $Roster = @($Raw | ConvertFrom-Json)
+        $Roster.Count | Should -Be 2
+        @($Roster.displayName) | Should -Be @('Marketing', 'Marketing')
+        @($Roster.id) | Should -Be @('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222')
+
+        $Sec = $Roster | Where-Object { $_.id -eq '11111111-1111-1111-1111-111111111111' }
+        $Sec.securityEnabled | Should -BeOfType ([bool])
+        $Sec.securityEnabled | Should -BeTrue
+        $Sec.mailEnabled | Should -BeOfType ([bool])
+        $Sec.mailEnabled | Should -BeFalse
+        @($Sec.groupTypes).Count | Should -Be 0
+        $null -eq $Sec.visibility | Should -BeTrue
+
+        $M365 = $Roster | Where-Object { $_.id -eq '22222222-2222-2222-2222-222222222222' }
+        $M365.securityEnabled | Should -BeFalse
+        $M365.mailEnabled | Should -BeTrue
+        @($M365.groupTypes) | Should -Be @('Unified')
+        $M365.visibility | Should -BeExactly 'Private'
+
+        # The file itself: groupTypes is a JSON array in both rows ([] and ["Unified"], never a bare
+        # string or null), and createdDateTime is the converter's UTC ISO 8601 string. The raw text is
+        # checked for the time because ConvertFrom-Json would turn it into a DateTime.
+        ([regex]::Matches($Raw, '"groupTypes"\s*:\s*\[\s*\]')).Count | Should -Be 1
+        ([regex]::Matches($Raw, '"groupTypes"\s*:\s*\[\s*"Unified"\s*\]')).Count | Should -Be 1
+        $Raw | Should -Match '"createdDateTime"\s*:\s*"2026-01-02T03:04:05Z"'
+        $Raw | Should -Match '"createdDateTime"\s*:\s*"2026-02-03T04:05:06Z"'
+        $Raw | Should -Match '"visibility"\s*:\s*null'
+        $Raw | Should -Match '"visibility"\s*:\s*"Private"'
+    }
+
+    It 'writes groupTypes as a JSON array when the converter hands over a bare string or nothing, and unknown flags as null (BL-130)' {
+        # A defensive shape: the roster forces groupTypes to an array of strings whatever it is given,
+        # so a value that is a bare string still writes ["Unified"], a missing one writes [], and a
+        # flag that is not a boolean is null (not known), never a truthy string.
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            param($Group, $Filter, $All, $IncludeMembers, $IncludeOwners, $IncludePimEligibility, $TenantId)
+            [PSCustomObject]@{
+                Id = 'g-1'; DisplayName = 'bare'; GroupType = 'Regular'; IsAssignableToRole = $false
+                SecurityEnabled = 'true'; MailEnabled = $null; GroupTypes = 'Unified'
+            }
+            [PSCustomObject]@{ Id = 'g-2'; DisplayName = 'none'; GroupType = 'Regular'; IsAssignableToRole = $false }
+        }
+        $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups
+        $Raw = Get-Content (Join-Path $Result.BundlePath 'groupsRoster.json') -Raw
+        ([regex]::Matches($Raw, '"groupTypes"\s*:\s*\[\s*"Unified"\s*\]')).Count | Should -Be 1
+        ([regex]::Matches($Raw, '"groupTypes"\s*:\s*\[\s*\]')).Count | Should -Be 1
+        ([regex]::Matches($Raw, '"securityEnabled"\s*:\s*null')).Count | Should -Be 2
+        ([regex]::Matches($Raw, '"mailEnabled"\s*:\s*null')).Count | Should -Be 2
     }
 }
 

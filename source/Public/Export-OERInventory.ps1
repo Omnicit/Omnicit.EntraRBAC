@@ -54,7 +54,15 @@ function Export-OERInventory {
     are written as null for the reason given below, and every group that is not security-enabled.
     Null means not known, which is not zero: a count would cost a request per group. The count is
     the group's live member count, so it includes the members left out of inventory.json as PIM for
-    Groups access (see MEMBERS AND OWNERS THAT PIM FOR GROUPS HOLDS).
+    Groups access (see MEMBERS AND OWNERS THAT PIM FOR GROUPS HOLDS). Each row also carries the
+    group's object id, so two groups with one display name, or a group that was renamed, can be
+    told apart; its type, as the three values Microsoft Graph gives it (securityEnabled and
+    mailEnabled, each true, false or null when Graph gave none, and groupTypes, always an array,
+    empty for a group that is neither a Microsoft 365 group nor dynamic); its visibility (Public,
+    Private or HiddenMembership, null when Graph gave none, which is the case for most security
+    groups); and createdDateTime, the time Graph gave for its creation as a UTC ISO 8601 string,
+    null when none was given. The roster is read-only context: inventory.json stays without object
+    ids.
 
     MEMBERS AND OWNERS THAT PIM FOR GROUPS HOLDS. inventory.json and groups.json write a group's
     STANDING members and owners only (the Get-OERInventory help describes the rule). A member or
@@ -885,12 +893,22 @@ function Export-OERInventory {
                 $RgName = [string]$Rg.DisplayName
                 # A roster group with no entry was not read in full: $null, not 0 (R3, above).
                 $MemberCount = if ($CountById.ContainsKey($RgId)) { $CountById[$RgId] } else { $null }
+                # The group's identity and type, read from the converter's values and never from the
+                # raw response. groupTypes is forced to an array of strings so a security group is
+                # written as [] and a Microsoft 365 group as ["Unified"], never as a bare string.
+                $RgGroupTypes = [string[]]@(@($Rg.GroupTypes) | Where-Object { -not [string]::IsNullOrEmpty([string]$_) } | ForEach-Object { [string]$_ })
                 [PSCustomObject]@{
                     displayName      = $RgName
                     roleAssignable   = [bool]$Rg.IsAssignableToRole
                     dynamic          = ($Rg.GroupType -eq 'Dynamic')
                     onPremisesSynced = (Test-OERGroupOnPremisesSynced -Group $Rg)
                     memberCount      = $MemberCount
+                    id               = $RgId
+                    securityEnabled  = if ($Rg.SecurityEnabled -is [bool]) { [bool]$Rg.SecurityEnabled } else { $null }
+                    mailEnabled      = if ($Rg.MailEnabled -is [bool]) { [bool]$Rg.MailEnabled } else { $null }
+                    groupTypes       = $RgGroupTypes
+                    visibility       = $Rg.Visibility
+                    createdDateTime  = $Rg.CreatedDateTime
                 }
             })
         }
