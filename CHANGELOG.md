@@ -22,16 +22,22 @@ only if it reviews the declared package and policy (a non-unique name must be an
 (`AccessReviewScopeMismatch`), writing nothing.
 
 `Set-OERAccessPackageAssignmentPolicy` no longer drops custom extension stages and can update an
-automatic assignment policy. `Test-OERStructure` refuses `previousDisplayName` on assignment policies
-and access reviews, an invalid `mailNickname` and a scope with a dot segment, `%`, `\`, `?`, `#` or
-stray white space, and warns when a renamed group keeps its alias. `New-OERGroup` refuses an
-underivable alias. `-WhatIf` plans a package in a new catalog as created.
+automatic assignment policy. `Test-OERStructure` refuses an invalid `mailNickname` and a scope with
+a dot segment, `%`, `\`, `?`, `#` or stray white space, and warns when a renamed group keeps its
+alias. `New-OERGroup` refuses an underivable alias. `-WhatIf` plans a package in a new catalog as
+created.
 
 `Invoke-OERStructure` renames administrative units, catalogs and access packages through
 `previousDisplayName`, like groups: the object found only under its previous name is renamed; if both
 names find different objects, or neither finds one, the entry fails and writes nothing. In the same
 run, a group created into a renamed unit and a package in a renamed catalog find the renamed object
 by id.
+
+Assignment policies, within their package, and access reviews are renamed the same way, and an
+access review that names the new name of a package or policy renamed in the same run reaches it.
+`Set-OERAccessPackageAssignmentPolicy` renames a policy given `-DisplayName` alone. A catalog that
+`Invoke-OERStructure` fails to read is now `Failed`, with nothing written to it, instead of being
+updated.
 
 ## [1.2.0] - 2026-10-11
 

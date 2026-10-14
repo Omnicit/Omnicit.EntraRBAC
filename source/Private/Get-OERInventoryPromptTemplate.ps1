@@ -222,13 +222,13 @@ document.
     different groups the entry fails and nothing is changed (two groups are never merged), and when
     neither matches the entry fails and nothing is created: a rename names an existing group. A NEW
     group is declared without previousDisplayName.
-  - Renaming in place is supported for groups, administrativeUnits, catalogs and accessPackages (a
-    package within its catalog); the bullet of each of those sections says how. It is not supported
-    yet for assignmentPolicies and accessReviews: previousDisplayName there is refused by
-    Test-OERStructure as an Error, and without it a changed displayName there creates a new object
-    beside the old one. Do not propose a rename in those two sections. Test-OERStructure warns on a
-    reference that still names a renamed object by its previous name: a group's administrativeUnit,
-    an access package's catalog, an access review's accessPackage.
+  - Renaming in place is supported for every kind matched by name: groups, administrativeUnits,
+    catalogs, accessPackages (a package within its catalog), assignmentPolicies (a policy within its
+    access package) and accessReviews; the bullet of each of those sections says how. Without
+    previousDisplayName, a changed displayName creates a new object beside the old one.
+    Test-OERStructure warns on a reference that still names a renamed object by its previous name:
+    a group's administrativeUnit, an access package's catalog, an access review's accessPackage and
+    assignmentPolicy.
   - A mail alias does not follow a rename. A renamed group keeps its mailNickname unless the
     proposal declares the new one, so when a proposal renames a group, declare mailNickname with
     the alias the new name should carry (Test-OERStructure warns when a renamed group declares no
@@ -328,6 +328,8 @@ document.
   current display name or object id, in the same catalog, when displayName declares a new one; NOT
   captured by inventory), catalog (required), description, hidden (bool),
   resourceRoles[] { resource (required), role (required) }, assignmentPolicies[] { displayName (required),
+  previousDisplayName (rename only -- the policy's current display name or object id, in the same
+  access package, when displayName declares a new one; NOT captured by inventory),
   requestorScope { scope (an explicit scope always wins; omitting it infers SpecificDirectoryUsers
     when users or groups is a non-empty array -- prefer declaring scope explicitly),
     users[] (names/UPNs/ids), groups[] (names/ids) },
@@ -355,9 +357,20 @@ document.
     previousDisplayName in the proposal, and tell the operator in the rationale to wait until the
     new name resolves before applying again. A package in a catalog the same proposal renames names
     the catalog by its NEW name (the apply reaches the renamed catalog by its id in the same run),
-    and an access review of a package the proposal renames names the package by its NEW name too,
-    which the apply does not yet translate: in the run that renames the package that review can
-    fail with AccessPackageNotFound until the new name resolves, and works on the next run.
+    and an access review of a package or of an assignment policy the proposal renames names it by
+    its NEW name too, in accessPackage and assignmentPolicy (the apply reaches the renamed package or
+    policy by its id in the same run).
+  - an assignment policy's displayName is the match key WITHIN its access package. To rename a
+    policy, declare its new name as displayName and its current name (or object id) as
+    previousDisplayName, in the same package: the policy of that package found under
+    previousDisplayName alone is renamed in place, and a policy of another package is never matched.
+    When both names match different policies of the package the entry fails and nothing is changed
+    (two policies are never merged), and when neither matches the entry fails and nothing is created:
+    a rename names an existing policy, so a policy of a package the proposal creates never declares
+    previousDisplayName. A previousDisplayName that several policies of the package carry is
+    refused: declare it as the policy's object id then. A NEW policy is declared without
+    previousDisplayName; a changed displayName WITHOUT it still creates a new policy and reports the
+    old one as Extra, never removing it.
   - identities in users[], groups[], alternateUsers[], alternateGroups[] may be display names,
     UPNs, or object ids -- they are resolved live against the tenant.
   - approverInfoVisibility controls whether the requestor can see the approvers' identities:
@@ -369,7 +382,9 @@ document.
   - "approvalStages": [] is a declared EMPTY list and CLEARS every live approval stage. Never pair it
     with requireApproval: true -- that writes approval-required with no approvers, so nothing can be
     approved; omit approvalStages entirely to leave the live stages alone.
-- accessReviews[]: { displayName (required), accessPackage (required), assignmentPolicy (required),
+- accessReviews[]: { displayName (required), previousDisplayName (rename only -- the review's current
+  display name or object id when displayName declares a new one; NOT captured by inventory),
+  accessPackage (required), assignmentPolicy (required),
   recurrence (OneTime | Weekly | Monthly | Quarterly | SemiAnnually | Annually),
   startDate (ISO 8601 date), endDate (ISO 8601 date) OR occurrences (>=1)
   [at most one; both are ignored for OneTime], durationInDays (1-365),
@@ -378,8 +393,16 @@ document.
   descriptionForAdmins, descriptionForReviewers, mailNotification (bool),
   reminderNotification (bool), requireJustification (bool), recommendationsEnabled (bool),
   autoApplyDecisions (bool), defaultDecision (None | Approve | Deny | Recommendation) }
-  - displayName is the match key: an existing review is UPDATED in place, and renaming a review
-    through the document is not possible.
+  - displayName is the match key: an existing review is UPDATED in place. To rename a review,
+    declare its new name as displayName and its current name (or object id) as previousDisplayName:
+    both names are looked up in the whole tenant, and the review found under previousDisplayName
+    alone is renamed in place, in the same update as any other change, once it passes the scope
+    check below. When both names match different reviews the entry fails and nothing is changed
+    (two reviews are never merged), and when neither matches the entry fails and nothing is created:
+    a rename names an existing review. A previousDisplayName that several reviews carry is refused:
+    declare it as the review's object id then. A NEW review is declared without
+    previousDisplayName; a changed displayName WITHOUT it creates a new review and leaves the old
+    one in place.
   - accessPackage and assignmentPolicy are the review SCOPE, which cannot be changed on an existing
     review. An existing review is matched by displayName and updated only when it reviews the
     declared accessPackage and assignmentPolicy; a review with that displayName that reviews

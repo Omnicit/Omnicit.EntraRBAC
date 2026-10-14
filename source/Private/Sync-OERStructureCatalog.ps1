@@ -90,8 +90,9 @@ function Sync-OERStructureCatalog {
     reports the item Failed before any prune runs.
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false; the handler
-    emits Skipped records instead of calling child cmdlets. When the catalog itself does not exist and
-    its creation is skipped under -WhatIf, no child read or write calls are made.
+    emits Skipped records instead of calling the child cmdlets that write; the catalog and resource
+    reads described above are still made. When the catalog itself does not exist and its creation is
+    skipped under -WhatIf, no child read or write calls are made.
 
     Under -WhatIf, a catalog reported as "would create catalog" is also added to -PlannedCatalog, so
     that Sync-OERStructureAccessPackage, which Invoke-OERStructure dispatches after this handler, plans
@@ -127,7 +128,8 @@ function Sync-OERStructureCatalog {
 
     .PARAMETER RenameMap
     The run-scoped rename map Invoke-OERStructure creates once per document and passes to this handler,
-    to Sync-OERStructureGroup, to Sync-OERStructureAdministrativeUnit and to the access package handler.
+    to Sync-OERStructureGroup, to Sync-OERStructureAdministrativeUnit, to the access package handler and
+    to the access review handler.
     For an entry that declares previousDisplayName, Resolve-OERStructureRename registers the outcome
     under 'catalogs|<new name>' in lower case: the id of the catalog the entry renames, a refused entry
     when its rename conflicts or finds nothing, and no entry when the new name already finds the

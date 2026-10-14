@@ -6819,9 +6819,11 @@ Sprint 11 step 4 (BL-128, decision A5) made an administrative unit, a catalog an
 renameable through the apply document, with the groups' rules (`## group-rename`): `previousDisplayName`
 names the object's current display name or object id beside the new `displayName`, and both names are
 resolved on every run before anything is read or written. Step 3 had refused the key on those three
-kinds because the engine could not read it (`## rename-refused-outside-groups`); the refusal now stands
-for an assignment policy of an access package and an access review only, which a later step (4b)
-renames. This anchor records the rules and what each costs if it is wrong. The rules were derived from
+kinds because the engine could not read it (`## rename-refused-outside-groups`); step 4 left the
+refusal standing for an assignment policy of an access package and an access review, and step 4b
+removed it for those two as well, which are now renamed with these rules and the additions recorded
+in `## rename-policies-and-reviews` (R3 below is closed there). This anchor records the rules and
+what each costs if it is wrong. The rules were derived from
 the code and proven with mocked tests. The live run of 2026-10-14
 (`docs/live-verification/feat-rename-more-object-kinds-checklist.md`) measured the rename itself: a
 unit, a catalog and two packages, one named by its object id and one in a catalog the same document
@@ -6842,7 +6844,9 @@ entry. `Rename` makes the handler act on the
 object found under the previous name and send the new name in the same `Set-OER<Kind> -NewDisplayName`
 call as every other changed property, so a rename and a property change are one update. The groups
 handler keeps its own, older decision with the same shape. If wrong: three handlers deciding the same
-rule alone would word it three ways, and a fix would land in one of them.
+rule alone would word it three ways, and a fix would land in one of them. Step 4b made the same
+helper decide an assignment policy and an access review, with four more ids
+(`## rename-policies-and-reviews`, D1).
 
 **Neither name matches fails; it never creates.** The reason is the one `## group-rename` gives: Graph's
 name lookup can follow a rename with a delay, and a re-run inside the window in which neither name
@@ -6905,14 +6909,17 @@ create. Why a map: without it a package in a catalog renamed by the same documen
 real run while Graph's name lookup lags (`CatalogNotFound`), and works in the next; a group created
 into a renamed unit fails the same way. The map is one engine variable and two reader calls. If wrong:
 the plan reports `Failed` rows for references that the real run satisfies, and the real run fails
-them once.
+them once. Step 4b made the access package handler register its package and each of its assignment
+policies, and added a third reader, the access review handler, for a review's `accessPackage` and
+`assignmentPolicy` (`## rename-policies-and-reviews`, D1, D4 and D5).
 
-**An access review does not read the map (R3).** An access review's `accessPackage` is not translated
-through the map in this step, since the review handler belongs to step 4b. A review that names a package
-by the new name the package gets in the same run can fail in the plan and in the first run with
-`AccessPackageNotFound`, and works in the next, as a reference to a renamed group does; the validator
-warns on a reference to the old name. If wrong: step 4b makes `Sync-OERStructureAccessReview` read the
-map.
+**An access review does not read the map (R3; closed by step 4b).** Step 4 did not translate an access
+review's `accessPackage` through the map, since the review handler belonged to step 4b: a review that
+named a package by the new name the package got in the same run could fail in the plan and in the
+first run with `AccessPackageNotFound`, and worked in the next, as a reference to a renamed group does.
+Step 4b made `Sync-OERStructureAccessReview` read the map for its `accessPackage` and its
+`assignmentPolicy` (`## rename-policies-and-reviews`, D5), so that paragraph is the record of what step
+4 shipped, no longer the rule.
 
 **The pre-pass follows the previous name (R4).** The pre-pass (`Sync-OERStructureAdministrativeUnit
 -EnsureOnly`) exists to create a unit that a declared group is about to be created into. For an entry
@@ -6956,15 +6963,18 @@ declared in it, existing ones included, and for a unit every group that would be
 even when the rename was done in an earlier run, since the run cannot know. A run that selects Groups
 but not AdministrativeUnits, or AccessPackages but not Catalogs, therefore refuses, for units or
 catalogs that declare `previousDisplayName`, what it resolved by name before R12. The remedy is to
-include the section, or to remove `previousDisplayName` once the new name resolves.
+include the section, or to remove `previousDisplayName` once the new name resolves. Step 4b extended
+R12 to access packages and their assignment policies (`## rename-policies-and-reviews`, D4): the
+access package handler marks them first of all, and a run whose `-Include` leaves AccessPackages out
+marks them, so an access review that names their new names is refused the same way.
 
 **The validator (R10, R11).** `Test-OERStructureSchema` accepts `previousDisplayName` on the three kinds
 with the groups' rules: a value that is not a non-empty string is an Error; one equal to `displayName`
 ignoring case is a Warning, since both names find one object and a case-only rename is not possible
 through the document (`Set-OERAdministrativeUnit`, `Set-OERCatalog` and `Set-OERAccessPackage` do it with
 `-NewDisplayName`); and the previous name is a claim of the section's duplicate check, a package's
-within its catalog. It keeps step 3's Error for an assignment policy and an access review, naming the
-four kinds that can be renamed. A reference that still names a renamed object by its previous name is a
+within its catalog. It kept step 3's Error for an assignment policy and an access review, naming the
+four kinds that could be renamed, until step 4b removed it (`## rename-policies-and-reviews`). A reference that still names a renamed object by its previous name is a
 Warning at the reference -- a group's `administrativeUnit`, a package's `catalog`, a review's
 `accessPackage` -- saying to name the object by its new name (the group's and the review's Warnings
 add: or its object id). It is a Warning, never an Error, so no document that validates today starts failing. R10:
@@ -6977,8 +6987,8 @@ of as renamed, or sees two Warnings for one reference.
 
 **Cost, accepted.** A package in a catalog renamed by the same document is found through the
 catalog's id, which needs the catalog entry to run before the package: the engine's section order
-already does. A reference by name from a section that does not read the map (an access review) still
-waits for Graph's lookup. A package that declares `previousDisplayName` in a catalog the `-WhatIf` plan
+already does. A reference by name from a section that did not read the map (an access review) still
+waited for Graph's lookup until step 4b made that section read it. A package that declares `previousDisplayName` in a catalog the `-WhatIf` plan
 would create is not planned as created (step 3, Rule 2): nothing can be renamed in a catalog that does
 not exist yet, so it fails with `AccessPackageRenameNotFound`. And a `displayName` changed WITHOUT
 `previousDisplayName` still creates a new object beside the old one, silently, as before.
@@ -8224,6 +8234,12 @@ instead. `Get-OERAccessReviewTargetMismatch` reads `accessPackage` and `assignme
 
 Nothing here was measured live: the rules were derived from the code and proven with mocked tests.
 
+**Since Sprint 11 step 4b.** The check also runs on a review found under the `previousDisplayName` its
+entry declares, before the review is renamed or anything else is written to it, and its `Failed` row
+then says where the review was found. An `accessPackage` or `assignmentPolicy` name for which the
+run's rename map holds an id, a package or policy the same document renames, is compared as that id,
+as written, with no lookup (`## rename-policies-and-reviews`, D5 and D6).
+
 ## policy-update-keeps-custom-extensions
 
 Sprint 11 step 3 made `Set-OERAccessPackageAssignmentPolicy` stop dropping what Microsoft Graph
@@ -8319,10 +8335,13 @@ where the engine cannot rename, and made a `-WhatIf` plan report a package in a 
 created. This anchor records the problem, the rules, and what each costs if it is wrong. Nothing here
 was measured live; the rules were derived from the code and proven with mocked tests. Sprint 11 step 4
 later made administrative units, catalogs and access packages renameable (`## rename-more-object-kinds`),
-so Rule 1 below now refuses the key on an assignment policy and an access review only. Rule 3 is
-unaffected. Rule 2 holds except that an access package declaring `previousDisplayName` in a catalog the
-plan would create is not planned as created: nothing can be renamed in a catalog that does not exist
-yet, so it fails with `AccessPackageRenameNotFound`.
+and step 4b assignment policies and access reviews (`## rename-policies-and-reviews`), so the refusal
+of Rule 1 below is gone: the validator refuses `previousDisplayName` on no kind, and Rule 1 is the record
+of what steps 3 and 4 did. Rule 3 is unaffected. Rule 2 holds except that an access package declaring
+`previousDisplayName` in a catalog the plan would create is not planned as created: nothing can be
+renamed in a catalog that does not exist yet, so it fails with `AccessPackageRenameNotFound`; and an
+assignment policy declaring it in a package the plan would create fails with
+`AssignmentPolicyRenameNotFound` instead of its `would create assignmentPolicy` row.
 
 **The problem (BL-128).** Until step 4 only the groups handler read `previousDisplayName`. The other
 sections -- `administrativeUnits`, `catalogs`, `accessPackages` and an access package's
@@ -8348,8 +8367,9 @@ a unit, a catalog and a package keep their `previousDisplayName`, which is the r
 supports. An explicit null is not declared, as for every other key (`Test-HasProp` is present and not
 null), and is not reported. If wrong: a document that carries the key on an assignment policy or an
 access review used to apply and now fails validation; the fix is to remove the key and, when the
-object is to be renamed, rename it outside the document first. The refusal stands for those two kinds
-until a later step (4b) supports their rename.
+object is to be renamed, rename it outside the document first. Step 4b removed the refusal for those
+two kinds as well, deleting the validator's `Add-UnsupportedRenameFinding` with both of its call
+sites, since the engine now renames them (`## rename-policies-and-reviews`).
 
 **Rule 2 (a package in a catalog the same plan creates; R4).** Under `-WhatIf` a catalog the document
 creates does not exist yet, so the catalog-scoped lookup of a package declared in it failed with
@@ -8452,3 +8472,200 @@ and the document is valid either way. The message says the alias does not follow
 declare. A `previousDisplayName` that is an object id, and a template-based group with no
 `mailNickname`, warn too although there is no old name to derive an alias from; the message hedges
 ("if that alias was derived from the old name"). If wrong: one Warning too many on such a document.
+
+## rename-policies-and-reviews
+
+Sprint 11 step 4b (BL-128 part 2, decision A5) made an assignment policy of an access package and an
+access review renameable through the apply document, with the rules of `## rename-more-object-kinds`:
+`previousDisplayName` names the object's current display name or object id beside the new
+`displayName`, both names are resolved on every run before anything else is read or written for the
+object, the object found only under the previous name is renamed in the same update as every other
+changed property, and an entry whose two names find different objects, or neither finds one, fails
+with nothing written. The step also made an access review that names an access package or an
+assignment policy renamed in the same run reach it through the run's rename map, made
+`Set-OERAccessPackageAssignmentPolicy` rename a policy given `-DisplayName` alone (A16), and stopped
+the catalogs handler from taking a failed read for an empty fact (BL-144). This anchor records the
+rules (D1 to D7), the rulings made while planning (P3 to P6) with what each costs if it is wrong, and
+the known limits. Unchanged by this step: `-Prune` never removes an assignment policy or an access
+review, the export never writes `previousDisplayName`, `NothingToUpdate` stays the published id for
+"nothing to update", and no public parameter or output type was added; the four ids in D1 are the
+only new ones. The rules were derived from the code and proven with mocked tests; nothing here has
+been measured live yet.
+
+**D1 (the decision owner and the keys).** `Resolve-OERStructureRename` decides for the
+`assignmentPolicies` and `accessReviews` sections too, with the outcomes it decides for the other
+kinds (`Rename`, `Current`, `Conflict`, `NotFound`, and `Undecided` for a mark) and four new ids:
+`AssignmentPolicyRenameConflict` and `AccessReviewRenameConflict` (category `ResourceExists`),
+`AssignmentPolicyRenameNotFound` and `AccessReviewRenameNotFound` (category `ObjectNotFound`), each
+with the new name as its target. A policy is matched within its access package, so `-AccessPackage`
+is required for that section (a caller error, thrown as an `ArgumentException`) and the messages name
+the package. The map key of a policy is `assignmentPolicies|<package>|<policy>` in lower case, the
+package term being the package's display name as its accessPackages entry declares it; when the
+package's id is known at decision time, the same outcome is registered under the key built with the
+id as well (the same entry, and a `Current` removes both), so a review that names the package by
+object id finds it. An undecided mark is registered under the name key only.
+`Get-OERStructureRenameTarget` reads the policy keys with `-AccessPackage` (the package's name or
+id) and does not serve `accessReviews`. If wrong: a second owner of the policy decision would word
+the refusals its own way, and a key built in a third place would drift from the two that build it.
+
+**D2 (a policy's rows are its package's rows).** Every row about a policy, the decision's refusals
+included, is a row of its package's entry: section `accessPackages`, the package's display name as
+the item, and the policy named in the detail (the decision's rows start with
+`assignmentPolicy '<new name>':`), as every policy row of `Sync-OERStructureAccessPackage` already
+was. The error record's target is the policy's new name. If wrong: a reader that filters rows by
+section finds a policy's rename under its package, where every other policy row has always been.
+
+**The policy handler.** `Sync-OERStructureAccessPackage` matches `previousDisplayName` in the
+package's policy list, which it has already read, so it costs no request: an object id matches only
+the id of a policy of this package, without regard to letter case (R5 of step 4), and a name matches
+a display name without regard to letter case, as `displayName` does. The refusal of a `displayName`
+that several live policies carry stays first and unchanged; a previous name that several carry is
+refused next, with one `AmbiguousName` record whose target is the previous name and one `Failed`
+row, saying to declare the previous name as the policy's object id. A `Rename` acts on the policy
+found under the previous name, and the new name travels as `-DisplayName` in its one
+`Set-OERAccessPackageAssignmentPolicy` call with every declared field, which is sent even when no
+declared field differs (D3 makes such a call an update). A policy that a declared
+`previousDisplayName` names is not reported `Extra`, unless the entry's own `displayName` was refused
+first. A policy that declares `previousDisplayName` in a package the call creates, or under `-WhatIf`
+would create, fails with `AssignmentPolicyRenameNotFound` and is never created. When the previous
+name is an object id, the rename texts name the policy by its current name followed by the id. A
+rename sends every declared field, so a renaming policy whose entry declares `requestorScope`
+`SpecificConnectedOrganizationUsers` is refused by the existing guard against that scope even when
+the scope does not differ; omitting `requestorScope`, the way out the refusal names, renames it. If
+wrong: a rename alone would be reported `Unchanged` and never sent, or would reach a policy of
+another package.
+
+**D3 (A16; `Set-OERAccessPackageAssignmentPolicy -DisplayName` alone).** Issue #47 made the cmdlet
+refuse, with `NothingToUpdate` and before any request, a call that supplies no updatable property
+beyond the mandatory `-DisplayName`. That refused the one call the handler needs for a rename alone.
+The cmdlet now decides on the live policy, directly after the GET it already makes: with no other
+updatable property bound, a `-DisplayName` equal to the live display name, compared ignoring case, is
+`NothingToUpdate` (the same id, category and target, and a message that says how to rename or update
+instead), and a different one is a rename, sent as the usual full PUT with everything else carried
+forward (`## policy-update-keeps-custom-extensions`). A failed GET is reported as itself, never as
+`NothingToUpdate`, and the decision comes before the `AccessPackageNotFound` check, so a read that
+carries the live name and no access package is `NothingToUpdate`. A change of letter case alone is
+therefore not sent; with another property it is. Cost: a call that issue #47 refused without a
+request now costs one GET before `NothingToUpdate`. The decision's `$null -ne $Existing` term is an
+equivalent mutant: `-DisplayName` is mandatory and cannot be empty, while a missing read's display
+name converts to the empty string, which never equals it; the term stays because it says what the
+decision reads. If wrong: the handler would have to re-send a value to make a rename alone an update
+(P3's alternative).
+
+**P3 (the NothingToUpdate cohort).** `tests/Unit/Public/NothingToUpdate.Cohort.Tests.ps1` holds every
+`Set-OER*` cmdlet to reporting `NothingToUpdate` for a call with no updatable property, and to issuing
+no request for it. D3 needs the live name, so for this one cmdlet the case keeps its `Invoke` block and
+its expected `NothingToUpdate`, carries a `LivePolicy` (a policy whose display name is the
+`-DisplayName` the case passes) that answers its read, and asserts exactly one GET and no write; the
+other eleven keep the no-request assertion. If wrong: the architect meant zero requests, which A16
+cannot meet; the alternative is the handler re-sending a value, a change confined to the access
+package handler.
+
+**D4 (R12 for packages and policies).** `Sync-OERStructureAccessPackage`, as its first action and
+before the catalog check and any lookup, marks the package undecided when its entry declares
+`previousDisplayName`, and every assignment policy that declares one, with the reason "the
+accessPackages entry did not reach a decision in this run; see that entry's rows". Each decision
+replaces its mark: the package's under `accessPackages|<name>`, a policy's under both of its keys
+(D1). Every early return leaves the marks no decision has replaced yet -- the catalog refused, a
+failed or ambiguous lookup, a failed package update that renames it, an ambiguous policy name -- so
+a review that names a new name is refused instead of being looked up by name, which could reach
+another object that carries that name. A name that is empty after string conversion is not marked:
+the validator refuses such an entry, and the helper's parameter binding would otherwise end the item
+in the mark block. `Invoke-OERStructure` marks the packages and the policies of a document whose
+`-Include` leaves AccessPackages out, with the reason "the accessPackages section is not selected by
+-Include, so its rename is not reconciled in this run", each policy that declares
+`previousDisplayName` whether or not its package is renamed. If wrong: a review that names the new
+name of a package or policy whose entry stopped would be looked up by name and could reach another
+object that carries it. The cost, accepted, is step 4's: while `-Include` leaves the section out and
+the entry still declares `previousDisplayName`, every review that names the new name is refused, even
+when the rename was done in an earlier run.
+
+**D5 (a review reads the map).** `Sync-OERStructureAccessReview` takes `-RenameMap` and reads it,
+before any Graph call for the entry, for its `accessPackage` (by name; a GUID is an object id and not a
+key) and its `assignmentPolicy` (by name within the package as the review names it, by the package's
+name or its object id). An entry that is refused -- a rename that conflicted or found nothing, or a
+mark -- gives one `Failed` row naming the refused rename and its reason, no error record of its own
+(the rename's own row carries one when it was refused, as step 4's R9 rules), and nothing is
+created, read or written for the review, under `-WhatIf` too; the package is read first, so a refused
+package stops the review before its policy is read. An entry with an id replaces the name in a copy
+of the review entry that only the target check and the create read, so the check compares that id as
+written and a new review is created on it; the diff keeps the names. A `Failed` row of the target
+check then says which declared name was read as which id. If wrong: a review that names a package or
+policy by the new name the same run gives it would fail in the plan and in the first run, as before
+this step, or, with a refusal ignored, could reach another object that carries the new name.
+
+**P5 (a review is not registered).** No entry of a document names an access review, so no reader of a
+review's rename exists, and the review handler decides through `Resolve-OERStructureRename` without
+the map. If wrong: one argument added later.
+
+**P6 (the policy key with the package id).** A policy's outcome is registered under the package's name
+and, once the package's id is known, under its id, so a review that names the package by object id
+finds the policy's rename. Residual, accepted: an undecided mark has no id key, so a review that names
+the package by object id and the policy by the new name of a policy whose package entry stopped
+before the package was found looks the policy up by name, as before this step. If wrong: one more
+refusal path.
+
+**D6 (a review renamed).** Both names are looked up in the whole tenant, each the way `displayName`
+always is (the same lookup, filter and refusal of a name several definitions carry), the new name
+first, so a refusal or a failed read of it returns before the previous name is read. A previous name
+that several definitions carry is refused with one `AmbiguousName` record whose target is the
+previous name, saying to declare the previous name as the review's object id. An object id is read
+once, by id, at `v1.0/identityGovernance/accessReviews/definitions/` followed by the id, with the
+not-found codes `NotFound`, `ResourceNotFound` and `Request_ResourceNotFound` declared to the
+transport: a not-found answer, or an answer with no object, counts as not matching, and any other
+failure is reported `Failed` as itself, with nothing written. The review found, under either name,
+passes `Get-OERAccessReviewTargetMismatch` before anything is written to it (`## access-review-target`),
+so a review of another package or policy is refused and never renamed, and that row says where the
+review was found. The rename is `-DisplayName` in the same `Set-OERAccessReviewDefinition` call as
+every other change (a rename alone makes that call), and the definition read back must carry the new
+name exactly, letter case included, or the row is `Failed` with a warning; when another field did not
+take effect either, the one `Failed` row says both. The decision is made without the map (P5). If
+wrong: a review of another package found under its previous name would be renamed, or a rename that
+Graph did not store would be reported `Updated`.
+
+**D7 (BL-144; the catalogs handler's reads).** `Sync-OERStructureCatalog` read an existing catalog
+with `Get-OERCatalog` and its resources with `Get-OERCatalogResource` without `-ErrorAction Stop`,
+and both cmdlets report a failed read as a non-terminating error and return nothing. So, under the
+default error preference, a failed catalog read made every declared property look changed and sent
+it as a PATCH, and a failed resource read, made after that PATCH, made every declared resource look
+absent, so a resource that exists was added again: the defect class of A14 in
+`## role-assignment-key`. Both reads now carry `-ErrorAction Stop` and come before the first write
+for the entry. A failed read is one `Failed` row that carries the error as itself, written once
+through the caller, and says that no catalog update was sent and no resource was added or removed;
+nothing else is written for the entry, with `-Prune` as without it, and a `-WhatIf` plan reports the
+same row, since the reads are made in a plan too. A catalog read that answers with no object and no
+error is a `Failed` row with no error record, as the create's "returned no object" row is. After a
+failed read of a catalog that the entry renames, the rename map keeps the decision, as it does after
+a failed rename update: the catalog found under its previous name is still the one the document
+means. If wrong: a failed read would again be an empty fact that writes.
+
+**The validator and the schema (P4, Rule 14).** `Test-OERStructureSchema` no longer refuses the key on
+either kind (`Add-UnsupportedRenameFinding` is deleted) and reads it with the groups' rules: a value
+that is not a non-empty string is an Error, and one equal to `displayName` ignoring case is a Warning
+naming what makes such a change (`Set-OERAccessPackageAssignmentPolicy -DisplayName` together with
+another property, or `Set-OERAccessReviewDefinition -DisplayName`). A review's previous name is a claim
+of the accessReviews duplicate check. P4: among the assignment policies of one package, a
+`previousDisplayName` is a claim of a new duplicate check, an Error only when at least one of the two
+colliding claims is a `previousDisplayName`, naming the earlier policy by its position in the package;
+two policies declaring one `displayName` stay unreported, as before this step. If wrong: a stricter
+check is one condition. Rule 14 has a policy half: a review whose `assignmentPolicy` equals, ignoring
+case, the previous name (not an object id) of a policy the document renames in the package the
+review names -- by its `displayName`, or by the name or object id it renames from -- is a Warning,
+since once the rename is applied no policy of the package carries the old name and the review's
+target check fails. The schema declares `previousDisplayName` on both items as a non-empty string.
+
+**Known limits.** (a) A map key joins display names with `|`, so a `|` inside a name can make two keys
+collide: a package `A|B` with a policy `C` and a package `A` with a policy `B|C` share one key, and
+both would need a `previousDisplayName` in one document to meet; so can a package whose display name
+is spelled like another package's object id. (b) Two accessPackages entries with one display name in
+different catalogs share the package-name key, so a later entry's decision replaces the earlier
+one's; a review names a package in the whole tenant, where two packages with one name are ambiguous
+anyway (`AmbiguousName`). (c) A `Rename` registered before a later refusal or failure of the policy
+update keeps the id of the policy found under its previous name, so a review in the same run is
+checked against that policy while it still carries its old name; step 4 set that precedent for
+packages and catalogs. (d) The not-found codes of the access review probe by id (D6) are declared, not
+measured: a not-found answer under another code makes the entry `Failed` with nothing written, the
+safe direction, and the live run of this step is to measure which code Graph sends. (e) A rename that
+changes the letter case only is not possible through the document for a policy or a review either:
+both names find the one object (for a review, as far as the server's name filter ignores case, which
+is not measured), so nothing is renamed, and the validator warns.
