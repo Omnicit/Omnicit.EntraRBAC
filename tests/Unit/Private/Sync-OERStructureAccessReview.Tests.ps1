@@ -4,6 +4,7 @@ BeforeAll {
     Import-Module $script:moduleName -Force -ErrorAction Stop
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 }
 
 AfterAll {
@@ -3972,5 +3973,626 @@ Describe 'Sync-OERStructureAccessReview updates a review found by name only when
         Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 1 -Exactly
         Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal -Times 0
+    }
+}
+
+# BL-128 (Sprint 11 step 4b, D6). An accessReviews[] entry that declares previousDisplayName renames the
+# review found under that name: the entry's displayName is looked up first, exactly as before, then the
+# previous name (tenant-wide by name, or read once by id when it is an object id), and
+# Resolve-OERStructureRename decides, with no rename map (Ruling P5). The review found under the previous
+# name passes the BL-127 target check before anything is written to it -- the check runs for REAL here,
+# only its two lookups are mocked -- and the rename travels as -DisplayName in the one
+# Set-OERAccessReviewDefinition call. The tenant is a list of definitions the mocks read and the Set mock
+# writes, so a second run sees what the first one wrote. No id below is version-4 shaped.
+Describe 'Sync-OERStructureAccessReview renames a review through previousDisplayName (BL-128)' {
+
+    BeforeAll {
+        $script:moduleName = 'Omnicit.EntraRBAC'
+        $script:RnNew = 'Q3 AP review'
+        $script:RnOld = 'Q3 AP review (old)'
+        $script:RnOldId = 'cccc3333-0000-0000-0000-000000000011'
+        $script:RnOtherId = 'cccc3333-0000-0000-0000-000000000012'
+        $script:RnThirdId = 'cccc3333-0000-0000-0000-000000000013'
+        $script:RnPkgId = 'aaaa1111-0000-0000-0000-000000000001'
+        $script:RnOtherPkgId = 'aaaa1111-0000-0000-0000-000000000002'
+        $script:RnPolId = 'bbbb2222-0000-0000-0000-000000000001'
+        $script:RnNotUnique = 'Access review display names are not unique: give the entry or the review in the tenant another display name.'
+
+        # A live definition as ConvertTo-OERAccessReviewDefinition shapes it (Id is the alias the handler
+        # writes by), reviewing the given access package and the declared policy.
+        function New-RnLive {
+            param([string]$Id, [string]$Name, [string]$AccessPackageId = $script:RnPkgId, [int]$DurationInDays = 14)
+            [PSCustomObject]@{
+                Id                      = $Id
+                DisplayName             = $Name
+                Status                  = 'InProgress'
+                DescriptionForAdmins    = 'admin text'
+                DescriptionForReviewers = 'reviewer text'
+                Scope                   = ("/identityGovernance/entitlementManagement/assignments?`$filter=(accessPackage/id eq '{0}' and assignmentPolicy/id eq '{1}')" -f $AccessPackageId, $script:RnPolId)
+                AccessPackageId         = $AccessPackageId
+                AssignmentPolicyId      = $script:RnPolId
+                Reviewers               = @(@{ query = '/users/usr-1' })
+                FallbackReviewers       = @()
+                DurationInDays          = $DurationInDays
+                Recurrence              = @{
+                    pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                    range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                }
+                Settings                = @{ instanceDurationInDays = $DurationInDays }
+            }
+        }
+        # The same definition as Microsoft Graph answers a read by id, before any conversion.
+        function New-RnRaw {
+            param([string]$Id, [string]$Name, [string]$AccessPackageId = $script:RnPkgId)
+            @{
+                id                      = $Id
+                displayName             = $Name
+                status                  = 'InProgress'
+                descriptionForAdmins    = 'admin text'
+                descriptionForReviewers = 'reviewer text'
+                scope                   = @{
+                    query     = ("/identityGovernance/entitlementManagement/assignments?`$filter=(accessPackage/id eq '{0}' and assignmentPolicy/id eq '{1}')" -f $AccessPackageId, $script:RnPolId)
+                    queryType = 'MicrosoftGraph'
+                }
+                reviewers               = @(@{ query = '/users/usr-1'; queryType = 'MicrosoftGraph' })
+                fallbackReviewers       = @()
+                settings                = @{
+                    instanceDurationInDays = 14
+                    recurrence             = @{
+                        pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                        range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                    }
+                }
+            }
+        }
+        function New-RnEntry {
+            param([string]$PreviousDisplayName = $script:RnOld, [int]$DurationInDays = 21)
+            [PSCustomObject]@{
+                displayName         = $script:RnNew
+                previousDisplayName = $PreviousDisplayName
+                accessPackage       = 'AP-Sales'
+                assignmentPolicy    = 'Standard'
+                durationInDays      = $DurationInDays
+                reviewers           = @('person1@example.com')
+            }
+        }
+        # What Invoke-OERGraphRequest returns for an error code the caller declared as an answer.
+        function New-RnNotFoundMarker {
+            param([string]$Uri)
+            $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'NotFound'; StatusCode = 404; Message = 'Not found.'; Uri = $Uri }
+            $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+            $Marker
+        }
+        # Applies one entry through a caller that owns ShouldProcess, and returns the rows, the error
+        # records the CALLER itself published (a record's id carries ',Invoke-SyncArViaCaller' when it is)
+        # and the warnings.
+        function Invoke-RnSync {
+            param([Parameter(Mandatory)]$Item, [switch]$WhatIf)
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Item = $Item; PlanOnly = $WhatIf.IsPresent } {
+                param($Item, $PlanOnly)
+                function Invoke-SyncArViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet
+                }
+                $Published = $null
+                $Warned = $null
+                $Rows = @(Invoke-SyncArViaCaller -Item $Item -WhatIf:$PlanOnly -ErrorAction SilentlyContinue -ErrorVariable Published `
+                        -WarningAction SilentlyContinue -WarningVariable Warned)
+                [PSCustomObject]@{
+                    Rows     = $Rows
+                    Errors   = @($Published | Where-Object {
+                            $_ -is [System.Management.Automation.ErrorRecord] -and
+                            ([string]$_.FullyQualifiedErrorId).EndsWith(',Invoke-SyncArViaCaller')
+                        })
+                    Warnings = @($Warned | ForEach-Object { [string]$_.Message })
+                }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        # The tenant: the definitions a name lookup finds, and the Set mock writes.
+        $script:RnLive = [System.Collections.Generic.List[object]]::new()
+        # When set, the definition read back after the write carries this name instead of the one sent.
+        $script:RnReadBackName = $null
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { param($Uri) throw "Unexpected Graph request: $Uri" }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal { 'usr-1' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId { 'aaaa1111-0000-0000-0000-000000000001' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId { 'bbbb2222-0000-0000-0000-000000000001' }
+        Mock -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+        # Writes what it is sent to the live definition and reads it back, as Graph does.
+        Mock -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition {
+            param($Id, $DisplayName, $DurationInDays)
+            $Live = @($script:RnLive | Where-Object { $_.Id -eq $Id })[0]
+            if ($null -ne $script:RnReadBackName) { $Live.DisplayName = $script:RnReadBackName }
+            elseif ($null -ne $DisplayName) { $Live.DisplayName = $DisplayName }
+            if ($null -ne $DurationInDays) {
+                $Live.DurationInDays = $DurationInDays
+                $Live.Settings = @{ instanceDurationInDays = $DurationInDays }
+            }
+            $Live
+        }
+    }
+
+    Context 'the name lookups answered from the tenant list' {
+
+        BeforeEach {
+            # A name lookup answers every definition carrying the name, ignoring case as the server does.
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition {
+                param($Filter)
+                if ($Filter -notmatch "^displayName eq '(.*)'$") { throw "Unexpected filter: $Filter" }
+                $Wanted = $Matches[1].Replace("''", "'")
+                @($script:RnLive | Where-Object { $_.DisplayName -eq $Wanted })
+            }
+        }
+
+        It 'renames the review found only under its previous name, after the target check, in the one Set call that sends the other changed field' {
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnOld))
+            $Run = Invoke-RnSync -Item (New-RnEntry)
+
+            # Both names were looked up, once each.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 2 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter { $Filter -eq "displayName eq 'Q3 AP review'" }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter { $Filter -eq "displayName eq 'Q3 AP review (old)'" }
+            # The target check ran on the review found under the previous name, and passed.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'AP-Sales' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 1 -Exactly
+            # ONE write, carrying the new name and the other changed field, to the review found under the old name.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                $Id -eq 'cccc3333-0000-0000-0000-000000000011' -and $DisplayName -ceq 'Q3 AP review' -and $DurationInDays -eq 21
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Section | Should -BeExactly 'accessReviews'
+            $Run.Rows[0].Item | Should -BeExactly 'Q3 AP review'
+            $Run.Rows[0].Action | Should -BeExactly 'Updated'
+            $Run.Rows[0].Detail | Should -BeExactly "renamed access review 'Q3 AP review (old)' to 'Q3 AP review'; updated (durationInDays=21)"
+            $Run.Errors.Count | Should -Be 0
+            $Run.Warnings.Count | Should -Be 0
+        }
+
+        It 'renames a review with no other change in one Set call that carries -DisplayName alone' {
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnOld -DurationInDays 21))
+            $Run = Invoke-RnSync -Item (New-RnEntry)
+
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                $Id -eq 'cccc3333-0000-0000-0000-000000000011' -and $DisplayName -ceq 'Q3 AP review' -and $null -eq $DurationInDays
+            }
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Updated'
+            $Run.Rows[0].Detail | Should -BeExactly "renamed access review 'Q3 AP review (old)' to 'Q3 AP review'"
+            @($Run.Rows | Where-Object { $_.Action -eq 'Unchanged' }).Count | Should -Be 0
+            $Run.Errors.Count | Should -Be 0
+        }
+
+        It 'reports Unchanged and writes nothing when only the new name finds the review, with previousDisplayName still declared' {
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnNew -DurationInDays 21))
+            $Run = Invoke-RnSync -Item (New-RnEntry)
+
+            # The previous name was still looked up, and found nothing.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter { $Filter -eq "displayName eq 'Q3 AP review (old)'" }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Unchanged'
+            $Run.Rows[0].Detail | Should -BeExactly "access review 'Q3 AP review' already matches"
+            $Run.Errors.Count | Should -Be 0
+        }
+
+        It 'converges: the first run renames the review, and the same document again reports Unchanged and writes nothing (G8)' {
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnOld))
+            $First = Invoke-RnSync -Item (New-RnEntry)
+            $Second = Invoke-RnSync -Item (New-RnEntry)
+
+            $First.Rows.Count | Should -Be 1
+            $First.Rows[0].Action | Should -BeExactly 'Updated'
+            $First.Rows[0].Detail | Should -BeExactly "renamed access review 'Q3 AP review (old)' to 'Q3 AP review'; updated (durationInDays=21)"
+            $Second.Rows.Count | Should -Be 1
+            $Second.Rows[0].Action | Should -BeExactly 'Unchanged'
+            $Second.Rows[0].Detail | Should -BeExactly "access review 'Q3 AP review' already matches"
+            # Exactly the one write of the first run, across both runs.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+            $First.Errors.Count + $Second.Errors.Count | Should -Be 0
+            $script:RnLive[0].DisplayName | Should -BeExactly 'Q3 AP review'
+        }
+
+        It 'refuses with one Failed row and AccessReviewRenameConflict, writing nothing, when both names find different reviews (<Mode>)' -ForEach @(
+            @{ Mode = 'a real run'; PlanOnly = $false }
+            @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+        ) {
+            $script:RnLive.Add((New-RnLive -Id $script:RnOtherId -Name $script:RnNew))
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnOld))
+            $Run = Invoke-RnSync -Item (New-RnEntry) -WhatIf:$PlanOnly
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Item | Should -BeExactly 'Q3 AP review'
+            $Run.Rows[0].Action | Should -BeExactly 'Failed' -Because 'a refusal is not a write, so a plan reports it exactly as a real run does'
+            $Run.Rows[0].Detail | Should -BeExactly ("both 'Q3 AP review' and its previousDisplayName 'Q3 AP review (old)' exist as different access reviews; " +
+                'the document never merges two access reviews, so nothing was changed -- rename or delete one of them, or remove previousDisplayName')
+            [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewRenameConflict*'
+            $Run.Errors.Count | Should -Be 1
+            [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewRenameConflict,Invoke-SyncArViaCaller'
+            $Run.Errors[0].CategoryInfo.Category | Should -Be 'ResourceExists'
+            $Run.Errors[0].TargetObject | Should -BeExactly 'Q3 AP review'
+            # Neither review is read further or written: no target check, no reviewer lookup.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal -Times 0
+        }
+
+        It 'refuses with AccessReviewRenameNotFound and creates nothing when neither name finds a review (<Mode>)' -ForEach @(
+            @{ Mode = 'a real run'; PlanOnly = $false }
+            @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+        ) {
+            $Run = Invoke-RnSync -Item (New-RnEntry) -WhatIf:$PlanOnly
+
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 2 -Exactly
+            $Run.Rows.Count | Should -Be 1 -Because 'one Failed row stands alone, with no would-create row beside it'
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly ("neither 'Q3 AP review' nor its previousDisplayName 'Q3 AP review (old)' matches an access review, " +
+                'so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; ' +
+                'to create a new access review, remove previousDisplayName')
+            $Run.Errors.Count | Should -Be 1
+            [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewRenameNotFound,Invoke-SyncArViaCaller'
+            $Run.Errors[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+            $Run.Errors[0].TargetObject | Should -BeExactly 'Q3 AP review'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'refuses a review found under its previous name that reviews another access package, and renames nothing (<Mode>)' -ForEach @(
+            @{ Mode = 'a real run'; PlanOnly = $false }
+            @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true }
+        ) {
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnOld -AccessPackageId $script:RnOtherPkgId))
+            $Run = Invoke-RnSync -Item (New-RnEntry) -WhatIf:$PlanOnly
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly ("Access review 'Q3 AP review' in the tenant reviews access package 'aaaa1111-0000-0000-0000-000000000002', " +
+                "not the access package 'AP-Sales' ('aaaa1111-0000-0000-0000-000000000001') this entry declares, so it is not the review this " +
+                "entry declares. Nothing was written. $($script:RnNotUnique)")
+            $Run.Errors.Count | Should -Be 1
+            [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch,Invoke-SyncArViaCaller'
+            # Nothing written: the review keeps its name.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal -Times 0
+            $script:RnLive[0].DisplayName | Should -BeExactly 'Q3 AP review (old)'
+        }
+
+        It 'refuses a previous name that several reviews carry with one AmbiguousName record naming every id, and writes nothing' {
+            # The new name finds a review too, so a handler that skipped the refusal would update it.
+            $script:RnLive.Add((New-RnLive -Id $script:RnThirdId -Name $script:RnNew))
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnOld))
+            $script:RnLive.Add((New-RnLive -Id $script:RnOtherId -Name $script:RnOld))
+            $Run = Invoke-RnSync -Item (New-RnEntry)
+
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 2 -Exactly
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Item | Should -BeExactly 'Q3 AP review'
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly ("2 access review definitions are named 'Q3 AP review (old)' (cccc3333-0000-0000-0000-000000000011, " +
+                'cccc3333-0000-0000-0000-000000000012), the previousDisplayName of this entry; nothing was written -- declare ' +
+                'previousDisplayName as the object id of the review to rename')
+            $Run.Errors.Count | Should -Be 1
+            [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AmbiguousName,Invoke-SyncArViaCaller'
+            $Run.Errors[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Run.Errors[0].TargetObject | Should -BeExactly 'Q3 AP review (old)'
+            $Run.Errors[0].Exception.Message | Should -BeExactly ("Access review definition display name 'Q3 AP review (old)' matches 2 definitions " +
+                '(cccc3333-0000-0000-0000-000000000011, cccc3333-0000-0000-0000-000000000012). Access reviews do not enforce unique ' +
+                'definition display names, so this name cannot identify a single definition. Declare previousDisplayName as the ' +
+                'object id of the review to rename.')
+            $Run.Rows[0].Error.Exception.Message | Should -BeExactly $Run.Errors[0].Exception.Message
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+        }
+
+        It 'refuses a new name that several reviews carry exactly as before, without reading the previous name' {
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnNew))
+            $script:RnLive.Add((New-RnLive -Id $script:RnOtherId -Name $script:RnNew))
+            $Run = Invoke-RnSync -Item (New-RnEntry)
+
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 0 -ParameterFilter { $Filter -eq "displayName eq 'Q3 AP review (old)'" }
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Detail | Should -BeExactly ("2 access review definitions are named 'Q3 AP review' (cccc3333-0000-0000-0000-000000000011, " +
+                'cccc3333-0000-0000-0000-000000000012); nothing was written')
+            $Run.Errors.Count | Should -Be 1
+            $Run.Errors[0].TargetObject | Should -BeExactly 'Q3 AP review'
+            $Run.Errors[0].Exception.Message | Should -BeLike '*Rename one of them so the display name is unique.'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        }
+
+        Context 'a previousDisplayName that is an object id' {
+
+            It 'reads it once, by id, declaring the not-found answers, and renames the review it finds (the id typed in <Case>)' -ForEach @(
+                @{ Case = 'lower case'; Typed = 'cccc3333-0000-0000-0000-000000000011' }
+                @{ Case = 'upper case'; Typed = 'CCCC3333-0000-0000-0000-000000000011' }
+            ) {
+                $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnOld))
+                $script:RnProbeUri = "v1.0/identityGovernance/accessReviews/definitions/$Typed"
+                Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { New-RnRaw -Id 'cccc3333-0000-0000-0000-000000000011' -Name 'Q3 AP review (old)' } -ParameterFilter {
+                    $Uri -eq $script:RnProbeUri
+                }
+                $Run = Invoke-RnSync -Item (New-RnEntry -PreviousDisplayName $Typed)
+
+                # ONE read by id, declaring Graph's three not-found answers; the id is never looked up as a name.
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Uri -eq $script:RnProbeUri -and @($ExpectedErrorCode).Count -eq 3 -and
+                    @($ExpectedErrorCode) -contains 'NotFound' -and @($ExpectedErrorCode) -contains 'ResourceNotFound' -and
+                    @($ExpectedErrorCode) -contains 'Request_ResourceNotFound'
+                }
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter { $Filter -eq "displayName eq 'Q3 AP review'" }
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 1 -Exactly
+                # The review read by id was converted as Get-OERAccessReviewDefinition converts it, so the target
+                # check found its package and policy, and passed.
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 1 -Exactly
+                # The write goes to the id as Graph spells it.
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                    $Id -ceq 'cccc3333-0000-0000-0000-000000000011' -and $DisplayName -ceq 'Q3 AP review' -and $DurationInDays -eq 21
+                }
+                $Run.Rows.Count | Should -Be 1
+                $Run.Rows[0].Action | Should -BeExactly 'Updated'
+                $Run.Rows[0].Detail | Should -BeExactly "renamed access review '$Typed' to 'Q3 AP review'; updated (durationInDays=21)"
+                $Run.Errors.Count | Should -Be 0
+            }
+
+            It 'treats an id that names no review as not matching: with the new name absent, AccessReviewRenameNotFound and nothing created' {
+                Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { param($Uri) New-RnNotFoundMarker -Uri $Uri } -ParameterFilter {
+                    $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions/cccc3333-0000-0000-0000-000000000011'
+                }
+                $Run = Invoke-RnSync -Item (New-RnEntry -PreviousDisplayName $script:RnOldId)
+
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly
+                $Run.Rows.Count | Should -Be 1
+                $Run.Rows[0].Action | Should -BeExactly 'Failed'
+                [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'AccessReviewRenameNotFound*'
+                $Run.Errors.Count | Should -Be 1
+                [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewRenameNotFound,Invoke-SyncArViaCaller'
+                Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            }
+
+            It 'treats an id that names no review as not matching: with the new name present, a normal update with no rename and no conflict' {
+                $script:RnLive.Add((New-RnLive -Id $script:RnThirdId -Name $script:RnNew))
+                Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { param($Uri) New-RnNotFoundMarker -Uri $Uri } -ParameterFilter {
+                    $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions/cccc3333-0000-0000-0000-000000000011'
+                }
+                $Run = Invoke-RnSync -Item (New-RnEntry -PreviousDisplayName $script:RnOldId)
+
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                    $Id -eq 'cccc3333-0000-0000-0000-000000000013' -and $null -eq $DisplayName -and $DurationInDays -eq 21
+                }
+                $Run.Rows.Count | Should -Be 1
+                $Run.Rows[0].Action | Should -BeExactly 'Updated'
+                $Run.Rows[0].Detail | Should -BeExactly "updated access review 'Q3 AP review' (durationInDays=21)"
+                $Run.Errors.Count | Should -Be 0
+            }
+
+            It 'reports any other failure of the read by id as itself, scrubbed first, and writes nothing although the new name found a review' {
+                $script:RnLive.Add((New-RnLive -Id $script:RnThirdId -Name $script:RnNew))
+                Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
+                Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied,
+                        'cccc3333-0000-0000-0000-000000000011')
+                } -ParameterFilter { $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions/cccc3333-0000-0000-0000-000000000011' }
+                $Run = Invoke-RnSync -Item (New-RnEntry -PreviousDisplayName $script:RnOldId)
+
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly
+                $Run.Rows.Count | Should -Be 1
+                $Run.Rows[0].Action | Should -BeExactly 'Failed'
+                $Run.Rows[0].Detail | Should -BeExactly ("could not read access review definition 'cccc3333-0000-0000-0000-000000000011', the " +
+                    'previousDisplayName of this entry: Authorization_RequestDenied: Insufficient privileges to complete the operation.; nothing was written')
+                [string]$Run.Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'Authorization_RequestDenied*'
+                $Run.Rows[0].Error.CategoryInfo.Category | Should -Be 'PermissionDenied'
+                $Run.Errors.Count | Should -Be 1
+                [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeLike 'Authorization_RequestDenied*'
+                # The handler's own catch scrubbed the record before publishing it.
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                    $Record.Exception.Message -eq 'Authorization_RequestDenied: Insufficient privileges to complete the operation.'
+                }
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+                Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            }
+
+            It 'fails the entry and writes nothing when the read by id answers with no object at all' {
+                $script:RnLive.Add((New-RnLive -Id $script:RnThirdId -Name $script:RnNew))
+                Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { $null } -ParameterFilter {
+                    $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions/cccc3333-0000-0000-0000-000000000011'
+                }
+                $Run = Invoke-RnSync -Item (New-RnEntry -PreviousDisplayName $script:RnOldId)
+
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly
+                $Run.Rows.Count | Should -Be 1
+                $Run.Rows[0].Action | Should -BeExactly 'Failed'
+                $Run.Rows[0].Detail | Should -BeLike "could not read access review definition 'cccc3333-0000-0000-0000-000000000011', the previousDisplayName of this entry: *; nothing was written"
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+                Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+            }
+        }
+
+        It 'under -WhatIf reports <Expected> and writes nothing' -ForEach @(
+            @{ Live = 14; Expected = "would rename access review 'Q3 AP review (old)' to 'Q3 AP review'; would update (durationInDays=21)" }
+            @{ Live = 21; Expected = "would rename access review 'Q3 AP review (old)' to 'Q3 AP review'" }
+        ) {
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnOld -DurationInDays $Live))
+            $Run = Invoke-RnSync -Item (New-RnEntry) -WhatIf
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Skipped'
+            $Run.Rows[0].Detail | Should -BeExactly $Expected
+            $Run.Errors.Count | Should -Be 0
+            # The target check ran in the plan too.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            $script:RnLive[0].DisplayName | Should -BeExactly 'Q3 AP review (old)'
+        }
+
+        It 'reports Failed and a warning, never Updated, when the definition read back is named <Case>' -ForEach @(
+            @{ Case = 'as before the rename'; ReadBack = 'Q3 AP review (old)' }
+            @{ Case = 'the new name in another letter case'; ReadBack = 'q3 ap review' }
+        ) {
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnOld))
+            $script:RnReadBackName = $ReadBack
+            $Run = Invoke-RnSync -Item (New-RnEntry)
+
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly ("access review rename not confirmed: Microsoft Graph accepted the write but the definition read " +
+                "back is named '$ReadBack', not 'Q3 AP review'; definition status is 'InProgress'")
+            $Run.Warnings.Count | Should -Be 1
+            $Run.Warnings[0] | Should -BeExactly ("Sync-OERStructureAccessReview: access review 'Q3 AP review' -- Microsoft Graph accepted the rename " +
+                "from 'Q3 AP review (old)' but the definition read back is named '$ReadBack'. The definition status is 'InProgress'. Graph " +
+                'documents that a definition update applies to FUTURE instances only, so a review with no future instance left may accept ' +
+                'a write without storing it.')
+            $Run.Errors.Count | Should -Be 0
+        }
+
+        It 'does not compare the name read back when there is no rename: a review found in another letter case is updated as before' {
+            # The name lookup ignores case, so the entry finds the live 'q3 ap review' under its displayName: no
+            # rename is declared, and the read-back keeps the live spelling.
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name 'q3 ap review'))
+            $Entry = New-RnEntry
+            $Entry.PSObject.Properties.Remove('previousDisplayName')
+            $Run = Invoke-RnSync -Item $Entry
+
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                $Id -eq 'cccc3333-0000-0000-0000-000000000011' -and $null -eq $DisplayName -and $DurationInDays -eq 21
+            }
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Updated'
+            $Run.Rows[0].Detail | Should -BeExactly "updated access review 'Q3 AP review' (durationInDays=21)"
+            $Run.Warnings.Count | Should -Be 0
+        }
+
+        It 'reports Failed naming the rename when Set-OERAccessReviewDefinition returns no definition to verify against' {
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnOld))
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition { }
+            $Run = Invoke-RnSync -Item (New-RnEntry)
+
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly ("access review rename of 'Q3 AP review (old)' to 'Q3 AP review' and update (durationInDays=21) " +
+                'could not be confirmed: Set-OERAccessReviewDefinition returned no definition to verify against')
+        }
+
+        It 'reports a failed rename write as Failed with the error as itself, and no Updated row' {
+            $script:RnLive.Add((New-RnLive -Id $script:RnOldId -Name $script:RnOld))
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition { throw 'graph 400 rename refused' }
+            $Run = Invoke-RnSync -Item (New-RnEntry)
+
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 1 -Exactly
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly 'access review update failed: graph 400 rename refused'
+            $Run.Errors.Count | Should -Be 1
+        }
+
+        It 'asks ShouldProcess with the rename action on the new name, and without a rename with the action it always had' {
+            # The 'What if:' line goes straight to the host, so the entries run in a runspace whose host records
+            # it (OERConfirmHost). Pester mocks do not cross the runspace boundary: the script installs its own
+            # fakes in its copy of the module scope. Each entry is planned under -WhatIf, and nothing is written.
+            $Scenario = {
+                Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+                $Module = Get-Module Omnicit.EntraRBAC
+                & $Module {
+                    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+                    Set-Item -Path function:script:Get-OERAccessReviewTargetMismatch -Value { }
+                    Set-Item -Path function:script:Invoke-OERGraphRequest -Value { throw 'no Graph request expected' }
+                    Set-Item -Path function:script:Set-OERAccessReviewDefinition -Value { throw 'no write expected' }
+                    Set-Item -Path function:script:New-OERAccessReviewDefinition -Value { throw 'no create expected' }
+                    Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value {
+                        [CmdletBinding()]
+                        param($Filter)
+                        $Live = @{ 'R1 old' = 14; 'R2 old' = 21; 'R3' = 14 }
+                        foreach ($Name in $Live.Keys) {
+                            if ($Filter -eq "displayName eq '$Name'") {
+                                [pscustomobject]@{
+                                    Id = "cccc3333-0000-0000-0000-00000000002$($Name.Substring(1, 1))"; DisplayName = $Name; Status = 'InProgress'
+                                    AccessPackageId = 'aaaa1111-0000-0000-0000-000000000001'; AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000001'
+                                    Reviewers = @(); FallbackReviewers = @(); DurationInDays = $Live[$Name]
+                                    Settings = @{ instanceDurationInDays = $Live[$Name] }
+                                }
+                            }
+                        }
+                    }
+                    function script:Invoke-SyncArPlan {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item)
+                        Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet
+                    }
+                }
+                $Items = @(
+                    [pscustomobject]@{ displayName = 'R1 new'; previousDisplayName = 'R1 old'; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'; durationInDays = 21 }
+                    [pscustomobject]@{ displayName = 'R2 new'; previousDisplayName = 'R2 old'; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'; durationInDays = 21 }
+                    [pscustomobject]@{ displayName = 'R3'; accessPackage = 'AP-Sales'; assignmentPolicy = 'Standard'; durationInDays = 21 }
+                )
+                foreach ($Item in $Items) {
+                    & $Module { param($Item) Invoke-SyncArPlan -Item $Item -WhatIf } $Item | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+                }
+                'END'
+            }
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -Script $Scenario
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Errors).Count | Should -Be 0
+            @($Run.Prompts).Count | Should -Be 0
+            @($Run.Events | Where-Object { $_ -like 'Line: What if:*' }) | Should -Be @(
+                'Line: What if: Performing the operation "Rename access review definition ''R1 old'' to ''R1 new'' and update it" on target "R1 new".'
+                'Line: What if: Performing the operation "Rename access review definition ''R2 old'' to ''R2 new''" on target "R2 new".'
+                'Line: What if: Performing the operation "Update access review definition" on target "R3".'
+            )
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+                "ROW:Skipped:would rename access review 'R1 old' to 'R1 new'; would update (durationInDays=21)"
+                "ROW:Skipped:would rename access review 'R2 old' to 'R2 new'"
+                "ROW:Skipped:would update access review 'R3' (durationInDays=21)"
+            )
+        }
+    }
+
+    Context 'the name lookups run through the real Get-OERAccessReviewDefinition' {
+
+        It 'reports a failed read of the previous name as itself and writes nothing, although the new name found a review' {
+            # The REAL Get-OERAccessReviewDefinition runs, so the failure reaches the handler as the record that
+            # cmdlet publishes, the shape the lookup's publisher test reads.
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Uri)
+                $Decoded = [System.Uri]::UnescapeDataString([string]$Uri)
+                if ($Decoded -like "*displayName eq 'Q3 AP review'") { return @{ value = @((New-RnRaw -Id 'cccc3333-0000-0000-0000-000000000013' -Name 'Q3 AP review')) } }
+                if ($Decoded -like "*displayName eq 'Q3 AP review (old)'") {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('429 Too Many Requests'), 'TooManyRequests',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, $null)
+                }
+                throw "Unexpected Graph request: $Uri"
+            }
+            $Run = Invoke-RnSync -Item (New-RnEntry)
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly 'could not read access review definitions: 429 Too Many Requests'
+            @($Run.Errors | Where-Object { $_.Exception.Message -eq '429 Too Many Requests' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+        }
     }
 }
