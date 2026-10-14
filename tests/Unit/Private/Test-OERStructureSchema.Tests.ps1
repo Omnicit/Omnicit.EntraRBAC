@@ -3687,9 +3687,11 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
     # one. A known key; a non-string or empty value is an Error; one equal to displayName, ignoring
     # case, is a Warning, since both names find the same group and a case-only rename cannot be
     # expressed through the document.
-    It 'accepts a non-empty previousDisplayName with no finding at all' {
+    It 'accepts a non-empty previousDisplayName with no finding at all (the alias it declares is not the old name''s)' {
         InModuleScope $script:moduleName {
-            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
+            # BL-132: a rename that declares no mailNickname, or the one derived from the old name,
+            # is a Warning of its own (Describe 'group mailNickname' below); this entry declares a new one.
+            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "mailNickname": "hr_emea", "members": null } ] }' | ConvertFrom-Json
             $V = Test-OERStructureSchema -Document $Doc
             @($V.Errors) | Should -BeNullOrEmpty
             $V.Valid | Should -BeTrue
@@ -3745,10 +3747,119 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
 
     It 'accepts previousDisplayName on a template-based group without comparing it to the computed name (no Warning)' {
         InModuleScope $script:moduleName {
-            $Doc = '{ "version": "1.0", "groups": [ { "template": "role_sec_{Area}", "tokens": { "Area": "hr" }, "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
+            $Doc = '{ "version": "1.0", "groups": [ { "template": "role_sec_{Area}", "tokens": { "Area": "hr" }, "previousDisplayName": "role_sec_hr", "mailNickname": "hr", "members": null } ] }' | ConvertFrom-Json
             $V = Test-OERStructureSchema -Document $Doc
             @($V.Errors) | Should -BeNullOrEmpty
             $V.Valid | Should -BeTrue
+        }
+    }
+
+    Context 'previousDisplayName outside groups (BL-128, A5)' {
+        # Only groups[] can be renamed through the document. The other five places match an entry by
+        # displayName alone, so a previousDisplayName there would be ignored and the engine would
+        # create a second object beside the one the document means to rename. Refused as an Error.
+        BeforeDiscovery {
+            $script:OutsideGroupCase = @(
+                @{
+                    Where   = 'an administrative unit'
+                    Kind    = 'administrative unit'
+                    Article = 'an'
+                    At      = 'administrativeUnits[0]'
+                    Path    = 'administrativeUnits[0].previousDisplayName'
+                    Json    = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "au-new", "previousDisplayName": "au-old" } ] }'
+                }
+                @{
+                    Where   = 'a catalog'
+                    Kind    = 'catalog'
+                    Article = 'a'
+                    At      = 'catalogs[0]'
+                    Path    = 'catalogs[0].previousDisplayName'
+                    Json    = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-new", "previousDisplayName": "cat-old" } ] }'
+                }
+                @{
+                    Where   = 'an access package'
+                    Kind    = 'access package'
+                    Article = 'an'
+                    At      = 'accessPackages[0]'
+                    Path    = 'accessPackages[0].previousDisplayName'
+                    Json    = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap-new", "catalog": "cat-x", "previousDisplayName": "ap-old" } ] }'
+                }
+                @{
+                    Where   = 'an assignment policy'
+                    Kind    = 'assignment policy'
+                    Article = 'an'
+                    At      = 'accessPackages[0].assignmentPolicies[0]'
+                    Path    = 'accessPackages[0].assignmentPolicies[0].previousDisplayName'
+                    Json    = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap-new", "catalog": "cat-x", "assignmentPolicies": [ { "displayName": "pol-new", "previousDisplayName": "pol-old" } ] } ] }'
+                }
+                @{
+                    Where   = 'an access review'
+                    Kind    = 'access review'
+                    Article = 'an'
+                    At      = 'accessReviews[0]'
+                    Path    = 'accessReviews[0].previousDisplayName'
+                    Json    = '{ "version": "1.0", "accessReviews": [ { "displayName": "rev-new", "accessPackage": "ap-x", "assignmentPolicy": "pol-x", "previousDisplayName": "rev-old" } ] }'
+                }
+            )
+        }
+
+        It 'refuses previousDisplayName on <Where> with one Error that says it is not supported' -ForEach $script:OutsideGroupCase {
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Kind = $Kind; Path = $Path } {
+                param($Doc, $Kind, $Path)
+                $V = Test-OERStructureSchema -Document $Doc
+                $V.Valid | Should -BeFalse
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Severity | Should -BeExactly 'Error'
+                $Hit[0].Message | Should -Match 'not supported'
+                $Hit[0].Message | Should -Match ('would create a new ' + [regex]::Escape($Kind))
+                # The message no longer says the engine matches by displayName "alone": a package is matched
+                # within its catalog and a policy within its package, so that was inexact.
+                $Hit[0].Message | Should -Not -Match 'alone'
+                # It is the only Error of the document: the entry is otherwise valid.
+                @($V.Errors | Where-Object Severity -eq 'Error').Count | Should -Be 1
+            }
+        }
+
+        It 'words the refusal on <Where> exactly, with the article <Article> before the kind' -ForEach $script:OutsideGroupCase {
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Kind = $Kind; Article = $Article; At = $At; Path = $Path } {
+                param($Doc, $Kind, $Article, $At, $Path)
+                $Hit = @((Test-OERStructureSchema -Document $Doc).Errors | Where-Object { $_.Path -eq $Path })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Message | Should -BeExactly ("'previousDisplayName' at $At is not supported for $Article $Kind yet: only groups can be renamed " +
+                    "through the document. Invoke-OERStructure does not read previousDisplayName for $Article $Kind, so it would " +
+                    "create a new $Kind named by displayName beside the existing one instead of renaming it. " +
+                    'Remove previousDisplayName, and rename the existing object outside the document first.')
+            }
+        }
+
+        It 'does not report previousDisplayName on <Where> when its value is null (not declared)' -ForEach $script:OutsideGroupCase {
+            # The same document with the value in place is refused (the code path is reached), and with
+            # an explicit null it is not: Test-HasProp is present-and-not-null.
+            $Declared = $Json | ConvertFrom-Json
+            $NullJson = $Json -replace '"previousDisplayName": "[^"]*"', '"previousDisplayName": null'
+            $NullJson | Should -Not -BeExactly $Json
+            $NullDoc = $NullJson | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; NullDoc = $NullDoc; Path = $Path } {
+                param($Declared, $NullDoc, $Path)
+                @((Test-OERStructureSchema -Document $Declared).Errors | Where-Object { $_.Path -eq $Path }).Count | Should -Be 1
+                $V = Test-OERStructureSchema -Document $NullDoc
+                @($V.Errors | Where-Object { $_.Path -eq $Path }) | Should -BeNullOrEmpty
+                @($V.Errors | Where-Object Severity -eq 'Error') | Should -BeNullOrEmpty
+                $V.Valid | Should -BeTrue
+            }
+        }
+
+        It 'still accepts previousDisplayName on a group with no refusal of this kind' {
+            InModuleScope $script:moduleName {
+                $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
+                $V = Test-OERStructureSchema -Document $Doc
+                @($V.Errors | Where-Object { $_.Message -match 'not supported' }) | Should -BeNullOrEmpty
+                @($V.Errors | Where-Object Path -eq 'groups[0].previousDisplayName') | Should -BeNullOrEmpty
+                $V.Valid | Should -BeTrue
+            }
         }
     }
 
@@ -3773,6 +3884,235 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
             $V = Test-OERStructureSchema -Document $Doc
             @($V.Errors | Where-Object Severity -eq 'Error') | Should -BeNullOrEmpty
             $V.Valid | Should -BeTrue
+        }
+    }
+}
+
+Describe 'Test-OERStructureSchema group mailNickname (BL-132)' {
+    # Measured 2026-10-13 (PATCH on a security group, app-only): Microsoft Graph refuses a mailNickname
+    # of 65 characters, the empty string, a space, a tab and each of @ ( ) \ [ ] " ; : < > , with
+    # Request_BadRequest, and accepts 64 characters, . - _ / ' ~ ! # $ % & * + = ? ^ ` { | } and the
+    # non-ASCII letter U+00E5. The validator refuses what was refused and accepts what was accepted.
+    # A mail alias does not follow a rename: a renamed group that keeps the alias derived from its old
+    # name, or declares none, is a Warning.
+    BeforeAll {
+        function New-NickDoc {
+            param([hashtable]$Group)
+            [PSCustomObject]@{
+                version = '1.0'
+                groups  = @([PSCustomObject]$Group)
+            }
+        }
+        function Get-NickFinding {
+            param([object]$Doc)
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+    }
+
+    Context 'a mailNickname Microsoft Graph refuses is an Error at groups[0].mailNickname' {
+        It 'refuses <Case> with one Error naming <Named>' -ForEach @(
+            @{ Case = '65 characters'; Value = ('a' * 65); Named = 'the length'; Expect = 'is 65 characters long; Microsoft Graph accepts at most 64' }
+            @{ Case = 'the empty string'; Value = ''; Named = 'the empty value'; Expect = 'must not be empty' }
+            @{ Case = 'an at sign'; Value = 'a@b'; Named = "'@'"; Expect = "contains '@'" }
+            @{ Case = 'an opening parenthesis'; Value = 'a(b'; Named = "'('"; Expect = "contains '('" }
+            @{ Case = 'a closing parenthesis'; Value = 'a)b'; Named = "')'"; Expect = "contains ')'" }
+            @{ Case = 'a backslash'; Value = 'a\b'; Named = "'\'"; Expect = "contains '\'" }
+            @{ Case = 'an opening bracket'; Value = 'a[b'; Named = "'['"; Expect = "contains '['" }
+            @{ Case = 'a closing bracket'; Value = 'a]b'; Named = "']'"; Expect = "contains ']'" }
+            @{ Case = 'a double quote'; Value = 'a"b'; Named = "'""'"; Expect = "contains '""'" }
+            @{ Case = 'a semicolon'; Value = 'a;b'; Named = "';'"; Expect = "contains ';'" }
+            @{ Case = 'a colon'; Value = 'a:b'; Named = "':'"; Expect = "contains ':'" }
+            @{ Case = 'a less-than sign'; Value = 'a<b'; Named = "'<'"; Expect = "contains '<'" }
+            @{ Case = 'a greater-than sign'; Value = 'a>b'; Named = "'>'"; Expect = "contains '>'" }
+            @{ Case = 'a comma'; Value = 'a,b'; Named = "','"; Expect = "contains ','" }
+            @{ Case = 'a space'; Value = 'a b'; Named = 'U+0020'; Expect = 'contains U+0020' }
+            @{ Case = 'a tab'; Value = "a$([char]9)b"; Named = 'U+0009'; Expect = 'contains U+0009' }
+            @{ Case = 'a control character'; Value = "a$([char]7)b"; Named = 'U+0007'; Expect = 'contains U+0007' }
+        ) {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = $Value; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Section | Should -BeExactly 'groups'
+            $Hit[0].Item | Should -BeExactly 'role_sec_core'
+            $Hit[0].Message | Should -Match ('^' + [regex]::Escape("'mailNickname' at groups[0] "))
+            $Hit[0].Message | Should -Match ([regex]::Escape($Expect))
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'names every refused character once, white space and control characters by code point' {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = "a@b c@$([char]9)"; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeLike "*contains '@', U+0020, U+0009, which the validator refuses in a mail alias*"
+        }
+
+        It 'words the refusal as the validator''s own and says only what Microsoft Graph was measured to refuse' {
+            # Measured (M6): Graph refused the printable set, a space and a tab. Any other white space and
+            # any control character is refused by the validator and was not measured, so the message must
+            # not say that Graph refuses them (an earlier text said Graph refuses all white space and all
+            # control characters).
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = 'a@b'; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeExactly ("'mailNickname' at groups[0] contains '@', which the validator refuses in a mail alias " +
+                "(Microsoft Graph was measured to refuse @ ( ) \ [ ] `" ; : < > , a space and a tab; " +
+                'other white space and control characters are refused too).')
+            $Hit[0].Message | Should -Not -BeLike '*which Microsoft Graph refuses*'
+        }
+
+        It 'names a white space or control character Graph was not measured to refuse the same way (<Case>)' -ForEach @(
+            @{ Case = 'a no-break space'; Value = "a$([char]0xA0)b"; Named = 'U+00A0' }
+            @{ Case = 'a line feed'; Value = "a$([char]10)b"; Named = 'U+000A' }
+            @{ Case = 'a bell'; Value = "a$([char]7)b"; Named = 'U+0007' }
+        ) {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = $Value; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeLike "*contains $Named, which the validator refuses in a mail alias (Microsoft Graph was measured to refuse*other white space and control characters are refused too).*"
+        }
+
+        It 'reports the length and a refused character as two Errors when both apply' {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = (('a' * 64) + '@'); members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 2
+            @($Hit | Where-Object { $_.Message -like '*is 65 characters long*' }).Count | Should -Be 1
+            @($Hit | Where-Object { $_.Message -like "*contains '@'*" }).Count | Should -Be 1
+        }
+    }
+
+    Context 'a mailNickname Microsoft Graph accepts raises no finding' {
+        It 'accepts <Case>' -ForEach @(
+            @{ Case = '64 characters'; Value = ('a' * 64) }
+            @{ Case = 'a dot'; Value = 'a.b' }
+            @{ Case = 'a slash'; Value = 'a/b' }
+            @{ Case = 'an apostrophe'; Value = "a'b" }
+            @{ Case = 'a tilde'; Value = 'a~b' }
+            @{ Case = 'a percent sign'; Value = 'a%b' }
+            @{ Case = 'a non-ASCII letter (measured accepted)'; Value = "a$([char]0x00E5)b" }
+            @{ Case = 'a hyphen and an underscore'; Value = 'role_sec-core' }
+        ) {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = $Value; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' }) | Should -BeNullOrEmpty
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'treats an explicit null mailNickname as undeclared' {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = $null; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'keeps the must-be-string Error for a non-string mailNickname, and adds no length or character Error' {
+            $Doc = New-NickDoc -Group @{ displayName = 'role_sec_core'; mailNickname = 42; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Message | Should -BeExactly "'mailNickname' at groups[0] must be a string."
+            $V.Valid | Should -BeFalse
+        }
+    }
+
+    Context 'a mail alias does not follow a rename (A5)' {
+        It 'warns, and stays Valid, when a renamed group keeps the alias derived from its old name: <Alias>' -ForEach @(
+            @{ Alias = 'OldNamex' }
+            @{ Alias = 'oldnamex' }
+            @{ Alias = 'OLDNAMEX' }
+        ) {
+            $Doc = New-NickDoc -Group @{ displayName = 'New Name'; previousDisplayName = 'Old Name (x)'; mailNickname = $Alias; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Section | Should -BeExactly 'groups'
+            $Hit[0].Item | Should -BeExactly 'New Name'
+            $Hit[0].Message | Should -BeLike '*does not follow a rename*'
+            $Hit[0].Message | Should -BeLike "*renamed from 'Old Name (x)'*"
+            $Hit[0].Message | Should -BeLike "*its mailNickname '$Alias' is the alias derived from the old name*"
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'warns, and stays Valid, when a renamed group declares no mailNickname' {
+            $Doc = New-NickDoc -Group @{ displayName = 'New Name'; previousDisplayName = 'Old Name (x)'; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeLike '*declares no mailNickname*'
+            $Hit[0].Message | Should -BeLike '*does not follow a rename*'
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'warns for a renamed group that declares an explicit null mailNickname (not declared)' {
+            $Doc = New-NickDoc -Group @{ displayName = 'New Name'; previousDisplayName = 'Old Name (x)'; mailNickname = $null; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeLike '*declares no mailNickname*'
+        }
+
+        It 'warns for a template-based group that declares a previousDisplayName and no mailNickname' {
+            $Doc = [PSCustomObject]@{
+                version = '1.0'
+                groups  = @([PSCustomObject]@{
+                    template = 'role_sec_{Area}'; tokens = [PSCustomObject]@{ Area = 'hr' }
+                    previousDisplayName = 'role_sec_old'; members = $null
+                })
+            }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            @($V.Errors).Count | Should -Be 1
+        }
+
+        It 'raises no such Warning in the case <Case>' -ForEach @(
+            @{ Case = 'a new mailNickname'; Group = @{ displayName = 'New Name'; previousDisplayName = 'Old Name (x)'; mailNickname = 'NewName'; members = $null } }
+            @{ Case = 'no previousDisplayName, with the alias of any name'; Group = @{ displayName = 'New Name'; mailNickname = 'OldNamex'; members = $null } }
+            @{ Case = 'no previousDisplayName and no mailNickname'; Group = @{ displayName = 'New Name'; members = $null } }
+            @{ Case = 'a null previousDisplayName (not declared) and no mailNickname'; Group = @{ displayName = 'New Name'; previousDisplayName = $null; members = $null } }
+            @{ Case = 'a previousDisplayName that equals displayName ignoring case, and no mailNickname'; Group = @{ displayName = 'Old Name (x)'; previousDisplayName = 'OLD NAME (X)'; members = $null } }
+            @{ Case = 'a previousDisplayName that equals displayName ignoring case, and its derived alias'; Group = @{ displayName = 'Old Name (x)'; previousDisplayName = 'OLD NAME (X)'; mailNickname = 'OldNamex'; members = $null } }
+            @{ Case = 'an empty previousDisplayName'; Group = @{ displayName = 'New Name'; previousDisplayName = ''; members = $null } }
+            @{ Case = 'a previousDisplayName that is not a string'; Group = @{ displayName = 'New Name'; previousDisplayName = 42; members = $null } }
+        ) {
+            $Doc = New-NickDoc -Group $Group
+            $V = Get-NickFinding -Doc $Doc
+            @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' }) | Should -BeNullOrEmpty
+            @($V.Errors | Where-Object { $_.Message -like '*does not follow a rename*' }) | Should -BeNullOrEmpty
+        }
+
+        It 'does not also warn when the declared mailNickname is not a string (the type Error stands alone)' {
+            $Doc = New-NickDoc -Group @{ displayName = 'New Name'; previousDisplayName = 'Old Name (x)'; mailNickname = @(1, 2); members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Message | Should -BeExactly "'mailNickname' at groups[0] must be a string."
+        }
+
+        It 'compares with the alias Get-OERDerivedMailNickname derives, so a name with characters the alias drops matches' {
+            $Doc = New-NickDoc -Group @{ displayName = 'Nytt namn'; previousDisplayName = "Gamla $([char]0x00E5)ret (1)"; mailNickname = 'Gamlaret1'; members = $null }
+            $V = Get-NickFinding -Doc $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].mailNickname' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
         }
     }
 }
@@ -4398,20 +4738,25 @@ Describe 'Test-OERStructureSchema warns about a role assignment at the root scop
         $V.Valid | Should -BeFalse
     }
 
-    It 'warns about <Scope> in roleAssignments, a spelling the ARM transport sends to the root, with no Error' -ForEach @(
-        @{ Scope = '/.' }
-        @{ Scope = '/..' }
-        @{ Scope = '/%2e' }
+    It 'warns about <Scope> in roleAssignments, a spelling the ARM transport sends to the root, and refuses its spelling (A13)' -ForEach @(
+        @{ Scope = '/.'; Needle = '*without a ''.'' or ''..'' segment*' }
+        @{ Scope = '/..'; Needle = '*without a ''.'' or ''..'' segment*' }
+        @{ Scope = '/%2e'; Needle = '*without a ''%'':*' }
     ) {
         # System.Uri removes the dot segment (and decodes '%2e' first), so a request for this scope reaches
-        # the root scope's path; Test-OERAzureRootScope says so, and the validator warns as for '/'.
+        # the root scope's path; Test-OERAzureRootScope says so, and the validator warns as for '/'. Since
+        # A13 (BL-141) the spelling itself is also an Error: the Warning no longer stands alone, and the
+        # document is refused before the engine's own root-scope guard is reached.
         $V = Invoke-RootValidation -Json ('{ "version": "1.0", "roleAssignments": [ { "scope": "' + $Scope + '", "role": "User Access Administrator", "principal": "person1@example.com" } ] }')
-        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        $Errs = @($V.Errors | Where-Object { $_.Severity -eq 'Error' })
+        $Errs.Count | Should -Be 1
+        $Errs[0].Path | Should -BeExactly 'roleAssignments[0].scope'
+        $Errs[0].Message | Should -BeLike $Needle
         $Warnings = @($V.Errors | Where-Object { $_.Severity -eq 'Warning' })
         $Warnings.Count | Should -Be 1
         $Warnings[0].Path | Should -BeExactly 'roleAssignments[0].scope'
         $Warnings[0].Message | Should -BeExactly $script:RootFindingText
-        $V.Valid | Should -BeTrue
+        $V.Valid | Should -BeFalse
     }
 
     It 'names the index of a later entry at the root scope, and warns about no other entry' {
@@ -4438,6 +4783,288 @@ Describe 'Test-OERStructureSchema warns about a role assignment at the root scop
     ) {
         $V = Invoke-RootValidation -Json $Json
         @(Get-RootWarning -Validation $V).Count | Should -Be 0
+    }
+}
+
+Describe 'Test-OERStructureSchema refuses a scope spelling the request reads as another scope (A13, BL-141)' {
+    # A scope written as an Azure Resource Manager path is sent as written, as part of a System.Uri: a
+    # '.' or '..' segment is removed (with '/' or '\' as the separator), a '\' is read as '/', a '?' or
+    # '#' ends the path, and an escape of an unreserved character is decoded (every '%' is refused).
+    # Such a spelling names another scope than the text says, while the engine groups entries on the
+    # text's canonical form, so two spellings of one scope would form two groups and each prune pass
+    # could remove what the other declares. White space at the start or end of the scope or of a
+    # segment, white space other than U+0020 and a control character are refused too, as the safe
+    # direction; one or more spaces BETWEEN other characters of a segment are accepted, since an Azure
+    # resource name can hold them (decision A13 as narrowed on 2026-10-14). Each rule is an Error of its
+    # own at the entry's scope path in roleAssignments and roleManagementPolicies. The mg:, sub: and
+    # subscription: forms are exempt: they name a management group or subscription by id, name or
+    # display name (which may hold spaces) and are resolved by a lookup, never sent as written. No id
+    # below is version-4 shaped.
+    BeforeAll {
+        function New-SegmentDoc {
+            param([string]$Section, [string]$Scope)
+            $Entry = if ($Section -eq 'roleAssignments') {
+                [pscustomobject]@{ scope = $Scope; role = 'Reader'; principal = 'person1@example.com' }
+            } else {
+                [pscustomobject]@{ scope = $Scope; role = 'Reader' }
+            }
+            [pscustomobject]@{ version = '1.0'; $Section = @($Entry) }
+        }
+        function Invoke-SegmentValidation {
+            param([object]$Doc)
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        function Get-SegmentError {
+            param([object]$Validation)
+            @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' })
+        }
+        # The exact messages, written out in full here rather than built the way the source builds them.
+        function Get-PercentText {
+            param([string]$Section, [string]$Scope)
+            "'scope' at $Section[0] must be written without a '%': an escape can let two spellings reach one resource, and the " +
+            "names of most Azure resource types hold no '%'. Got: '$Scope'. A resource whose name holds one cannot be declared in " +
+            'a document; remove the entry.'
+        }
+        function Get-BackslashText {
+            param([string]$Section, [string]$Scope)
+            "'scope' at $Section[0] must be written without a '\': the request reads it as '/', so the scope would be a second " +
+            "spelling of the one written with '/'. Got: '$Scope'. A resource whose name holds one cannot be declared in a " +
+            'document; remove the entry.'
+        }
+        function Get-PathEndText {
+            param([string]$Section, [string]$Scope)
+            "'scope' at $Section[0] must be written without a '?' or '#': either ends the path of the request, which would then " +
+            "name another scope than the one written. Got: '$Scope'. A resource whose name holds one cannot be declared in a " +
+            'document; remove the entry.'
+        }
+        function Get-WhiteSpaceText {
+            param([string]$Section, [string]$Scope, [string]$Named)
+            "'scope' at $Section[0] must be written without white space at the start or end of the scope or of a segment, white " +
+            "space other than a space (U+0020) or a control character; a space between other characters of a segment is " +
+            "accepted. Got: '$Scope'.$Named A resource whose name holds one of these cannot be declared in a document; remove " +
+            'the entry.'
+        }
+        $script:SegmentRootWarning = "'scope' at roleAssignments[0] is the root scope '/', which grants access over every management group and " +
+            'subscription in the tenant (elevated access). Invoke-OERStructure never creates or removes a role assignment there: the entry ' +
+            'is reported Skipped and the root scope is never pruned. Remove the entry and manage elevated access outside the document.'
+    }
+
+    It 'refuses <Scope> in <Section> as one dot segment Error at the entry''s scope path' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/../other' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/./resourceGroups/rg' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/..' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/.' }
+            @{ Section = $Section; Scope = '/.' }
+            @{ Section = $Section; Scope = '/..' }
+        }
+    ) {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 1
+        $Errs[0].Section | Should -BeExactly $Section
+        $Errs[0].Path | Should -BeExactly "$Section[0].scope"
+        $Errs[0].Message | Should -BeExactly "'scope' at $Section[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '$Scope'."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses <Scope> in <Section> as one percent Error at the entry''s scope path' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg%2Fx' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/%2e%2e' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg%' }
+            @{ Section = $Section; Scope = '/%2e' }
+        }
+    ) {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 1
+        $Errs[0].Section | Should -BeExactly $Section
+        $Errs[0].Path | Should -BeExactly "$Section[0].scope"
+        $Errs[0].Message | Should -BeExactly (Get-PercentText -Section $Section -Scope $Scope)
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses <Scope> in <Section> as one backslash Error at the entry''s scope path' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            # System.Uri reads '\' as '/', so each is a second spelling of the path written with '/'.
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups\rg' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111\resourceGroups\rg' }
+            @{ Section = $Section; Scope = '\subscriptions\11111111-1111-1111-1111-111111111111' }
+        }
+    ) {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 1
+        $Errs[0].Section | Should -BeExactly $Section
+        $Errs[0].Path | Should -BeExactly "$Section[0].scope"
+        $Errs[0].Message | Should -BeExactly (Get-BackslashText -Section $Section -Scope $Scope)
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses <Scope> in <Section> as one ''?'' or ''#'' Error at the entry''s scope path' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            # Either character ends the path of the request URI, so the rest never reaches it as a path.
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg?x' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg#x' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg?' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg#' }
+            # Both characters in one scope are one Error: the two share the rule and its reason.
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg?a#b' }
+        }
+    ) {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 1
+        $Errs[0].Section | Should -BeExactly $Section
+        $Errs[0].Path | Should -BeExactly "$Section[0].scope"
+        $Errs[0].Message | Should -BeExactly (Get-PathEndText -Section $Section -Scope $Scope)
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses a scope with misplaced white space in <Section> as one white space Error at the entry''s scope path (<Case>)' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            # A space (U+0020) where an Azure resource name cannot carry one: at either end of the scope
+            # or of a segment. The message names no code point for a plain space.
+            @{ Section = $Section; Case = 'a leading space'; Named = ''; Scope = ' /subscriptions/11111111-1111-1111-1111-111111111111' }
+            @{ Section = $Section; Case = 'a trailing space'; Named = ''; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg ' }
+            @{ Section = $Section; Case = 'a space at the start of a segment'; Named = ''; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/ rg' }
+            @{ Section = $Section; Case = 'a space at the end of a segment'; Named = ''; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg /providers/Microsoft.Sql/servers/srv1' }
+            @{ Section = $Section; Case = 'a segment of two spaces'; Named = ''; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/  /x' }
+            # White space other than U+0020 anywhere, and a control character anywhere, named by code point.
+            @{ Section = $Section; Case = 'a tab inside a segment'; Named = ' It contains U+0009.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/my$([char]9)rg" }
+            @{ Section = $Section; Case = 'a trailing tab'; Named = ' It contains U+0009.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111$([char]9)" }
+            @{ Section = $Section; Case = 'two tabs, named once'; Named = ' It contains U+0009.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/a$([char]9)b$([char]9)c" }
+            @{ Section = $Section; Case = 'a no-break space inside a segment'; Named = ' It contains U+00A0.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Sql/servers/srv1/databases/my$([char]0x00A0)db" }
+            @{ Section = $Section; Case = 'an em space inside a segment'; Named = ' It contains U+2003.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/my$([char]0x2003)rg" }
+            @{ Section = $Section; Case = 'a line feed at the end'; Named = ' It contains U+000A.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111$([char]10)" }
+            @{ Section = $Section; Case = 'a control character that is not white space'; Named = ' It contains U+0007.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/my$([char]7)rg" }
+            @{ Section = $Section; Case = 'a tab and a no-break space, in the order they appear'; Named = ' It contains U+0009, U+00A0.'; Scope = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/a$([char]9)b/c$([char]0x00A0)d" }
+        }
+    ) {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 1
+        $Errs[0].Section | Should -BeExactly $Section
+        $Errs[0].Path | Should -BeExactly "$Section[0].scope"
+        $Errs[0].Message | Should -BeExactly (Get-WhiteSpaceText -Section $Section -Scope $Scope -Named $Named)
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'reports every rule one scope breaks as a separate Error, in order, in <Section>' -ForEach @(
+        @{ Section = 'roleAssignments' }
+        @{ Section = 'roleManagementPolicies' }
+    ) {
+        $Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/ rg/..\%2e?#'
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 5
+        @($Errs.Path | Select-Object -Unique) | Should -BeExactly @("$Section[0].scope")
+        $Errs[0].Message | Should -BeLike "*without a '.' or '..' segment*"
+        $Errs[1].Message | Should -BeExactly (Get-PercentText -Section $Section -Scope $Scope)
+        $Errs[2].Message | Should -BeExactly (Get-BackslashText -Section $Section -Scope $Scope)
+        $Errs[3].Message | Should -BeExactly (Get-PathEndText -Section $Section -Scope $Scope)
+        $Errs[4].Message | Should -BeExactly (Get-WhiteSpaceText -Section $Section -Scope $Scope -Named '')
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'still refuses a dot segment written with backslashes, now with the backslash Error beside it, in <Section>' -ForEach @(
+        @{ Section = 'roleAssignments' }
+        @{ Section = 'roleManagementPolicies' }
+    ) {
+        $Scope = '/subscriptions/11111111-1111-1111-1111-111111111111\..\x'
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 2
+        $Errs[0].Message | Should -BeExactly "'scope' at $Section[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '$Scope'."
+        $Errs[1].Message | Should -BeExactly (Get-BackslashText -Section $Section -Scope $Scope)
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'accepts <Scope> in <Section> with no Error and no Warning' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg.name' }
+            # Dots inside a segment are not a dot segment.
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Web/sites/a..b' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Web/sites/.hidden' }
+            # One or more spaces between other characters of a segment, as in a legal Azure resource name
+            # (Microsoft Learn: a Microsoft.Sql database, an Application Insights component, a Kusto database),
+            # and in two segments of one scope.
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Sql/servers/srv1/databases/my db' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Sql/servers/srv1/databases/my  db' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Insights/components/web app 1' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Kusto/clusters/kc1/databases/sales data' }
+            @{ Section = $Section; Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Kusto/clusters/kc1/databases/sales data/dataConnections/event hub a' }
+            # The friendly forms name a subscription or management group, which a lookup resolves; a display
+            # name may hold spaces, and the prefix is read in any letter case.
+            @{ Section = $Section; Scope = 'sub:Visual Studio Enterprise' }
+            @{ Section = $Section; Scope = 'mg:Contoso Root' }
+            @{ Section = $Section; Scope = 'subscription:My Sub' }
+            @{ Section = $Section; Scope = 'SUB:x y' }
+            @{ Section = $Section; Scope = 'Mg:Contoso Root' }
+            @{ Section = $Section; Scope = 'SUBSCRIPTION:My Sub' }
+        }
+    ) {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section $Section -Scope $Scope)
+        @($V.Errors).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'accepts the root scope in roleManagementPolicies with no finding' {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section 'roleManagementPolicies' -Scope '/')
+        @($V.Errors).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'reports ''/.'' in roleAssignments with one dot segment Error and the root Warning, since both are true' {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section 'roleAssignments' -Scope '/.')
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 1
+        $Errs[0].Message | Should -BeLike "*without a '.' or '..' segment*"
+        $Warnings = @($V.Errors | Where-Object { $_.Severity -eq 'Warning' })
+        $Warnings.Count | Should -Be 1
+        $Warnings[0].Message | Should -BeExactly $script:SegmentRootWarning
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'reports ''/'' in roleAssignments with the root Warning only, and no Error' {
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section 'roleAssignments' -Scope '/')
+        (Get-SegmentError -Validation $V).Count | Should -Be 0
+        $Warnings = @($V.Errors | Where-Object { $_.Severity -eq 'Warning' })
+        $Warnings.Count | Should -Be 1
+        $Warnings[0].Message | Should -BeExactly $script:SegmentRootWarning
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'exempts a scope as ConvertTo-OERScopeSplat reads it as a friendly form, and no other text that merely starts with the prefix' {
+        # 'mg:' followed by a line feed names no management group (the splat's value needs a character that
+        # is not a line break), so the text is sent as written like any other path and is refused twice:
+        # '..' is a dot segment, and the line feed is white space other than a space at the end of a segment.
+        $Scope = "mg:$([char]10)/../x"
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section 'roleManagementPolicies' -Scope $Scope)
+        $Errs = Get-SegmentError -Validation $V
+        $Errs.Count | Should -Be 2
+        $Errs[0].Message | Should -BeLike "*without a '.' or '..' segment*"
+        $Errs[1].Message | Should -BeExactly (Get-WhiteSpaceText -Section 'roleManagementPolicies' -Scope $Scope -Named ' It contains U+000A.')
+    }
+
+    It 'leaves the friendly form <Scope> to its lookup, which never sends it as written' -ForEach @(
+        @{ Scope = 'mg:a%20b' }
+        @{ Scope = 'sub:/../x' }
+        @{ Scope = 'mg:a\b' }
+        @{ Scope = 'sub:x?y#z' }
+        @{ Scope = 'mg: Contoso Root ' }
+        @{ Scope = "subscription:My$([char]9)Sub" }
+    ) {
+        # The friendly forms are exempt as a whole (ruling R9): the value is looked up by id, name or
+        # display name, and a management group name is escaped as one path segment before it is sent.
+        $V = Invoke-SegmentValidation -Doc (New-SegmentDoc -Section 'roleAssignments' -Scope $Scope)
+        (Get-SegmentError -Validation $V).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
     }
 }
 

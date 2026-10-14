@@ -1007,7 +1007,13 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax** -- never re-implement
   either inline; the first is pure, since the offline validator uses it. A document scope that
   ends with `/` (other than `/`) or contains `//` is REFUSED by the validator, not merged by the
-  helper's trim: never drop that rule in favour of the trim, which would make such a scope prune.
+  helper's trim, and so is a path with a `.` or `..` segment, a `%`, a `\`, a `?` or a `#`, white
+  space at the start or end of the scope or of a segment, white space other than a space, or a control
+  character (A13, narrowed in Sprint 11 step 3 round 1; the `mg:`/`sub:`/`subscription:` forms
+  excepted, as `ConvertTo-OERScopeSplat` reads them). A space between other characters of a segment
+  is accepted, since an Azure resource name can hold one: never widen the white space rule back to
+  every space, which refused a whole export. Never drop the rule in favour of the trim, which would
+  make such a scope prune.
   `Why: docs/development/rationale.md#role-assignment-key`
 - **`Resolve-OERPimActivationConflict` is the single owner of the MFA / authentication-context
   mutual-exclusion rule.** An enabled authentication context and `MultiFactorAuthentication` on
@@ -1075,6 +1081,12 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   keeps one documented public-cloud fallback for the no-auth-state case, exempted by name rather than
   deleted. `tests/QA/sourcehygiene.tests.ps1` machine-checks this the same way it checks the other
   single-owner rules above. `Why: docs/development/rationale.md#sovereign-clouds`
+- **`Get-OERDerivedMailNickname` is the single owner of the mail alias `New-OERGroup` derives from a
+  display name** (every character outside A-Z, a-z, 0-9, '.', '_' and '-' removed). `New-OERGroup`
+  refuses a derived alias that is empty or longer than 64 characters with `DerivedMailNicknameInvalid`,
+  and `Test-OERStructureSchema` compares a renamed group's `mailNickname` with the alias derived from
+  its previous name. Never re-implement the derivation inline.
+  `Why: docs/development/rationale.md#mail-nickname`
 - **`Select-OERManagedDirectoryRoleAssignment` is the single owner of which live directory role
   assignment the apply engine may match or prune** (tenant scope, `memberType` Direct, Active only
   `assignmentType` Assigned), and `Get-OERTokenObjectId` the single owner of reading the signed-in

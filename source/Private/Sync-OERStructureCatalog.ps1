@@ -42,6 +42,12 @@ function Sync-OERStructureCatalog {
     emits Skipped records instead of calling child cmdlets. When the catalog itself does not exist and
     its creation is skipped under -WhatIf, no child read or write calls are made.
 
+    Under -WhatIf, a catalog reported as "would create catalog" is also added to -PlannedCatalog, so
+    that Sync-OERStructureAccessPackage, which Invoke-OERStructure dispatches after this handler, plans
+    a package declared in that catalog as created instead of failing its catalog lookup. A creation
+    skipped any other way (a declined -Confirm, where -WhatIf is not in force) adds nothing, and nor
+    does a real run, an existing catalog or a call without the list.
+
     .PARAMETER Item
     One element from the catalogs[] array in the structure document, as a PSCustomObject produced by
     ConvertFrom-Json.
@@ -62,6 +68,12 @@ function Sync-OERStructureCatalog {
     Optional Tenant Profile alias forwarded for context. Currently unused by this handler but
     accepted for a uniform Sync-OERStructure* signature.
 
+    .PARAMETER PlannedCatalog
+    Optional list that collects the names of the catalogs a -WhatIf plan would create. This handler
+    adds the entry's displayName to it, only under -WhatIf and only when it reports "would create
+    catalog"; Invoke-OERStructure passes one list per run to this handler and to
+    Sync-OERStructureAccessPackage, which reads it. Omit it to collect nothing.
+
     .EXAMPLE
     Sync-OERStructureCatalog -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
     Reconciles one catalog entry from the document, pruning undeclared resources, resolving the
@@ -81,7 +93,8 @@ function Sync-OERStructureCatalog {
         [Parameter(Mandatory)][PSCustomObject]$Item,
         [Parameter(Mandatory)][System.Management.Automation.PSCmdlet]$Caller,
         [switch]$Prune,
-        [string]$TenantAlias
+        [string]$TenantAlias,
+        [System.Collections.Generic.List[string]]$PlannedCatalog
     )
     process {
         # -- Resolve the display name -------------------------------------------------------
@@ -96,6 +109,11 @@ function Sync-OERStructureCatalog {
             if (-not $Caller.ShouldProcess($Name, 'Create catalog')) {
                 # Under -WhatIf: emit Skipped for the catalog and all declared resources, then return.
                 ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Skipped' -Detail "would create catalog $Name"
+                # BL-128 (A5): record the catalog this -WhatIf plan would create, so the access
+                # packages declared in it are planned as created instead of failing their catalog
+                # lookup. Only under -WhatIf: a declined -Confirm leaves the catalog uncreated, and its
+                # packages must stay Failed, exactly as a real run would find them.
+                if ($WhatIfPreference -and $null -ne $PlannedCatalog) { $PlannedCatalog.Add([string]$Name) }
 
                 if (Test-OERDeclaredProperty -Node $Item -Name 'resources') {
                     foreach ($Res in @($Item.resources)) {

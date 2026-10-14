@@ -55,8 +55,13 @@ function New-OERGroup {
     Optional description stored on the group.
 
     .PARAMETER MailNickname
-    Optional mail nickname. When omitted it is derived from the resolved display name (non-alphanumeric
-    characters removed).
+    Optional mail nickname (the group's mail alias), sent as given. When omitted it is derived from the
+    resolved display name by removing every character outside A-Z, a-z, 0-9, '.', '_' and '-'. When that
+    derived alias is empty or longer than the 64 characters Microsoft Graph accepts, the command writes
+    DerivedMailNicknameInvalid and creates nothing: pass -MailNickname with the alias the group should
+    carry. A group that already exists is returned as it is, whatever its name derives to. The alias is
+    NOT derived again when a group is renamed: it stays as it is until Set-OERGroup -MailNickname
+    changes it.
 
     .PARAMETER AdministrativeUnit
     Optional administrative unit (id or display name) to create the group inside. When supplied the group
@@ -199,6 +204,28 @@ function New-OERGroup {
             return
         }
 
+        # BL-132 (A9): the alias derived from the display name must be one Microsoft Graph accepts
+        # (1 to 64 characters; measured: 65 and the empty string are refused with Request_BadRequest).
+        # Refused here, before the administrative unit lookup and the create, instead of sending it. An
+        # existing group was returned above and needs no alias; an explicit -MailNickname is sent as given.
+        $Nick = if ($MailNickname) { $MailNickname } else { Get-OERDerivedMailNickname -DisplayName $ResolvedName }
+        if (-not $MailNickname -and ($Nick.Length -eq 0 -or $Nick.Length -gt 64)) {
+            $Why = if ($Nick.Length -eq 0) {
+                'is empty (the name has no character A-Z, a-z, 0-9, ''.'', ''_'' or ''-'')'
+            } else {
+                "is $($Nick.Length) characters long"
+            }
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "The mail alias derived from the group name '$ResolvedName' $Why; Microsoft Graph accepts 1 to 64 characters. " +
+                    'Nothing was sent. Pass -MailNickname with the alias the group should carry.')) `
+                -ErrorId 'DerivedMailNicknameInvalid' `
+                -Category InvalidArgument `
+                -TargetObject $ResolvedName `
+                -Cmdlet $PSCmdlet
+            return
+        }
+
         # Resolve the target administrative unit (if any) before building the create request.
         $AuId = $null
         if ($AdministrativeUnit) {
@@ -231,7 +258,6 @@ function New-OERGroup {
             }
         }
 
-        $Nick = if ($MailNickname) { $MailNickname } else { ($ResolvedName -replace '[^A-Za-z0-9._-]', '') }
         $Body = @{
             displayName     = $ResolvedName
             mailEnabled     = $false

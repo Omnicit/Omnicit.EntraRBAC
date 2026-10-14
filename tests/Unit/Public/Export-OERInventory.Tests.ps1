@@ -3447,6 +3447,71 @@ Describe 'Export-OERInventory tenantId (BL-88, A14)' {
     }
 }
 
+Describe 'Export-OERInventory self-check of a scope at a resource whose name holds a space (Sprint 11 step 3, decision A13)' {
+    # The export's own self-check runs the real offline validator over inventory.json. An Azure resource
+    # name can hold spaces between other characters, and the validator accepts them since A13 was
+    # narrowed, so a role assignment at such a resource passes the self-check; a '#' in a name, which a
+    # few resource types allow, is still refused, and the self-check says so. Test-OERStructureSchema is
+    # NOT mocked. No id below is version-4 shaped.
+    BeforeAll {
+        $script:SpaceSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @($script:SpaceSub)
+                Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() }
+        }
+        # The one scope's read returns the role assignment rows as Get-OERInventory writes them.
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            [PSCustomObject]@{
+                RoleAssignments        = @($script:SpaceRows)
+                RoleManagementPolicies = @()
+            }
+        }
+    }
+
+    It 'writes the scope with its spaces into inventory.json, and the self-check accepts it' {
+        $SqlScope = "$($script:SpaceSub)/resourceGroups/rg-one/providers/Microsoft.Sql/servers/srv1/databases/sales data"
+        $script:SpaceRows = @(
+            [PSCustomObject]@{ scope = $SqlScope; role = 'Reader'; principal = 'person1@example.com' }
+        )
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'space-ok') -Include RoleAssignments `
+            -WarningVariable Warn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        # Reach proofs: the scope was read, and the bundle holds the row.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.roleAssignments | ForEach-Object { $_.scope }) | Should -Be @($SqlScope)
+        @($Warn | Where-Object { "$_" -like '*did not pass apply-schema validation*' }).Count | Should -Be 0
+        @($Warn | Where-Object { "$_" -like '*Could not run the apply-schema self-check*' }).Count | Should -Be 0
+    }
+
+    It 'warns from the self-check when a resource name holds a ''#'', the control that the self-check ran' {
+        $HashScope = "$($script:SpaceSub)/resourceGroups/rg-one/providers/Microsoft.Sql/servers/srv1/databases/db#1"
+        $script:SpaceRows = @(
+            [PSCustomObject]@{ scope = $HashScope; role = 'Reader'; principal = 'person1@example.com' }
+        )
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'space-hash') -Include RoleAssignments `
+            -WarningVariable Warn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.roleAssignments | ForEach-Object { $_.scope }) | Should -Be @($HashScope)
+        $SelfCheck = @($Warn | Where-Object { "$_" -like '*did not pass apply-schema validation*' })
+        $SelfCheck.Count | Should -Be 1
+        "$($SelfCheck[0])" | Should -BeLike "*First issue: 'scope' at roleAssignments[[]0[]] must be written without a '?' or '#'*"
+    }
+}
+
 Describe 'Export-OERInventory (the groups are read through the relevance-first group reader, A13)' {
     # Without -AllGroupsDetailed the export asks the group reader to decide first, in two requests
     # per group, which groups are RBAC-relevant, and to read members, owners and policies only for

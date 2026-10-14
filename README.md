@@ -816,6 +816,32 @@ tenant, nor an assignment policy name in its access package, and the export writ
 when such a name is shared, the entry is reported `Failed` with `AmbiguousName` until it gives the
 package or the policy by id. Give a new review a display name no other review in the tenant uses.
 
+Only a group can be renamed through the document (`previousDisplayName`). `Test-OERStructure`
+reports `previousDisplayName` in `administrativeUnits`, `catalogs`, `accessPackages`, their
+`assignmentPolicies` and `accessReviews` as an `Error`: renaming is not supported there yet, and
+`Invoke-OERStructure` would create a new object beside the old one. A group's mail alias does not
+follow a rename: declare `mailNickname` for the new name, and the validator warns when a renamed
+group keeps the alias derived from its old name or declares none. A `mailNickname` that is empty,
+longer than 64 characters or holds one of `@ ( ) \ [ ] " ; : < > ,`, a space or a tab is an `Error`,
+since Microsoft Graph was measured to refuse each of them; the validator refuses any other white
+space or control character too, which was not measured. `New-OERGroup` refuses to derive an alias
+that would be empty or longer than 64 characters (`DerivedMailNicknameInvalid`). A scope written as
+a path is an `Error` too when it holds a `.` or `..` segment, a `%`, a `\`, a `?` or a `#`, white
+space at the start or end of the scope or of a segment, white space other than a space, or a control
+character (the `mg:`, `sub:` and `subscription:` forms are not checked for these). One or more spaces
+between other characters of a segment are accepted, since an Azure resource name can hold them, so an
+export that holds a role assignment at such a resource applies. A resource whose name holds one of
+the refused characters, which a few resource types allow, cannot be declared: remove its entry.
+
+`Set-OERAccessPackageAssignmentPolicy`, and `Invoke-OERStructure` through it, keeps a policy's
+custom extension stages, which Microsoft Graph removes on an update that does not send them, and,
+while no `-RequestorScope` is passed, an automatic assignment policy's settings, without which
+Microsoft Graph refuses the update. `Set-OERAccessPackageAssignmentPolicy` refuses a stage whose
+custom extension id cannot be read with `InvalidPolicyInput`, also under its own `-WhatIf`, and sends
+no update. A `-WhatIf` plan reports an
+access package declared in a catalog the same document creates as `would create access package`
+instead of `Failed`.
+
 `Export-OERInventory` stays fast in a large tenant by deciding which security groups are
 RBAC-relevant before it reads any group in full: role-assignable groups, groups with PIM
 eligibility, groups found to use PIM for Groups and, with `-IncludeSyncedGroups`, synchronized

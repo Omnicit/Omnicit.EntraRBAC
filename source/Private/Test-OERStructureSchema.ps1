@@ -65,7 +65,12 @@ function Test-OERStructureSchema {
     inventory README used to document before they were renamed (activationEnabledRules,
     activeEnabledRules, eligibleAlertRecipients, activeAlertRecipients, activationAlertRecipients) gets a
     "Did you mean '<current name>'?" suffix pointing at its replacement. Other sections keep accepting
-    unknown keys without comment. An accessPackages assignmentPolicies entry declaring requireApproval true together
+    unknown keys without comment, except previousDisplayName: only groups can be renamed through the
+    document, so a previousDisplayName declared on an administrativeUnits, catalogs or accessPackages
+    entry, on an assignmentPolicies entry of an access package, or on an accessReviews entry is an
+    Error (BL-128), since Invoke-OERStructure does not read previousDisplayName there and would create
+    a new object under the new displayName beside the existing one instead of renaming it. An explicit
+    null is not declared and is not reported. An accessPackages assignmentPolicies entry declaring requireApproval true together
     with an empty approvalStages array is a Warning naming the measured outcome: Microsoft Graph refuses
     the write with InvalidApprovalStages ("If approval is required, a valid list of stages must be
     provided."), so the assignment policy is reported Failed and left completely unchanged and the
@@ -118,6 +123,17 @@ function Test-OERStructureSchema {
     through the document (Set-OERGroup -NewDisplayName does it). An explicit null is not declared,
     as for every other key, and that Warning does not compare a template-based group's computed name.
     A group's onPremisesSynced, when present, must be a boolean (Error); it is information only.
+    A groups[] entry's mailNickname, when present, must be a string (Error) of 1 to 64 characters
+    (BL-132): an empty one is an Error, one longer than 64 characters is an Error naming its length, and
+    one containing any of @ ( ) \ [ ] " ; : < > , white space or a control character is an Error naming
+    each such character (white space and control characters by code point). Microsoft Graph was measured
+    (2026-10-13) to refuse the printable set, a space, a tab, the empty string and 65 characters; the
+    validator refuses any other white space and any other control character too, which was not
+    measured. A non-ASCII letter is accepted, as Microsoft Graph accepts it. A mail alias does not
+    follow a rename and none is derived again, so a groups[] entry that declares a previousDisplayName
+    different from its displayName (ignoring case) is a Warning at its
+    mailNickname path when it declares no mailNickname (it keeps its current alias) or declares one that
+    equals, ignoring case, the alias Get-OERDerivedMailNickname derives from the previousDisplayName.
     A groups[] entry declaring a non-empty administrativeUnit whose matching administrativeUnits[]
     entry exists in the same document but does not name the group in its members is a Warning
     (issue #59, BL-07): administrativeUnit is applied only when the group is created and never
@@ -159,9 +175,25 @@ function Test-OERStructureSchema {
     '/' itself) or contains '//' is an Error at the entry's scope path: the canonical form would merge
     it with the scope written without the stray '/', so a scope written only that way would start to
     be pruned and '//' would become the root, and the document is refused instead. A roleAssignments
+    or roleManagementPolicies scope that is written as an Azure path is an Error at the entry's scope
+    path, once for each rule it breaks (A13, BL-141), when it holds a '.' or '..' segment (split at
+    '/' and at '\'), a '%', a '\', a '?' or a '#', white space at the start or end of the scope or of
+    a segment, white space other than a space (U+0020), or a control character. The request URI
+    removes a dot segment, reads '\' as '/', ends the path at a '?' or '#', and decodes an escape of an
+    unreserved character (such as %2e), so such a spelling names another scope than the text says,
+    while the engine groups entries on the text's canonical form, and two spellings of one scope would
+    each prune what the other declares. Every '%' is refused, whatever it escapes. Microsoft Learn's
+    naming rules exclude '%', '\', '?' and '#' for most resource types but not all, so a role assignment
+    at a resource whose name holds one cannot be declared, and the message says to remove the entry.
+    One or more spaces between other characters of a segment are accepted: an Azure resource name can
+    hold them (a Microsoft.Kusto or a Microsoft.Sql database, for instance, per Microsoft Learn's naming
+    rules), so a role assignment at such a resource, as Get-OERInventory exports it, is valid.
+    A scope in the mg:, sub: or subscription: form is exempt, as ConvertTo-OERScopeSplat reads the
+    form: it names a management group or subscription by id, name or display name (a display name may
+    contain spaces), a lookup resolves it, and it is never sent as written. A roleAssignments
     scope that is the Azure root scope '/' (Test-OERAzureRootScope decides, so '//' is reported this
     way too, beside its Error, and so is a spelling the Azure Resource Manager transport sends to the
-    root, such as '/.' or '/%2e') is a Warning at the entry's scope path (BL-126): a role assignment
+    root, such as '/.' or '/%2e', beside its A13 Error) is a Warning at the entry's scope path (BL-126): a role assignment
     there is elevated access, which Invoke-OERStructure never creates or removes, so the entry is
     reported Skipped and the root scope is never pruned. A roleManagementPolicies scope '/' is not reported,
     and neither is the '/' of the directory role sections, the Microsoft Entra tenant scope. An OMITTED
@@ -236,6 +268,25 @@ function Test-OERStructureSchema {
                     -Severity 'Warning'
             }
         }
+    }
+
+    # BL-128 (A5): only groups[] can be renamed through the document. The other handlers never read
+    # previousDisplayName -- they match an entry by its displayName (a package within its catalog, a
+    # policy within its package) -- so a previousDisplayName there would be ignored and the engine would
+    # create a second object beside the one the document means to rename. Refused as an Error until
+    # those sections support it (Sprint 11 step 4). A null value is not declared and is not reported.
+    # The message names the kind with the article its first letter calls for ('an administrative unit',
+    # 'a catalog').
+    function Add-UnsupportedRenameFinding {
+        param([object]$Node, [string]$Section, [string]$Item, [string]$Path, [string]$Kind)
+        if (-not (Test-HasProp -Node $Node -Name 'previousDisplayName')) { return }
+        $KindWithArticle = if ($Kind -match '^[aeiou]') { "an $Kind" } else { "a $Kind" }
+        Add-Finding -Section $Section -Item $Item -Path "$Path.previousDisplayName" `
+            -Message ("'previousDisplayName' at $Path is not supported for $KindWithArticle yet: only groups can be " +
+                "renamed through the document. Invoke-OERStructure does not read previousDisplayName for " +
+                "$KindWithArticle, so it would create a new $Kind named by displayName beside the existing one " +
+                "instead of renaming it. Remove previousDisplayName, and rename the existing object outside " +
+                "the document first.")
     }
 
     # Enum casing has a single owner: Resolve-OERStructureEnumCasing. This validator deliberately
@@ -446,6 +497,56 @@ function Test-OERStructureSchema {
                             Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.$GStringProp" `
                                 -Message "'$GStringProp' at $GPath must be a string."
                         }
+                    }
+                }
+
+                # BL-132: Microsoft Graph was measured (2026-10-13, PATCH on a security group) to refuse
+                # @ ( ) \ [ ] " ; : < > , a space, a tab, the empty string and 65 characters; Microsoft
+                # Learn's group resource lists the same printable set. The validator also refuses any other
+                # white space and any other control character, which was not measured (no alias needs them).
+                # A non-ASCII letter was accepted by Graph, so it is not refused here. A non-string value
+                # was reported above.
+                if ((Test-HasProp -Node $G -Name 'mailNickname') -and $G.mailNickname -is [string]) {
+                    $Nick = [string]$G.mailNickname
+                    if ($Nick.Length -eq 0) {
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.mailNickname" `
+                            -Message "'mailNickname' at $GPath must not be empty."
+                    } elseif ($Nick.Length -gt 64) {
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.mailNickname" `
+                            -Message "'mailNickname' at $GPath is $($Nick.Length) characters long; Microsoft Graph accepts at most 64."
+                    }
+                    $Bad = @($Nick.ToCharArray() | Where-Object {
+                            '@()\[]";:<>,'.Contains($_) -or [char]::IsWhiteSpace($_) -or [char]::IsControl($_)
+                        } | Select-Object -Unique)
+                    if ($Bad.Count -gt 0) {
+                        $Shown = ($Bad | ForEach-Object {
+                                if ([char]::IsWhiteSpace($_) -or [char]::IsControl($_)) { 'U+{0:X4}' -f [int]$_ } else { "'$_'" }
+                            }) -join ', '
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.mailNickname" `
+                            -Message ("'mailNickname' at $GPath contains $Shown, which the validator refuses in a mail alias " +
+                                '(Microsoft Graph was measured to refuse @ ( ) \ [ ] " ; : < > , a space and a tab; ' +
+                                'other white space and control characters are refused too).')
+                    }
+                }
+
+                # BL-132 (A5): a mail alias does not follow a rename, and none is derived again. Warn when a
+                # renamed group keeps the alias derived from its previous name, or declares none and so keeps
+                # whatever alias it has. Not reported when previousDisplayName is not declared, is not a
+                # non-empty string (reported above), or equals displayName ignoring case (nothing is renamed).
+                if ((Test-HasProp -Node $G -Name 'previousDisplayName') -and $G.previousDisplayName -is [string] -and
+                    $G.previousDisplayName.Length -gt 0 -and
+                    -not ($HasDN -and [string]$G.displayName -ieq $G.previousDisplayName)) {
+                    $OldAlias = Get-OERDerivedMailNickname -DisplayName $G.previousDisplayName
+                    if (-not (Test-HasProp -Node $G -Name 'mailNickname')) {
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.mailNickname" -Severity 'Warning' `
+                            -Message ("Group at $GPath is renamed from '$($G.previousDisplayName)' and declares no mailNickname, so it keeps " +
+                                'its current mail alias: the alias does not follow a rename. If that alias was derived from the old ' +
+                                'name, declare mailNickname with the alias the new name should carry.')
+                    } elseif ($G.mailNickname -is [string] -and $G.mailNickname -ieq $OldAlias) {
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.mailNickname" -Severity 'Warning' `
+                            -Message ("Group at $GPath is renamed from '$($G.previousDisplayName)' but its mailNickname '$($G.mailNickname)' " +
+                                'is the alias derived from the old name: the alias does not follow a rename. Declare the alias the new ' +
+                                'name should carry, or keep this one on purpose.')
                     }
                 }
 
@@ -693,6 +794,8 @@ function Test-OERStructureSchema {
                         -Consequence ('Both entries reconcile one administrative unit, so each would undo the other''s settings and, ' +
                             'under -Prune, remove the members and scoped roles the other declares.')
                 }
+                Add-UnsupportedRenameFinding -Node $AU -Section 'administrativeUnits' -Item $AUItem -Path $AUPath `
+                    -Kind 'administrative unit'
 
                 foreach ($AUBoolProp in @('dynamic', 'restricted', 'hiddenMembership')) {
                     if (Test-HasProp -Node $AU -Name $AUBoolProp) {
@@ -787,6 +890,8 @@ function Test-OERStructureSchema {
                         -Consequence ('Both entries reconcile one catalog, so each would undo the other''s settings and, ' +
                             'under -Prune, remove the resources the other declares.')
                 }
+                Add-UnsupportedRenameFinding -Node $Cat -Section 'catalogs' -Item $CatItem -Path $CatPath `
+                    -Kind 'catalog'
 
                 if (Test-HasProp -Node $Cat -Name 'externallyVisible') {
                     if ($Cat.externallyVisible -isnot [bool]) {
@@ -877,6 +982,8 @@ function Test-OERStructureSchema {
                         -Consequence ('Both entries reconcile one access package, so each would undo the other''s settings and, ' +
                             'under -Prune, remove the resource role bindings the other declares.')
                 }
+                Add-UnsupportedRenameFinding -Node $AP -Section 'accessPackages' -Item $APItem -Path $APPath `
+                    -Kind 'access package'
 
                 if (Test-HasProp -Node $AP -Name 'hidden') {
                     if ($AP.hidden -isnot [bool]) {
@@ -932,6 +1039,8 @@ function Test-OERStructureSchema {
                                     -Path "$PolPath.displayName" `
                                     -Message "'displayName' is required at $PolPath."
                             }
+                            Add-UnsupportedRenameFinding -Node $Pol -Section 'accessPackages' -Item $APItem -Path $PolPath `
+                                -Kind 'assignment policy'
 
                             if (Test-HasProp -Node $Pol -Name 'requestorScope') {
                                 $RScope = $Pol.requestorScope
@@ -1253,6 +1362,8 @@ function Test-OERStructureSchema {
                         -What "display name '$($AR.displayName)'" `
                         -Consequence 'Both entries reconcile one access review, so applying the document would rewrite its settings on every run.'
                 }
+                Add-UnsupportedRenameFinding -Node $AR -Section 'accessReviews' -Item $ARItem -Path $ARPath `
+                    -Kind 'access review'
 
                 if (Test-HasProp -Node $AR -Name 'recurrence') {
                     if ($ValidRecurrence -inotcontains $AR.recurrence) {
@@ -1397,7 +1508,7 @@ function Test-OERStructureSchema {
     # a scope written ONLY with the stray '/' would start to be pruned, and '//' would become the root
     # '/'. Before the engine grouped on the canonical scope, neither was ever pruned, and a refusal
     # removes nothing. Azure Resource Manager never returns a scope carrying either spelling, so an
-    # exported document is not hit.
+    # exported document is not hit. Add-ScopeSegmentFinding, below, is the second spelling rule (A13).
     function Add-ScopeSlashFinding {
         param([object]$Node, [string]$Section, [string]$Item, [string]$Path)
         if (-not (Test-HasProp -Node $Node -Name 'scope')) { return }
@@ -1405,6 +1516,82 @@ function Test-OERStructureSchema {
         if (($ScopeText.EndsWith('/') -and $ScopeText -cne '/') -or $ScopeText.Contains('//')) {
             Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
                 -Message "'scope' at $Path must be written without a trailing or doubled '/'. Got: '$ScopeText'."
+        }
+    }
+
+    # A13 (BL-141, narrowed 2026-10-14): a scope written as an Azure Resource Manager path is sent as
+    # written, as part of a System.Uri, while the engine groups entries on the text's canonical form. A
+    # spelling the request reads as another scope would let two spellings of one scope form two groups,
+    # and each prune pass could remove what the other declares (the mechanism of BL-01). Each check below
+    # is an Error at the entry's scope path, in the form of the slash rule above, and they are
+    # independent, so one scope can draw several:
+    # - a '.' or '..' segment, with '/' or '\' as the separator: System.Uri removes it;
+    # - a '%': an escape can let two spellings reach one resource (System.Uri decodes an escape of an
+    #   unreserved character such as %2e and keeps one such as %2f), so every '%' is refused, whatever it
+    #   escapes;
+    # - a '\': System.Uri reads it as '/', so the text is a second spelling of the path written with '/';
+    # - a '?' or a '#': either ends the path of the request URI, so the rest of the scope never reaches
+    #   it as a path;
+    # - white space at the start or end of the scope or of a segment, white space other than a space
+    #   (U+0020) anywhere, and a control character. The first segment starts where the scope starts and
+    #   the last ends where it ends, so the segment test covers the scope's own start and end too. One
+    #   or more spaces BETWEEN other characters of a segment are accepted: an Azure resource name can
+    #   hold them (Microsoft Learn, "Naming rules and restrictions for Azure resources": Microsoft.Kusto
+    #   databases, and by its exclusion lists Microsoft.Sql servers/databases and elasticPools and
+    #   Microsoft.Insights components), the request sends each one as %20, and the export writes the
+    #   scope as Azure Resource Manager returns it, so a role assignment at such a resource, as
+    #   Get-OERInventory exports it, is valid (docs/development/rationale.md#role-assignment-key).
+    # The same page excludes '%', '\', '?' and '#' for most resource types, though not for all (a few
+    # allow '%', '\' or '?', and several allow '#', which it says not to use since it interferes with
+    # Azure Resource Manager requests), and not every type excludes a leading space: a role assignment
+    # at such a resource cannot be declared, and each message says to remove the entry.
+    # The mg:, sub: and subscription: forms are exempt: they name a management group or subscription by
+    # id, name or display name (a display name may contain spaces) and are resolved by a lookup, never
+    # sent as written. ConvertTo-OERScopeSplat owns that syntax, so the exemption asks it: only a scope it
+    # returns as @{ Scope = ... } is the text that is sent as written, and the prefix pattern is never
+    # repeated here.
+    function Add-ScopeSegmentFinding {
+        param([object]$Node, [string]$Section, [string]$Item, [string]$Path)
+        if (-not (Test-HasProp -Node $Node -Name 'scope')) { return }
+        $ScopeText = [string]$Node.scope
+        if (-not (ConvertTo-OERScopeSplat -Scope $ScopeText).ContainsKey('Scope')) { return }
+        $Segments = @($ScopeText -split '[/\\]')
+        if (@($Segments | Where-Object { $_ -ceq '.' -or $_ -ceq '..' }).Count -gt 0) {
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
+                -Message "'scope' at $Path must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '$ScopeText'."
+        }
+        if ($ScopeText.Contains('%')) {
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
+                -Message ("'scope' at $Path must be written without a '%': an escape can let two spellings reach one resource, and the " +
+                    "names of most Azure resource types hold no '%'. Got: '$ScopeText'. A resource whose name holds one cannot be " +
+                    'declared in a document; remove the entry.')
+        }
+        if ($ScopeText.Contains('\')) {
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
+                -Message ("'scope' at $Path must be written without a '\': the request reads it as '/', so the scope would be a second " +
+                    "spelling of the one written with '/'. Got: '$ScopeText'. A resource whose name holds one cannot be declared in a " +
+                    'document; remove the entry.')
+        }
+        if ($ScopeText.Contains('?') -or $ScopeText.Contains('#')) {
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
+                -Message ("'scope' at $Path must be written without a '?' or '#': either ends the path of the request, which would " +
+                    "then name another scope than the one written. Got: '$ScopeText'. A resource whose name holds one cannot be " +
+                    'declared in a document; remove the entry.')
+        }
+        # String.Trim() removes exactly the characters [char]::IsWhiteSpace reports, at both ends.
+        $EdgeWhiteSpace = @($Segments | Where-Object { $_ -cne $_.Trim() }).Count -gt 0
+        $OtherWhiteSpace = @($ScopeText.ToCharArray() | Where-Object {
+                [char]::IsControl($_) -or ([char]::IsWhiteSpace($_) -and [int]$_ -ne 32)
+            } | Select-Object -Unique)
+        if ($EdgeWhiteSpace -or $OtherWhiteSpace.Count -gt 0) {
+            $Named = if ($OtherWhiteSpace.Count -gt 0) {
+                ' It contains ' + (($OtherWhiteSpace | ForEach-Object { 'U+{0:X4}' -f [int]$_ }) -join ', ') + '.'
+            } else { '' }
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
+                -Message ("'scope' at $Path must be written without white space at the start or end of the scope or of a segment, " +
+                    "white space other than a space (U+0020) or a control character; a space between other characters of a segment " +
+                    "is accepted. Got: '$ScopeText'.$Named A resource whose name holds one of these cannot be declared in a " +
+                    'document; remove the entry.')
         }
     }
 
@@ -1430,9 +1617,11 @@ function Test-OERStructureSchema {
                     }
                 }
                 Add-ScopeSlashFinding -Node $RA -Section 'roleAssignments' -Item $RAItem -Path $RAPath
+                Add-ScopeSegmentFinding -Node $RA -Section 'roleAssignments' -Item $RAItem -Path $RAPath
                 # BL-126: a role assignment at the Azure root scope '/' (Test-OERAzureRootScope owns the
-                # rule, so '//' is it too, beside its slash Error, and so is '/.', which the ARM
-                # transport's URI sends to the root) is elevated access, which a document
+                # rule, so '//' is it too, beside its slash Error, and so are '/.', '/..' and '/%2e',
+                # which the ARM transport's URI sends to the root, each beside its A13 segment Error:
+                # the Warning no longer stands alone for them) is elevated access, which a document
                 # never carries and the apply engine never creates, removes or prunes: it reports the
                 # entry Skipped. A Warning, not an Error, so an older export that holds one still applies
                 # for the rest (docs/development/rationale.md#root-scope-is-not-in-the-document). Never
@@ -1627,6 +1816,7 @@ function Test-OERStructureSchema {
                 Test-PimPolicySectionItem -Node $RMP -Section 'roleManagementPolicies' -Path $RMPPath -Item $RMPItem `
                     -KnownKey (@('scope') + $PimPolicyItemKey) -RequiredKey @('scope', 'role') -PimLabel 'Azure PIM'
                 Add-ScopeSlashFinding -Node $RMP -Section 'roleManagementPolicies' -Item $RMPItem -Path $RMPPath
+                Add-ScopeSegmentFinding -Node $RMP -Section 'roleManagementPolicies' -Item $RMPItem -Path $RMPPath
                 if ((Test-HasProp -Node $RMP -Name 'scope') -and (Test-HasProp -Node $RMP -Name 'role')) {
                     $RMPCanonicalScope = ConvertTo-OERCanonicalScope -Scope ([string]$RMP.scope)
                     Add-DuplicateEntryFinding -Seen $RMPSeen -Key "$RMPCanonicalScope|$($RMP.role)" -Index $I `

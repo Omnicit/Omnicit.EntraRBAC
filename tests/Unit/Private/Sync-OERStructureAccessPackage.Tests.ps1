@@ -645,7 +645,7 @@ Describe 'Sync-OERStructureAccessPackage' {
         }
     }
 
-    It 'under -WhatIf on a missing AP, declared resourceRoles and assignmentPolicies each produce a would-configure preview row' {
+    It 'under -WhatIf on a missing AP, declared resourceRoles and assignmentPolicies each produce a preview row (would configure resourceRole, would create assignmentPolicy)' {
         InModuleScope $script:moduleName {
             function Invoke-SyncApViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
@@ -665,7 +665,7 @@ Describe 'Sync-OERStructureAccessPackage' {
             }
             $r = @(Invoke-SyncApViaCaller -Item $Item -WhatIf)
             @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "would configure resourceRole 'role_sec_x'" }).Count | Should -Be 1
-            @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "would configure assignmentPolicy 'Default'" }).Count | Should -Be 1
+            @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "would create assignmentPolicy 'Default' after access package is created" }).Count | Should -Be 1
         }
     }
 
@@ -3048,7 +3048,7 @@ Describe 'Sync-OERStructureAccessPackage' {
                     assignmentPolicies = @([PSCustomObject]@{ displayName = 'Default' })
                 }
                 $r = @(Invoke-SyncApViaCaller -Item $Item -WhatIf)
-                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "would configure assignmentPolicy 'Default'" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "would create assignmentPolicy 'Default' after access package is created" }).Count | Should -Be 1
             }
         }
 
@@ -3068,7 +3068,7 @@ Describe 'Sync-OERStructureAccessPackage' {
                     assignmentPolicies = @([PSCustomObject]@{ displayName = $null })
                 }
                 $r = @(Invoke-SyncApViaCaller -Item $Item -WhatIf)
-                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "would configure assignmentPolicy '\?'" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "would create assignmentPolicy '\?' after access package is created" }).Count | Should -Be 1
             }
         }
 
@@ -3088,7 +3088,7 @@ Describe 'Sync-OERStructureAccessPackage' {
                     assignmentPolicies = @([PSCustomObject]@{})
                 }
                 $r = @(Invoke-SyncApViaCaller -Item $Item -WhatIf)
-                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "would configure assignmentPolicy '\?'" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "would create assignmentPolicy '\?' after access package is created" }).Count | Should -Be 1
             }
         }
     }
@@ -5247,6 +5247,102 @@ Describe 'Sync-OERStructureAccessPackage -- every Microsoft Graph v1.0 requestor
             $Run.Sent.Count | Should -Be 1
             $Run.Sent[0].Method | Should -Be 'POST'
             $Run.Sent[0].Body.allowedTargetScope | Should -BeExactly 'specificConnectedOrganizationUsers'
+        }
+    }
+}
+
+Describe 'Sync-OERStructureAccessPackage -PlannedCatalog' {
+    Context 'a package in a catalog the same -WhatIf plan creates (BL-128, A5)' {
+        # Under -WhatIf the catalogs handler has not created the catalog the document declares, so the
+        # catalog-scoped package lookup would fail with CatalogNotFound and report the package Failed
+        # ("NOT created") while the real run creates both. The engine passes the catalogs the plan
+        # would create as -PlannedCatalog; only a name in it is trusted, and a catalog the document
+        # does not declare, and that does not exist, still fails.
+
+        It 'plans the package and each declared child as created without reading the catalog (catalog <Declared>, planned <Planned>)' -ForEach @(
+            @{ Declared = 'cat-new'; Planned = 'cat-new' }
+            @{ Declared = 'CAT-NEW'; Planned = 'cat-new' }
+            @{ Declared = 'cat-new'; Planned = 'CAT-NEW' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; Planned = $Planned } {
+                param($Declared, $Planned)
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[string]]$PlannedCatalog)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -PlannedCatalog $PlannedCatalog
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERAccessPackageId { $null }
+                Mock Get-OERAccessPackage { @() }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'ap-new' } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $PlannedList = [System.Collections.Generic.List[string]]::new()
+                $PlannedList.Add($Planned)
+                $Item = [PSCustomObject]@{
+                    displayName        = 'ap-new'
+                    catalog            = $Declared
+                    resourceRoles      = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' })
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Default' }, [PSCustomObject]@{ displayName = 'Partners' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -PlannedCatalog $PlannedList -WhatIf)
+
+                # The catalog is not read, and nothing is sent or created.
+                Should -Invoke Get-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq 'would create access package ap-new' }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would configure resourceRole 'role_sec_x' after access package is created" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would create assignmentPolicy 'Default' after access package is created" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would create assignmentPolicy 'Partners' after access package is created" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                $r.Count | Should -Be 4
+            }
+        }
+
+        It 'still fails the package with NOT created when the list is <Case> and the catalog lookup finds no catalog' -ForEach @(
+            @{ Case = 'empty'; Mode = 'Empty' }
+            @{ Case = 'not passed'; Mode = 'Null' }
+            @{ Case = 'holding another catalog only'; Mode = 'Other' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Mode = $Mode } {
+                param($Mode)
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[string]]$PlannedCatalog)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -PlannedCatalog $PlannedCatalog
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERAccessPackageId { $null }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'ap-new' } }
+                # A cmdlet failure mock: the handler reads with -ErrorAction Stop, and only the
+                # cmdlet's own WriteError is promoted by it.
+                Mock Get-OERAccessPackage {
+                    [CmdletBinding()] param([string]$Catalog)
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Catalog '$Catalog' not found."),
+                            'CatalogNotFound', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Catalog))
+                }
+                # Built with plain assignments: a switch or a pipeline would enumerate the list away.
+                $PlannedList = $null
+                if ($Mode -ne 'Null') { $PlannedList = [System.Collections.Generic.List[string]]::new() }
+                if ($Mode -eq 'Other') { $PlannedList.Add('some-other-catalog') }
+                $Item = [PSCustomObject]@{
+                    displayName        = 'ap-new'
+                    catalog            = 'cat-new'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Default' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -PlannedCatalog $PlannedList -WhatIf -ErrorAction SilentlyContinue)
+
+                Should -Invoke Get-OERAccessPackage -Times 1 -Exactly
+                Should -Invoke New-OERAccessPackage -Times 0
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -Match "failed to look up access packages in catalog 'cat-new'"
+                $Failed[0].Detail | Should -Match 'CatalogNotFound|not found'
+                $Failed[0].Detail | Should -Match 'NOT created'
+                @($r | Where-Object { $_.Detail -match 'would create' }).Count | Should -Be 0
+            }
         }
     }
 }
