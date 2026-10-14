@@ -226,49 +226,80 @@ ACCESS REVIEWS ARE MATCHED BY NAME
 
 RENAMES, MAIL ALIASES AND SCOPE SPELLING
 
-    A group, an administrative unit, a catalog and an access package (within
-    its catalog) are renamed in place through a structure document: declare
+    A group, an administrative unit, a catalog, an access package (within
+    its catalog), an assignment policy (within its access package) and an
+    access review are renamed in place through a structure document: declare
     the new name as displayName and the current name, or the object id, as
     previousDisplayName. Every run looks up both names before it reads or
-    writes anything. The object found only under previousDisplayName is
-    renamed in the same update as any other changed property. When both names
-    find different objects the entry fails with GroupRenameConflict,
-    AdministrativeUnitRenameConflict, CatalogRenameConflict or
-    AccessPackageRenameConflict and nothing is changed; when neither finds
-    one it fails with the matching GroupRenameNotFound,
-    AdministrativeUnitRenameNotFound, CatalogRenameNotFound or
-    AccessPackageRenameNotFound and nothing is created. When the rename
-    itself fails, the object's children (members, scoped roles, resources,
-    resource roles, assignment policies) are not reconciled, and under
-    -WhatIf the plan says 'would rename' and plans them against the object
-    found under its previous name.
+    writes anything else for the object. The object found only under
+    previousDisplayName is renamed in the same update as any other changed
+    property. When both names find different objects the entry fails with
+    GroupRenameConflict, AdministrativeUnitRenameConflict,
+    CatalogRenameConflict, AccessPackageRenameConflict,
+    AssignmentPolicyRenameConflict or AccessReviewRenameConflict and nothing
+    is changed; when neither finds one it fails with the matching
+    GroupRenameNotFound, AdministrativeUnitRenameNotFound,
+    CatalogRenameNotFound, AccessPackageRenameNotFound,
+    AssignmentPolicyRenameNotFound or AccessReviewRenameNotFound and nothing
+    is created. When the rename itself fails, the object's children (members,
+    scoped roles, resources, resource roles, assignment policies) are not
+    reconciled, and under -WhatIf the plan says 'would rename' and plans them
+    against the object found under its previous name.
+
+    An assignment policy's object id matches only a policy of its own access
+    package, and a policy that declares previousDisplayName in a package the
+    same run creates fails with AssignmentPolicyRenameNotFound. An access
+    review's two names are looked up in the whole tenant (an object id is
+    read by id), and the review found under either name is updated or
+    renamed only when it reviews the access package and assignment policy the
+    entry declares; otherwise the entry fails with AccessReviewScopeMismatch
+    and nothing is written. After a rename, the review read back must carry
+    the new name exactly, letter case included, or the entry is Failed. A
+    previous name that several policies of the package, or several reviews,
+    carry fails the entry with AmbiguousName: declare the object id then.
 
     Microsoft Graph's name lookup can follow a rename with a delay: keep
     previousDisplayName in the document until the new name resolves. In the
-    same run, a group that is created into a renamed unit and an access
-    package declared in a renamed catalog find the renamed unit or catalog by
-    its object id, so name the unit or the catalog by its new name in those
-    references. When the rename is refused, or the run cannot decide it (one
-    of its names could not be looked up, or -Include leaves out the
-    AdministrativeUnits or Catalogs section that holds the entry), the group
-    that would be created and every package of the catalog are Failed and
-    nothing is created or written for them, instead of being looked up by
-    name; a group that already exists is not affected. While -Include leaves
-    the section out and the entry still declares previousDisplayName, that
-    holds for every such reference, for a catalog every package declared in
-    it, existing ones included, even when the rename was done in an earlier
-    run: include the section, or remove previousDisplayName once the new name
-    resolves. A refusal because -Include leaves the section out publishes no
-    error record, only the Failed row, so -ErrorAction Stop and $? do not see
-    it: check the rows. An access review's accessPackage does not follow a
-    package's rename yet, and can fail with AccessPackageNotFound in the run
-    that renames the package.
+    same run, a group that is created into a renamed unit, an access package
+    declared in a renamed catalog and an access review that names a renamed
+    access package or assignment policy find the renamed object by its object
+    id, so name the object by its new name in those references. When the
+    rename is refused, or the run cannot decide it (one of its names could
+    not be looked up, the access package's entry stopped before it decided,
+    or -Include leaves out the AdministrativeUnits, Catalogs or
+    AccessPackages section that holds the entry), the group that would be
+    created, every package of the catalog and every access review that names
+    the package or the policy by its new name are Failed and nothing is
+    created or written for them, instead of being looked up by name; a group
+    that already exists is not affected, an access review that already exists
+    is. A review that names the access package by its object id and a
+    renamed policy by its new name reaches the policy, or is refused, the
+    same way once the package's entry knows that package's id. Until then the
+    review looks the policy up by name, as before: so it does when the entry
+    stopped before it knew any package id (its catalog refused, a failed read
+    of the catalog's packages, or a package rename that found neither name),
+    when the entry stopped at a display name several packages of its catalog
+    carry and the review names the package that carries the entry's previous
+    name (only the packages that carry the display name are marked; the
+    previous name is not looked up by then), or when -Include leaves out the
+    AccessPackages section. While -Include leaves the section out and the
+    entry still declares previousDisplayName, every reference by the new name
+    is refused -- for a catalog every package declared in it, for a package
+    or a policy every review that names it by that name (one that names the
+    package by object id looks a policy up by name, as above) -- existing
+    ones included, even when the rename was done in an earlier run: include
+    the section, or remove previousDisplayName once the new name resolves. A
+    refusal because -Include leaves the section out publishes no error
+    record, only the Failed row, so -ErrorAction Stop and $? do not see it:
+    check the rows.
 
-    Test-OERStructure reports previousDisplayName in assignmentPolicies and
-    accessReviews as an Error: renaming is not supported there yet, and
-    Invoke-OERStructure would create a new object beside the old one. It
-    warns on a reference that still names a renamed object by its previous
-    name.
+    Test-OERStructure warns on a reference that still names a renamed object
+    by its previous name, an access review's assignmentPolicy included. It
+    refuses, as an Error, an access review whose accessPackage gives by name
+    a package that two or more accessPackages entries declare, as
+    displayName or previousDisplayName, while one of them is renamed: the run
+    keys a package by its name alone, so it cannot tell which package the
+    review means. Name the package by its object id.
 
     A group's mail alias does not follow a rename. Declare mailNickname for the
     new name; the validator warns when a renamed group keeps the alias derived
@@ -792,7 +823,10 @@ ACCESS PACKAGE ASSIGNMENT POLICY -- GRANULAR SETTINGS
     and the update sends every stage back; a stage whose custom extension id
     could not be read is refused with InvalidPolicyInput, also under -WhatIf,
     and no update is sent. A declared -RequestorScope never inherits the
-    automatic assignment settings. On both
+    automatic assignment settings. Given -DisplayName and no other property
+    to update, the cmdlet renames the policy when the name differs from the
+    live one, carrying everything else forward, and reports NothingToUpdate
+    after one read when it is the live name, compared ignoring case. On both
     New- and Set-OERAccessPackageAssignmentPolicy the Description parameter
     defaults to the policy display name when omitted.
 

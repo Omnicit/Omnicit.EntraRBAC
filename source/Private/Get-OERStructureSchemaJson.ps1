@@ -79,12 +79,11 @@ function Get-OERStructureSchemaJson {
     description says how to declare the rename and the property's description what the apply engine
     does with it: the object found only under previousDisplayName is renamed in place, an entry whose
     two names match different objects fails without merging them, and an entry neither name matches
-    fails and creates nothing. Get-OERInventory never exports it. An assignment policy and an access
-    review cannot be renamed through the document yet: the descriptions of assignmentPolicies and
-    accessReviews each say that renaming is not supported yet and that Test-OERStructure refuses
-    previousDisplayName there as an Error, since the engine would create a new object beside the old
-    one; the schema keeps those items open and does not declare the key, so only the offline
-    validator refuses it. A groups[] mailNickname is
+    fails and creates nothing. Get-OERInventory never exports it. So may an assignment policy (an
+    accessPackages[].assignmentPolicies[] item, renamed within its package) and an access review (an
+    accessReviews[] item, whose name is looked up tenant-wide and whose target is checked whichever
+    name finds it): each declares the key as a non-empty string, its section description says how to
+    declare the rename, and the property description says what the engine does with it. A groups[] mailNickname is
     typed with minLength 1 and maxLength 64, and its description lists what Microsoft Graph was
     measured to refuse and what the validator refuses beyond it, and says the alias is not derived
     again on a rename; the characters themselves are checked by the offline validator alone, since
@@ -346,12 +345,13 @@ function Get-OERStructureSchemaJson {
           },
           "assignmentPolicies": {
             "type": "array",
-            "description": "Assignment policies of the package. displayName is the match key within the package: an existing policy is matched and updated by it. Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a policy as an Error, since the engine would create a new policy beside the old one.",
+            "description": "Assignment policies of the package. displayName is the match key within the package: an existing policy is matched and updated by it. To rename a policy, declare its new name as displayName and its current name (or object id) as previousDisplayName, within its package; an access review that names the policy must name it by its new name (or object id) once the rename is applied.",
             "items": {
               "type": "object",
               "required": [ "displayName" ],
               "properties": {
                 "displayName": { "type": "string" },
+                "previousDisplayName": { "type": "string", "minLength": 1, "description": "The assignment policy's current display name or object id, when displayName declares a new one. When only this value matches a live assignment policy of this access package, that policy is renamed in place; when displayName also matches a different policy of the access package, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. An object id matches only a policy of this access package. A name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. An access review that names the policy must name it by its new name or object id once the rename is applied. Not exported by Get-OERInventory." },
                 "description": { "type": [ "string", "null" ] },
                 "requestorScope": {
                   "type": "object",
@@ -416,12 +416,13 @@ function Get-OERStructureSchemaJson {
     },
     "accessReviews": {
       "type": "array",
-      "description": "Access review series. displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy; otherwise the entry fails and nothing is written. The update is a full-object PUT (read-modify-write), so every writable property the module models or explicitly carries forward is preserved. A writable top-level property added to the Microsoft Graph accessReviewScheduleDefinition resource in future and not yet modelled here would be dropped by that PUT. Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a review as an Error, since the engine would create a new review beside the old one.",
+      "description": "Access review series. displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy; otherwise the entry fails and nothing is written. The update is a full-object PUT (read-modify-write), so every writable property the module models or explicitly carries forward is preserved. A writable top-level property added to the Microsoft Graph accessReviewScheduleDefinition resource in future and not yet modelled here would be dropped by that PUT. To rename a review, declare its new name as displayName and its current name (or object id) as previousDisplayName: the name is looked up tenant-wide, as displayName is, and the review found under either name must review the declared accessPackage and assignmentPolicy, or the entry fails and nothing is written. When the same document renames the access package or the policy, name it by its new name (or object id) here.",
       "items": {
         "type": "object",
         "required": [ "displayName", "accessPackage", "assignmentPolicy" ],
         "properties": {
           "displayName": { "type": "string" },
+          "previousDisplayName": { "type": "string", "minLength": 1, "description": "The access review's current display name or object id, when displayName declares a new one. The name is looked up tenant-wide, as displayName is. When only this value matches a live access review, that review is renamed in place; when displayName also matches a different review, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. The review found under either name must review the declared accessPackage and assignmentPolicy, or the entry fails and nothing is written. A name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. Not exported by Get-OERInventory." },
           "accessPackage": { "type": "string" },
           "assignmentPolicy": { "type": "string" },
           "recurrence": {

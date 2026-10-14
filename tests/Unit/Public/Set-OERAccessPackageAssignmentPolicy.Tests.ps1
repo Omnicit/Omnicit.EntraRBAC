@@ -1049,3 +1049,326 @@ $Results = @(
         @(Get-S11RequestLog -Log $Log) | Should -Be @('Invoke-OERGraphRequest GET', 'Invoke-OERGraphRequest PUT stages=1')
     }
 }
+
+Describe 'Set-OERAccessPackageAssignmentPolicy renames with -DisplayName alone (A16, Sprint 11 step 4b)' {
+    # A16: with no updatable property beyond -DisplayName, the call is a rename when -DisplayName
+    # differs from the live policy's displayName, sent as the usual full PUT with everything else
+    # carried forward, and NothingToUpdate when it equals that name ignoring case. The decision is
+    # taken on the read the update makes anyway, so a refused call sends exactly that one GET.
+    BeforeAll {
+        Import-Module $script:moduleName -Force
+        $script:A16Id = 'aaaaaaaa-0000-0000-0000-000000000041'
+        $script:A16GetUri = 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/aaaaaaaa-0000-0000-0000-000000000041?$expand=accessPackage,customExtensionStageSettings($expand=customExtension)'
+        $script:A16PutUri = 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/aaaaaaaa-0000-0000-0000-000000000041'
+        $script:A16Message = "-DisplayName equals the current display name of assignment policy 'aaaaaaaa-0000-0000-0000-000000000041' (compared ignoring case) and no other updatable property was supplied, so there is nothing to update. To rename the policy, pass a different -DisplayName; to update it, pass at least one of -Description, -RequestorScope, -RequestorSettings, -ApprovalStage, -RequireApproval, -RequireRequestorJustification, -RequireApprovalForUpdate, -DurationInDays, -DurationInHours, -ExpirationDateTime, or -DisableAssignmentNotifications."
+
+        # The live policy as Microsoft Graph returns it for the expanded read: an automatic assignment
+        # policy with one custom extension stage, so a rename-only PUT has both to carry forward.
+        function New-A16Policy {
+            @{
+                id                           = 'aaaaaaaa-0000-0000-0000-000000000041'
+                displayName                  = 'Policy'
+                description                  = 'live description'
+                accessPackage                = @{ id = 'ap-1' }
+                allowedTargetScope           = 'specificDirectoryUsers'
+                specificAllowedTargets       = @(@{ '@odata.type' = '#microsoft.graph.attributeRuleMembers'; description = 'rule'; membershipRule = '(user.department -eq "x")' })
+                automaticRequestSettings     = @{
+                    requestAccessForAllowedTargets             = $true
+                    removeAccessWhenTargetLeavesAllowedTargets = $true
+                    gracePeriodBeforeAccessRemoval             = 'P7D'
+                }
+                expiration                   = @{ type = 'noExpiration' }
+                customExtensionStageSettings = @(@{
+                        id              = 'aaaaaaaa-0000-0000-0000-000000000042'
+                        stage           = 'assignmentRequestCreated'
+                        customExtension = @{
+                            '@odata.type'         = '#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension'
+                            id                    = 'aaaaaaaa-0000-0000-0000-000000000043'
+                            displayName           = 'ext'
+                            endpointConfiguration = @{ url = 'https://example.invalid/x' }
+                        }
+                    })
+            }
+        }
+
+        function Invoke-A16Set {
+            param([string]$Name, [hashtable]$Extra = @{}, [bool]$UseWhatIf = $false)
+            $Err = $null
+            $Result = Set-OERAccessPackageAssignmentPolicy -Id $script:A16Id -DisplayName $Name @Extra `
+                -WhatIf:$UseWhatIf -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+            [PSCustomObject]@{ Result = $Result; Errors = @($Err) }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        $script:A16Live = New-A16Policy
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { $script:A16Live } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ id = 'aaaaaaaa-0000-0000-0000-000000000041'; displayName = $Body.displayName; allowedTargetScope = 'specificDirectoryUsers'; expiration = @{ type = 'noExpiration' } }
+        } -ParameterFilter { $Method -eq 'PUT' }
+    }
+
+    Context 'a -DisplayName that differs from the live name' {
+        It 'renames: one GET, then one PUT carrying the new name and everything else from the live policy' {
+            $Run = Invoke-A16Set -Name 'Renamed'
+
+            $Run.Errors.Count | Should -Be 0
+            $Run.Result.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AssignmentPolicy'
+            $Run.Result.DisplayName | Should -BeExactly 'Renamed'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                (-not $Method -or $Method -eq 'GET') -and $Uri -ceq $script:A16GetUri
+            }
+            # The new name, the live description and package, the custom extension stage in the
+            # update shape step 3 sends (the stage and the extension type and id only), and the
+            # automatic assignment settings with the live scope they travel with.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and
+                $Uri -ceq $script:A16PutUri -and
+                $Body.id -ceq 'aaaaaaaa-0000-0000-0000-000000000041' -and
+                $Body.displayName -ceq 'Renamed' -and
+                $Body.description -ceq 'live description' -and
+                $Body.accessPackage.id -ceq 'ap-1' -and
+                @($Body.customExtensionStageSettings).Count -eq 1 -and
+                $Body.customExtensionStageSettings[0].stage -ceq 'assignmentRequestCreated' -and
+                $Body.customExtensionStageSettings[0].customExtension.id -ceq 'aaaaaaaa-0000-0000-0000-000000000043' -and
+                $Body.customExtensionStageSettings[0].customExtension['@odata.type'] -ceq '#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension' -and
+                (($Body.customExtensionStageSettings[0].Keys | Sort-Object) -join ',') -eq 'customExtension,stage' -and
+                (($Body.customExtensionStageSettings[0].customExtension.Keys | Sort-Object) -join ',') -eq '@odata.type,id' -and
+                $Body.allowedTargetScope -ceq 'specificDirectoryUsers' -and
+                @($Body.specificAllowedTargets).Count -eq 1 -and
+                $Body.automaticRequestSettings.requestAccessForAllowedTargets -eq $true -and
+                $Body.automaticRequestSettings.removeAccessWhenTargetLeavesAllowedTargets -eq $true -and
+                $Body.automaticRequestSettings.gracePeriodBeforeAccessRemoval -ceq 'P7D'
+            }
+        }
+
+        It 'sends no PUT under -WhatIf, after the one read, and reports nothing' {
+            $Run = Invoke-A16Set -Name 'Renamed' -UseWhatIf $true
+
+            $Run.Result | Should -BeNullOrEmpty
+            # No record at all: the call was planned as an update, not refused as NothingToUpdate.
+            $Run.Errors.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                (-not $Method -or $Method -eq 'GET') -and $Uri -ceq $script:A16GetUri
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'reports a read that names no access package as AccessPackageNotFound, and sends no PUT' {
+            $script:A16Live = @{ id = 'aaaaaaaa-0000-0000-0000-000000000041'; displayName = 'Policy' }
+
+            $Run = Invoke-A16Set -Name 'Renamed'
+
+            $Run.Errors.Count | Should -Be 1
+            $Run.Errors[0].FullyQualifiedErrorId | Should -Be 'AccessPackageNotFound,Set-OERAccessPackageAssignmentPolicy'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+        }
+    }
+
+    Context 'a -DisplayName equal to the live name' {
+        It 'reports NothingToUpdate after exactly one GET, and sends no PUT (-DisplayName <Name>)' -ForEach @(
+            @{ Name = 'Policy' }
+            @{ Name = 'policy' }
+            @{ Name = 'POLICY' }
+        ) {
+            $Run = Invoke-A16Set -Name $Name
+
+            $Run.Result | Should -BeNullOrEmpty
+            $Run.Errors.Count | Should -Be 1
+            $Run.Errors[0].FullyQualifiedErrorId | Should -Be 'NothingToUpdate,Set-OERAccessPackageAssignmentPolicy'
+            $Run.Errors[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Run.Errors[0].TargetObject | Should -Be $script:A16Id
+            $Run.Errors[0].Exception.Message | Should -BeExactly $script:A16Message
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                (-not $Method -or $Method -eq 'GET') -and $Uri -ceq $script:A16GetUri
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'reports NothingToUpdate under -WhatIf as well, after the one read' {
+            $Run = Invoke-A16Set -Name 'policy' -UseWhatIf $true
+
+            $Run.Errors.Count | Should -Be 1
+            $Run.Errors[0].FullyQualifiedErrorId | Should -Be 'NothingToUpdate,Set-OERAccessPackageAssignmentPolicy'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'still sends the update when another property is supplied, with -DisplayName as given (-DisplayName <Name>)' -ForEach @(
+            @{ Name = 'Policy' }
+            @{ Name = 'policy' }
+        ) {
+            $script:A16ExpectedName = $Name
+
+            $Run = Invoke-A16Set -Name $Name -Extra @{ Description = 'new description' }
+
+            $Run.Errors.Count | Should -Be 0
+            # Exactly two requests: the one read, then the one update.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                (-not $Method -or $Method -eq 'GET') -and $Uri -ceq $script:A16GetUri
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and
+                $Body.displayName -ceq $script:A16ExpectedName -and
+                $Body.description -ceq 'new description'
+            }
+        }
+
+        It 'decides NothingToUpdate before the access package check: a read with the live name and no access package reports NothingToUpdate, not AccessPackageNotFound' {
+            # The decision stands directly after the read; nothing would be sent either way, so the
+            # caller learns that there is nothing to update rather than that the package is unknown.
+            $script:A16Live = @{ id = 'aaaaaaaa-0000-0000-0000-000000000041'; displayName = 'Policy' }
+
+            $Run = Invoke-A16Set -Name 'Policy'
+
+            $Run.Result | Should -BeNullOrEmpty
+            @($Run.Errors | Where-Object { $_.FullyQualifiedErrorId -eq 'NothingToUpdate,Set-OERAccessPackageAssignmentPolicy' }).Count | Should -Be 1
+            @($Run.Errors | Where-Object { $_.FullyQualifiedErrorId -like 'AccessPackageNotFound*' }).Count | Should -Be 0
+            $Run.Errors.Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+        }
+    }
+
+    Context 'a failed or empty read' {
+        It 'publishes a failed GET as itself, not as NothingToUpdate, and sends no PUT (-DisplayName <Name>)' -ForEach @(
+            @{ Name = 'Policy' }
+            @{ Name = 'Renamed' }
+        ) {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Request_ResourceNotFound: The policy was not found.'),
+                    'Request_ResourceNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                    $null)
+            } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+
+            $Run = Invoke-A16Set -Name $Name
+
+            $Run.Result | Should -BeNullOrEmpty
+            @($Run.Errors | Where-Object { $_.FullyQualifiedErrorId -eq 'Request_ResourceNotFound,Set-OERAccessPackageAssignmentPolicy' }).Count | Should -Be 1
+            @($Run.Errors | Where-Object { $_.FullyQualifiedErrorId -like 'NothingToUpdate*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                (-not $Method -or $Method -eq 'GET') -and $Uri -ceq $script:A16GetUri
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'never takes a read that returned nothing for the live name: AccessPackageNotFound, not NothingToUpdate' {
+            $script:A16Live = $null
+
+            $Run = Invoke-A16Set -Name 'Policy'
+
+            $Run.Errors.Count | Should -Be 1
+            $Run.Errors[0].FullyQualifiedErrorId | Should -Be 'AccessPackageNotFound,Set-OERAccessPackageAssignmentPolicy'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'takes a read that carries no displayName for a rename: one GET, then one PUT carrying -DisplayName' {
+            $script:A16Live.Remove('displayName')
+
+            $Run = Invoke-A16Set -Name 'Policy'
+
+            $Run.Errors.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and $Body.displayName -ceq 'Policy'
+            }
+        }
+    }
+}
+
+Describe 'Set-OERAccessPackageAssignmentPolicy: NothingToUpdate on the live name in a script with no try (A16, Sprint 11 step 4b)' {
+    # The refusal writes a NON-terminating error and the script goes on, so what it must not do is
+    # send the PUT on the way. Same shape as the two no-try Describes above: the script stands in no
+    # try, prints a sentinel at its end, and the stubbed transport appends every request to a log file
+    # whose path is substituted into the text. The control renames in the same script with the same
+    # stub, after a refused call, so a refused run with no PUT in the log cannot be an artefact of a
+    # stub that never logs one. The stub writes its log with -WhatIf:$false, so a -WhatIf request
+    # still shows in the log.
+    BeforeAll {
+        $script:A16NoTryMessage = "-DisplayName equals the current display name of assignment policy 'aaaaaaaa-0000-0000-0000-000000000041' (compared ignoring case) and no other updatable property was supplied, so there is nothing to update. To rename the policy, pass a different -DisplayName; to update it, pass at least one of -Description, -RequestorScope, -RequestorSettings, -ApprovalStage, -RequireApproval, -RequireRequestorJustification, -RequireApprovalForUpdate, -DurationInDays, -DurationInHours, -ExpirationDateTime, or -DisableAssignmentNotifications."
+
+        $script:A16NoTryScenario = {
+            param([string]$Log, [string]$Calls)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        if ($Method -eq 'PUT') {
+            Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value "Invoke-OERGraphRequest PUT name=$($Body.displayName)"
+            return @{ id = 'aaaaaaaa-0000-0000-0000-000000000041'; displayName = $Body.displayName; allowedTargetScope = 'allMemberUsers'; expiration = @{ type = 'noExpiration' } }
+        }
+        Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value "Invoke-OERGraphRequest $Method"
+        @{
+            id                 = 'aaaaaaaa-0000-0000-0000-000000000041'
+            displayName        = 'Policy'
+            accessPackage      = @{ id = 'ap-1' }
+            allowedTargetScope = 'allMemberUsers'
+            expiration         = @{ type = 'noExpiration' }
+        }
+    }
+}
+#CALLS#
+"OWN:$(@($Error | Where-Object { $_.FullyQualifiedErrorId -eq 'NothingToUpdate,Set-OERAccessPackageAssignmentPolicy' }).Count)"
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#CALLS#', $Calls))
+        }
+
+        $script:A16RefusedCalls = @'
+$Results = @(
+    Set-OERAccessPackageAssignmentPolicy -Id 'aaaaaaaa-0000-0000-0000-000000000041' -DisplayName 'Policy' -Confirm:$false
+    Set-OERAccessPackageAssignmentPolicy -Id 'aaaaaaaa-0000-0000-0000-000000000041' -DisplayName 'POLICY' -Confirm:$false
+    Set-OERAccessPackageAssignmentPolicy -Id 'aaaaaaaa-0000-0000-0000-000000000041' -DisplayName 'policy' -WhatIf
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        $script:A16RefusedThenRenamedCalls = @'
+$Results = @(
+    Set-OERAccessPackageAssignmentPolicy -Id 'aaaaaaaa-0000-0000-0000-000000000041' -DisplayName 'policy' -Confirm:$false
+    Set-OERAccessPackageAssignmentPolicy -Id 'aaaaaaaa-0000-0000-0000-000000000041' -DisplayName 'Renamed' -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        function Get-A16RequestLog ([string]$Log) {
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        }
+    }
+
+    It 'reaches the end of the script, sends no PUT, and writes NothingToUpdate once per call (with and without -WhatIf)' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:A16NoTryScenario -Log $Log -Calls $script:A16RefusedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:0|OWN:3|END'
+        # Positive proof: each refused call read the live policy, and that was all it sent.
+        @(Get-A16RequestLog -Log $Log) | Should -Be @('Invoke-OERGraphRequest GET', 'Invoke-OERGraphRequest GET', 'Invoke-OERGraphRequest GET')
+        @($Run.Errors).Count | Should -Be 3
+        @($Run.Errors | Where-Object { $_ -ceq $script:A16NoTryMessage }).Count | Should -Be 3
+    }
+
+    It 'the control: a different name in the same script, after a refused call, sends the PUT with the new name' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:A16NoTryScenario -Log $Log -Calls $script:A16RefusedThenRenamedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:1|OWN:1|END'
+        @($Run.Errors).Count | Should -Be 1
+        @($Run.Errors | Where-Object { $_ -ceq $script:A16NoTryMessage }).Count | Should -Be 1
+        @(Get-A16RequestLog -Log $Log) | Should -Be @(
+            'Invoke-OERGraphRequest GET'
+            'Invoke-OERGraphRequest GET'
+            'Invoke-OERGraphRequest PUT name=Renamed'
+        )
+    }
+}

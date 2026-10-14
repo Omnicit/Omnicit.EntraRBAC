@@ -420,7 +420,8 @@ Describe 'Get-OERInventoryPromptTemplate group rename through previousDisplayNam
 Describe 'Get-OERInventoryPromptTemplate renames of administrative units, catalogs and access packages (Sprint 11 step 4)' {
     # previousDisplayName renames a unit, a catalog and a package in place, with the groups' rules, so
     # the prompt must teach each section's rule and must no longer tell the model that changing a
-    # displayName there is the only way. Only assignment policies and access reviews stay refused.
+    # displayName there is the only way. Assignment policies and access reviews follow in step 4b (the
+    # Describe below).
     It 'lists previousDisplayName among the fields of each of the three sections' {
         InModuleScope $script:moduleName {
             # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
@@ -444,27 +445,56 @@ Describe 'Get-OERInventoryPromptTemplate renames of administrative units, catalo
         }
     }
 
-    It 'carries the lag, the new-name reference and the not-yet-translated review reference' {
+    It 'carries the lag, the new-name reference and the review reference the apply translates' {
         InModuleScope $script:moduleName {
             $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
             $T | Should -Match ([regex]::Escape("Microsoft Graph's name lookup can follow a unit's rename with a delay, as it does a group's: keep previousDisplayName in the proposal, and tell the operator in the rationale to wait until the new name resolves before applying again. When a proposal renames a unit, a group created into it names it by its NEW name in administrativeUnit (the apply reaches the renamed unit by its id in the same run)."))
             $T | Should -Match ([regex]::Escape("Microsoft Graph's name lookup can follow a catalog's rename with a delay: keep previousDisplayName in the proposal, and tell the operator in the rationale to wait until the new name resolves before applying again. When a proposal renames a catalog, every access package declared in it names the catalog by its NEW name in catalog (the apply reaches the renamed catalog by its id in the same run)."))
-            $T | Should -Match ([regex]::Escape("A package in a catalog the same proposal renames names the catalog by its NEW name (the apply reaches the renamed catalog by its id in the same run), and an access review of a package the proposal renames names the package by its NEW name too, which the apply does not yet translate: in the run that renames the package that review can fail with AccessPackageNotFound until the new name resolves, and works on the next run."))
+            # Sprint 11 step 4b (D5): the review handler reads the run's rename map, so a review that
+            # names a package or policy by the new name the same run gives it reaches it by id.
+            $T | Should -Match ([regex]::Escape("A package in a catalog the same proposal renames names the catalog by its NEW name (the apply reaches the renamed catalog by its id in the same run), and an access review of a package or of an assignment policy the proposal renames names it by its NEW name too, in accessPackage and assignmentPolicy (the apply reaches the renamed package or policy by its id in the same run)."))
+            $T | Should -Not -Match 'does not yet translate'
+        }
+    }
+}
+
+Describe 'Get-OERInventoryPromptTemplate renames of assignment policies and access reviews (BL-128, Sprint 11 step 4b)' {
+    # Step 3 refused previousDisplayName on assignment policies and access reviews, and the prompt told
+    # the model not to propose a rename there. Step 4b renames both in place (a policy within its
+    # access package, a review looked up tenant-wide and scope-checked first), so the prompt must list
+    # the key among their fields and teach each rule.
+    It 'lists previousDisplayName among the fields of an assignment policy and of an access review' {
+        InModuleScope $script:moduleName {
+            # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape("assignmentPolicies[] { displayName (required), previousDisplayName (rename only -- the policy's current display name or object id, in the same access package, when displayName declares a new one; NOT captured by inventory), requestorScope {"))
+            $T | Should -Match ([regex]::Escape("accessReviews[]: { displayName (required), previousDisplayName (rename only -- the review's current display name or object id when displayName declares a new one; NOT captured by inventory), accessPackage (required), assignmentPolicy (required),"))
+        }
+    }
+
+    It 'teaches the rename rule of a policy and of a review, and the sentences that said it was impossible are gone' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape("an assignment policy's displayName is the match key WITHIN its access package. To rename a policy, declare its new name as displayName and its current name (or object id) as previousDisplayName, in the same package: the policy of that package found under previousDisplayName alone is renamed in place, and a policy of another package is never matched. When both names match different policies of the package the entry fails and nothing is changed (two policies are never merged), and when neither matches the entry fails and nothing is created: a rename names an existing policy, so a policy of a package the proposal creates never declares previousDisplayName. A previousDisplayName that several policies of the package carry is refused: declare it as the policy's object id then. A NEW policy is declared without previousDisplayName; a changed displayName WITHOUT it still creates a new policy and reports the old one as Extra, never removing it."))
+            $T | Should -Match ([regex]::Escape('displayName is the match key: an existing review is UPDATED in place. To rename a review, declare its new name as displayName and its current name (or object id) as previousDisplayName: both names are looked up in the whole tenant, and the review found under previousDisplayName alone is renamed in place, in the same update as any other change, once it passes the scope check below. When both names match different reviews the entry fails and nothing is changed (two reviews are never merged), and when neither matches the entry fails and nothing is created: a rename names an existing review. A previousDisplayName that several reviews carry is refused: declare it as the review''s object id then. A NEW review is declared without previousDisplayName; a changed displayName WITHOUT it creates a new review and leaves the old one in place.'))
+            $T | Should -Not -Match 'renaming a review through the document is not possible'
+            $T | Should -Not -Match 'Do not propose a rename in those two sections'
+            $T | Should -Not -Match ([regex]::Escape('It is not supported yet for assignmentPolicies and accessReviews'))
         }
     }
 }
 
 Describe 'Get-OERInventoryPromptTemplate renames outside groups and the mail alias (BL-128, BL-132)' {
     # Sprint 11 step 3 made Test-OERStructure refuse previousDisplayName where the engine cannot
-    # rename; step 4 narrowed that to assignment policies and access reviews. The prompt must not let
-    # a model propose a rename there, and a renamed group keeps its mail alias unless the proposal
-    # declares one Microsoft Graph accepts.
-    It 'teaches that groups, units, catalogs and packages rename in place and the other two do not, and that a mail alias does not follow a rename' {
+    # rename; step 4 narrowed that to assignment policies and access reviews, and step 4b removed it:
+    # every kind matched by name renames in place. A renamed group keeps its mail alias unless the
+    # proposal declares one Microsoft Graph accepts.
+    It 'teaches that every kind matched by name renames in place, and that a mail alias does not follow a rename' {
         InModuleScope $script:moduleName {
             # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
             $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
-            $T | Should -Match ([regex]::Escape('Renaming in place is supported for groups, administrativeUnits, catalogs and accessPackages (a package within its catalog); the bullet of each of those sections says how. It is not supported yet for assignmentPolicies and accessReviews: previousDisplayName there is refused by Test-OERStructure as an Error, and without it a changed displayName there creates a new object beside the old one. Do not propose a rename in those two sections.'))
-            $T | Should -Match ([regex]::Escape("Test-OERStructure warns on a reference that still names a renamed object by its previous name: a group's administrativeUnit, an access package's catalog, an access review's accessPackage."))
+            $T | Should -Match ([regex]::Escape('Renaming in place is supported for every kind matched by name: groups, administrativeUnits, catalogs, accessPackages (a package within its catalog), assignmentPolicies (a policy within its access package) and accessReviews; the bullet of each of those sections says how. Without previousDisplayName, a changed displayName creates a new object beside the old one.'))
+            $T | Should -Match ([regex]::Escape("Test-OERStructure warns on a reference that still names a renamed object by its previous name: a group's administrativeUnit, an access package's catalog, an access review's accessPackage and assignmentPolicy."))
             $T | Should -Not -Match 'supported only for groups'
             $T | Should -Match ([regex]::Escape('A mail alias does not follow a rename. A renamed group keeps its mailNickname unless the proposal declares the new one'))
             $T | Should -Match ([regex]::Escape('A declared mailNickname must be 1 to 64 characters and must not contain @ ( ) \ [ ] " ; : < > , or white space; Test-OERStructure refuses it as an Error otherwise.'))

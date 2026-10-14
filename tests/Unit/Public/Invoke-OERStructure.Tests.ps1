@@ -307,12 +307,11 @@ Describe 'Invoke-OERStructure' {
             }
         }
 
-        It 'hands the pre-pass and the groups, administrativeUnits, catalogs and accessPackages handlers one rename map per document (BL-128, A5)' {
+        It 'hands the pre-pass and the groups, administrativeUnits, catalogs, accessPackages and accessReviews handlers one rename map per document (BL-128, A5)' {
             # The map is how a reference to a name the same run gives an object reaches that object, so
             # every handler that fills or reads it must see the SAME map, and a second piped document
-            # must start from an empty one. The accessReviews handler takes no map (R3): its mock keeps
-            # the real signature, so passing the map to it would fail that entry's binding, and
-            # -ErrorAction Stop would end the run.
+            # must start from an empty one. The accessReviews handler reads it for the access package
+            # and assignment policy a review names (BL-128 part 2).
             InModuleScope $script:moduleName {
                 $script:SeenMap = [System.Collections.Generic.List[object]]::new()
                 Mock Initialize-OERAuth { }
@@ -334,6 +333,10 @@ Describe 'Invoke-OERStructure' {
                     param($Item, $Caller, $Prune, $TenantAlias, $PlannedCatalog, $RenameMap)
                     $script:SeenMap.Add([PSCustomObject]@{ Call = "package $($Item.displayName)"; Map = $RenameMap })
                 }
+                Mock Sync-OERStructureAccessReview {
+                    param($Item, $Caller, $Prune, $TenantAlias, $RenameMap)
+                    $script:SeenMap.Add([PSCustomObject]@{ Call = "review $($Item.displayName)"; Map = $RenameMap })
+                }
                 $Doc1 = ('{ "version": "1.0", ' +
                     '"groups": [ { "displayName": "G1", "administrativeUnit": "AU-1" } ], ' +
                     '"administrativeUnits": [ { "displayName": "AU-1" } ], ' +
@@ -344,17 +347,17 @@ Describe 'Invoke-OERStructure' {
                 $null = @($Doc1, $Doc2 | Invoke-OERStructure -Confirm:$false -ErrorAction Stop)
 
                 $Calls = @($script:SeenMap)
-                @($Calls | ForEach-Object { $_.Call }) | Should -Be @('au-ensure AU-1', 'group G1', 'au-full AU-1', 'catalog CAT-1', 'package AP-1', 'catalog CAT-2')
+                @($Calls | ForEach-Object { $_.Call }) | Should -Be @('au-ensure AU-1', 'group G1', 'au-full AU-1', 'catalog CAT-1', 'package AP-1', 'review AR-1', 'catalog CAT-2')
                 Should -Invoke Sync-OERStructureAccessReview -Times 1 -Exactly
                 $First = $Calls[0].Map
                 ($null -ne $First) | Should -BeTrue -Because 'the pre-pass must receive a map'
                 ($First -is [System.Collections.Generic.Dictionary[string, object]]) | Should -BeTrue
                 $First.Comparer.Equals('administrativeunits|AU-1', 'administrativeUnits|au-1') | Should -BeTrue -Because 'the keys are compared without regard to letter case'
-                for ($Index = 1; $Index -le 4; $Index++) {
+                for ($Index = 1; $Index -le 5; $Index++) {
                     [object]::ReferenceEquals($Calls[$Index].Map, $First) | Should -BeTrue -Because "$($Calls[$Index].Call) must get the map the pre-pass got"
                 }
-                ($null -ne $Calls[5].Map) | Should -BeTrue -Because 'the second document must receive a map'
-                [object]::ReferenceEquals($Calls[5].Map, $First) | Should -BeFalse -Because 'each document gets a map of its own'
+                ($null -ne $Calls[6].Map) | Should -BeTrue -Because 'the second document must receive a map'
+                [object]::ReferenceEquals($Calls[6].Map, $First) | Should -BeFalse -Because 'each document gets a map of its own'
             }
         }
     }
@@ -3143,5 +3146,485 @@ Invoke-OERStructure -Json $Json -Confirm:$false | ForEach-Object { "ROW:$($_.Sec
             @($Run.Errors).Count | Should -Be 2
             @($Run.Prompts).Count | Should -Be 0
         }
+
+        It 'reaches the end of the script with every refused entry Failed and no write request: a failed catalog read, a policy rename conflict, a package rename that finds nothing, a review of another package found under its old name and a review of that package (BL-128 part 2, BL-144)' {
+            # The same runner, with every read logged as 'READ <kind> <name or id>' and every write as
+            # 'WRITE <command>'. CAT-Bad's read fails as the real cmdlet fails it (a non-terminating error
+            # the handler's -ErrorAction Stop promotes); AP-Pol's two policy names find two policies;
+            # AP-New's names find no package in CAT-2; R-New's previous name finds a review of another
+            # access package; R-Pkg names AP-New, whose rename was refused, so it is refused through the
+            # run's rename map before anything is read for it.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Json = ('{ "version": "1.0", ' +
+                '"catalogs": [ { "displayName": "CAT-Bad", "resources": [] } ], ' +
+                '"accessPackages": [ ' +
+                '{ "displayName": "AP-Pol", "catalog": "CAT-2", "resourceRoles": [], "assignmentPolicies": [ { "displayName": "POL-New", "previousDisplayName": "POL-Old" } ] }, ' +
+                '{ "displayName": "AP-New", "previousDisplayName": "AP-Old", "catalog": "CAT-2", "resourceRoles": [] } ], ' +
+                '"accessReviews": [ ' +
+                '{ "displayName": "R-New", "previousDisplayName": "R-Old", "accessPackage": "AP-Pol", "assignmentPolicy": "Standard", "reviewers": [ "person1@example.com" ] }, ' +
+                '{ "displayName": "R-Pkg", "accessPackage": "AP-New", "assignmentPolicy": "Standard", "reviewers": [ "person1@example.com" ] } ] }')
+            $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERStructureDefault -Value { $null }
+    Set-Item -Path function:script:Resolve-OERCatalogId -Value {
+        param([string]$DisplayName)
+        [System.IO.File]::AppendAllText('#LOG#', "READ catalog-name $DisplayName`n")
+        if ($DisplayName -eq 'CAT-Bad') { 'dddd4444-0000-0000-0000-000000000041' }
+    }
+    Set-Item -Path function:script:Get-OERCatalog -Value {
+        [CmdletBinding()]
+        param([string]$Id)
+        [System.IO.File]::AppendAllText('#LOG#', "READ catalog $Id`n")
+        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Forbidden: the catalog read was refused.'), 'Forbidden',
+                [System.Management.Automation.ErrorCategory]::PermissionDenied, $Id))
+    }
+    Set-Item -Path function:script:Get-OERCatalogResource -Value { [System.IO.File]::AppendAllText('#LOG#', "READ catalog-resources`n") }
+    Set-Item -Path function:script:Get-OERAccessPackage -Value {
+        [CmdletBinding()]
+        param([string]$Catalog, [string]$Id)
+        if ($Catalog) {
+            [System.IO.File]::AppendAllText('#LOG#', "READ packages $Catalog`n")
+            [pscustomobject]@{ Id = 'aaaa1111-0000-0000-0000-000000000041'; DisplayName = 'AP-Pol' }
+        } else {
+            [System.IO.File]::AppendAllText('#LOG#', "READ package $Id`n")
+            [pscustomobject]@{ Id = $Id; DisplayName = 'AP-Pol'; Description = $null; IsHidden = $false }
+        }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Uri)
+        [System.IO.File]::AppendAllText('#LOG#', "READ graph $(($Uri -split '\?')[0])`n")
+        @{ value = @() }
+    }
+    Set-Item -Path function:script:Get-OERAccessPackageAssignmentPolicy -Value {
+        [CmdletBinding()]
+        param([string]$AccessPackage)
+        [System.IO.File]::AppendAllText('#LOG#', "READ policies $AccessPackage`n")
+        [pscustomobject]@{ Id = 'bbbb2222-0000-0000-0000-000000000041'; DisplayName = 'POL-New'; RequestorScope = @{ scope = 'allMemberUsers' } }
+        [pscustomobject]@{ Id = 'bbbb2222-0000-0000-0000-000000000042'; DisplayName = 'POL-Old'; RequestorScope = @{ scope = 'allMemberUsers' } }
+    }
+    Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value {
+        [CmdletBinding()]
+        param([string]$Filter)
+        [System.IO.File]::AppendAllText('#LOG#', "READ reviews $Filter`n")
+        [pscustomobject]@{
+            Id = 'cccc3333-0000-0000-0000-000000000041'; DisplayName = 'R-Old'; Status = 'InProgress'
+            Scope = 'another access package'; AccessPackageId = 'aaaa1111-0000-0000-0000-000000000049'; AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000049'
+            Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @(); DurationInDays = 14; Settings = @{ instanceDurationInDays = 14 }
+        }
+    }
+    Set-Item -Path function:script:Resolve-OERAccessPackageId -Value {
+        param([string]$DisplayName)
+        [System.IO.File]::AppendAllText('#LOG#', "READ package-name $DisplayName`n")
+        if ($DisplayName -eq 'AP-Pol') { 'aaaa1111-0000-0000-0000-000000000041' } else { 'aaaa1111-0000-0000-0000-000000000048' }
+    }
+    Set-Item -Path function:script:Resolve-OERAssignmentPolicyId -Value { [System.IO.File]::AppendAllText('#LOG#', "READ policy-name`n"); 'bbbb2222-0000-0000-0000-000000000041' }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value { [System.IO.File]::AppendAllText('#LOG#', "READ principal`n"); 'usr-1' }
+    foreach ($Write in @('New-OERCatalog', 'Set-OERCatalog', 'Add-OERCatalogResource', 'Remove-OERCatalogResource', 'New-OERAccessPackage',
+            'Set-OERAccessPackage', 'Add-OERAccessPackageResourceRole', 'Remove-OERAccessPackageResourceRole', 'New-OERAccessPackageAssignmentPolicy',
+            'Set-OERAccessPackageAssignmentPolicy', 'New-OERAccessReviewDefinition', 'Set-OERAccessReviewDefinition')) {
+        Set-Item -Path "function:script:$Write" -Value ([scriptblock]::Create("[System.IO.File]::AppendAllText('#LOG#', 'WRITE $Write' + [char]10)"))
+    }
+}
+$Json = '#JSON#'
+Invoke-OERStructure -Json $Json -Confirm:$false | ForEach-Object { "ROW:$($_.Section):$($_.Item):$($_.Action)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#JSON#', $Json.Replace("'", "''")))
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            # Positive proof first: every section ran and made its reads -- and R-Pkg made none. No write.
+            $Logged = if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log | Where-Object { $_ }) } else { @() }
+            @($Logged) | Should -Be @(
+                'READ catalog-name CAT-Bad', 'READ catalog dddd4444-0000-0000-0000-000000000041'
+                'READ packages CAT-2', 'READ package aaaa1111-0000-0000-0000-000000000041'
+                'READ graph v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000041/resourceRoleScopes'
+                'READ policies aaaa1111-0000-0000-0000-000000000041'
+                'READ packages CAT-2'
+                "READ reviews displayName eq 'R-New'", "READ reviews displayName eq 'R-Old'", 'READ package-name AP-Pol'
+            )
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+                'ROW:catalogs:CAT-Bad:Failed'
+                'ROW:accessPackages:AP-Pol:Unchanged'
+                'ROW:accessPackages:AP-Pol:Failed'
+                'ROW:accessPackages:AP-New:Failed'
+                'ROW:accessReviews:R-New:Failed'
+                'ROW:accessReviews:R-Pkg:Failed'
+            )
+            # Four refusals are published -- the catalog read, the policy conflict, the package rename and
+            # the review of another package; the review refused through the map publishes none.
+            @($Run.Errors).Count | Should -Be 4
+            @($Run.Prompts).Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'Invoke-OERStructure: an access review reaches an access package or assignment policy the same document renames (BL-128 part 2)' {
+    # The real engine, the real access package and access review handlers, the real rename map and the
+    # real target check run; only the sign-in, the lookups and the cmdlets the handlers call are mocked.
+    # The lookups behave as Graph's do in the run that renames: the new name of a package or policy is
+    # not found under it yet -- here another package or policy carries it -- so a review naming it
+    # reaches the renamed object only through the map. No id below is version-4 shaped.
+    BeforeAll {
+        $script:RvPkgId = 'aaaa1111-0000-0000-0000-000000000031'
+        $script:RvOtherPkgId = 'aaaa1111-0000-0000-0000-000000000032'
+        $script:RvPolOldId = 'bbbb2222-0000-0000-0000-000000000031'
+        $script:RvOtherPolId = 'bbbb2222-0000-0000-0000-000000000032'
+        $script:RvStdPolId = 'bbbb2222-0000-0000-0000-000000000033'
+        $script:RvReview = ('{ "displayName": "Q3 AP review", "accessPackage": "#PKG#", "assignmentPolicy": "#POL#", "durationInDays": 21, ' +
+            '"reviewers": [ "person1@example.com" ] }')
+        # A package the document renames, and a review of it by its new name.
+        $script:RvPkgDoc = ('{ "version": "1.0", ' +
+            '"accessPackages": [ { "displayName": "AP-New", "previousDisplayName": "AP-Old", "catalog": "CAT-1", "resourceRoles": [] } ], ' +
+            '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', 'AP-New').Replace('#POL#', 'Standard') + ' ] }')
+        # A policy the document renames in a package it does not rename, and a review of it by its new
+        # name, the package named by name or by id.
+        function New-RvPolDoc {
+            param([string]$ReviewPackage = 'AP-1')
+            ('{ "version": "1.0", ' +
+                '"accessPackages": [ { "displayName": "AP-1", "catalog": "CAT-1", "resourceRoles": [], ' +
+                '"assignmentPolicies": [ { "displayName": "POL-New", "previousDisplayName": "POL-Old" } ] } ], ' +
+                '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', $ReviewPackage).Replace('#POL#', 'POL-New') + ' ] }')
+        }
+        # The live review: it reviews the package and the policy the document means.
+        function New-RvLive {
+            param([string]$AssignmentPolicyId = $script:RvStdPolId, [int]$DurationInDays = 14)
+            [PSCustomObject]@{
+                Id = 'cccc3333-0000-0000-0000-000000000031'; DisplayName = 'Q3 AP review'; Status = 'InProgress'
+                Scope = 'the declared package and policy'; AccessPackageId = $script:RvPkgId; AssignmentPolicyId = $AssignmentPolicyId
+                Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @(); DurationInDays = $DurationInDays
+                Settings = @{ instanceDurationInDays = $DurationInDays }
+            }
+        }
+        # A live policy as Get-OERAccessPackageAssignmentPolicy returns it: the raw Graph object, projected
+        # by the real converter.
+        function New-RvPolicy {
+            param([string]$Id, [string]$DisplayName)
+            $Raw = @{
+                id                      = $Id
+                displayName             = $DisplayName
+                description             = 'live description'
+                accessPackage           = @{ id = 'aaaa1111-0000-0000-0000-000000000031' }
+                allowedTargetScope      = 'allMemberUsers'
+                specificAllowedTargets  = @()
+                expiration              = @{ type = 'noExpiration' }
+                requestApprovalSettings = @{
+                    isApprovalRequiredForAdd         = $false
+                    isApprovalRequiredForUpdate      = $false
+                    isRequestorJustificationRequired = $false
+                    stages                           = @()
+                }
+                notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
+            }
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Raw = $Raw } {
+                param($Raw)
+                ConvertTo-OERAssignmentPolicy -InputObject $Raw
+            }
+        }
+        function ConvertTo-RvRowLine {
+            param([object[]]$Row)
+            @($Row | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.Section, $_.Item, $_.Action, $_.Detail })
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        # The live state: the packages catalog CAT-1 holds, the raw policies of the package, and the
+        # review the definition lookup finds ($null: none).
+        $script:RvState = @{
+            Packages = @([PSCustomObject]@{ Id = $script:RvPkgId; DisplayName = 'AP-Old' })
+            Policies = @()
+            Review   = (New-RvLive)
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected Graph request: $Uri" }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } } -ParameterFilter { $Uri -like '*/resourceRoleScopes*' }
+        Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { 'usr-1' }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+            if ($Catalog) { return @($script:RvState.Packages) }
+            foreach ($Package in @($script:RvState.Packages)) {
+                if ([string]$Package.Id -eq $Id) { [PSCustomObject]@{ Id = $Package.Id; DisplayName = $Package.DisplayName; Description = $null; IsHidden = $false } }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @($script:RvState.Policies) }
+        Mock -ModuleName $script:moduleName Set-OERAccessPackage { }
+        Mock -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy { }
+        Mock -ModuleName $script:moduleName New-OERAccessPackage { throw 'unexpected access package create' }
+        Mock -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy { throw 'unexpected assignment policy create' }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:RvState.Review }
+        # Graph's tenant-wide name lookups in the run that renames: the names nothing renames resolve to
+        # the objects the document means; the new names to OTHER objects that carry them.
+        Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
+            if ($DisplayName -eq 'AP-1') { 'aaaa1111-0000-0000-0000-000000000031' } else { 'aaaa1111-0000-0000-0000-000000000032' }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId {
+            if ($AssignmentPolicy -eq 'Standard') { 'bbbb2222-0000-0000-0000-000000000033' } else { 'bbbb2222-0000-0000-0000-000000000032' }
+        }
+        Mock -ModuleName $script:moduleName New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+        Mock -ModuleName $script:moduleName Set-OERAccessReviewDefinition {
+            New-RvLive -AssignmentPolicyId $script:RvState.Review.AssignmentPolicyId -DurationInDays 21
+        }
+    }
+
+    It 'renames the package and updates its review by the package''s id, with no package lookup (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run'; PlanOnly = $false; Sets = 1; Expected = @(
+                "accessPackages|AP-New|Updated|renamed access package 'AP-Old' to 'AP-New'"
+                "accessReviews|Q3 AP review|Updated|updated access review 'Q3 AP review' (durationInDays=21)"
+            )
+        }
+        @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true; Sets = 0; Expected = @(
+                "accessPackages|AP-New|Skipped|would rename access package 'AP-Old' to 'AP-New'"
+                "accessReviews|Q3 AP review|Skipped|would update access review 'Q3 AP review' (durationInDays=21)"
+            )
+        }
+    ) {
+        $Params = @{ Json = $script:RvPkgDoc; ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
+        if ($PlanOnly) { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+        $Rows = @(Invoke-OERStructure @Params)
+
+        @(ConvertTo-RvRowLine -Row $Rows) | Should -Be $Expected
+        # The review's package was compared by the map's id: the tenant-wide lookup of 'AP-New', which
+        # here finds another package, was never made. Its policy was looked up within that package.
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 1 -Exactly -ParameterFilter {
+            $AccessPackageId -eq 'aaaa1111-0000-0000-0000-000000000031' -and $AssignmentPolicy -eq 'Standard'
+        }
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackage -Times $Sets -Exactly
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times $Sets -Exactly
+    }
+
+    It 'renames the package and creates its review on the package''s id (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run'; PlanOnly = $false; News = 1; ReviewRow = "accessReviews|Q3 AP review|Created|created access review 'Q3 AP review' (recurrence: OneTime)" }
+        @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true; News = 0; ReviewRow = "accessReviews|Q3 AP review|Skipped|would create access review 'Q3 AP review'" }
+    ) {
+        $script:RvState.Review = $null
+        $Params = @{ Json = $script:RvPkgDoc; ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
+        if ($PlanOnly) { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+        $Rows = @(Invoke-OERStructure @Params)
+
+        @(ConvertTo-RvRowLine -Row $Rows)[-1] | Should -BeExactly $ReviewRow
+        @($Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times $News -Exactly
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times $News -Exactly -ParameterFilter {
+            $AccessPackage -eq 'aaaa1111-0000-0000-0000-000000000031' -and $AssignmentPolicy -eq 'Standard'
+        }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+    }
+
+    It 'renames the policy and updates its review by the policy''s id, the package named by <Key> (<Mode>)' -ForEach @(
+        @{ Key = 'name'; Package = 'AP-1'; PackageLookups = 1; Mode = 'a real run'; PlanOnly = $false; Sets = 1; Expected = @(
+                'accessPackages|AP-1|Unchanged|access package properties match'
+                "accessPackages|AP-1|Updated|renamed assignmentPolicy 'POL-Old' to 'POL-New'"
+                "accessReviews|Q3 AP review|Updated|updated access review 'Q3 AP review' (durationInDays=21)"
+            )
+        }
+        @{ Key = 'id'; Package = 'aaaa1111-0000-0000-0000-000000000031'; PackageLookups = 0; Mode = 'a real run'; PlanOnly = $false; Sets = 1; Expected = @(
+                'accessPackages|AP-1|Unchanged|access package properties match'
+                "accessPackages|AP-1|Updated|renamed assignmentPolicy 'POL-Old' to 'POL-New'"
+                "accessReviews|Q3 AP review|Updated|updated access review 'Q3 AP review' (durationInDays=21)"
+            )
+        }
+        @{ Key = 'name'; Package = 'AP-1'; PackageLookups = 1; Mode = 'a plan under -WhatIf'; PlanOnly = $true; Sets = 0; Expected = @(
+                'accessPackages|AP-1|Unchanged|access package properties match'
+                "accessPackages|AP-1|Skipped|would rename assignmentPolicy 'POL-Old' to 'POL-New'"
+                "accessReviews|Q3 AP review|Skipped|would update access review 'Q3 AP review' (durationInDays=21)"
+            )
+        }
+    ) {
+        $script:RvState.Packages = @([PSCustomObject]@{ Id = $script:RvPkgId; DisplayName = 'AP-1' })
+        $script:RvState.Policies = @(New-RvPolicy -Id $script:RvPolOldId -DisplayName 'POL-Old')
+        $script:RvState.Review = New-RvLive -AssignmentPolicyId $script:RvPolOldId
+        $Params = @{ Json = (New-RvPolDoc -ReviewPackage $Package); ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
+        if ($PlanOnly) { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+        $Rows = @(Invoke-OERStructure @Params)
+
+        @(ConvertTo-RvRowLine -Row $Rows) | Should -Be $Expected
+        # The review's policy was compared by the map's id: the lookup of 'POL-New', which here finds
+        # another policy, was never made.
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times $PackageLookups -Exactly
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy -Times $Sets -Exactly
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy -Times $Sets -Exactly -ParameterFilter {
+            $Id -eq 'bbbb2222-0000-0000-0000-000000000031' -and $DisplayName -eq 'POL-New'
+        }
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times $Sets -Exactly
+    }
+
+    It 'refuses the review of a <Case> the document renames, reading and writing nothing for it, when -Include leaves AccessPackages out (<Mode>)' -ForEach @(
+        foreach ($Mode in @('a real run', 'a plan under -WhatIf')) {
+            @{ Case = 'package'; Mode = $Mode; Doc = 'package'
+                Detail = ("access package 'AP-New' was not reconciled in this run: its rename from 'AP-Old' was refused (the accessPackages section " +
+                    'is not selected by -Include, so its rename is not reconciled in this run), so the access package this access review reviews ' +
+                    'cannot be identified; nothing was created, read or written for it')
+            }
+            @{ Case = 'policy'; Mode = $Mode; Doc = 'policy'
+                Detail = ("assignment policy 'POL-New' of access package 'AP-1' was not reconciled in this run: its rename from 'POL-Old' was " +
+                    'refused (the accessPackages section is not selected by -Include, so its rename is not reconciled in this run), so the ' +
+                    'assignment policy this access review reviews cannot be identified; nothing was created, read or written for it')
+            }
+        }
+    ) {
+        $Errs = $null
+        $Json = if ($Doc -eq 'package') { $script:RvPkgDoc } else { New-RvPolDoc }
+        $Params = @{ Json = $Json; Include = 'AccessReviews'; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Errs'; WarningAction = 'SilentlyContinue' }
+        if ($Mode -eq 'a plan under -WhatIf') { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+        $Rows = @(Invoke-OERStructure @Params)
+
+        @(ConvertTo-RvRowLine -Row $Rows) | Should -Be @("accessReviews|Q3 AP review|Failed|$Detail")
+        $Rows[0].Error | Should -BeNullOrEmpty
+        @($Errs).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0
+    }
+
+    # The access package handler's own undecided marks (R12, D4): its entry stops before it decides a
+    # rename, so the review that names the new name is refused with the handler's reason, and nothing is
+    # read or written for it. A review that names the package by its OBJECT ID reads the policy's mark
+    # under the package id, which the handler registers as soon as it has found the package (Sprint 11
+    # step 4b, Fix B); before that it looked the policy's new name up by name within the package.
+    It 'refuses the review of <Case> when the access package entry stops before it decides the rename (<Mode>)' -ForEach @(
+        foreach ($Mode in @('a real run', 'a plan under -WhatIf')) {
+            @{ Case = 'a package by its new name'; Mode = $Mode; Doc = 'package'
+                Expected = @(
+                    "accessPackages|AP-New|Failed|failed to look up access packages in catalog 'CAT-1': transient Graph failure; the access package was NOT created"
+                    ("accessReviews|Q3 AP review|Failed|access package 'AP-New' was not reconciled in this run: its rename from 'AP-Old' was refused " +
+                        "(the accessPackages entry did not reach a decision in this run; see that entry's rows), so the access package this access " +
+                        'review reviews cannot be identified; nothing was created, read or written for it')
+                )
+            }
+            @{ Case = 'a policy by its new name, the package named by its object id'; Mode = $Mode; Doc = 'policy'
+                Expected = @(
+                    'accessPackages|AP-1|Unchanged|access package properties match'
+                    "accessPackages|AP-1|Failed|failed to read the current assignment policies of access package 'AP-1': transient policies failure; no assignmentPolicy was created or updated"
+                    ("accessReviews|Q3 AP review|Failed|assignment policy 'POL-New' of access package 'aaaa1111-0000-0000-0000-000000000031' was not " +
+                        "reconciled in this run: its rename from 'POL-Old' was refused (the accessPackages entry did not reach a decision in this run; " +
+                        "see that entry's rows), so the assignment policy this access review reviews cannot be identified; nothing was created, read or " +
+                        'written for it')
+                )
+            }
+        }
+    ) {
+        if ($Doc -eq 'package') {
+            # The catalog's package list cannot be read: the entry stops before either name is matched.
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage { throw 'transient Graph failure' } -ParameterFilter { $Catalog }
+            $Json = $script:RvPkgDoc
+        } else {
+            # The package is found by its name; its policy list cannot be read, so the policy's rename is
+            # never decided. The review names the package by its object id.
+            $script:RvState.Packages = @([PSCustomObject]@{ Id = $script:RvPkgId; DisplayName = 'AP-1' })
+            $script:RvState.Policies = @(New-RvPolicy -Id $script:RvPolOldId -DisplayName 'POL-Old')
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { throw 'transient policies failure' } -ParameterFilter {
+                $AccessPackage -eq 'aaaa1111-0000-0000-0000-000000000031'
+            }
+            $Json = New-RvPolDoc -ReviewPackage $script:RvPkgId
+        }
+        $Errs = $null
+        $Params = @{ Json = $Json; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Errs'; WarningAction = 'SilentlyContinue' }
+        if ($Mode -eq 'a plan under -WhatIf') { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+        $Rows = @(Invoke-OERStructure @Params)
+
+        @(ConvertTo-RvRowLine -Row $Rows) | Should -Be $Expected
+        # The review's row publishes no record of its own; the one record the engine published is the
+        # package entry's failed read (-ErrorVariable also holds the inner layers of the mock's throw).
+        $Rows[-1].Error | Should -BeNullOrEmpty
+        $Own = @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId.EndsWith(',Invoke-OERStructure') })
+        $Own.Count | Should -Be 1
+        $Own[0].Exception.Message | Should -BeExactly $Rows[-2].Error.Exception.Message
+        # Nothing was read or written for the review: no definition read, no name lookup of its package or
+        # policy (the policy's new name would find another policy here), no write.
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackage -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy -Times 0
+    }
+
+    # Fix round 2: a package rename refused as a conflict names two packages; the entry marks its renaming
+    # policies under both ids, so a review that names either package by object id and the policy by its
+    # new name is refused with the handler's reason instead of looking the policy up by name.
+    It 'refuses the review of a policy by its new name, the package named by the <Which> id of a refused rename conflict (<Mode>)' -ForEach @(
+        @{ Which = 'previous name''s'; PackageId = 'aaaa1111-0000-0000-0000-000000000031'; Mode = 'a real run' }
+        @{ Which = 'new name''s'; PackageId = 'aaaa1111-0000-0000-0000-000000000032'; Mode = 'a real run' }
+        @{ Which = 'previous name''s'; PackageId = 'aaaa1111-0000-0000-0000-000000000031'; Mode = 'a plan under -WhatIf' }
+    ) {
+        # Catalog CAT-1 holds both names: 'AP-New' is another package, 'AP-Old' the one the entry renames.
+        $script:RvState.Packages = @(
+            [PSCustomObject]@{ Id = $script:RvOtherPkgId; DisplayName = 'AP-New' }
+            [PSCustomObject]@{ Id = $script:RvPkgId; DisplayName = 'AP-Old' }
+        )
+        $Json = ('{ "version": "1.0", ' +
+            '"accessPackages": [ { "displayName": "AP-New", "previousDisplayName": "AP-Old", "catalog": "CAT-1", "resourceRoles": [], ' +
+            '"assignmentPolicies": [ { "displayName": "POL-New", "previousDisplayName": "POL-Old" } ] } ], ' +
+            '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', $PackageId).Replace('#POL#', 'POL-New') + ' ] }')
+        $Errs = $null
+        $Params = @{ Json = $Json; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Errs'; WarningAction = 'SilentlyContinue' }
+        if ($Mode -eq 'a plan under -WhatIf') { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+        $Rows = @(Invoke-OERStructure @Params)
+
+        @(ConvertTo-RvRowLine -Row $Rows) | Should -Be @(
+            ("accessPackages|AP-New|Failed|both 'AP-New' and its previousDisplayName 'AP-Old' exist in catalog 'CAT-1' as different access packages; " +
+                'the document never merges two access packages, so nothing was changed -- rename or delete one of them, or remove previousDisplayName')
+            ("accessReviews|Q3 AP review|Failed|assignment policy 'POL-New' of access package '$PackageId' was not reconciled in this run: its rename " +
+                "from 'POL-Old' was refused (the accessPackages entry did not reach a decision in this run; see that entry's rows), so the assignment " +
+                'policy this access review reviews cannot be identified; nothing was created, read or written for it')
+        )
+        # The conflict's record is the one the engine published; the review's row carries none.
+        $Rows[1].Error | Should -BeNullOrEmpty
+        $Own = @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId.EndsWith(',Invoke-OERStructure') })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -BeExactly 'AccessPackageRenameConflict,Invoke-OERStructure'
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackage -Times 0
+    }
+
+    It 'still updates a review by name when -Include leaves AccessPackages out and nothing it names is renamed (control)' {
+        $Doc = ('{ "version": "1.0", ' +
+            '"accessPackages": [ { "displayName": "AP-1", "catalog": "CAT-1", "resourceRoles": [], "assignmentPolicies": [ { "displayName": "Standard" } ] } ], ' +
+            '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', 'AP-1').Replace('#POL#', 'Standard') + ' ] }')
+        $Rows = @(Invoke-OERStructure -Json $Doc -Include AccessReviews -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+
+        @(ConvertTo-RvRowLine -Row $Rows) | Should -Be @("accessReviews|Q3 AP review|Updated|updated access review 'Q3 AP review' (durationInDays=21)")
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'AP-1' }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 1 -Exactly -ParameterFilter { $AssignmentPolicy -eq 'Standard' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
+    }
+
+    It 'skips an entry or a policy without a usable name when -Include leaves AccessPackages out, so no binding error ends the run' {
+        # The validator refuses such names, so the document is let through here as the engine would see
+        # it if a name were empty; each entry whose names cannot be registered is skipped, the named
+        # policy renames of the other entry are still registered, and the run completes.
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @(); Findings = @() } }
+        $Doc = ('{ "version": "1.0", ' +
+            '"accessPackages": [ ' +
+            '{ "displayName": "", "previousDisplayName": "AP-Old", "catalog": "CAT-1", "assignmentPolicies": [ { "displayName": "POL-X", "previousDisplayName": "POL-Y" } ] }, ' +
+            '{ "displayName": "AP-2", "previousDisplayName": "", "catalog": "CAT-1" }, ' +
+            '{ "catalog": "CAT-1", "previousDisplayName": "AP-Old" }, ' +
+            '{ "displayName": "AP-1", "catalog": "CAT-1", "assignmentPolicies": [ ' +
+            '{ "displayName": "", "previousDisplayName": "POL-Old" }, { "displayName": "POL-A", "previousDisplayName": "" }, null, ' +
+            '{ "displayName": "POL-New", "previousDisplayName": "POL-Old" } ] } ], ' +
+            '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', 'AP-1').Replace('#POL#', 'POL-New') + ' ] }')
+        $Rows = @(Invoke-OERStructure -Json $Doc -Include AccessReviews -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+
+        # Positive proof that the marking ran past the skipped entries: the policy of the last one is
+        # registered, so the review that names it is refused.
+        @($Rows).Count | Should -Be 1
+        $Rows[0].Section | Should -BeExactly 'accessReviews'
+        $Rows[0].Action | Should -BeExactly 'Failed'
+        $Rows[0].Detail | Should -BeLike "assignment policy 'POL-New' of access package 'AP-1' was not reconciled in this run: *"
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
     }
 }

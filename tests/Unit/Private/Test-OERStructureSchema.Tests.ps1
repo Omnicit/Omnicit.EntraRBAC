@@ -3754,98 +3754,6 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
         }
     }
 
-    Context 'previousDisplayName on assignment policies and access reviews (BL-128, A5)' {
-        # Of the places outside groups that match an entry by displayName, administrativeUnits, catalogs and
-        # accessPackages rename the object found under previousDisplayName (Sprint 11 step 4, the Describe
-        # below). A policy within its package and a review still match by displayName alone, so a
-        # previousDisplayName there would be ignored and the engine would create a second object beside
-        # the one the document means to rename. Refused as an Error until step 4b.
-        BeforeDiscovery {
-            $script:OutsideGroupCase = @(
-                @{
-                    Where   = 'an assignment policy'
-                    Kind    = 'assignment policy'
-                    Article = 'an'
-                    At      = 'accessPackages[0].assignmentPolicies[0]'
-                    Path    = 'accessPackages[0].assignmentPolicies[0].previousDisplayName'
-                    Json    = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap-new", "catalog": "cat-x", "assignmentPolicies": [ { "displayName": "pol-new", "previousDisplayName": "pol-old" } ] } ] }'
-                }
-                @{
-                    Where   = 'an access review'
-                    Kind    = 'access review'
-                    Article = 'an'
-                    At      = 'accessReviews[0]'
-                    Path    = 'accessReviews[0].previousDisplayName'
-                    Json    = '{ "version": "1.0", "accessReviews": [ { "displayName": "rev-new", "accessPackage": "ap-x", "assignmentPolicy": "pol-x", "previousDisplayName": "rev-old" } ] }'
-                }
-            )
-        }
-
-        It 'refuses previousDisplayName on <Where> with one Error that says it is not supported' -ForEach $script:OutsideGroupCase {
-            $Doc = $Json | ConvertFrom-Json
-            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Kind = $Kind; Path = $Path } {
-                param($Doc, $Kind, $Path)
-                $V = Test-OERStructureSchema -Document $Doc
-                $V.Valid | Should -BeFalse
-                $Hit = @($V.Errors | Where-Object { $_.Path -eq $Path })
-                $Hit.Count | Should -Be 1
-                $Hit[0].Severity | Should -BeExactly 'Error'
-                $Hit[0].Message | Should -Match 'not supported'
-                $Hit[0].Message | Should -Match ('would create a new ' + [regex]::Escape($Kind))
-                # The message names the three kinds that CAN be renamed now, and no longer says that only
-                # groups can: that sentence was step 3's, before administrative units, catalogs and access
-                # packages joined them.
-                $Hit[0].Message | Should -Match 'only groups, administrative units, catalogs and access packages can be renamed through the document'
-                $Hit[0].Message | Should -Not -Match 'only groups can be renamed'
-                # The message no longer says the engine matches by displayName "alone": a package is matched
-                # within its catalog and a policy within its package, so that was inexact.
-                $Hit[0].Message | Should -Not -Match 'alone'
-                # It is the only Error of the document: the entry is otherwise valid.
-                @($V.Errors | Where-Object Severity -eq 'Error').Count | Should -Be 1
-            }
-        }
-
-        It 'words the refusal on <Where> exactly, with the article <Article> before the kind' -ForEach $script:OutsideGroupCase {
-            $Doc = $Json | ConvertFrom-Json
-            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Kind = $Kind; Article = $Article; At = $At; Path = $Path } {
-                param($Doc, $Kind, $Article, $At, $Path)
-                $Hit = @((Test-OERStructureSchema -Document $Doc).Errors | Where-Object { $_.Path -eq $Path })
-                $Hit.Count | Should -Be 1
-                $Hit[0].Message | Should -BeExactly ("'previousDisplayName' at $At is not supported for $Article $Kind yet: only groups, administrative units, catalogs and access packages " +
-                    "can be renamed through the document. Invoke-OERStructure does not read previousDisplayName for $Article $Kind, so it would " +
-                    "create a new $Kind named by displayName beside the existing one instead of renaming it. " +
-                    'Remove previousDisplayName, and rename the existing object outside the document first.')
-            }
-        }
-
-        It 'does not report previousDisplayName on <Where> when its value is null (not declared)' -ForEach $script:OutsideGroupCase {
-            # The same document with the value in place is refused (the code path is reached), and with
-            # an explicit null it is not: Test-HasProp is present-and-not-null.
-            $Declared = $Json | ConvertFrom-Json
-            $NullJson = $Json -replace '"previousDisplayName": "[^"]*"', '"previousDisplayName": null'
-            $NullJson | Should -Not -BeExactly $Json
-            $NullDoc = $NullJson | ConvertFrom-Json
-            InModuleScope $script:moduleName -Parameters @{ Declared = $Declared; NullDoc = $NullDoc; Path = $Path } {
-                param($Declared, $NullDoc, $Path)
-                @((Test-OERStructureSchema -Document $Declared).Errors | Where-Object { $_.Path -eq $Path }).Count | Should -Be 1
-                $V = Test-OERStructureSchema -Document $NullDoc
-                @($V.Errors | Where-Object { $_.Path -eq $Path }) | Should -BeNullOrEmpty
-                @($V.Errors | Where-Object Severity -eq 'Error') | Should -BeNullOrEmpty
-                $V.Valid | Should -BeTrue
-            }
-        }
-
-        It 'still accepts previousDisplayName on a group with no refusal of this kind' {
-            InModuleScope $script:moduleName {
-                $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
-                $V = Test-OERStructureSchema -Document $Doc
-                @($V.Errors | Where-Object { $_.Message -match 'not supported' }) | Should -BeNullOrEmpty
-                @($V.Errors | Where-Object Path -eq 'groups[0].previousDisplayName') | Should -BeNullOrEmpty
-                $V.Valid | Should -BeTrue
-            }
-        }
-    }
-
     # Task 8: the worked example must carry every section the schema understands, so it stays a
     # complete starting point rather than a document missing the directory-role sections.
     # Three Split-Path hops from tests\Unit\Private: tests\Unit\Private -> tests\Unit -> tests ->
@@ -3871,19 +3779,21 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
     }
 }
 
-Describe 'Test-OERStructureSchema renames of administrative units, catalogs and access packages (BL-128, A5)' {
-    # Sprint 11 step 4: administrativeUnits, catalogs and accessPackages rename the object found under
-    # previousDisplayName, with the groups' rules. A non-string or empty value names nothing (Error); one
-    # equal to displayName ignoring case finds the same object, so nothing is renamed (Warning naming the
-    # Set command); the previous name is a claimed key of the section's duplicate check, a package's within
-    # its catalog. A reference that still uses the previous name is a Warning (Rule 14), and replaces Rule
-    # 11's "not declared" Warning for a package's catalog (R11).
+Describe 'Test-OERStructureSchema renames of administrative units, catalogs, access packages and access reviews (BL-128, A5)' {
+    # Sprint 11 step 4 (step 4b for access reviews): administrativeUnits, catalogs, accessPackages and
+    # accessReviews rename the object found under previousDisplayName, with the groups' rules. A non-string
+    # or empty value names nothing (Error); one equal to displayName ignoring case finds the same object,
+    # so nothing is renamed (Warning naming the Set command, which differs per kind: CaseOnlyUse is the
+    # words after 'use', the three older kinds byte-identical to step 4); the previous name is a claimed
+    # key of the section's duplicate check, a package's within its catalog. A reference that still uses
+    # the previous name is a Warning (Rule 14), and replaces Rule 11's "not declared" Warning for a
+    # package's catalog (R11). The assignment policies of a package are the next Describe.
     BeforeDiscovery {
         $script:RenameKind = @(
             @{
                 Kind        = 'an administrative unit'
                 Section     = 'administrativeUnits'
-                SetCommand  = 'Set-OERAdministrativeUnit'
+                CaseOnlyUse = 'Set-OERAdministrativeUnit -NewDisplayName'
                 Prefix      = ''
                 Tail        = ', "members": null, "scopedRoles": null'
                 What        = "display name '{0}'"
@@ -3892,7 +3802,7 @@ Describe 'Test-OERStructureSchema renames of administrative units, catalogs and 
             @{
                 Kind        = 'a catalog'
                 Section     = 'catalogs'
-                SetCommand  = 'Set-OERCatalog'
+                CaseOnlyUse = 'Set-OERCatalog -NewDisplayName'
                 Prefix      = ''
                 Tail        = ', "resources": null'
                 What        = "display name '{0}'"
@@ -3901,11 +3811,21 @@ Describe 'Test-OERStructureSchema renames of administrative units, catalogs and 
             @{
                 Kind        = 'an access package'
                 Section     = 'accessPackages'
-                SetCommand  = 'Set-OERAccessPackage'
+                CaseOnlyUse = 'Set-OERAccessPackage -NewDisplayName'
                 Prefix      = '"catalogs": [ { "displayName": "cat-x", "resources": null }, { "displayName": "cat-y", "resources": null } ], '
                 Tail        = ', "catalog": "cat-x", "resourceRoles": null'
                 What        = "catalog 'cat-x' and display name '{0}'"
                 Consequence = 'Both entries reconcile one access package, so each would undo the other''s settings and, under -Prune, remove the resource role bindings the other declares.'
+            }
+            @{
+                # Step 4b. Set-OERAccessReviewDefinition names the new name -DisplayName, not -NewDisplayName.
+                Kind        = 'an access review'
+                Section     = 'accessReviews'
+                CaseOnlyUse = 'Set-OERAccessReviewDefinition -DisplayName'
+                Prefix      = ''
+                Tail        = ', "accessPackage": "ap-x", "assignmentPolicy": "pol-x", "reviewers": [ "self" ]'
+                What        = "display name '{0}'"
+                Consequence = 'Both entries reconcile one access review, so applying the document would rewrite its settings on every run.'
             }
         )
         $script:RenameInvalidCase = foreach ($Kind in $script:RenameKind) {
@@ -4032,7 +3952,7 @@ Describe 'Test-OERStructureSchema renames of administrative units, catalogs and 
             $Hit[0].Severity | Should -BeExactly 'Warning'
             $Hit[0].Item | Should -BeExactly 'New'
             # Both names find one object, so nothing is renamed and a case-only rename needs the cmdlet.
-            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at ${Section}[0] equals displayName ignoring case; a case-only rename is not possible through the document -- use $SetCommand -NewDisplayName."
+            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at ${Section}[0] equals displayName ignoring case; a case-only rename is not possible through the document -- use $CaseOnlyUse."
             # The entry is not a duplicate of itself, and nothing else is reported.
             @($V.Errors).Count | Should -Be 1
             $V.Valid | Should -BeTrue
@@ -4293,6 +4213,704 @@ Describe 'Test-OERStructureSchema renames of administrative units, catalogs and 
             @($V.Errors | Where-Object { $_.Message -match "'displayName' is required at administrativeUnits\[0\]" }).Count | Should -Be 1
             @($V.Errors | Where-Object { $_.Message -match 'previousDisplayName of' }) | Should -BeNullOrEmpty
         }
+    }
+}
+
+Describe 'Test-OERStructureSchema renames of assignment policies (BL-128, Sprint 11 step 4b)' {
+    # Sprint 11 step 4b: the assignment policies of an access package are renamed through the document like
+    # the other kinds -- the object found under previousDisplayName is renamed, with the groups' rules. The
+    # step 3 Error ("not supported yet") is gone. A policy is matched by name inside its package, so the
+    # duplicate check runs per package (Ruling P4): a collision between two claims of one package is an Error
+    # only when at least one of the two is a previousDisplayName, and two equal displayNames stay unreported.
+    # Rule 14 has a policy half: a review naming the policy by the previous name of a rename is warned.
+    BeforeDiscovery {
+        $script:PolicyInvalidCase = @(
+            @{ Label = 'an empty string'; Json = '""' }
+            @{ Label = 'a number'; Json = '5' }
+            @{ Label = 'an empty array'; Json = '[]' }
+            @{ Label = 'a boolean'; Json = 'true' }
+        )
+    }
+
+    BeforeAll {
+        # One catalog, one package 'ap-x' holding the given policies. The package and the policies are
+        # otherwise complete, so the one finding a case provokes is the one it is about.
+        function New-PolicyItem {
+            param([string]$Name, [string]$PrevJson)
+            $Prev = if ($PrevJson) { ', "previousDisplayName": ' + $PrevJson } else { '' }
+            '{ "displayName": "' + $Name + '"' + $Prev + ' }'
+        }
+        function New-PolicyDoc {
+            param([string[]]$PolicyJson, [string]$Rest = '')
+            ('{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], ' +
+                '"accessPackages": [ { "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ ' +
+                ($PolicyJson -join ', ') + ' ] }' + $Rest + ' ] }') | ConvertFrom-Json
+        }
+        function Invoke-PolicyValidation {
+            param([object]$Doc)
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        function Get-PolicyFindingAt {
+            param([object]$Validation, [string]$Path)
+            @($Validation.Errors | Where-Object { $_.Path -eq $Path })
+        }
+        # A document with one review of package/policy, the policy being renamed from 'Old' to 'New'.
+        function New-PolicyReviewDoc {
+            param([string]$Package = 'ap-x', [string]$Policy = 'Old', [string]$Prev = '"Old"')
+            $Doc = New-PolicyDoc -PolicyJson @((New-PolicyItem -Name 'New' -PrevJson $Prev))
+            $Review = [PSCustomObject]@{ displayName = 'rev_one'; accessPackage = $Package; assignmentPolicy = $Policy; reviewers = @('self') }
+            $Doc | Add-Member -NotePropertyName accessReviews -NotePropertyValue @($Review) -PassThru
+        }
+        $script:Consequence = "Both entries reconcile one assignment policy of the access package, so each would undo the other's settings."
+    }
+
+    Context 'the key itself' {
+        It 'accepts previousDisplayName on an assignment policy with no finding at all (step 3 refused it)' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @((New-PolicyItem -Name 'New' -PrevJson '"Old"')))
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessPackages[0].assignmentPolicies[0].previousDisplayName') | Should -BeNullOrEmpty
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'accepts an object id as the previousDisplayName of an assignment policy' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @((New-PolicyItem -Name 'New' -PrevJson '"11111111-1111-1111-1111-111111111111"')))
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'reports an Error for the previousDisplayName of an assignment policy that is <Label>' -ForEach $script:PolicyInvalidCase {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @((New-PolicyItem -Name 'New' -PrevJson $Json)))
+            $Hit = @(Get-PolicyFindingAt -Validation $V -Path 'accessPackages[0].assignmentPolicies[0].previousDisplayName')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            # Every policy row is about the package (D2), so the finding is filed under it.
+            $Hit[0].Section | Should -BeExactly 'accessPackages'
+            $Hit[0].Item | Should -BeExactly 'ap-x'
+            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at accessPackages[0].assignmentPolicies[0] must be a non-empty string."
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'treats an explicit null previousDisplayName on an assignment policy as undeclared' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @((New-PolicyItem -Name 'New' -PrevJson 'null')))
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'warns, and stays Valid, when the previousDisplayName of an assignment policy equals its displayName ignoring case' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @((New-PolicyItem -Name 'New' -PrevJson '"nEW"')))
+            $Hit = @(Get-PolicyFindingAt -Validation $V -Path 'accessPackages[0].assignmentPolicies[0].previousDisplayName')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Section | Should -BeExactly 'accessPackages'
+            $Hit[0].Item | Should -BeExactly 'ap-x'
+            # The access package handler sends the declared displayName on every update of a policy, so the
+            # document applies the letter case together with another changed field. A16: -DisplayName alone
+            # with only the case changed is NothingToUpdate, so the cmdlet needs a second property.
+            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at accessPackages[0].assignmentPolicies[0] equals displayName ignoring case; a case-only rename is applied only together with another changed field of the policy -- or use Set-OERAccessPackageAssignmentPolicy -DisplayName together with another property."
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'reports the problems of two policies of one package each at its own path' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
+                    (New-PolicyItem -Name 'New_A' -PrevJson '""')
+                    (New-PolicyItem -Name 'New_B' -PrevJson '5')
+                ))
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessPackages[0].assignmentPolicies[0].previousDisplayName').Count | Should -Be 1
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessPackages[0].assignmentPolicies[1].previousDisplayName').Count | Should -Be 1
+            @($V.Errors).Count | Should -Be 2
+        }
+    }
+
+    Context 'duplicate claims inside one package (Ruling P4)' {
+        It 'refuses a later previousDisplayName that equals an earlier displayName' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
+                    (New-PolicyItem -Name 'X')
+                    (New-PolicyItem -Name 'Y' -PrevJson '"x"')
+                ))
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Section | Should -BeExactly 'accessPackages'
+            $Errs[0].Item | Should -BeExactly 'ap-x'
+            $Errs[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[1].previousDisplayName'
+            # The earlier policy is named by its position inside the package, not by a package index.
+            $Errs[0].Message | Should -BeExactly ("accessPackages[0].assignmentPolicies[1].previousDisplayName declares the same display name 'x' as accessPackages[0].assignmentPolicies[0] (compared without regard to letter case). " +
+                "$script:Consequence Keep one entry.")
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'refuses a later displayName that equals an earlier previousDisplayName' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
+                    (New-PolicyItem -Name 'Y' -PrevJson '"X"')
+                    (New-PolicyItem -Name 'x')
+                ))
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Item | Should -BeExactly 'ap-x'
+            $Errs[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[1]'
+            $Errs[0].Message | Should -BeExactly ("accessPackages[0].assignmentPolicies[1] declares the same display name 'x' as accessPackages[0].assignmentPolicies[0] (compared without regard to letter case). " +
+                "$script:Consequence Keep one entry.")
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'refuses two policies that share one previousDisplayName' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
+                    (New-PolicyItem -Name 'New_A' -PrevJson '"old"')
+                    (New-PolicyItem -Name 'New_B' -PrevJson '"OLD"')
+                ))
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[1].previousDisplayName'
+            $Errs[0].Message | Should -BeExactly ("accessPackages[0].assignmentPolicies[1].previousDisplayName declares the same display name 'OLD' as accessPackages[0].assignmentPolicies[0] (compared without regard to letter case). " +
+                "$script:Consequence Keep one entry.")
+        }
+
+        It 'names the earlier policy by its position in its own package, not in the first one' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ ' +
+                '{ "displayName": "ap-a", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "Only" } ] }, ' +
+                '{ "displayName": "ap-b", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "P0" }, { "displayName": "P1", "previousDisplayName": "p0" } ] } ] }'
+            $Errs = @((Invoke-PolicyValidation -Doc ($Doc | ConvertFrom-Json)).Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Item | Should -BeExactly 'ap-b'
+            $Errs[0].Path | Should -BeExactly 'accessPackages[1].assignmentPolicies[1].previousDisplayName'
+            $Errs[0].Message | Should -Match ([regex]::Escape(" as accessPackages[1].assignmentPolicies[0] ("))
+        }
+
+        It 'does not report two policies that declare the same displayName' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
+                    (New-PolicyItem -Name 'Same')
+                    (New-PolicyItem -Name 'SAME')
+                ))
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'reports a previousDisplayName that meets two equal displayNames against the first of them' {
+            # The positive control of the test above: the same pair, plus a claim that is a previousDisplayName.
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
+                    (New-PolicyItem -Name 'Same')
+                    (New-PolicyItem -Name 'SAME')
+                    (New-PolicyItem -Name 'Other' -PrevJson '"same"')
+                ))
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[2].previousDisplayName'
+            $Errs[0].Message | Should -Match ([regex]::Escape(" as accessPackages[0].assignmentPolicies[0] ("))
+        }
+
+        It 'reports a displayName that meets a previousDisplayName even when another displayName claimed the name first' {
+            # Policy 1 claims 'a' as a previous name, behind policy 0's displayName 'A' (the first claim of the
+            # name). Policy 2's displayName 'A' then meets that previous name, whatever the first claim was.
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
+                    (New-PolicyItem -Name 'A')
+                    (New-PolicyItem -Name 'B' -PrevJson '"a"')
+                    (New-PolicyItem -Name 'A')
+                ))
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 2
+            $Errs[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[1].previousDisplayName'
+            $Errs[1].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[2]'
+            $Errs[1].Message | Should -Match ([regex]::Escape(" as accessPackages[0].assignmentPolicies[0] ("))
+        }
+
+        It 'makes no claim for a previousDisplayName that is not a non-empty string' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
+                    (New-PolicyItem -Name 'New_A' -PrevJson '5')
+                    (New-PolicyItem -Name 'New_B' -PrevJson '5')
+                    (New-PolicyItem -Name 'New_C' -PrevJson '""')
+                    (New-PolicyItem -Name 'New_D' -PrevJson '""')
+                ))
+            # The four non-empty-string Errors prove every policy was reached; none of them is a duplicate.
+            @($V.Errors | Where-Object { $_.Message -match 'must be a non-empty string' }).Count | Should -Be 4
+            @($V.Errors | Where-Object { $_.Message -match 'declares the same' }) | Should -BeNullOrEmpty
+        }
+
+        It 'makes no claim for a previousDisplayName that equals its own displayName ignoring case' {
+            # Policy 0 claims 'Alpha' once: its previous name 'ALPHA' is its own name, so claiming that too
+            # would collide with the claim just made, at policy 0 itself. Policy 1's previous name 'alpha'
+            # collides with policy 0's claim, and that is the one Error.
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
+                    (New-PolicyItem -Name 'Alpha' -PrevJson '"ALPHA"')
+                    (New-PolicyItem -Name 'Beta' -PrevJson '"alpha"')
+                ))
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[1].previousDisplayName'
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessPackages[0].assignmentPolicies[0].previousDisplayName')[0].Severity | Should -BeExactly 'Warning'
+        }
+
+        It 'counts the claims of each package alone: the same names in two packages are not duplicates' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ ' +
+                '{ "displayName": "ap-a", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" } ] }, ' +
+                '{ "displayName": "ap-b", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "Other", "previousDisplayName": "old" }, { "displayName": "new" } ] } ] }'
+            $V = Invoke-PolicyValidation -Doc ($Doc | ConvertFrom-Json)
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'does not let a previous name claimed in one package make two equal displayNames of another package an Error' {
+            # Package ap-a claims 'Same' as a previous name; package ap-b merely declares 'Same' twice, which
+            # is not reported (Ruling P4) -- ap-a's claim is another package's business.
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ ' +
+                '{ "displayName": "ap-a", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Same" } ] }, ' +
+                '{ "displayName": "ap-b", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "Same" }, { "displayName": "SAME" } ] } ] }'
+            $V = Invoke-PolicyValidation -Doc ($Doc | ConvertFrom-Json)
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    Context 'a review that names a policy by its previous name (Rule 14, policy half)' {
+        BeforeAll {
+            $script:Warning = "Access review 'rev_one' at accessReviews[0] declares assignmentPolicy '{0}', the previousDisplayName of accessPackages[0].assignmentPolicies[0], which renames that assignment policy to 'New'. " +
+                "Name the assignment policy by its new name 'New' or its object id: once the rename is applied no assignment policy of the access package carries '{0}', and the review's target check fails."
+        }
+
+        It 'warns on a review that still uses the previous name, and stays Valid' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyReviewDoc)
+            $Hit = @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].assignmentPolicy')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Section | Should -BeExactly 'accessReviews'
+            $Hit[0].Item | Should -BeExactly 'rev_one'
+            $Hit[0].Message | Should -BeExactly ($script:Warning -f 'Old')
+            # It is the only finding of the document.
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'does not warn on a review that names the policy by its new name' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyReviewDoc -Policy 'New')
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'warns when the reference differs from the previous name only in letter case, naming the reference as written' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyReviewDoc -Policy 'oLD')
+            $Hit = @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].assignmentPolicy')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeExactly ($script:Warning -f 'oLD')
+        }
+
+        It 'does not warn when the previousDisplayName is an object id and the review uses that id (R10)' {
+            $Id = '11111111-1111-1111-1111-111111111111'
+            $V = Invoke-PolicyValidation -Doc (New-PolicyReviewDoc -Policy $Id -Prev ('"' + $Id + '"'))
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].assignmentPolicy') | Should -BeNullOrEmpty
+            @($V.Errors) | Should -BeNullOrEmpty
+        }
+
+        It 'does not warn when the previousDisplayName equals the displayName ignoring case (nothing is renamed)' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyReviewDoc -Policy 'NEW' -Prev '"NEW"')
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].assignmentPolicy') | Should -BeNullOrEmpty
+            # Only the case-only Warning of the policy itself is left.
+            @($V.Errors).Count | Should -Be 1
+            $V.Errors[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[0].previousDisplayName'
+        }
+
+        It 'does not warn when the previousDisplayName is not a non-empty string' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyReviewDoc -Policy 'Old' -Prev '""')
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].assignmentPolicy') | Should -BeNullOrEmpty
+            @($V.Errors | Where-Object { $_.Message -match 'must be a non-empty string' }).Count | Should -Be 1
+        }
+
+        It 'warns when the review names the package by the previous name it is renamed from (both Warnings are given)' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ ' +
+                '{ "displayName": "ap-new", "previousDisplayName": "ap-old", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" } ] } ], ' +
+                '"accessReviews": [ { "displayName": "rev_one", "accessPackage": "ap-old", "assignmentPolicy": "Old", "reviewers": [ "self" ] } ] }'
+            $V = Invoke-PolicyValidation -Doc ($Doc | ConvertFrom-Json)
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].accessPackage').Count | Should -Be 1
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].assignmentPolicy').Count | Should -Be 1
+            @($V.Errors).Count | Should -Be 2
+        }
+
+        It 'warns when the review names the package by the object id it is renamed from' {
+            $Id = '11111111-1111-1111-1111-111111111111'
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ ' +
+                '{ "displayName": "ap-new", "previousDisplayName": "' + $Id + '", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" } ] } ], ' +
+                '"accessReviews": [ { "displayName": "rev_one", "accessPackage": "' + $Id + '", "assignmentPolicy": "Old", "reviewers": [ "self" ] } ] }'
+            $V = Invoke-PolicyValidation -Doc ($Doc | ConvertFrom-Json)
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].assignmentPolicy').Count | Should -Be 1
+            # The id reference to the package itself stays valid after its rename (R10).
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].accessPackage') | Should -BeNullOrEmpty
+            @($V.Errors).Count | Should -Be 1
+        }
+
+        It 'does not warn when the policy is renamed in another package than the one the review names' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ ' +
+                '{ "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" } ] }, ' +
+                '{ "displayName": "ap-y", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "Other" } ] } ], ' +
+                '"accessReviews": [ { "displayName": "rev_one", "accessPackage": "ap-y", "assignmentPolicy": "Old", "reviewers": [ "self" ] } ] }'
+            $V = Invoke-PolicyValidation -Doc ($Doc | ConvertFrom-Json)
+            @($V.Errors) | Should -BeNullOrEmpty
+        }
+
+        It 'finds the package among several, naming the package index and the policy index in the Warning' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ ' +
+                '{ "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "Other" } ] }, ' +
+                '{ "displayName": "ap-y", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "Keep" }, { "displayName": "New", "previousDisplayName": "Old" } ] } ], ' +
+                '"accessReviews": [ { "displayName": "rev_one", "accessPackage": "AP-Y", "assignmentPolicy": "Old", "reviewers": [ "self" ] } ] }'
+            $Hit = @(Get-PolicyFindingAt -Validation (Invoke-PolicyValidation -Doc ($Doc | ConvertFrom-Json)) -Path 'accessReviews[0].assignmentPolicy')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Match ([regex]::Escape("the previousDisplayName of accessPackages[1].assignmentPolicies[1], which renames that assignment policy to 'New'."))
+        }
+
+        It 'names the first policy that renames from the name' {
+            $Doc = New-PolicyDoc -PolicyJson @(
+                (New-PolicyItem -Name 'New_A' -PrevJson '"Old"')
+                (New-PolicyItem -Name 'New_B' -PrevJson '"old"')
+            )
+            $Review = [PSCustomObject]@{ displayName = 'rev_one'; accessPackage = 'ap-x'; assignmentPolicy = 'OLD'; reviewers = @('self') }
+            $Doc | Add-Member -NotePropertyName accessReviews -NotePropertyValue @($Review)
+            $V = Invoke-PolicyValidation -Doc $Doc
+            # The second policy is a duplicate Error of its own.
+            @($V.Errors | Where-Object { $_.Severity -eq 'Error' -and $_.Message -match 'declares the same' }).Count | Should -Be 1
+            $Hit = @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].assignmentPolicy')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Match ([regex]::Escape("the previousDisplayName of accessPackages[0].assignmentPolicies[0], which renames that assignment policy to 'New_A'."))
+        }
+
+        It 'names the first package that carries the name when two packages of different catalogs do' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null }, { "displayName": "cat-y", "resources": null } ], "accessPackages": [ ' +
+                '{ "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New_A", "previousDisplayName": "Old" } ] }, ' +
+                '{ "displayName": "ap-x", "catalog": "cat-y", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New_B", "previousDisplayName": "Old" } ] } ], ' +
+                '"accessReviews": [ { "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "Old", "reviewers": [ "self" ] } ] }'
+            $V = Invoke-PolicyValidation -Doc ($Doc | ConvertFrom-Json)
+            $Hit = @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].assignmentPolicy')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Match ([regex]::Escape("the previousDisplayName of accessPackages[0].assignmentPolicies[0], which renames that assignment policy to 'New_A'."))
+        }
+
+        It 'warns once for each review that names the old policy name' {
+            $Doc = New-PolicyDoc -PolicyJson @((New-PolicyItem -Name 'New' -PrevJson '"Old"'))
+            $Reviews = @(
+                [PSCustomObject]@{ displayName = 'rev_one'; accessPackage = 'ap-x'; assignmentPolicy = 'Old'; reviewers = @('self') }
+                [PSCustomObject]@{ displayName = 'rev_two'; accessPackage = 'ap-x'; assignmentPolicy = 'New'; reviewers = @('self') }
+                [PSCustomObject]@{ displayName = 'rev_three'; accessPackage = 'ap-x'; assignmentPolicy = 'Old'; reviewers = @('self') }
+            )
+            $Doc | Add-Member -NotePropertyName accessReviews -NotePropertyValue $Reviews
+            $V = Invoke-PolicyValidation -Doc $Doc
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].assignmentPolicy').Count | Should -Be 1
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[1].assignmentPolicy') | Should -BeNullOrEmpty
+            $Third = @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[2].assignmentPolicy')
+            $Third.Count | Should -Be 1
+            $Third[0].Item | Should -BeExactly 'rev_three'
+            @($V.Errors).Count | Should -Be 2
+        }
+
+        It 'skips a policy entry that has no displayName to point to' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ ' +
+                '{ "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "previousDisplayName": "Old" } ] } ], ' +
+                '"accessReviews": [ { "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "Old", "reviewers": [ "self" ] } ] }'
+            $V = Invoke-PolicyValidation -Doc ($Doc | ConvertFrom-Json)
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].assignmentPolicy') | Should -BeNullOrEmpty
+            # The missing displayName is an Error already, so the policy was reached.
+            @($V.Errors | Where-Object { $_.Message -match "'displayName' is required at accessPackages\[0\]\.assignmentPolicies\[0\]" }).Count | Should -Be 1
+        }
+
+        It 'does not point at a package that has no displayName to name, even when it renames from the name the review uses' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ ' +
+                '{ "previousDisplayName": "ap-old", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" } ] } ], ' +
+                '"accessReviews": [ { "displayName": "rev_one", "accessPackage": "ap-old", "assignmentPolicy": "Old", "reviewers": [ "self" ] } ] }'
+            $V = Invoke-PolicyValidation -Doc ($Doc | ConvertFrom-Json)
+            @(Get-PolicyFindingAt -Validation $V -Path 'accessReviews[0].assignmentPolicy') | Should -BeNullOrEmpty
+            # The missing displayName is an Error already, so the package was reached.
+            @($V.Errors | Where-Object { $_.Message -match "'displayName' is required at accessPackages\[0\]" }).Count | Should -Be 1
+        }
+
+        It 'ignores a review or package shape it cannot read, and a package without policies' {
+            # ap-bad holds an OBJECT where the array belongs, and "5" / N5 are names a number would equal
+            # as text: none of them may be read as a rename the review names.
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ ' +
+                '{ "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" }, { "displayName": "N5", "previousDisplayName": "5" } ] }, ' +
+                '{ "displayName": "ap-none", "catalog": "cat-x", "resourceRoles": null }, ' +
+                '{ "displayName": "ap-bad", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": { "displayName": "New", "previousDisplayName": "Old" } }, ' +
+                '{ "catalog": "cat-x", "resourceRoles": null }, ' +
+                '{ "displayName": "5", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" } ] } ], ' +
+                '"accessReviews": [ { "displayName": "rev_a", "accessPackage": 5, "assignmentPolicy": "Old", "reviewers": [ "self" ] }, ' +
+                '{ "displayName": "rev_b", "accessPackage": "ap-none", "assignmentPolicy": "Old", "reviewers": [ "self" ] }, ' +
+                '{ "displayName": "rev_c", "accessPackage": "ap-bad", "assignmentPolicy": "Old", "reviewers": [ "self" ] }, ' +
+                '{ "displayName": "rev_d", "accessPackage": "ap-x", "assignmentPolicy": 5, "reviewers": [ "self" ] }, ' +
+                '{ "displayName": "rev_e", "accessPackage": "ap-x", "reviewers": [ "self" ] }, ' +
+                '{ "displayName": "rev_f", "accessPackage": "ap-x", "assignmentPolicy": "Old", "reviewers": [ "self" ] } ] }'
+            $Parsed = $Doc | ConvertFrom-Json
+            { Invoke-PolicyValidation -Doc $Parsed } | Should -Not -Throw
+            $V = Invoke-PolicyValidation -Doc $Parsed
+            # Only the review that can be read (the positive control, rev_f) is warned about.
+            $Warned = @($V.Errors | Where-Object { $_.Path -match '^accessReviews\[\d\]\.assignmentPolicy$' -and $_.Severity -eq 'Warning' })
+            $Warned.Count | Should -Be 1
+            $Warned[0].Path | Should -BeExactly 'accessReviews[5].assignmentPolicy'
+        }
+
+        # The outer shape guard of the policy half: a section that is not an array is an Error already
+        # ("must be an array"), and the half must not read a lone object, or a string, as a list of one entry.
+        # The positive control is the object itself: read as one entry it WOULD name the renamed policy.
+        It 'reports <Label> as the one Error that says it must be an array, and reads it as no list (the outer shape guard)' -ForEach @(
+            @{
+                Label   = 'an object-valued accessReviews'
+                Section = 'accessReviews'
+                Json    = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ { "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" } ] } ], "accessReviews": { "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "Old", "reviewers": [ "self" ] } }'
+            }
+            @{
+                Label   = 'a string-valued accessReviews'
+                Section = 'accessReviews'
+                Json    = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ { "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" } ] } ], "accessReviews": "nope" }'
+            }
+            @{
+                Label   = 'an object-valued accessPackages'
+                Section = 'accessPackages'
+                Json    = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": { "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" } ] }, "accessReviews": [ { "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "Old", "reviewers": [ "self" ] } ] }'
+            }
+            @{
+                Label   = 'a string-valued accessPackages'
+                Section = 'accessPackages'
+                Json    = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": "nope", "accessReviews": [ { "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "Old", "reviewers": [ "self" ] } ] }'
+            }
+        ) {
+            $Parsed = $Json | ConvertFrom-Json
+            { Invoke-PolicyValidation -Doc $Parsed } | Should -Not -Throw
+            $V = Invoke-PolicyValidation -Doc $Parsed
+            @($V.Errors).Count | Should -Be 1
+            $V.Errors[0].Severity | Should -BeExactly 'Error'
+            $V.Errors[0].Section | Should -BeExactly $Section
+            $V.Errors[0].Item | Should -BeExactly $Section
+            $V.Errors[0].Path | Should -BeExactly $Section
+            $V.Errors[0].Message | Should -BeExactly "Section '$Section' must be an array."
+            @($V.Errors | Where-Object { $_.Path -match 'assignmentPolicy$' }) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeFalse
+        }
+
+        # A null element is a malformed entry, not a reason to stop: the duplicate check of the policies and the
+        # policy half read around it, name the entries that follow it by their real positions, and add no
+        # finding of their own for it.
+        It 'survives a null element in assignmentPolicies, accessPackages and accessReviews, and counts its findings' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ null, ' +
+                '{ "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ null, ' +
+                '{ "displayName": "New", "previousDisplayName": "Old" }, null, { "displayName": "Other", "previousDisplayName": "old" } ] } ], ' +
+                '"accessReviews": [ null, { "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "Old", "reviewers": [ "self" ] }, null ] }'
+            $Parsed = $Doc | ConvertFrom-Json
+            { Invoke-PolicyValidation -Doc $Parsed } | Should -Not -Throw
+            $V = Invoke-PolicyValidation -Doc $Parsed
+
+            # accessPackages[0] is null: displayName and catalog are required. accessReviews[0] and [2] are
+            # null: displayName, accessPackage and assignmentPolicy are required. In ap-x the null policies
+            # [0] and [2] each lack a displayName, and policy [3] repeats policy [1]'s previous name.
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 11
+            @($Errs | Where-Object { $_.Path -match '^accessPackages\[0\]' }).Count | Should -Be 2
+            @($Errs | Where-Object { $_.Path -match '^accessReviews\[(0|2)\]' }).Count | Should -Be 6
+            @($Errs | Where-Object { $_.Path -match '^accessPackages\[1\]\.assignmentPolicies\[(0|2)\]\.displayName$' }).Count | Should -Be 2
+            $Dup = @($Errs | Where-Object { $_.Message -match 'declares the same' })
+            $Dup.Count | Should -Be 1
+            $Dup[0].Path | Should -BeExactly 'accessPackages[1].assignmentPolicies[3].previousDisplayName'
+            $Dup[0].Message | Should -Match ([regex]::Escape(" as accessPackages[1].assignmentPolicies[1] ("))
+
+            # The policy half names the real positions, past the null package and the null policy.
+            $Hit = @($V.Errors | Where-Object { $_.Severity -eq 'Warning' -and $_.Path -match 'assignmentPolicy$' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'accessReviews[1].assignmentPolicy'
+            $Hit[0].Message | Should -Match ([regex]::Escape("the previousDisplayName of accessPackages[1].assignmentPolicies[1], which renames that assignment policy to 'New'."))
+            # The other two Warnings are older ones: a review with no reviewers key defaults to a manager
+            # reviewer and then lacks a fallback, which both null reviews do.
+            $Warns = @($V.Errors | Where-Object Severity -eq 'Warning')
+            $Warns.Count | Should -Be 3
+            @($Warns | Where-Object { $_.Path -match '^accessReviews\[(0|2)\]\.fallbackReviewers$' }).Count | Should -Be 2
+        }
+    }
+}
+
+Describe 'Test-OERStructureSchema refuses a review naming an access package that several entries declare while one renames it (Rule 15, Sprint 11 step 4b)' {
+    # The run's rename map keys a package, and the policies within it, by the package's name, without its
+    # catalog, while the same name in two catalogs is two packages. A review that names such a name, not
+    # an object id, while one of the entries declaring it is renamed through previousDisplayName, could
+    # reach either package, so the document is refused offline with an Error at the review's
+    # accessPackage. Without a rename among those entries nothing is reported (the apply-time lookup
+    # refuses the ambiguous name).
+    BeforeAll {
+        function Invoke-AmbValidation {
+            param([object]$Doc)
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        # Two catalogs, the given package entries (JSON objects without the trailing collections), and one
+        # review named rev_one of the given accessPackage (JSON value). Every entry is otherwise complete, so
+        # the findings a case provokes are the ones it is about.
+        function New-AmbDoc {
+            param([string[]]$PackageJson, [string]$ReviewPackageJson = '"ap-x"')
+            $Packages = @($PackageJson | ForEach-Object { ($_ -replace '\s*\}\s*$', '') + ', "resourceRoles": null }' })
+            ('{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null }, { "displayName": "cat-y", "resources": null } ], ' +
+                '"accessPackages": [ ' + ($Packages -join ', ') + ' ], ' +
+                '"accessReviews": [ { "displayName": "rev_one", "accessPackage": ' + $ReviewPackageJson + ', "assignmentPolicy": "pol_one", "reviewers": [ "self" ] } ] }') | ConvertFrom-Json
+        }
+        function Get-AmbFinding {
+            param([object]$Validation, [string]$Path = 'accessReviews[0].accessPackage')
+            @($Validation.Errors | Where-Object { $_.Path -eq $Path -and $_.Severity -eq 'Error' })
+        }
+        $script:AmbMessage = "Access review '{0}' at accessReviews[{1}] declares accessPackage '{2}', which {3} accessPackages entries declare as displayName " +
+            'or previousDisplayName ({4}) while at least one of them is renamed through previousDisplayName, so the run cannot tell which access ' +
+            'package the review means. Name the access package by its object id.'
+    }
+
+    It 'refuses two entries of different catalogs that share the displayName the review names, one of them renamed' {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -PackageJson @(
+                '{ "displayName": "ap-x", "previousDisplayName": "ap-old", "catalog": "cat-x" }'
+                '{ "displayName": "ap-x", "catalog": "cat-y" }'
+            ))
+        $Hit = @(Get-AmbFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Section | Should -BeExactly 'accessReviews'
+        $Hit[0].Item | Should -BeExactly 'rev_one'
+        $Hit[0].Path | Should -BeExactly 'accessReviews[0].accessPackage'
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Message | Should -BeExactly ($script:AmbMessage -f 'rev_one', 0, 'ap-x', 2, 'accessPackages[0], accessPackages[1]')
+        # It is the only finding of the document, and it refuses it.
+        @($V.Errors).Count | Should -Be 1
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses a displayName of one entry that equals the previousDisplayName of another, naming the reference as written' {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -ReviewPackageJson '"AP-X"' -PackageJson @(
+                '{ "displayName": "ap-x", "catalog": "cat-x" }'
+                '{ "displayName": "ap-new", "previousDisplayName": "ap-x", "catalog": "cat-y" }'
+            ))
+        $Hit = @(Get-AmbFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeExactly ($script:AmbMessage -f 'rev_one', 0, 'AP-X', 2, 'accessPackages[0], accessPackages[1]')
+        # Rule 14 also warns that the review still names a renamed package by its previous name.
+        $Warn = @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].accessPackage' -and $_.Severity -eq 'Warning' })
+        $Warn.Count | Should -Be 1
+        @($V.Errors).Count | Should -Be 2
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'names every entry that declares the name, in document order, and refuses each review that names it' {
+        $Doc = New-AmbDoc -PackageJson @(
+            '{ "displayName": "ap-x", "catalog": "cat-x" }'
+            '{ "displayName": "ap-other", "catalog": "cat-x" }'
+            '{ "displayName": "AP-X", "catalog": "cat-y" }'
+            '{ "displayName": "ap-z", "previousDisplayName": "Ap-X", "catalog": "cat-x" }'
+        )
+        $Doc.accessReviews += [PSCustomObject]@{ displayName = 'rev_two'; accessPackage = 'ap-other'; assignmentPolicy = 'pol_one'; reviewers = @('self') }
+        $Doc.accessReviews += [PSCustomObject]@{ displayName = 'rev_three'; accessPackage = 'ap-X'; assignmentPolicy = 'pol_one'; reviewers = @('self') }
+        $V = Invoke-AmbValidation -Doc $Doc
+        $First = @(Get-AmbFinding -Validation $V)
+        $First.Count | Should -Be 1
+        $First[0].Message | Should -BeExactly ($script:AmbMessage -f 'rev_one', 0, 'ap-x', 3, 'accessPackages[0], accessPackages[2], accessPackages[3]')
+        @(Get-AmbFinding -Validation $V -Path 'accessReviews[1].accessPackage') | Should -BeNullOrEmpty
+        $Third = @(Get-AmbFinding -Validation $V -Path 'accessReviews[2].accessPackage')
+        $Third.Count | Should -Be 1
+        $Third[0].Item | Should -BeExactly 'rev_three'
+        $Third[0].Message | Should -BeExactly ($script:AmbMessage -f 'rev_three', 2, 'ap-X', 3, 'accessPackages[0], accessPackages[2], accessPackages[3]')
+    }
+
+    It 'does not report the shared name when no entry that declares it renames its package' {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -PackageJson @(
+                '{ "displayName": "ap-x", "catalog": "cat-x" }'
+                '{ "displayName": "ap-x", "catalog": "cat-y" }'
+                '{ "displayName": "ap-y", "previousDisplayName": "ap-old", "catalog": "cat-x" }'
+            ))
+        @($V.Errors) | Should -BeNullOrEmpty
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'does not report the shared name when the previousDisplayName of an entry that declares it renames nothing (<Case>)' -ForEach @(
+        @{ Case = 'it equals the displayName ignoring case'; Prev = '"AP-X"'; Finding = 'Warning' }
+        @{ Case = 'it is not a non-empty string'; Prev = '5'; Finding = 'Error' }
+    ) {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -PackageJson @(
+                '{ "displayName": "ap-x", "previousDisplayName": ' + $Prev + ', "catalog": "cat-x" }'
+                '{ "displayName": "ap-x", "catalog": "cat-y" }'
+            ))
+        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].accessPackage' }) | Should -BeNullOrEmpty
+        # The finding of the previousDisplayName itself proves the entry was reached.
+        $Own = @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].previousDisplayName' })
+        $Own.Count | Should -Be 1
+        $Own[0].Severity | Should -BeExactly $Finding
+        @($V.Errors).Count | Should -Be 1
+    }
+
+    It 'does not report a review that names the package by its object id, even when two entries rename from that id' {
+        $Id = '11111111-1111-1111-1111-111111111111'
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -ReviewPackageJson ('"' + $Id + '"') -PackageJson @(
+                '{ "displayName": "ap-new", "previousDisplayName": "' + $Id + '", "catalog": "cat-x" }'
+                '{ "displayName": "ap-other", "previousDisplayName": "' + $Id + '", "catalog": "cat-y" }'
+            ))
+        @($V.Errors) | Should -BeNullOrEmpty
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'does not report a name that only one entry declares' {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -PackageJson @(
+                '{ "displayName": "ap-x", "previousDisplayName": "ap-old", "catalog": "cat-x" }'
+                '{ "displayName": "ap-y", "catalog": "cat-y" }'
+            ))
+        @($V.Errors) | Should -BeNullOrEmpty
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'does not read a reference that is not a string, even when its text matches two entries one of which is renamed' {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -ReviewPackageJson '5' -PackageJson @(
+                '{ "displayName": "5", "previousDisplayName": "ap-old", "catalog": "cat-x" }'
+                '{ "displayName": "5", "catalog": "cat-y" }'
+            ))
+        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].accessPackage' }) | Should -BeNullOrEmpty
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'does not count an entry without a displayName as declaring one' {
+        # An empty reference equals the empty text an absent displayName converts to; the entries' missing
+        # displayNames are Errors of their own, which prove they were reached.
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -ReviewPackageJson '""' -PackageJson @(
+                '{ "previousDisplayName": "ap-old", "catalog": "cat-x" }'
+                '{ "catalog": "cat-y" }'
+            ))
+        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].accessPackage' }) | Should -BeNullOrEmpty
+        @($V.Errors | Where-Object { $_.Message -match "'displayName' is required at accessPackages\[(0|1)\]" }).Count | Should -Be 2
+    }
+
+    It 'names a review without a displayName by its path' {
+        $Doc = New-AmbDoc -PackageJson @(
+            '{ "displayName": "ap-x", "previousDisplayName": "ap-old", "catalog": "cat-x" }'
+            '{ "displayName": "ap-x", "catalog": "cat-y" }'
+        )
+        $Doc.accessReviews[0].PSObject.Properties.Remove('displayName')
+        $Hit = @(Get-AmbFinding -Validation (Invoke-AmbValidation -Doc $Doc))
+        $Hit.Count | Should -Be 1
+        $Hit[0].Item | Should -BeExactly 'accessReviews[0]'
+        $Hit[0].Message | Should -BeExactly ($script:AmbMessage -f 'accessReviews[0]', 0, 'ap-x', 2, 'accessPackages[0], accessPackages[1]')
+    }
+
+    It 'survives null elements in accessPackages and accessReviews, and names the real positions' {
+        $Doc = ('{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null }, { "displayName": "cat-y", "resources": null } ], ' +
+            '"accessPackages": [ null, { "displayName": "ap-x", "previousDisplayName": "ap-old", "catalog": "cat-x", "resourceRoles": null }, null, ' +
+            '{ "displayName": "ap-x", "catalog": "cat-y", "resourceRoles": null } ], ' +
+            '"accessReviews": [ null, { "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "pol_one", "reviewers": [ "self" ] } ] }') | ConvertFrom-Json
+        { Invoke-AmbValidation -Doc $Doc } | Should -Not -Throw
+        $V = Invoke-AmbValidation -Doc $Doc
+        $Hit = @(Get-AmbFinding -Validation $V -Path 'accessReviews[1].accessPackage')
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeExactly ($script:AmbMessage -f 'rev_one', 1, 'ap-x', 2, 'accessPackages[1], accessPackages[3]')
+        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].accessPackage' -and $_.Message -match 'which \d+ accessPackages entries' }) | Should -BeNullOrEmpty
+    }
+
+    It 'reads <Label> as no list of reviews: the one Error says it must be an array' -ForEach @(
+        @{ Label = 'an object-valued accessReviews'; Reviews = '{ "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "pol_one", "reviewers": [ "self" ] }' }
+        @{ Label = 'a string-valued accessReviews'; Reviews = '"ap-x"' }
+    ) {
+        # The positive control is the object itself: read as one review it WOULD name the shared package.
+        $Doc = ('{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null }, { "displayName": "cat-y", "resources": null } ], ' +
+            '"accessPackages": [ { "displayName": "ap-x", "previousDisplayName": "ap-old", "catalog": "cat-x", "resourceRoles": null }, ' +
+            '{ "displayName": "ap-x", "catalog": "cat-y", "resourceRoles": null } ], "accessReviews": ' + $Reviews + ' }') | ConvertFrom-Json
+        { Invoke-AmbValidation -Doc $Doc } | Should -Not -Throw
+        $V = Invoke-AmbValidation -Doc $Doc
+        @($V.Errors).Count | Should -Be 1
+        $V.Errors[0].Path | Should -BeExactly 'accessReviews'
+        $V.Errors[0].Message | Should -BeExactly "Section 'accessReviews' must be an array."
     }
 }
 
