@@ -6821,11 +6821,14 @@ names the object's current display name or object id beside the new `displayName
 resolved on every run before anything is read or written. Step 3 had refused the key on those three
 kinds because the engine could not read it (`## rename-refused-outside-groups`); the refusal now stands
 for an assignment policy of an access package and an access review only, which a later step (4b)
-renames. This anchor records the rules and what each costs if it is wrong. Nothing here was measured
-live except where a rule says so: the rules were derived from the code and proven with mocked tests,
-and the not-found probe of a unit and of a catalog still has to be measured. Unchanged by this step:
-`-Prune` never deletes a top-level object, the export never writes `previousDisplayName`, and no public
-parameter or output type was added.
+renames. This anchor records the rules and what each costs if it is wrong. The rules were derived from
+the code and proven with mocked tests. The live run of 2026-10-14
+(`docs/live-verification/feat-rename-more-object-kinds-checklist.md`) measured the rename itself: a
+unit, a catalog and two packages, one named by its object id and one in a catalog the same document
+renamed, were each renamed in one PATCH, kept their ids and everything they held, and the same document
+then converged with no write. It also measured the two not-found probes (R5, R6, below). Unchanged
+by this step: `-Prune` never deletes a top-level object, the export never writes
+`previousDisplayName`, and no public parameter or output type was added.
 
 **The decision, owned by one helper.** `Resolve-OERStructureRename` takes the ids the new name and the
 previous name resolved to (each empty when nothing matched) and decides: both resolve to DIFFERENT
@@ -6856,17 +6859,19 @@ unit resolver looks an id up as a display name, so it would never find a unit by
 longer names an object counts as not matching: never a conflict, and never a create -- with
 `displayName` not matching either, the entry fails with `RenameNotFound`. The unit probe is
 `v1.0/directory/administrativeUnits/` followed by the id and `?$select=id`, with the codes
-`Request_ResourceNotFound` and `ResourceNotFound` (the group probe's set, not yet measured for a unit).
+`Request_ResourceNotFound` and `ResourceNotFound` (the group probe's set).
 The catalog probe is `v1.0/identityGovernance/entitlementManagement/catalogs/` followed by the id,
 with no `$select` (the read `Get-OERCatalog -Id` makes), and the codes
 `CatalogNotFound` and `NotFound`: Graph answers a missing catalog id with `CatalogNotFound` (measured
 live, 2026-10-02), and `NotFound` is the transport's status-derived label. If a code is wrong: a
 not-found answer under an unknown code throws and the item is Failed with nothing written, the safe
-direction; the live run measures it. An access package id is matched only against the `Id` of a package
-in the declared catalog's own list, which the handler has already read for the name match, so it costs
-no request. If wrong (R5): a probe by id would find a package of ANOTHER catalog and rename it, outside
-the catalog the entry declares; the list cannot. The id of a deleted package, or of one in another
-catalog, matches nothing.
+direction. Measured live on 2026-10-14: a unit id and a catalog id that name no object were each
+answered with a code its probe declares, since both entries failed with `RenameNotFound` and not with a
+handler error; the run did not record which of the two codes Graph sent. An access package id is
+matched only against the `Id` of a package in the declared catalog's own list, which the handler has
+already read for the name match, so it costs no request. If wrong (R5): a probe by id would find a
+package of ANOTHER catalog and rename it, outside the catalog the entry declares; the list cannot.
+The id of a deleted package, or of one in another catalog, matches nothing.
 
 **A name matching several objects (R7).** An ambiguous name stays what it is today, in shape: the unit
 and catalog resolvers throw `AmbiguousName` and the engine reports the item Failed ("handler error"); a
