@@ -338,7 +338,7 @@ function Invoke-S114Apply {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -360,13 +360,32 @@ Write-OerLiveStep "The worktree's build refuses an undecided rename (R12): -Incl
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main clone;
 a `False` mark -- build the worktree first (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: 2026-10-14 08:01 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree is on this branch at 6d7aa62 with 0 tracked changes, and its build (built from d586400, the last commit under source/) carries every mark, the R12 refusals included. The later commit of the branch changes only this checklist.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s114] The module loads from a worktree that is not the main clone: True
+[oer-s114] Main clone: branch main; HEAD 491e72e
+[oer-s114] Worktree: branch feat/rename-more-object-kinds; HEAD 6d7aa62 docs: add the live checklist for renaming units, catalogs and access packages in place; tracked changes: 0
+[oer-s114] The worktree's build carries the rename decision True; the map reader True; the refusal ids True True
+[oer-s114] The worktree's build passes the map to the handlers: True
+[oer-s114] The worktree's build refuses an undecided rename (R12): -Include True; a failed lookup True
+RUNNER: check-S.1 exit code 0; started 2026-10-14T08:00:52Z; took 3 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -380,11 +399,35 @@ Disconnect-OerLive
 build: True`.
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), or `False`.
 
-Result:
+Result: 2026-10-14 08:01 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only, certificate); identity check passed; the module is the worktree's build (1.2.1).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] The module is the worktree's build: True; version 1.2.1
+RUNNER: check-0.1 exit code 0; started 2026-10-14T08:01:04Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 0.2. The permissions this file needs
 
-- [ ] **0.2** `oer-live-cc` holds the four permissions; otherwise the run stops here (the role permission alone makes the scoped role class B).
+- [x] **0.2** `oer-live-cc` holds the four permissions; otherwise the run stops here (the role permission alone makes the scoped role class B).
 
 ```powershell
 Connect-OerLive -Arm
@@ -400,11 +443,39 @@ Disconnect-OerLive
 **Expect:** each of the four lines `True`.
 **Failure looks like:** `False` for one of the first three -- stop the run; nothing has been written.
 
-Result:
+Result: 2026-10-14 08:01 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. oer-live-cc holds AdministrativeUnit.ReadWrite.All, EntitlementManagement.ReadWrite.All, Group.ReadWrite.All and RoleManagement.ReadWrite.Directory (19 Microsoft Graph application permissions in all); no permission was added or removed.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.2 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] oer-live-cc holds AdministrativeUnit.ReadWrite.All: True
+[oer-s114] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s114] oer-live-cc holds Group.ReadWrite.All: True
+[oer-s114] oer-live-cc holds RoleManagement.ReadWrite.Directory: True
+[oer-s114] oer-live-cc holds 19 Microsoft Graph application permissions
+RUNNER: check-0.2 exit code 0; started 2026-10-14T08:01:18Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 0.3. The prerequisite objects
 
-- [ ] **0.3** The plan writes nothing; the first run creates the objects (or brings back what an earlier run renamed); a second run writes nothing.
+- [x] **0.3** The plan writes nothing; the first run creates the objects (or brings back what an earlier run renamed); a second run writes nothing.
 
 ```powershell
 $Script = Join-Path $env:OER_LIVE_DIR 'Initialize-OerS114Prereq.ps1'
@@ -422,13 +493,143 @@ False`), exit code 0.
 **Failure looks like:** a `Refusing to run:` line, an `UNAVAILABLE` line, or exit code 1 -- read the
 reason; nothing past a refusal was written.
 
-Result:
+Result: 2026-10-14 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, on the third run of this check. Run 1 created the three groups and a unit, then stopped on a 404 reading the unit's members (replication), and its second -Unattended run created a SECOND unit oer-s114-au because the unit listing did not show the first yet; it also stopped on a script defect (a retry helper misused). Fixes to the prerequisite script, outside the repository: every created id is now recorded and read back by id when a listing lags (setup and teardown), the unit is waited on until it is listed and its members are readable, and the Member-role read is waited on with Wait-OerLiveConverged. The script's teardown then removed every oer-s114- object, both units included, and the counts were the baseline's. Run 2 created everything over two -Unattended runs (its -WhatIf run stopped on a group the sweep still listed seconds after its deletion, and its first -Unattended run on a members read that answered 404 again right after the unit read as converged). Run 3, below: the plan writes nothing; both -Unattended runs find all eight objects, the unit's member and its scoped role (License Administrator: neither low-risk role can be scoped to a unit, see the scoped-role paragraph above, and its holder oer-s114-rolegrp has no member, so nobody holds it), catalog A's resource, package A's policy and resource role, and write nothing (written to the tenant: False). unavailable (class B): none. Exit code 0 each time.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.3 ===
+[oer-s114] === Initialize-OerS114Prereq.ps1 -WhatIf ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s114\prereq-20261014-080930Z.log".
+[oer-s114] Mode: CREATE or complete. Prefix 'oer-s114-'. Objects (fixed): oer-s114-member, oer-s114-resgrp (security groups, no member); oer-s114-rolegrp (role-assignable, no member, no owner); oer-s114-au (member oer-s114-member, one scoped role for oer-s114-rolegrp); oer-s114-cat-a (resource oer-s114-resgrp) with oer-s114-ap-a (hidden; resource role Member of oer-s114-resgrp; policy oer-s114-pol-a, administrator assignments only); oer-s114-cat-b with oer-s114-ap-b (hidden, nothing in it). The checklist renames oer-s114-au, oer-s114-cat-a, oer-s114-ap-a and oer-s114-ap-b to the same names with '-new' appended. OerLive 1.0.3.
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s114] oer-live-cc holds AdministrativeUnit.ReadWrite.All: True
+[oer-s114] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s114] oer-live-cc holds Group.ReadWrite.All: True
+[oer-s114] oer-live-cc holds RoleManagement.ReadWrite.Directory: True
+[oer-s114] Found: oer-s114-member True; oer-s114-resgrp True; oer-s114-rolegrp True; oer-s114-au as oer-s114-au; oer-s114-cat-a as oer-s114-cat-a; oer-s114-cat-b True; oer-s114-ap-a as oer-s114-ap-a; oer-s114-ap-b as oer-s114-ap-b.
+[oer-s114] The baseline exists (groups 97, administrative units 1, catalogs 5, access packages 6 when it was written).
+[oer-s114] Group oer-s114-member exists.
+[oer-s114] Group oer-s114-resgrp exists.
+[oer-s114] Group oer-s114-rolegrp exists.
+[oer-s114] Administrative unit oer-s114-au exists.
+[oer-s114] oer-s114-member is a member of oer-s114-au.
+[oer-s114] oer-s114-au has its scoped role: License Administrator for oer-s114-rolegrp.
+[oer-s114] Catalog oer-s114-cat-a exists.
+[oer-s114] Catalog oer-s114-cat-b exists.
+[oer-s114] oer-s114-resgrp is a resource of oer-s114-cat-a.
+[oer-s114] Access package oer-s114-ap-a exists.
+[oer-s114] Access package oer-s114-ap-b exists.
+[oer-s114] Policy oer-s114-pol-a exists.
+[oer-s114] The Member role of oer-s114-resgrp is bound to oer-s114-ap-a.
+[oer-s114] Summary: oer-s114-member True; oer-s114-resgrp True; oer-s114-rolegrp True; oer-s114-au True (member True, scoped role License Administrator); oer-s114-cat-a True (resource True); oer-s114-cat-b True; oer-s114-ap-a True (policy True, resource role True); oer-s114-ap-b True; unavailable (class B): none; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s114] WhatIf: nothing was created, removed or written.
+[oer-s114] Done.
+[oer-s114] exit code: 0
+[oer-s114] === Initialize-OerS114Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s114] Transcript (redacted): raw\s114\prereq-20261014-080938Z.log; OerLive 1.0.3.
+[oer-s114] Mode: CREATE or complete. Prefix 'oer-s114-'. Objects (fixed): oer-s114-member, oer-s114-resgrp (security groups, no member); oer-s114-rolegrp (role-assignable, no member, no owner); oer-s114-au (member oer-s114-member, one scoped role for oer-s114-rolegrp); oer-s114-cat-a (resource oer-s114-resgrp) with oer-s114-ap-a (hidden; resource role Member of oer-s114-resgrp; policy oer-s114-pol-a, administrator assignments only); oer-s114-cat-b with oer-s114-ap-b (hidden, nothing in it). The checklist renames oer-s114-au, oer-s114-cat-a, oer-s114-ap-a and oer-s114-ap-b to the same names with '-new' appended. OerLive 1.0.3.
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s114] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s114] oer-live-cc holds AdministrativeUnit.ReadWrite.All: True
+[oer-s114] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s114] oer-live-cc holds Group.ReadWrite.All: True
+[oer-s114] oer-live-cc holds RoleManagement.ReadWrite.Directory: True
+[oer-s114] Found: oer-s114-member True; oer-s114-resgrp True; oer-s114-rolegrp True; oer-s114-au as oer-s114-au; oer-s114-cat-a as oer-s114-cat-a; oer-s114-cat-b True; oer-s114-ap-a as oer-s114-ap-a; oer-s114-ap-b as oer-s114-ap-b.
+[oer-s114] The baseline exists (groups 97, administrative units 1, catalogs 5, access packages 6 when it was written).
+[oer-s114] Group oer-s114-member exists.
+[oer-s114] Group oer-s114-resgrp exists.
+[oer-s114] Group oer-s114-rolegrp exists.
+[oer-s114] Administrative unit oer-s114-au exists.
+[oer-s114] oer-s114-member is a member of oer-s114-au.
+[oer-s114] oer-s114-au has its scoped role: License Administrator for oer-s114-rolegrp.
+[oer-s114] Catalog oer-s114-cat-a exists.
+[oer-s114] Catalog oer-s114-cat-b exists.
+[oer-s114] oer-s114-resgrp is a resource of oer-s114-cat-a.
+[oer-s114] Access package oer-s114-ap-a exists.
+[oer-s114] Access package oer-s114-ap-b exists.
+[oer-s114] Policy oer-s114-pol-a exists.
+[oer-s114] The Member role of oer-s114-resgrp is bound to oer-s114-ap-a.
+[oer-s114] Summary: oer-s114-member True; oer-s114-resgrp True; oer-s114-rolegrp True; oer-s114-au True (member True, scoped role License Administrator); oer-s114-cat-a True (resource True); oer-s114-cat-b True; oer-s114-ap-a True (policy True, resource role True); oer-s114-ap-b True; unavailable (class B): none; written to the tenant: False.
+[oer-s114] Done.
+[oer-s114] exit code: 0
+[oer-s114] === Initialize-OerS114Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s114] Transcript (redacted): raw\s114\prereq-20261014-080946Z.log; OerLive 1.0.3.
+[oer-s114] Mode: CREATE or complete. Prefix 'oer-s114-'. Objects (fixed): oer-s114-member, oer-s114-resgrp (security groups, no member); oer-s114-rolegrp (role-assignable, no member, no owner); oer-s114-au (member oer-s114-member, one scoped role for oer-s114-rolegrp); oer-s114-cat-a (resource oer-s114-resgrp) with oer-s114-ap-a (hidden; resource role Member of oer-s114-resgrp; policy oer-s114-pol-a, administrator assignments only); oer-s114-cat-b with oer-s114-ap-b (hidden, nothing in it). The checklist renames oer-s114-au, oer-s114-cat-a, oer-s114-ap-a and oer-s114-ap-b to the same names with '-new' appended. OerLive 1.0.3.
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s114] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s114] oer-live-cc holds AdministrativeUnit.ReadWrite.All: True
+[oer-s114] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s114] oer-live-cc holds Group.ReadWrite.All: True
+[oer-s114] oer-live-cc holds RoleManagement.ReadWrite.Directory: True
+[oer-s114] Found: oer-s114-member True; oer-s114-resgrp True; oer-s114-rolegrp True; oer-s114-au as oer-s114-au; oer-s114-cat-a as oer-s114-cat-a; oer-s114-cat-b True; oer-s114-ap-a as oer-s114-ap-a; oer-s114-ap-b as oer-s114-ap-b.
+[oer-s114] The baseline exists (groups 97, administrative units 1, catalogs 5, access packages 6 when it was written).
+[oer-s114] Group oer-s114-member exists.
+[oer-s114] Group oer-s114-resgrp exists.
+[oer-s114] Group oer-s114-rolegrp exists.
+[oer-s114] Administrative unit oer-s114-au exists.
+[oer-s114] oer-s114-member is a member of oer-s114-au.
+[oer-s114] oer-s114-au has its scoped role: License Administrator for oer-s114-rolegrp.
+[oer-s114] Catalog oer-s114-cat-a exists.
+[oer-s114] Catalog oer-s114-cat-b exists.
+[oer-s114] oer-s114-resgrp is a resource of oer-s114-cat-a.
+[oer-s114] Access package oer-s114-ap-a exists.
+[oer-s114] Access package oer-s114-ap-b exists.
+[oer-s114] Policy oer-s114-pol-a exists.
+[oer-s114] The Member role of oer-s114-resgrp is bound to oer-s114-ap-a.
+[oer-s114] Summary: oer-s114-member True; oer-s114-resgrp True; oer-s114-rolegrp True; oer-s114-au True (member True, scoped role License Administrator); oer-s114-cat-a True (resource True); oer-s114-cat-b True; oer-s114-ap-a True (policy True, resource role True); oer-s114-ap-b True; unavailable (class B): none; written to the tenant: False.
+[oer-s114] Done.
+[oer-s114] exit code: 0
+RUNNER: check-0.3 exit code 0; started 2026-10-14T08:09:28Z; took 25 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 1. The rename in place
 
 ### 1.1. The ids before the rename
 
-- [ ] **1.1** Every object is found exactly once under its own name; the ids, and what each object holds, are recorded under `raw\s114\` (never printed).
+- [x] **1.1** Every object is found exactly once under its own name; the ids, and what each object holds, are recorded under `raw\s114\` (never printed).
 
 ```powershell
 Connect-OerLive -Arm
@@ -458,11 +659,45 @@ packages: 8).
 **Failure looks like:** a `STOP` or a `False` -- run 0.3 again (it renames back what an earlier run
 renamed).
 
-Result:
+Result: 2026-10-14 08:11 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (second run; the first ran with a helper that returned its ids wrapped once too often, so its lines were not valid -- fixed in the checklist commit that returns the ids unwrapped). Each of the five objects is found exactly once under its own name and no object carries any of the four new names; before the rename the unit holds one member and one scoped role (License Administrator), catalog A one resource, package A one resource role and one policy, and the sweep lists 8 prefixed objects. The ids and the snapshot are under raw\s114\before.json, not printed.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] oer-s114-au is found exactly once under its own name: True
+[oer-s114] oer-s114-cat-a is found exactly once under its own name: True
+[oer-s114] oer-s114-cat-b is found exactly once under its own name: True
+[oer-s114] oer-s114-ap-a is found exactly once under its own name: True
+[oer-s114] oer-s114-ap-b is found exactly once under its own name: True
+[oer-s114] No object carries the new name oer-s114-au-new yet: True
+[oer-s114] No object carries the new name oer-s114-cat-a-new yet: True
+[oer-s114] No object carries the new name oer-s114-ap-a-new yet: True
+[oer-s114] No object carries the new name oer-s114-ap-b-new yet: True
+[oer-s114] Before: unit member(s) 1; scoped role(s) 1 (License Administrator); catalog A resource(s) 1; package A resource role(s) 1, policy(ies) 1; prefixed objects 8
+[oer-s114] Recorded the ids and the snapshot under raw\s114\before.json (not printed).
+RUNNER: check-1.1 exit code 0; started 2026-10-14T08:11:28Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.2. The validator accepts the rename document
 
-- [ ] **1.2** `Test-OERStructure` reports the document valid, with no Error.
+- [x] **1.2** `Test-OERStructure` reports the document valid, with no Error.
 
 ```powershell
 Connect-OerLive -Arm
@@ -478,11 +713,35 @@ Disconnect-OerLive
 `catalogs[0].previousDisplayName` or `accessPackages[n].previousDisplayName` -- the step 3 refusal is
 still in force for that kind.
 
-Result:
+Result: 2026-10-14 08:12 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Test-OERStructure reports the rename document valid with no Error and no Warning: previousDisplayName is accepted on the unit, catalog A and both packages (package B's as its object id), and no finding stands at a previousDisplayName path.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] 1.2 valid: True; errors: 0; warnings: 0
+RUNNER: check-1.2 exit code 0; started 2026-10-14T08:11:46Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.3. The plan renames in place and writes nothing
 
-- [ ] **1.3** Under `-WhatIf` each of the four objects is reported `would rename` from its previous name to its new name, its collections are planned against the object found under its previous name (Unchanged), and nothing is written.
+- [x] **1.3** Under `-WhatIf` each of the four objects is reported `would rename` from its previous name to its new name, its collections are planned against the object found under its previous name (Unchanged), and nothing is written.
 
 ```powershell
 Connect-OerLive -Arm
@@ -502,11 +761,51 @@ Invoke-OERStructure: 0`; `writes: 0` for Microsoft Graph and Azure Resource Mana
 **Failure looks like:** a `would create` row (the engine would create a second object), a Failed row for
 package A (its catalog's new name did not reach the catalog through the run's rename map), or any write.
 
-Result:
+Result: 2026-10-14 08:12 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Under -WhatIf the four objects are reported Skipped 'would rename ... to ...': the unit, catalog A, package A (whose catalog is renamed in the same plan and was reached by its id through the run's rename map) and package B (named by its object id). The unit's member and scoped role, catalog A's resource, package A's resource role and catalog B's properties are Unchanged against the objects found under their previous names. No Created, Failed or Removed row; no error; 29 Microsoft Graph requests, 0 writes; 0 Azure Resource Manager requests; 0 token requests.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.3 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Rename administrative unit 'oer-s114-au' to 'oer-s114-au-new'" on target "oer-s114-au-new".
+What if: Performing the operation "Rename catalog 'oer-s114-cat-a' to 'oer-s114-cat-a-new'" on target "oer-s114-cat-a-new".
+What if: Performing the operation "Rename access package 'oer-s114-ap-a' to 'oer-s114-ap-a-new'" on target "oer-s114-ap-a-new".
+What if: Performing the operation "Rename access package '00000000-0000-0000-0000-000000000001' to 'oer-s114-ap-b-new'" on target "oer-s114-ap-b-new".
+[oer-s114] 1.3 rows: 9
+[oer-s114] 1.3 row: administrativeUnits | oer-s114-au-new | Skipped | would rename administrative unit 'oer-s114-au' to 'oer-s114-au-new'
+[oer-s114] 1.3 row: administrativeUnits | oer-s114-au-new | Unchanged | member 'oer-s114-member' already present
+[oer-s114] 1.3 row: administrativeUnits | oer-s114-au-new | Unchanged | scopedRole 'License Administrator' for 'oer-s114-rolegrp' already present
+[oer-s114] 1.3 row: catalogs | oer-s114-cat-a-new | Skipped | would rename catalog 'oer-s114-cat-a' to 'oer-s114-cat-a-new'
+[oer-s114] 1.3 row: catalogs | oer-s114-cat-a-new | Unchanged | resource 'oer-s114-resgrp' already present
+[oer-s114] 1.3 row: catalogs | oer-s114-cat-b | Unchanged | catalog properties match
+[oer-s114] 1.3 row: accessPackages | oer-s114-ap-a-new | Skipped | would rename access package 'oer-s114-ap-a' to 'oer-s114-ap-a-new'
+[oer-s114] 1.3 row: accessPackages | oer-s114-ap-a-new | Unchanged | resourceRole 'Member' on 'oer-s114-resgrp' already bound
+[oer-s114] 1.3 row: accessPackages | oer-s114-ap-b-new | Skipped | would rename access package '00000000-0000-0000-0000-000000000001' to 'oer-s114-ap-b-new'
+[oer-s114] 1.3 warnings: 0
+[oer-s114] 1.3 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s114] 1.3 sent: token requests: 0; Microsoft Graph requests: 29, writes: 0; Azure Resource Manager requests: 0, writes: 0
+RUNNER: check-1.3 exit code 0; started 2026-10-14T08:12:00Z; took 9 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.4. The run renames in place
 
-- [ ] **1.4** The run renames the four objects, each in one PATCH, and writes nothing else.
+- [x] **1.4** The run renames the four objects, each in one PATCH, and writes nothing else.
 
 ```powershell
 Connect-OerLive -Arm
@@ -523,11 +822,47 @@ Removed row; `errors of Invoke-OERStructure: 0`; Microsoft Graph `writes: 4`, ea
 catalog A and the two packages, by object id.
 **Failure looks like:** a POST (an object was created), a fifth write, or a Failed row.
 
-Result:
+Result: 2026-10-14 08:13 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Four Updated rows 'renamed ... to ...' (the unit, catalog A, package A in the renamed catalog, package B named by its object id); the collection rows Unchanged as in 1.3; no Created, Failed or Removed row; no error. Microsoft Graph: 34 requests, exactly 4 writes, all PATCH, no POST and no DELETE (the counter's path column prints empty for the module's relative request paths -- a limit of this checklist's counter; 1.5 reads the four objects back by id). 0 Azure Resource Manager requests, 0 token requests.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.4 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] 1.4 rows: 9
+[oer-s114] 1.4 row: administrativeUnits | oer-s114-au-new | Updated | renamed administrative unit 'oer-s114-au' to 'oer-s114-au-new'
+[oer-s114] 1.4 row: administrativeUnits | oer-s114-au-new | Unchanged | member 'oer-s114-member' already present
+[oer-s114] 1.4 row: administrativeUnits | oer-s114-au-new | Unchanged | scopedRole 'License Administrator' for 'oer-s114-rolegrp' already present
+[oer-s114] 1.4 row: catalogs | oer-s114-cat-a-new | Updated | renamed catalog 'oer-s114-cat-a' to 'oer-s114-cat-a-new'
+[oer-s114] 1.4 row: catalogs | oer-s114-cat-a-new | Unchanged | resource 'oer-s114-resgrp' already present
+[oer-s114] 1.4 row: catalogs | oer-s114-cat-b | Unchanged | catalog properties match
+[oer-s114] 1.4 row: accessPackages | oer-s114-ap-a-new | Updated | renamed access package 'oer-s114-ap-a' to 'oer-s114-ap-a-new'
+[oer-s114] 1.4 row: accessPackages | oer-s114-ap-a-new | Unchanged | resourceRole 'Member' on 'oer-s114-resgrp' already bound
+[oer-s114] 1.4 row: accessPackages | oer-s114-ap-b-new | Updated | renamed access package '00000000-0000-0000-0000-000000000001' to 'oer-s114-ap-b-new'
+[oer-s114] 1.4 warnings: 0
+[oer-s114] 1.4 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s114] 1.4 sent: token requests: 0; Microsoft Graph requests: 34, writes: 4 (PATCH , PATCH , PATCH , PATCH ); Azure Resource Manager requests: 0, writes: 0
+RUNNER: check-1.4 exit code 0; started 2026-10-14T08:12:26Z; took 16 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.5. Read back by id: the same objects, the new names, nothing lost, nothing created
 
-- [ ] **1.5** Each object read by the id recorded in 1.1 carries its new name; its members, scoped role, resources, resource role and policy are the same ones; the sweep lists the same prefixed objects as before the rename.
+- [x] **1.5** Each object read by the id recorded in 1.1 carries its new name; its members, scoped role, resources, resource role and policy are the same ones; the sweep lists the same prefixed objects as before the rename.
 
 ```powershell
 Connect-OerLive -Arm
@@ -548,13 +883,42 @@ Disconnect-OerLive
 **Failure looks like:** a `False` -- a name not changed, a collection changed, or an object added or
 lost (a lagging read: wait a minute and run the block again; it writes nothing).
 
-Result:
+Result: 2026-10-14 08:13 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Read by the ids recorded in 1.1: the unit, catalog A and both packages carry their new names (catalog B its own); the unit has the same member and the same scoped role membership (same ids), catalog A the same resource, package A the same resource role binding and the same policy; the sweep lists the same 8 prefixed objects (kind and id) as before the rename -- nothing created, nothing lost.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.5 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] Unit: name is oer-s114-au-new True; same members True; same scoped role(s) True
+[oer-s114] Catalog A: name is oer-s114-cat-a-new True; same resource(s) True
+[oer-s114] Catalog B: name is unchanged True
+[oer-s114] Package A: name is oer-s114-ap-a-new True; same resource role(s) True; same policy(ies) True
+[oer-s114] Package B: name is oer-s114-ap-b-new True
+[oer-s114] The sweep lists the same prefixed objects as before the rename (no object created, none lost): True (8 now, 8 before)
+RUNNER: check-1.5 exit code 0; started 2026-10-14T08:13:02Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 2. The same document again converges (G8)
 
 ### 2.1. The new names resolve
 
-- [ ] **2.1** Microsoft Graph's name lookup finds each object under its new name, three times in a row, before the convergence runs.
+- [x] **2.1** Microsoft Graph's name lookup finds each object under its new name, three times in a row, before the convergence runs.
 
 ```powershell
 Connect-OerLive -Arm
@@ -575,11 +939,35 @@ Disconnect-OerLive
 **Expect:** `True`.
 **Failure looks like:** `False` after 40 reads -- the name lookup has not caught up; run the block again.
 
-Result:
+Result: 2026-10-14 08:13 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Each of the four new names resolves to the id recorded in 1.1, three reads in a row (3 reads, 10 s apart).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] Every new name resolves to the recorded id, three reads in a row: True (3 read(s))
+RUNNER: check-2.1 exit code 0; started 2026-10-14T08:13:20Z; took 25 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.2. The same document twice more: only Unchanged
 
-- [ ] **2.2** Two runs of the 1.4 document report only Unchanged rows and write nothing.
+- [x] **2.2** Two runs of the 1.4 document report only Unchanged rows and write nothing.
 
 ```powershell
 Connect-OerLive -Arm
@@ -596,11 +984,62 @@ Disconnect-OerLive
 **Expect:** for each run `only Unchanged rows: True`, `errors of Invoke-OERStructure: 0`, `writes: 0`.
 **Failure looks like:** a `renamed` row (the new name did not resolve), an Updated row, or any write.
 
-Result:
+Result: 2026-10-14 08:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The 1.4 document (previousDisplayName still declared) run twice more: each run reports 9 rows, all Unchanged -- the four objects are found under their new names and 'properties match', every collection 'already present' or 'already bound'; no error; 31 Microsoft Graph requests and 0 writes each time (G8).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.2 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] 2.2 run 1 rows: 9
+[oer-s114] 2.2 run 1 row: administrativeUnits | oer-s114-au-new | Unchanged | administrative unit properties match
+[oer-s114] 2.2 run 1 row: administrativeUnits | oer-s114-au-new | Unchanged | member 'oer-s114-member' already present
+[oer-s114] 2.2 run 1 row: administrativeUnits | oer-s114-au-new | Unchanged | scopedRole 'License Administrator' for 'oer-s114-rolegrp' already present
+[oer-s114] 2.2 run 1 row: catalogs | oer-s114-cat-a-new | Unchanged | catalog properties match
+[oer-s114] 2.2 run 1 row: catalogs | oer-s114-cat-a-new | Unchanged | resource 'oer-s114-resgrp' already present
+[oer-s114] 2.2 run 1 row: catalogs | oer-s114-cat-b | Unchanged | catalog properties match
+[oer-s114] 2.2 run 1 row: accessPackages | oer-s114-ap-a-new | Unchanged | access package properties match
+[oer-s114] 2.2 run 1 row: accessPackages | oer-s114-ap-a-new | Unchanged | resourceRole 'Member' on 'oer-s114-resgrp' already bound
+[oer-s114] 2.2 run 1 row: accessPackages | oer-s114-ap-b-new | Unchanged | access package properties match
+[oer-s114] 2.2 run 1 warnings: 0
+[oer-s114] 2.2 run 1 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s114] 2.2 run 1 sent: token requests: 0; Microsoft Graph requests: 31, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s114] 2.2 run 1: only Unchanged rows: True
+[oer-s114] 2.2 run 2 rows: 9
+[oer-s114] 2.2 run 2 row: administrativeUnits | oer-s114-au-new | Unchanged | administrative unit properties match
+[oer-s114] 2.2 run 2 row: administrativeUnits | oer-s114-au-new | Unchanged | member 'oer-s114-member' already present
+[oer-s114] 2.2 run 2 row: administrativeUnits | oer-s114-au-new | Unchanged | scopedRole 'License Administrator' for 'oer-s114-rolegrp' already present
+[oer-s114] 2.2 run 2 row: catalogs | oer-s114-cat-a-new | Unchanged | catalog properties match
+[oer-s114] 2.2 run 2 row: catalogs | oer-s114-cat-a-new | Unchanged | resource 'oer-s114-resgrp' already present
+[oer-s114] 2.2 run 2 row: catalogs | oer-s114-cat-b | Unchanged | catalog properties match
+[oer-s114] 2.2 run 2 row: accessPackages | oer-s114-ap-a-new | Unchanged | access package properties match
+[oer-s114] 2.2 run 2 row: accessPackages | oer-s114-ap-a-new | Unchanged | resourceRole 'Member' on 'oer-s114-resgrp' already bound
+[oer-s114] 2.2 run 2 row: accessPackages | oer-s114-ap-b-new | Unchanged | access package properties match
+[oer-s114] 2.2 run 2 warnings: 0
+[oer-s114] 2.2 run 2 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s114] 2.2 run 2 sent: token requests: 0; Microsoft Graph requests: 31, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s114] 2.2 run 2: only Unchanged rows: True
+RUNNER: check-2.2 exit code 0; started 2026-10-14T08:13:56Z; took 13 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.3. With -Prune, the plan removes nothing
 
-- [ ] **2.3** `-Prune -WhatIf` on the same document plans no removal and writes nothing.
+- [x] **2.3** `-Prune -WhatIf` on the same document plans no removal and writes nothing.
 
 ```powershell
 Connect-OerLive -Arm
@@ -615,13 +1054,50 @@ Disconnect-OerLive
 **Expect:** `2.3 rows that remove or would remove: 0`, only Unchanged rows, `warnings: 0`, `writes: 0`.
 **Failure looks like:** a `would remove` row or a warning naming an omitted collection.
 
-Result:
+Result: 2026-10-14 08:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. -Prune -WhatIf on the same document: 9 rows, all Unchanged, 0 rows that remove or would remove, no warning (every collection the prune reconciles is declared), no error, 31 Microsoft Graph requests and 0 writes.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.3 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] 2.3 rows: 9
+[oer-s114] 2.3 row: administrativeUnits | oer-s114-au-new | Unchanged | administrative unit properties match
+[oer-s114] 2.3 row: administrativeUnits | oer-s114-au-new | Unchanged | member 'oer-s114-member' already present
+[oer-s114] 2.3 row: administrativeUnits | oer-s114-au-new | Unchanged | scopedRole 'License Administrator' for 'oer-s114-rolegrp' already present
+[oer-s114] 2.3 row: catalogs | oer-s114-cat-a-new | Unchanged | catalog properties match
+[oer-s114] 2.3 row: catalogs | oer-s114-cat-a-new | Unchanged | resource 'oer-s114-resgrp' already present
+[oer-s114] 2.3 row: catalogs | oer-s114-cat-b | Unchanged | catalog properties match
+[oer-s114] 2.3 row: accessPackages | oer-s114-ap-a-new | Unchanged | access package properties match
+[oer-s114] 2.3 row: accessPackages | oer-s114-ap-a-new | Unchanged | resourceRole 'Member' on 'oer-s114-resgrp' already bound
+[oer-s114] 2.3 row: accessPackages | oer-s114-ap-b-new | Unchanged | access package properties match
+[oer-s114] 2.3 warnings: 0
+[oer-s114] 2.3 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s114] 2.3 sent: token requests: 0; Microsoft Graph requests: 31, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s114] 2.3 rows that remove or would remove: 0
+RUNNER: check-2.3 exit code 0; started 2026-10-14T08:14:21Z; took 10 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 3. A conflict, and names nothing carries, write nothing
 
 ### 3.1. Two different catalogs under the two names
 
-- [ ] **3.1** A catalog entry whose new name is `oer-s114-cat-b` and whose previous name is `oer-s114-cat-a-new` (two different catalogs) fails with `CatalogRenameConflict`, and a package entry in `oer-s114-cat-b` is not created: planned or run, nothing is written.
+- [x] **3.1** A catalog entry whose new name is `oer-s114-cat-b` and whose previous name is `oer-s114-cat-a-new` (two different catalogs) fails with `CatalogRenameConflict`, and a package entry in `oer-s114-cat-b` is not created: planned or run, nothing is written.
 
 ```powershell
 Connect-OerLive -Arm
@@ -644,11 +1120,50 @@ nothing was created, read or written for it; `writes: 0` both times; `oer-s114-a
 **Failure looks like:** any write, or `oer-s114-ap-x exists: True` (the package was created in the other
 catalog).
 
-Result:
+Result: 2026-10-14 08:15 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The validator accepts the document. In the plan and in the run: one Failed row for oer-s114-cat-b (both names exist as different catalogs; the document never merges two catalogs) with the error CatalogRenameConflict,Invoke-OERStructure, and one Failed row for oer-s114-ap-x (its catalog's rename was refused, CatalogRenameConflict; nothing created, read or written for it) with no error record of its own; 2 Microsoft Graph requests (the two name lookups), 0 writes, both times; oer-s114-ap-x does not exist -- the package was not created in the other catalog that carries the new name.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.1 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] 3.1 valid: True; errors: 0; warnings: 0
+[oer-s114] 3.1 plan rows: 2
+[oer-s114] 3.1 plan row: catalogs | oer-s114-cat-b | Failed | both 'oer-s114-cat-b' and its previousDisplayName 'oer-s114-cat-a-new' exist as different catalogs; the document never merges two catalogs, so nothing was changed -- rename or delete one of them, or remove previousDisplayName
+[oer-s114] 3.1 plan row: accessPackages | oer-s114-ap-x | Failed | catalog 'oer-s114-cat-b' was not reconciled in this run: its rename from 'oer-s114-cat-a-new' was refused (CatalogRenameConflict), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it
+[oer-s114] 3.1 plan warnings: 0
+[oer-s114] 3.1 plan error: CatalogRenameConflict,Invoke-OERStructure: Catalog 'oer-s114-cat-b' (00000000-0000-0000-0000-000000000002) and its previousDisplayName 'oer-s114-cat-a-new' (00000000-0000-0000-0000-000000000003) are different catalogs. The document never merges two catalogs, so nothing was changed for this entry; rename or delete one of them, or remove previousDisplayName.
+[oer-s114] 3.1 plan errors of Invoke-OERStructure: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s114] 3.1 plan sent: token requests: 0; Microsoft Graph requests: 2, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s114] 3.1 run rows: 2
+[oer-s114] 3.1 run row: catalogs | oer-s114-cat-b | Failed | both 'oer-s114-cat-b' and its previousDisplayName 'oer-s114-cat-a-new' exist as different catalogs; the document never merges two catalogs, so nothing was changed -- rename or delete one of them, or remove previousDisplayName
+[oer-s114] 3.1 run row: accessPackages | oer-s114-ap-x | Failed | catalog 'oer-s114-cat-b' was not reconciled in this run: its rename from 'oer-s114-cat-a-new' was refused (CatalogRenameConflict), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it
+[oer-s114] 3.1 run warnings: 0
+[oer-s114] 3.1 run error: CatalogRenameConflict,Invoke-OERStructure: Catalog 'oer-s114-cat-b' (00000000-0000-0000-0000-000000000002) and its previousDisplayName 'oer-s114-cat-a-new' (00000000-0000-0000-0000-000000000003) are different catalogs. The document never merges two catalogs, so nothing was changed for this entry; rename or delete one of them, or remove previousDisplayName.
+[oer-s114] 3.1 run errors of Invoke-OERStructure: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s114] 3.1 run sent: token requests: 0; Microsoft Graph requests: 2, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s114] oer-s114-ap-x exists: False
+RUNNER: check-3.1 exit code 0; started 2026-10-14T08:14:42Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.2. Neither name matches: nothing is created
 
-- [ ] **3.2** A unit and a catalog whose previous name is an object id nothing carries, and a package whose two names nothing in its catalog carries, each fail with `<Kind>RenameNotFound`; planned or run, nothing is created or written.
+- [x] **3.2** A unit and a catalog whose previous name is an object id nothing carries, and a package whose two names nothing in its catalog carries, each fail with `<Kind>RenameNotFound`; planned or run, nothing is created or written.
 
 ```powershell
 Connect-OerLive -Arm
@@ -675,11 +1190,59 @@ saying nothing was created; `writes: 0` both times; the three `exists` lines `Fa
 **Failure looks like:** a `would create` or Created row, a write, an `exists: True`, or a `handler error`
 row (the by-id lookup answered with a not-found code the module does not declare).
 
-Result:
+Result: 2026-10-14 08:15 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The validator accepts the document (one Warning, Rule 11's 'Catalog oer-s114-cat-b is not declared in this document', expected: the document declares no catalogs entry for it). In the plan and in the run: three Failed rows and three errors -- AdministrativeUnitRenameNotFound and CatalogRenameNotFound (both previous names are the register's non-existent id ...099, looked up by id: the not-found answers of the unit probe and the catalog probe were the codes the module declares, so Ruling R6 holds live -- an undeclared code would have been a handler error) and AccessPackageRenameNotFound naming oer-s114-cat-b; each says nothing was created; 6 Microsoft Graph requests, 0 writes, both times; oer-s114-au-none, oer-s114-cat-none and oer-s114-ap-none do not exist.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.2 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] 3.2 valid: True; errors: 0; warnings: 1
+[oer-s114] 3.2 finding: Warning | accessPackages[0].catalog | Catalog 'oer-s114-cat-b' is not declared in this document. It may already exist in the tenant.
+[oer-s114] 3.2 plan rows: 3
+[oer-s114] 3.2 plan row: administrativeUnits | oer-s114-au-none | Failed | neither 'oer-s114-au-none' nor its previousDisplayName '00000000-0000-0000-0000-000000000099' matches an administrative unit, so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new administrative unit, remove previousDisplayName
+[oer-s114] 3.2 plan row: catalogs | oer-s114-cat-none | Failed | neither 'oer-s114-cat-none' nor its previousDisplayName '00000000-0000-0000-0000-000000000099' matches a catalog, so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new catalog, remove previousDisplayName
+[oer-s114] 3.2 plan row: accessPackages | oer-s114-ap-none | Failed | neither 'oer-s114-ap-none' nor its previousDisplayName 'oer-s114-ap-ghost' matches an access package in catalog 'oer-s114-cat-b', so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new access package, remove previousDisplayName
+[oer-s114] 3.2 plan warnings: 0
+[oer-s114] 3.2 plan error: AdministrativeUnitRenameNotFound,Invoke-OERStructure: Neither 'oer-s114-au-none' nor its previousDisplayName '00000000-0000-0000-0000-000000000099' matches an administrative unit, so nothing was created or renamed for this entry. Right after a rename Microsoft Graph can take a while to resolve the new name: wait and re-run. To create a new administrative unit, remove previousDisplayName.
+[oer-s114] 3.2 plan error: CatalogRenameNotFound,Invoke-OERStructure: Neither 'oer-s114-cat-none' nor its previousDisplayName '00000000-0000-0000-0000-000000000099' matches a catalog, so nothing was created or renamed for this entry. Right after a rename Microsoft Graph can take a while to resolve the new name: wait and re-run. To create a new catalog, remove previousDisplayName.
+[oer-s114] 3.2 plan error: AccessPackageRenameNotFound,Invoke-OERStructure: Neither 'oer-s114-ap-none' nor its previousDisplayName 'oer-s114-ap-ghost' matches an access package in catalog 'oer-s114-cat-b', so nothing was created or renamed for this entry. Right after a rename Microsoft Graph can take a while to resolve the new name: wait and re-run. To create a new access package, remove previousDisplayName.
+[oer-s114] 3.2 plan errors of Invoke-OERStructure: 3; other items in -ErrorVariable (counted, not printed): 0
+[oer-s114] 3.2 plan sent: token requests: 0; Microsoft Graph requests: 6, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s114] 3.2 run rows: 3
+[oer-s114] 3.2 run row: administrativeUnits | oer-s114-au-none | Failed | neither 'oer-s114-au-none' nor its previousDisplayName '00000000-0000-0000-0000-000000000099' matches an administrative unit, so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new administrative unit, remove previousDisplayName
+[oer-s114] 3.2 run row: catalogs | oer-s114-cat-none | Failed | neither 'oer-s114-cat-none' nor its previousDisplayName '00000000-0000-0000-0000-000000000099' matches a catalog, so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new catalog, remove previousDisplayName
+[oer-s114] 3.2 run row: accessPackages | oer-s114-ap-none | Failed | neither 'oer-s114-ap-none' nor its previousDisplayName 'oer-s114-ap-ghost' matches an access package in catalog 'oer-s114-cat-b', so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new access package, remove previousDisplayName
+[oer-s114] 3.2 run warnings: 0
+[oer-s114] 3.2 run error: AdministrativeUnitRenameNotFound,Invoke-OERStructure: Neither 'oer-s114-au-none' nor its previousDisplayName '00000000-0000-0000-0000-000000000099' matches an administrative unit, so nothing was created or renamed for this entry. Right after a rename Microsoft Graph can take a while to resolve the new name: wait and re-run. To create a new administrative unit, remove previousDisplayName.
+[oer-s114] 3.2 run error: CatalogRenameNotFound,Invoke-OERStructure: Neither 'oer-s114-cat-none' nor its previousDisplayName '00000000-0000-0000-0000-000000000099' matches a catalog, so nothing was created or renamed for this entry. Right after a rename Microsoft Graph can take a while to resolve the new name: wait and re-run. To create a new catalog, remove previousDisplayName.
+[oer-s114] 3.2 run error: AccessPackageRenameNotFound,Invoke-OERStructure: Neither 'oer-s114-ap-none' nor its previousDisplayName 'oer-s114-ap-ghost' matches an access package in catalog 'oer-s114-cat-b', so nothing was created or renamed for this entry. Right after a rename Microsoft Graph can take a while to resolve the new name: wait and re-run. To create a new access package, remove previousDisplayName.
+[oer-s114] 3.2 run errors of Invoke-OERStructure: 3; other items in -ErrorVariable (counted, not printed): 0
+[oer-s114] 3.2 run sent: token requests: 0; Microsoft Graph requests: 6, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s114] oer-s114-au-none exists: False
+[oer-s114] oer-s114-cat-none exists: False
+[oer-s114] oer-s114-ap-none exists: False
+RUNNER: check-3.2 exit code 0; started 2026-10-14T08:15:01Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.3. With the catalogs section left out, the package is refused as well
 
-- [ ] **3.3** The 3.1 document applied with `-Include AccessPackages` (the catalog's rename is not reconciled in this run) reports `oer-s114-ap-x` Failed and writes nothing, planned or run.
+- [x] **3.3** The 3.1 document applied with `-Include AccessPackages` (the catalog's rename is not reconciled in this run) reports `oer-s114-ap-x` Failed and writes nothing, planned or run.
 
 ```powershell
 Connect-OerLive -Arm
@@ -706,13 +1269,43 @@ rename is not reconciled in this run because the catalogs section is not selecte
 `writes: 0` both times; `oer-s114-ap-x exists: False`.
 **Failure looks like:** a `would create` or Created row, a write, or `exists: True`.
 
-Result:
+Result: 2026-10-14 08:15 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The 3.1 document with -Include AccessPackages, planned and run: exactly one row, Failed for oer-s114-ap-x -- its catalog's rename is not reconciled in this run because the catalogs section is not selected by -Include (Ruling R12); nothing created, read or written for it; 0 Microsoft Graph requests at all, 0 writes, 0 token requests, both times; oer-s114-ap-x does not exist.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.3 ===
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] 3.3 plan rows: 1
+[oer-s114] 3.3 plan row: accessPackages | oer-s114-ap-x | Failed | catalog 'oer-s114-cat-b' was not reconciled in this run: its rename from 'oer-s114-cat-a-new' was refused (the catalogs section is not selected by -Include, so its rename is not reconciled in this run), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it
+[oer-s114] 3.3 plan sent: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s114] 3.3 run rows: 1
+[oer-s114] 3.3 run row: accessPackages | oer-s114-ap-x | Failed | catalog 'oer-s114-cat-b' was not reconciled in this run: its rename from 'oer-s114-cat-a-new' was refused (the catalogs section is not selected by -Include, so its rename is not reconciled in this run), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it
+[oer-s114] 3.3 run sent: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s114] oer-s114-ap-x exists: False
+RUNNER: check-3.3 exit code 0; started 2026-10-14T08:15:23Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## T. Teardown
 
 ### T.1. Remove every oer-s114- object
 
-- [ ] **T.1** The teardown deletes the administrative unit, then the packages, the policy, the catalogs and the groups; the sweep is clean and the counts are the baseline's.
+- [x] **T.1** The teardown deletes the administrative unit, then the packages, the policy, the catalogs and the groups; the sweep is clean and the counts are the baseline's.
 
 ```powershell
 $Script = Join-Path $env:OER_LIVE_DIR 'Initialize-OerS114Prereq.ps1'
@@ -729,11 +1322,120 @@ both catalogs and the three groups with no residue; the sweep reports no prefixe
 equals the baseline's; exit code 0.
 **Failure looks like:** a `RESIDUE` line or exit code 3 -- the row is in `raw\residue.json`; record it.
 
-Result:
+Result: 2026-10-14 08:21 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The plan removes nothing. The run: Teardown A removes the unit's scoped role membership (204) and deletes oer-s114-au-new (204); OerLive's teardown then still lists oer-s114-rolegrp's unit-scoped License Administrator assignment, waits out its five-minute rule, and its removal answers 404 and reads back as no longer listed (counted removed); it removes the resource role binding, the policy, both packages, the catalog resource and both catalogs, and deletes the three groups: removed 11, residue 0, unreadable 0. The sweep reports no prefixed object, and every count equals the baseline's (groups 97, administrative units 1, catalogs 5, access packages 6). Exit code 0; took 363 s (the five-minute rule).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[oer-s114] === Initialize-OerS114Prereq.ps1 -Teardown -WhatIf ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s114\teardown-20261014-081542Z.log".
+[oer-s114] Mode: REMOVE. Prefix 'oer-s114-'. Objects (fixed): oer-s114-member, oer-s114-resgrp (security groups, no member); oer-s114-rolegrp (role-assignable, no member, no owner); oer-s114-au (member oer-s114-member, one scoped role for oer-s114-rolegrp); oer-s114-cat-a (resource oer-s114-resgrp) with oer-s114-ap-a (hidden; resource role Member of oer-s114-resgrp; policy oer-s114-pol-a, administrator assignments only); oer-s114-cat-b with oer-s114-ap-b (hidden, nothing in it). The checklist renames oer-s114-au, oer-s114-cat-a, oer-s114-ap-a and oer-s114-ap-b to the same names with '-new' appended. OerLive 1.0.3.
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+What if: Performing the operation "Remove (Graph v1.0 DELETE directory/administrativeUnits/scopedRoleMembers)" on target "oer-s114-au-new: scoped role membership of oer-s114-rolegrp".
+What if: Performing the operation "Delete the administrative unit (Graph v1.0 DELETE directory/administrativeUnits)" on target "oer-s114-au-new".
+[oer-s114] Teardown of 'oer-s114-': users 0, groups 3, access packages 2, catalogs 2; administrative units 1 and app registrations 0 are reported only.
+[oer-s114] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s114] oer-s114-rolegrp: active 'License Administrator' assignment at directory scope '/administrativeUnits/00000000-0000-0000-0000-000000000004': would wait 305 s: Microsoft Graph refuses to change or remove a principal's directory role assignments until its active assignment of that role has run for five minutes.
+What if: Performing the operation "Remove (Graph v1.0 schedule request, adminRemove)" on target "oer-s114-rolegrp: active 'License Administrator' assignment at directory scope '/administrativeUnits/00000000-0000-0000-0000-000000000004'".
+[oer-s114] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s114] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+What if: Performing the operation "Delete the access package (Graph v1.0 DELETE accessPackages)" on target "oer-s114-ap-b-new".
+What if: Performing the operation "Remove (Graph v1.0 DELETE resourceRoleScopes)" on target "oer-s114-ap-a-new: resource role binding 'Member'".
+What if: Performing the operation "Delete (Graph v1.0 DELETE assignmentPolicies)" on target "oer-s114-ap-a-new: assignment policy 'oer-s114-pol-a'".
+What if: Performing the operation "Delete the access package (Graph v1.0 DELETE accessPackages)" on target "oer-s114-ap-a-new".
+What if: Performing the operation "Delete the catalog (Graph v1.0 DELETE catalogs)" on target "oer-s114-cat-b".
+What if: Performing the operation "Remove (Graph v1.0 resourceRequests, adminRemove)" on target "oer-s114-cat-a-new: resource 'oer-s114-resgrp'".
+What if: Performing the operation "Delete the catalog (Graph v1.0 DELETE catalogs)" on target "oer-s114-cat-a-new".
+[oer-s114] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s114] Teardown 5/6: the prefixed groups.
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s114-member".
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s114-resgrp".
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s114-rolegrp".
+[oer-s114] Teardown 6/6: the prefixed users.
+[oer-s114] Teardown of 'oer-s114-': removed 0, residue 0, unreadable 0 (WhatIf: nothing was removed).
+[oer-s114] WhatIf: nothing was created, removed or written.
+[oer-s114] Done.
+[oer-s114] exit code: 0
+[oer-s114] === Initialize-OerS114Prereq.ps1 -Teardown -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s114] Transcript (redacted): raw\s114\teardown-20261014-081556Z.log; OerLive 1.0.3.
+[oer-s114] Mode: REMOVE. Prefix 'oer-s114-'. Objects (fixed): oer-s114-member, oer-s114-resgrp (security groups, no member); oer-s114-rolegrp (role-assignable, no member, no owner); oer-s114-au (member oer-s114-member, one scoped role for oer-s114-rolegrp); oer-s114-cat-a (resource oer-s114-resgrp) with oer-s114-ap-a (hidden; resource role Member of oer-s114-resgrp; policy oer-s114-pol-a, administrator assignments only); oer-s114-cat-b with oer-s114-ap-b (hidden, nothing in it). The checklist renames oer-s114-au, oer-s114-cat-a, oer-s114-ap-a and oer-s114-ap-b to the same names with '-new' appended. OerLive 1.0.3.
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s114] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s114] Teardown A: removed oer-s114-au-new: scoped role membership of oer-s114-rolegrp (204).
+[oer-s114] Teardown A: deleted administrative unit oer-s114-au-new (204).
+[oer-s114] Teardown of 'oer-s114-': users 0, groups 3, access packages 2, catalogs 2; administrative units 1 and app registrations 0 are reported only.
+[oer-s114] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s114] oer-s114-rolegrp: active 'License Administrator' assignment at directory scope '/administrativeUnits/00000000-0000-0000-0000-000000000004': waiting 305 s: Microsoft Graph refuses to change or remove a principal's directory role assignments until its active assignment of that role has run for five minutes.
+[oer-s114] oer-s114-rolegrp: active 'License Administrator' assignment at directory scope '/administrativeUnits/00000000-0000-0000-0000-000000000004' answered 404 ResourceNotFound -- The resource is not found.; reading back before it counts as removed.
+[oer-s114] oer-s114-rolegrp: active 'License Administrator' assignment at directory scope '/administrativeUnits/00000000-0000-0000-0000-000000000004': read back after the 'does not exist' answer: converged after 1 read(s), 1.5 s.
+[oer-s114] Removed: oer-s114-rolegrp: active 'License Administrator' assignment at directory scope '/administrativeUnits/00000000-0000-0000-0000-000000000004' (404; read back: no longer listed after 1 read(s), 1.5 s).
+[oer-s114] oer-s114-rolegrp: no direct directory role schedule listed: converged after 1 read(s), 1 s.
+[oer-s114] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s114] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s114] Deleted: access package oer-s114-ap-b-new (204, 1 attempt(s)).
+[oer-s114] Removed: oer-s114-ap-a-new: resource role binding 'Member' (200).
+[oer-s114] Deleted: oer-s114-ap-a-new: assignment policy 'oer-s114-pol-a' (204).
+[oer-s114] Deleted: access package oer-s114-ap-a-new (204, 1 attempt(s)).
+[oer-s114] Deleted: catalog oer-s114-cat-b (204, 1 attempt(s)).
+[oer-s114] Removed: oer-s114-cat-a-new: resource 'oer-s114-resgrp' (201).
+[oer-s114] Deleted: catalog oer-s114-cat-a-new (204, 1 attempt(s)).
+[oer-s114] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s114] Teardown 5/6: the prefixed groups.
+[oer-s114] Deleted: group oer-s114-member (204).
+[oer-s114] Deleted: group oer-s114-resgrp (204).
+[oer-s114] Deleted: group oer-s114-rolegrp (204).
+[oer-s114] Teardown 6/6: the prefixed users.
+[oer-s114] Teardown of 'oer-s114-': removed 11, residue 0, unreadable 0.
+[oer-s114] no 'oer-s114-' object is listed: not yet (read 1, 0.4 s, likely replication delay) -- reading again in 2 s.
+[oer-s114] no 'oer-s114-' object is listed: not yet (read 2, 2.8 s, likely replication delay) -- reading again in 4 s.
+[oer-s114] no 'oer-s114-' object is listed: not yet (read 3, 7.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s114] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s114-' is left.
+[oer-s114] no 'oer-s114-' object is listed: converged after 4 read(s), 15.7 s.
+[oer-s114] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s114-' is left.
+[oer-s114] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s114] Counts: administrativeUnits now 1, at the baseline 1; equal: True
+[oer-s114] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s114] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s114] Removed the recorded ids.
+[oer-s114] Done.
+[oer-s114] exit code: 0
+RUNNER: check-T.1 exit code 0; started 2026-10-14T08:15:40Z; took 363 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### T.2. Read back
 
-- [ ] **T.2** A read-back a minute later finds no prefixed object, the baseline's counts and no residue row of this step.
+- [x] **T.2** A read-back a minute later finds no prefixed object, the baseline's counts and no residue row of this step.
 
 ```powershell
 $Script = Join-Path $env:OER_LIVE_DIR 'Initialize-OerS114Prereq.ps1'
@@ -744,7 +1446,48 @@ Write-OerLiveStep "exit code: $LASTEXITCODE"
 **Expect:** `prefixed objects left: 0`, every count equal, `of them with this step's prefix: 0`.
 **Failure looks like:** a prefixed object (a listing that lags: run again a minute later) or a residue row.
 
-Result:
+Result: 2026-10-14 08:23 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. A read-back about a minute after the teardown: no prefixed object is left, every count equals the baseline's, and raw\residue.json holds 5 rows of other projects and none of this step's.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.2 ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s114] Transcript (redacted): raw\s114\readback-20261014-082308Z.log; OerLive 1.0.3.
+[oer-s114] Mode: READ BACK. Prefix 'oer-s114-'. Objects (fixed): oer-s114-member, oer-s114-resgrp (security groups, no member); oer-s114-rolegrp (role-assignable, no member, no owner); oer-s114-au (member oer-s114-member, one scoped role for oer-s114-rolegrp); oer-s114-cat-a (resource oer-s114-resgrp) with oer-s114-ap-a (hidden; resource role Member of oer-s114-resgrp; policy oer-s114-pol-a, administrator assignments only); oer-s114-cat-b with oer-s114-ap-b (hidden, nothing in it). The checklist renames oer-s114-au, oer-s114-cat-a, oer-s114-ap-a and oer-s114-ap-b to the same names with '-new' appended. OerLive 1.0.3.
+[oer-s114] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg4\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s114] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s114] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s114] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s114-' is left.
+[oer-s114] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s114] Counts: administrativeUnits now 1, at the baseline 1; equal: True
+[oer-s114] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s114] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s114] Read-back: residue row: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:09Z, attempts 3: 404 SubjectNotFound The subject is not found.; read back: still listed -- OerLive: Residue: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal': read back after the 'does not exist' answer -- not converged within budget (180 s, 10 reads).
+[oer-s114] Read-back: residue row: PIM for Groups assignment 'opim-s1-grp: PIM for Groups owner assignment of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:12Z, attempts 3: 403 UnauthorizedAccessException {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup,PrivilegedAccess.ReadWrite.AzureADGroup,PrivilegedAssignmentSchedule.Remove.AzureADGroup.","instanceAnnotations":[]}
+[oer-s114] Read-back: residue row: PIM for Groups eligibility 'opim-s2-grp: PIM for Groups member eligibility of a principal' (prefix opim-s2-), first refused 2026-10-10T23:39:01Z, attempts 1: 400 BadRequest {"error":{"code":"Request_BadRequest","message":"The source resource object or one of the objects being referenced do not exist.","innerError":{"date":"2026-10-10T23:39:01","request-id":"00000000-0000-0000-0000-000000000005","client-request-id":"00000000-0000-0000-0000-000000000006"}}}
+[oer-s114] Read-back: residue row: user 'opim-s2-live-user@example.com' (prefix opim-s2-), first refused 2026-10-10T23:39:02Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s114] Read-back: residue row: user 'opim-s2-live-user@example.com' (prefix opim-s2-), first refused 2026-10-11T14:55:13Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s114] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 5, of them with this step's prefix: 0.
+[oer-s114] Done.
+[oer-s114] exit code: 0
+RUNNER: check-T.2 exit code 0; started 2026-10-14T08:23:06Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## B. Proved offline only (class B)
 
