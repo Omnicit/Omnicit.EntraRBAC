@@ -7075,10 +7075,13 @@ Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' {
     # Get-OERGroupRelation -- can only run here. Only the transport is answered.
     BeforeAll {
         $script:moduleName = 'Omnicit.EntraRBAC'
-        # BL-125: the root default mock of the PIM for Groups assignment read is gone by now -- the
-        # Describes above re-import the module, and a mock lives in the module instance it was made
-        # in -- so it is made again here, with the same answer: a read that lists nothing, so the
-        # members and owners below read as standing.
+        # BL-131: imported again HERE, so the root default mocks are gone whether or not a Describe
+        # above ran (a filtered run skips them): the real Get-OERGroupNameIndex has to run below,
+        # through the transport, and the root mock of it would answer instead.
+        Import-Module $script:moduleName -Force
+        # BL-125: the root default mock of the PIM for Groups assignment read is gone too -- a mock
+        # lives in the module instance it was made in -- so it is made again here, with the same
+        # answer: a read that lists nothing, so the members and owners below read as standing.
         Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment {
             [PSCustomObject]@{ Read = $true; Value = @(); Message = $null; Exception = $null }
         }
