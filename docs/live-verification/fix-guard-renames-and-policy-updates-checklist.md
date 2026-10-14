@@ -339,7 +339,7 @@ function Write-S113Keys {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -362,13 +362,33 @@ Write-OerLiveStep "The worktree's build carries D: scope spelling rule $(& $Has 
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main clone;
 a `False` mark -- build the worktree first (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result: (not run yet)
+Result: 2026-10-14 01:36 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree is on this branch at 0afad90 with 0 tracked changes, and its build (built from 4e268a5, the last commit under source/) carries every mark of A to D. The later commit of the branch changes only this checklist.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s113] The module loads from a worktree that is not the main clone: True
+[oer-s113] Main clone: branch main; HEAD 491e72e
+[oer-s113] Worktree: branch fix/guard-renames-and-policy-updates; HEAD 0afad90 docs: add the live checklist for refusing unsupported renames and keeping policy settings; tracked changes: 0
+[oer-s113] The worktree's build carries A: rename refusal True; planned catalogs True
+[oer-s113] The worktree's build carries B: the expanded read True; the automatic settings carry True
+[oer-s113] The worktree's build carries C: alias owner True; refusal id True
+[oer-s113] The worktree's build carries D: scope spelling rule True
+RUNNER: check-S.1 exit code 0; started 2026-10-14T01:36:24Z; took 3 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -382,11 +402,35 @@ Disconnect-OerLive
 build: True`.
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), or `False`.
 
-Result: (not run yet)
+Result: 2026-10-14 01:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only, certificate); identity check passed; the module is the worktree's build (1.2.1).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] The module is the worktree's build: True; version 1.2.1
+RUNNER: check-0.1 exit code 0; started 2026-10-14T01:36:27Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 0.2. The permission this file needs
 
-- [ ] **0.2** `oer-live-cc` holds `EntitlementManagement.ReadWrite.All`; otherwise the run stops here.
+- [x] **0.2** `oer-live-cc` holds `EntitlementManagement.ReadWrite.All`; otherwise the run stops here.
 
 ```powershell
 Connect-OerLive -Arm
@@ -402,11 +446,36 @@ Disconnect-OerLive
 **Expect:** `oer-live-cc holds EntitlementManagement.ReadWrite.All: True`.
 **Failure looks like:** `False` and the STOP line -- stop the run; nothing has been written.
 
-Result: (not run yet)
+Result: 2026-10-14 01:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. oer-live-cc holds EntitlementManagement.ReadWrite.All (19 Microsoft Graph application permissions in all); no permission was added or removed.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.2 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s113] oer-live-cc holds 19 Microsoft Graph application permissions
+RUNNER: check-0.2 exit code 0; started 2026-10-14T01:36:33Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 0.3. The prerequisite objects
 
-- [ ] **0.3** The plan writes nothing; the first run brings `oer-s113-policy` back to its full state (section 1 removed its custom extension stage) and creates whatever is missing; a second run writes nothing.
+- [x] **0.3** The plan writes nothing; the first run brings `oer-s113-policy` back to its full state (section 1 removed its custom extension stage) and creates whatever is missing; a second run writes nothing.
 
 ```powershell
 $Script = Join-Path $env:OER_LIVE_DIR 'Initialize-OerS113Prereq.ps1'
@@ -425,7 +494,121 @@ policies in their full state, and writes nothing (`written to the tenant: False`
 **Failure looks like:** a `Refusing to run:` line, an `UNAVAILABLE` line, or exit code 1 -- read the
 reason; nothing past a refusal was written.
 
-Result: (not run yet)
+Result: 2026-10-14 01:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The plan wrote nothing (it planned to bring oer-s113-policy back: section 1 had removed its custom extension stage); the first -Unattended run put the stage back (PUT 200, converged on the first read) and found every other object present (unavailable: none); the second found all eight objects in their full state and wrote nothing (written to the tenant: False). Exit code 0 each time.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.3 ===
+[oer-s113] === Initialize-OerS113Prereq.ps1 -WhatIf ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s113\prereq-20261014-013703Z.log".
+[oer-s113] Mode: CREATE or complete. Prefix 'oer-s113-'. Objects (fixed): oer-s113-grp-old (security group, no member); oer-s113-catalog (catalog, no resource); oer-s113-ap (hidden access package, no resource role); oer-s113-rg (tagged) with oer-s113-la (Logic App, nothing calls it); oer-s113-ext (custom extension); oer-s113-policy (requestable by the members of oer-s113-grp-old only, one question, the custom extension stage); oer-s113-autopolicy (automatic, its rule matches no user). The checklist's own objects: oer-s113-newcat, oer-s113-newap and its policy. OerLive 1.0.3.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s113] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s113] Found: oer-s113-grp-old True; oer-s113-catalog True; oer-s113-ap True; oer-s113-policy True; oer-s113-autopolicy True; oer-s113-rg True; oer-s113-la True; oer-s113-ext True.
+[oer-s113] The baseline exists (groups 97, catalogs 5, access packages 6 when it was written).
+[oer-s113] Group oer-s113-grp-old exists.
+[oer-s113] Catalog oer-s113-catalog exists.
+[oer-s113] Access package oer-s113-ap exists.
+[oer-s113] Resource group oer-s113-rg exists.
+[oer-s113] Logic App oer-s113-la exists; its AADPOP authorization policy is there: True
+[oer-s113] Custom extension oer-s113-ext exists.
+[oer-s113] oer-s113-policy: the question is there: True; the custom extension stage is there: False
+What if: Performing the operation "Bring the policy back to its full state (Graph v1.0 PUT assignmentPolicies: the question and the custom extension stage)" on target "oer-s113-policy".
+[oer-s113] oer-s113-autopolicy: automaticRequestSettings with requestAccessForAllowedTargets true: True
+[oer-s113] Policy oer-s113-autopolicy exists in its full state.
+[oer-s113] Summary: oer-s113-grp-old present; oer-s113-catalog present; oer-s113-ap present; oer-s113-rg present; oer-s113-la present; oer-s113-ext present; oer-s113-policy present; oer-s113-autopolicy present; unavailable (class B): none; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s113] WhatIf: nothing was created, removed or written.
+[oer-s113] Done.
+[oer-s113] exit code: 0
+[oer-s113] === Initialize-OerS113Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s113] Transcript (redacted): raw\s113\prereq-20261014-013710Z.log; OerLive 1.0.3.
+[oer-s113] Mode: CREATE or complete. Prefix 'oer-s113-'. Objects (fixed): oer-s113-grp-old (security group, no member); oer-s113-catalog (catalog, no resource); oer-s113-ap (hidden access package, no resource role); oer-s113-rg (tagged) with oer-s113-la (Logic App, nothing calls it); oer-s113-ext (custom extension); oer-s113-policy (requestable by the members of oer-s113-grp-old only, one question, the custom extension stage); oer-s113-autopolicy (automatic, its rule matches no user). The checklist's own objects: oer-s113-newcat, oer-s113-newap and its policy. OerLive 1.0.3.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s113] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s113] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s113] Found: oer-s113-grp-old True; oer-s113-catalog True; oer-s113-ap True; oer-s113-policy True; oer-s113-autopolicy True; oer-s113-rg True; oer-s113-la True; oer-s113-ext True.
+[oer-s113] The baseline exists (groups 97, catalogs 5, access packages 6 when it was written).
+[oer-s113] Group oer-s113-grp-old exists.
+[oer-s113] Catalog oer-s113-catalog exists.
+[oer-s113] Access package oer-s113-ap exists.
+[oer-s113] Resource group oer-s113-rg exists.
+[oer-s113] Logic App oer-s113-la exists; its AADPOP authorization policy is there: True
+[oer-s113] Custom extension oer-s113-ext exists.
+[oer-s113] oer-s113-policy: the question is there: True; the custom extension stage is there: False
+[oer-s113] Brought oer-s113-policy back to its full state: 200.
+[oer-s113] oer-s113-policy: the question is there: True; the custom extension stage is there: True
+[oer-s113] oer-s113-policy holds its full state: converged after 1 read(s), 0.2 s.
+[oer-s113] oer-s113-autopolicy: automaticRequestSettings with requestAccessForAllowedTargets true: True
+[oer-s113] Policy oer-s113-autopolicy exists in its full state.
+[oer-s113] Summary: oer-s113-grp-old present; oer-s113-catalog present; oer-s113-ap present; oer-s113-rg present; oer-s113-la present; oer-s113-ext present; oer-s113-policy present; oer-s113-autopolicy present; unavailable (class B): none; written to the tenant: True.
+[oer-s113] Done.
+[oer-s113] exit code: 0
+[oer-s113] === Initialize-OerS113Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s113] Transcript (redacted): raw\s113\prereq-20261014-013719Z.log; OerLive 1.0.3.
+[oer-s113] Mode: CREATE or complete. Prefix 'oer-s113-'. Objects (fixed): oer-s113-grp-old (security group, no member); oer-s113-catalog (catalog, no resource); oer-s113-ap (hidden access package, no resource role); oer-s113-rg (tagged) with oer-s113-la (Logic App, nothing calls it); oer-s113-ext (custom extension); oer-s113-policy (requestable by the members of oer-s113-grp-old only, one question, the custom extension stage); oer-s113-autopolicy (automatic, its rule matches no user). The checklist's own objects: oer-s113-newcat, oer-s113-newap and its policy. OerLive 1.0.3.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s113] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s113] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s113] Found: oer-s113-grp-old True; oer-s113-catalog True; oer-s113-ap True; oer-s113-policy True; oer-s113-autopolicy True; oer-s113-rg True; oer-s113-la True; oer-s113-ext True.
+[oer-s113] The baseline exists (groups 97, catalogs 5, access packages 6 when it was written).
+[oer-s113] Group oer-s113-grp-old exists.
+[oer-s113] Catalog oer-s113-catalog exists.
+[oer-s113] Access package oer-s113-ap exists.
+[oer-s113] Resource group oer-s113-rg exists.
+[oer-s113] Logic App oer-s113-la exists; its AADPOP authorization policy is there: True
+[oer-s113] Custom extension oer-s113-ext exists.
+[oer-s113] oer-s113-policy: the question is there: True; the custom extension stage is there: True
+[oer-s113] Policy oer-s113-policy exists in its full state.
+[oer-s113] oer-s113-autopolicy: automaticRequestSettings with requestAccessForAllowedTargets true: True
+[oer-s113] Policy oer-s113-autopolicy exists in its full state.
+[oer-s113] Summary: oer-s113-grp-old present; oer-s113-catalog present; oer-s113-ap present; oer-s113-rg present; oer-s113-la present; oer-s113-ext present; oer-s113-policy present; oer-s113-autopolicy present; unavailable (class B): none; written to the tenant: False.
+[oer-s113] Done.
+[oer-s113] exit code: 0
+RUNNER: check-0.3 exit code 0; started 2026-10-14T01:37:00Z; took 25 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 1. The measurement, before the change (DEL 1)
 
@@ -436,7 +619,7 @@ before a write or on a measured answer (1.0); its final form is the one 0.3 runs
 
 ### 1.0. What creating the measured objects took
 
-- [ ] **1.0** The measured objects exist: the automatic assignment policy is accepted, and the custom extension needs the Logic App's trigger URL and an authorization policy on the Logic App.
+- [x] **1.0** The measured objects exist: the automatic assignment policy is accepted, and the custom extension needs the Logic App's trigger URL and an authorization policy on the Logic App.
 
 ```powershell
 $Script = Join-Path $env:OER_LIVE_DIR 'Initialize-OerS113Prereq.ps1'
@@ -451,11 +634,266 @@ foreach ($Run in @(@('-WhatIf'), @('-Unattended'), @('-Unattended'))) {
 **Failure looks like:** a refusal this file cannot work around without another permission (then the
 case is class B).
 
-Result: (not run yet)
+Result: 2026-10-14 01:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: MEASURED (the objects exist; each refusal recorded). Run 1 created the group, the catalog, the package, the resource group, the Logic App and the request policy (its question accepted), then stopped on a read: Microsoft Graph refuses $expand=questions with 400 InvalidFilter ('not a navigation property or complex property'), and the custom extension was refused with 400 MissingParameters: an app-only caller must give the Logic App trigger's URL. Run 2 (the URL read from Azure Resource Manager, without its signature, never printed): the custom extension was refused with 400 WorkFlowExtensionValidationError, the Logic App answering OAuthAccessPolicyNotFound ('Authorization header is not allowed'); the automatic assignment policy was created (the tenant supports it). Run 3, with an AADPOP authorization policy on the Logic App (issuer of this tenant, method, host and the workflow's path): the custom extension was created (201) and the request policy was brought to its full state with the stage (PUT 200). So the step needs no class C check: both measured settings could be created as oer-live-cc.
+
+=== The plan (2026-10-13 22:07 UTC) ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== PREREQ -WhatIf ===
+[oer-s113] === Initialize-OerS113Prereq.ps1 -WhatIf ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s113\prereq-20261013-220719Z.log".
+[oer-s113] Mode: CREATE or complete. Prefix 'oer-s113-'. Objects (fixed): oer-s113-grp-old (security group, no member); oer-s113-catalog (catalog, no resource); oer-s113-ap (hidden access package, no resource role); oer-s113-rg (tagged) with oer-s113-la (Logic App, nothing calls it); oer-s113-ext (custom extension); oer-s113-policy (requestable by the members of oer-s113-grp-old only, one question, the custom extension stage); oer-s113-autopolicy (automatic, its rule matches no user). The checklist's own objects: oer-s113-newcat, oer-s113-newap and its policy. OerLive 1.0.3.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s113] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s113] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s113-' is left.
+[oer-s113] Found: oer-s113-grp-old False; oer-s113-catalog False; oer-s113-ap False; oer-s113-policy False; oer-s113-autopolicy False; oer-s113-rg False; oer-s113-la False; oer-s113-ext False.
+[oer-s113] No baseline yet: it is written now, before the first write to the tenant (groups 97, catalogs 5, access packages 6; oer-s113-rg exists: False).
+What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s113\baseline-s113.json".
+What if: Performing the operation "Create a security group with no member (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership, mailNickname 'oer-s113-grp-old')" on target "oer-s113-grp-old".
+What if: Performing the operation "Create a catalog (Graph v1.0 POST entitlementManagement/catalogs: published, not visible to external users)" on target "oer-s113-catalog".
+What if: Performing the operation "Create a hidden access package (Graph v1.0 POST entitlementManagement/accessPackages: isHidden, no resource role)" on target "oer-s113-ap".
+What if: Performing the operation "Create the resource group in the test subscription (Azure Resource Manager PUT, location 'swedencentral', tag purpose 'Omnicit.EntraRBAC live verification (oer-s113)')" on target "oer-s113-rg".
+What if: Performing the operation "Create an assignment policy only the members of oer-s113-grp-old (none) may request through (Graph v1.0 POST assignmentPolicies: no approval, no expiration, one optional question, the custom extension stage when it exists)" on target "oer-s113-policy".
+What if: Performing the operation "Create an automatic assignment policy whose rule matches no user (Graph v1.0 POST assignmentPolicies: attributeRuleMembers '(user.department -eq "oer-s113-no-such-department")', automaticRequestSettings)" on target "oer-s113-autopolicy".
+[oer-s113] Summary: oer-s113-grp-old absent; oer-s113-catalog absent; oer-s113-ap absent; oer-s113-rg absent; oer-s113-la absent; oer-s113-ext absent; oer-s113-policy absent; oer-s113-autopolicy absent; unavailable (class B): none; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s113] WhatIf: nothing was created, removed or written.
+[oer-s113] Done.
+[oer-s113] exit code: 0
+RUNNER: prereq-whatif exit code 0; started 2026-10-13T22:07:17Z; took 9 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Run 1: two -Unattended runs (refusals before a write: the questions expand, then the URL) ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== PREREQ -Unattended x2 ===
+[oer-s113] === Initialize-OerS113Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s113] Transcript (redacted): raw\s113\prereq-20261013-220736Z.log; OerLive 1.0.3.
+[oer-s113] Mode: CREATE or complete. Prefix 'oer-s113-'. Objects (fixed): oer-s113-grp-old (security group, no member); oer-s113-catalog (catalog, no resource); oer-s113-ap (hidden access package, no resource role); oer-s113-rg (tagged) with oer-s113-la (Logic App, nothing calls it); oer-s113-ext (custom extension); oer-s113-policy (requestable by the members of oer-s113-grp-old only, one question, the custom extension stage); oer-s113-autopolicy (automatic, its rule matches no user). The checklist's own objects: oer-s113-newcat, oer-s113-newap and its policy. OerLive 1.0.3.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s113] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s113] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s113] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s113-' is left.
+[oer-s113] Found: oer-s113-grp-old False; oer-s113-catalog False; oer-s113-ap False; oer-s113-policy False; oer-s113-autopolicy False; oer-s113-rg False; oer-s113-la False; oer-s113-ext False.
+[oer-s113] No baseline yet: it is written now, before the first write to the tenant (groups 97, catalogs 5, access packages 6; oer-s113-rg exists: False).
+[oer-s113] Wrote the baseline raw\s113\baseline-s113.json and read it back.
+[oer-s113] Created group oer-s113-grp-old: 201.
+[oer-s113] Recorded the id of oer-s113-grp-old under raw\s113 (not printed).
+[oer-s113] oer-s113-grp-old resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s113] oer-s113-grp-old resolves by its display name: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s113] oer-s113-grp-old resolves by its display name: converged after 3 read(s), 6.3 s.
+[oer-s113] Created catalog oer-s113-catalog: 201.
+[oer-s113] oer-s113-catalog is readable by its id: converged after 1 read(s), 0.1 s.
+[oer-s113] Created access package oer-s113-ap: 201 after 1 attempt(s).
+[oer-s113] oer-s113-ap is readable by its id: converged after 1 read(s), 0.1 s.
+[oer-s113] Created resource group oer-s113-rg.
+[oer-s113] Created Logic App oer-s113-la.
+[oer-s113] UNAVAILABLE (class B): the custom extension oer-s113-ext -- answered 400 MissingParameters -- The following required parameters are missing: Url. The run carries on without it; nothing else is tried.
+[oer-s113] Created policy oer-s113-policy: 201 after 1 attempt(s).
+[oer-s113] Stopped after this run had written to the tenant (see the lines above): Reading a policy with its custom extension stages and questions failed: GET v1.0/identityGovernance/entitlementManagement/assignmentPolicies/00000000-0000-0000-0000-000000000001 answered 400 InvalidFilter -- OData query is invalid: Property 'questions' on type 'Microsoft.IGAELM.EC.FrontEnd.ExternalModel.accessPackageAssignmentPolicy' is not a navigation property or complex property. Only navigation properties can be expanded..
+[oer-s113] Stopped at: at Assert-OerLiveOk, VAULT\OerLive\OerLive.psm1: line 673 <- at Read-S113PolicyFull, VAULT\Initialize-OerS113Prereq.ps1: line 223 <- at <ScriptBlock>, VAULT\Initialize-OerS113Prereq.ps1: line 598
+[oer-s113] Setup changes nothing outside the prefix, so nothing is restored here; the test objects are removed by -Teardown.
+[oer-s113] exit code: 1
+[oer-s113] === Initialize-OerS113Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s113] Transcript (redacted): raw\s113\prereq-20261013-220752Z.log; OerLive 1.0.3.
+[oer-s113] Mode: CREATE or complete. Prefix 'oer-s113-'. Objects (fixed): oer-s113-grp-old (security group, no member); oer-s113-catalog (catalog, no resource); oer-s113-ap (hidden access package, no resource role); oer-s113-rg (tagged) with oer-s113-la (Logic App, nothing calls it); oer-s113-ext (custom extension); oer-s113-policy (requestable by the members of oer-s113-grp-old only, one question, the custom extension stage); oer-s113-autopolicy (automatic, its rule matches no user). The checklist's own objects: oer-s113-newcat, oer-s113-newap and its policy. OerLive 1.0.3.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s113] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s113] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s113] Found: oer-s113-grp-old True; oer-s113-catalog True; oer-s113-ap True; oer-s113-policy True; oer-s113-autopolicy False; oer-s113-rg True; oer-s113-la True; oer-s113-ext False.
+[oer-s113] The baseline exists (groups 97, catalogs 5, access packages 6 when it was written).
+[oer-s113] Group oer-s113-grp-old exists.
+[oer-s113] Catalog oer-s113-catalog exists.
+[oer-s113] Access package oer-s113-ap exists.
+[oer-s113] Resource group oer-s113-rg exists.
+[oer-s113] Logic App oer-s113-la exists.
+[oer-s113] UNAVAILABLE (class B): the custom extension oer-s113-ext -- answered 400 MissingParameters -- The following required parameters are missing: Url. The run carries on without it; nothing else is tried.
+[oer-s113] Stopped after this run had written to the tenant (see the lines above): Reading a policy with its custom extension stages and questions failed: GET v1.0/identityGovernance/entitlementManagement/assignmentPolicies/00000000-0000-0000-0000-000000000001 answered 400 InvalidFilter -- OData query is invalid: Property 'questions' on type 'Microsoft.IGAELM.EC.FrontEnd.ExternalModel.accessPackageAssignmentPolicy' is not a navigation property or complex property. Only navigation properties can be expanded..
+[oer-s113] Stopped at: at Assert-OerLiveOk, VAULT\OerLive\OerLive.psm1: line 673 <- at Read-S113PolicyFull, VAULT\Initialize-OerS113Prereq.ps1: line 223 <- at Invoke-S113Setup, VAULT\Initialize-OerS113Prereq.ps1: line 579
+[oer-s113] Setup changes nothing outside the prefix, so nothing is restored here; the test objects are removed by -Teardown.
+[oer-s113] exit code: 1
+RUNNER: prereq-run1 exit code 0; started 2026-10-13T22:07:34Z; took 24 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Run 2: two -Unattended runs, the trigger URL given (the Logic App had no authorization policy) ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== PREREQ -Unattended x2 (run 2) ===
+[oer-s113] === Initialize-OerS113Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s113] Transcript (redacted): raw\s113\prereq-20261013-220915Z.log; OerLive 1.0.3.
+[oer-s113] Mode: CREATE or complete. Prefix 'oer-s113-'. Objects (fixed): oer-s113-grp-old (security group, no member); oer-s113-catalog (catalog, no resource); oer-s113-ap (hidden access package, no resource role); oer-s113-rg (tagged) with oer-s113-la (Logic App, nothing calls it); oer-s113-ext (custom extension); oer-s113-policy (requestable by the members of oer-s113-grp-old only, one question, the custom extension stage); oer-s113-autopolicy (automatic, its rule matches no user). The checklist's own objects: oer-s113-newcat, oer-s113-newap and its policy. OerLive 1.0.3.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s113] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s113] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s113] Found: oer-s113-grp-old True; oer-s113-catalog True; oer-s113-ap True; oer-s113-policy True; oer-s113-autopolicy False; oer-s113-rg True; oer-s113-la True; oer-s113-ext False.
+[oer-s113] The baseline exists (groups 97, catalogs 5, access packages 6 when it was written).
+[oer-s113] Group oer-s113-grp-old exists.
+[oer-s113] Catalog oer-s113-catalog exists.
+[oer-s113] Access package oer-s113-ap exists.
+[oer-s113] Resource group oer-s113-rg exists.
+[oer-s113] Logic App oer-s113-la exists.
+[oer-s113] Read the trigger URL of oer-s113-la (not printed): True
+[oer-s113] Creating custom extension oer-s113-ext answered 400 WorkFlowExtensionValidationError (attempt 1 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s113] Creating custom extension oer-s113-ext answered 400 WorkFlowExtensionValidationError (attempt 2 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s113] Creating custom extension oer-s113-ext answered 400 WorkFlowExtensionValidationError (attempt 3 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s113] Creating custom extension oer-s113-ext answered 400 WorkFlowExtensionValidationError (attempt 4 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s113] Creating custom extension oer-s113-ext answered 400 WorkFlowExtensionValidationError (attempt 5 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s113] UNAVAILABLE (class B): the custom extension oer-s113-ext -- answered 400 WorkFlowExtensionValidationError -- {"error":{"code":"Unauthorized","message":"Unauthorized","details":"{\"error\":{\"code\":\"OAuthAccessPolicyNotFound\",\"message\":\"'Authorization' header is not allowed, The OAuth authentication policy is not enabled for the workflow.\"}}"}}. The run carries on without it; nothing else is tried.
+[oer-s113] oer-s113-policy: the question is there: True; the custom extension stage is there: no extension
+[oer-s113] Policy oer-s113-policy exists in its full state.
+[oer-s113] Created policy oer-s113-autopolicy: 201 after 1 attempt(s).
+[oer-s113] oer-s113-autopolicy is listed on oer-s113-ap: converged after 1 read(s), 0.2 s.
+[oer-s113] Summary: oer-s113-grp-old present; oer-s113-catalog present; oer-s113-ap present; oer-s113-rg present; oer-s113-la present; oer-s113-ext absent; oer-s113-policy present; oer-s113-autopolicy present; unavailable (class B): the custom extension oer-s113-ext; written to the tenant: True.
+[oer-s113] Done.
+[oer-s113] exit code: 0
+[oer-s113] === Initialize-OerS113Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s113] Transcript (redacted): raw\s113\prereq-20261013-220954Z.log; OerLive 1.0.3.
+[oer-s113] Mode: CREATE or complete. Prefix 'oer-s113-'. Objects (fixed): oer-s113-grp-old (security group, no member); oer-s113-catalog (catalog, no resource); oer-s113-ap (hidden access package, no resource role); oer-s113-rg (tagged) with oer-s113-la (Logic App, nothing calls it); oer-s113-ext (custom extension); oer-s113-policy (requestable by the members of oer-s113-grp-old only, one question, the custom extension stage); oer-s113-autopolicy (automatic, its rule matches no user). The checklist's own objects: oer-s113-newcat, oer-s113-newap and its policy. OerLive 1.0.3.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s113] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s113] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s113] Found: oer-s113-grp-old True; oer-s113-catalog True; oer-s113-ap True; oer-s113-policy True; oer-s113-autopolicy True; oer-s113-rg True; oer-s113-la True; oer-s113-ext False.
+[oer-s113] The baseline exists (groups 97, catalogs 5, access packages 6 when it was written).
+[oer-s113] Group oer-s113-grp-old exists.
+[oer-s113] Catalog oer-s113-catalog exists.
+[oer-s113] Access package oer-s113-ap exists.
+[oer-s113] Resource group oer-s113-rg exists.
+[oer-s113] Logic App oer-s113-la exists.
+[oer-s113] Read the trigger URL of oer-s113-la (not printed): True
+[oer-s113] Creating custom extension oer-s113-ext answered 400 WorkFlowExtensionValidationError (attempt 1 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s113] Creating custom extension oer-s113-ext answered 400 WorkFlowExtensionValidationError (attempt 2 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s113] Creating custom extension oer-s113-ext answered 400 WorkFlowExtensionValidationError (attempt 3 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s113] Creating custom extension oer-s113-ext answered 400 WorkFlowExtensionValidationError (attempt 4 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s113] Creating custom extension oer-s113-ext answered 400 WorkFlowExtensionValidationError (attempt 5 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s113] UNAVAILABLE (class B): the custom extension oer-s113-ext -- answered 400 WorkFlowExtensionValidationError -- {"error":{"code":"Unauthorized","message":"Unauthorized","details":"{\"error\":{\"code\":\"OAuthAccessPolicyNotFound\",\"message\":\"'Authorization' header is not allowed, The OAuth authentication policy is not enabled for the workflow.\"}}"}}. The run carries on without it; nothing else is tried.
+[oer-s113] oer-s113-policy: the question is there: True; the custom extension stage is there: no extension
+[oer-s113] Policy oer-s113-policy exists in its full state.
+[oer-s113] oer-s113-autopolicy: automaticRequestSettings with requestAccessForAllowedTargets true: True
+[oer-s113] Policy oer-s113-autopolicy exists in its full state.
+[oer-s113] Summary: oer-s113-grp-old present; oer-s113-catalog present; oer-s113-ap present; oer-s113-rg present; oer-s113-la present; oer-s113-ext absent; oer-s113-policy present; oer-s113-autopolicy present; unavailable (class B): the custom extension oer-s113-ext; written to the tenant: True.
+[oer-s113] Done.
+[oer-s113] exit code: 0
+RUNNER: prereq-run2 exit code 0; started 2026-10-13T22:09:13Z; took 75 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Run 3: one -Unattended run with the AADPOP policy on the Logic App ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== PREREQ -Unattended (run 3) ===
+[oer-s113] === Initialize-OerS113Prereq.ps1 -Unattended ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s113] Transcript (redacted): raw\s113\prereq-20261013-221132Z.log; OerLive 1.0.3.
+[oer-s113] Mode: CREATE or complete. Prefix 'oer-s113-'. Objects (fixed): oer-s113-grp-old (security group, no member); oer-s113-catalog (catalog, no resource); oer-s113-ap (hidden access package, no resource role); oer-s113-rg (tagged) with oer-s113-la (Logic App, nothing calls it); oer-s113-ext (custom extension); oer-s113-policy (requestable by the members of oer-s113-grp-old only, one question, the custom extension stage); oer-s113-autopolicy (automatic, its rule matches no user). The checklist's own objects: oer-s113-newcat, oer-s113-newap and its policy. OerLive 1.0.3.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s113] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s113] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s113] Found: oer-s113-grp-old True; oer-s113-catalog True; oer-s113-ap True; oer-s113-policy True; oer-s113-autopolicy True; oer-s113-rg True; oer-s113-la True; oer-s113-ext False.
+[oer-s113] The baseline exists (groups 97, catalogs 5, access packages 6 when it was written).
+[oer-s113] Group oer-s113-grp-old exists.
+[oer-s113] Catalog oer-s113-catalog exists.
+[oer-s113] Access package oer-s113-ap exists.
+[oer-s113] Resource group oer-s113-rg exists.
+[oer-s113] Logic App oer-s113-la exists; its AADPOP authorization policy is there: False
+[oer-s113] Wrote Logic App oer-s113-la with its authorization policy.
+[oer-s113] Read the trigger URL of oer-s113-la (not printed): True
+[oer-s113] Recorded the id of oer-s113-ext under raw\s113 (not printed).
+[oer-s113] Created custom extension oer-s113-ext: 201 after 1 attempt(s).
+[oer-s113] oer-s113-ext is listed in oer-s113-catalog: converged after 1 read(s), 0.1 s.
+[oer-s113] oer-s113-policy: the question is there: True; the custom extension stage is there: False
+[oer-s113] Brought oer-s113-policy back to its full state: 200.
+[oer-s113] oer-s113-policy: the question is there: True; the custom extension stage is there: True
+[oer-s113] oer-s113-policy holds its full state: converged after 1 read(s), 0.1 s.
+[oer-s113] oer-s113-autopolicy: automaticRequestSettings with requestAccessForAllowedTargets true: True
+[oer-s113] Policy oer-s113-autopolicy exists in its full state.
+[oer-s113] Summary: oer-s113-grp-old present; oer-s113-catalog present; oer-s113-ap present; oer-s113-rg present; oer-s113-la present; oer-s113-ext present; oer-s113-policy present; oer-s113-autopolicy present; unavailable (class B): none; written to the tenant: True.
+[oer-s113] Done.
+[oer-s113] exit code: 0
+RUNNER: prereq-run3 exit code 0; started 2026-10-13T22:11:30Z; took 11 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.1. What a read of a policy returns, with and without `$expand`
 
-- [ ] **1.1** The reads return `automaticRequestSettings`, `questions` and `customExtensionStageSettings` without a query; `$expand=questions` is refused.
+- [x] **1.1** The reads return `automaticRequestSettings`, `questions` and `customExtensionStageSettings` without a query; `$expand=questions` is refused.
 
 ```powershell
 Connect-OerLive -Arm
@@ -481,11 +919,99 @@ is not a query this block sends (see the result of 1.0); `notificationSettings` 
 `accessPackageNotificationSettings`.
 **Failure looks like:** a field missing from the module's own read (`$expand=accessPackage`).
 
-Result: (not run yet)
+Result: 2026-10-14 01:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: MEASURED. Without a query, with the module's own $expand=accessPackage, with $expand=customExtensionStageSettings (also nested with customExtension) and with $expand=catalog, Microsoft Graph returns automaticRequestSettings (null on this request policy), questions in full, and customExtensionStageSettings; notificationSettings is present and accessPackageNotificationSettings is not. $select=id,questions returned neither questions nor the other fields. (This read ran before the custom extension existed, so the stage list was empty; 1.2 shows the stage read without and with the nested expand.)
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== M.1 reads (before the extension) ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] oer-s113-policy [no query] keys (17): @odata.context, allowedTargetScope, automaticRequestSettings, createdDateTime, customExtensionStageSettings, description, displayName, expiration, id, modifiedDateTime, notificationSettings, questions, person1@example.com, requestApprovalSettings, requestorSettings, reviewSettings, specificAllowedTargets
+[oer-s113] oer-s113-policy [no query] automaticRequestSettings: null
+[oer-s113] oer-s113-policy [no query] customExtensionStageSettings: []
+[oer-s113] oer-s113-policy [no query] questions: [{"@odata.type":"#microsoft.graph.accessPackageTextInputQuestion","id":"00000000-0000-0000-0000-000000000002","isAnswerEditable":true,"isRequired":false,"isSingleLineQuestion":true,"localizations":[],"regexPattern":null,"sequence":1,"text":"oer-s113: an optional question that an update must keep"}]
+[oer-s113] oer-s113-policy [no query] reviewSettings: null
+[oer-s113] oer-s113-policy [no query] notificationSettings: {"isAssignmentNotificationDisabled":false}
+[oer-s113] oer-s113-policy [no query] accessPackageNotificationSettings: absent
+[oer-s113] oer-s113-policy [no query] allowedTargetScope: "specificDirectoryUsers"
+[oer-s113] oer-s113-policy [no query] specificAllowedTargets: [{"@odata.type":"#microsoft.graph.groupMembers","description":"oer-s113-grp-old","groupId":"00000000-0000-0000-0000-000000000003"}]
+[oer-s113] oer-s113-policy [$expand=accessPackage] keys (18): @odata.context, accessPackage, allowedTargetScope, automaticRequestSettings, createdDateTime, customExtensionStageSettings, description, displayName, expiration, id, modifiedDateTime, notificationSettings, questions, person1@example.com, requestApprovalSettings, requestorSettings, reviewSettings, specificAllowedTargets
+[oer-s113] oer-s113-policy [$expand=accessPackage] automaticRequestSettings: null
+[oer-s113] oer-s113-policy [$expand=accessPackage] customExtensionStageSettings: []
+[oer-s113] oer-s113-policy [$expand=accessPackage] questions: [{"@odata.type":"#microsoft.graph.accessPackageTextInputQuestion","id":"00000000-0000-0000-0000-000000000002","isAnswerEditable":true,"isRequired":false,"isSingleLineQuestion":true,"localizations":[],"regexPattern":null,"sequence":1,"text":"oer-s113: an optional question that an update must keep"}]
+[oer-s113] oer-s113-policy [$expand=accessPackage] reviewSettings: null
+[oer-s113] oer-s113-policy [$expand=accessPackage] notificationSettings: {"isAssignmentNotificationDisabled":false}
+[oer-s113] oer-s113-policy [$expand=accessPackage] accessPackageNotificationSettings: absent
+[oer-s113] oer-s113-policy [$expand=accessPackage] allowedTargetScope: "specificDirectoryUsers"
+[oer-s113] oer-s113-policy [$expand=accessPackage] specificAllowedTargets: [{"@odata.type":"#microsoft.graph.groupMembers","description":"oer-s113-grp-old","groupId":"00000000-0000-0000-0000-000000000003"}]
+[oer-s113] oer-s113-policy [$select=id,questions] keys (4): @odata.context, customExtensionStageSettings, id, requestApprovalSettings
+[oer-s113] oer-s113-policy [$select=id,questions] automaticRequestSettings: absent
+[oer-s113] oer-s113-policy [$select=id,questions] customExtensionStageSettings: []
+[oer-s113] oer-s113-policy [$select=id,questions] questions: absent
+[oer-s113] oer-s113-policy [$select=id,questions] reviewSettings: absent
+[oer-s113] oer-s113-policy [$select=id,questions] notificationSettings: absent
+[oer-s113] oer-s113-policy [$select=id,questions] accessPackageNotificationSettings: absent
+[oer-s113] oer-s113-policy [$select=id,questions] allowedTargetScope: absent
+[oer-s113] oer-s113-policy [$select=id,questions] specificAllowedTargets: absent
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings] keys (17): @odata.context, allowedTargetScope, automaticRequestSettings, createdDateTime, customExtensionStageSettings, description, displayName, expiration, id, modifiedDateTime, notificationSettings, questions, person1@example.com, requestApprovalSettings, requestorSettings, reviewSettings, specificAllowedTargets
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings] automaticRequestSettings: null
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings] customExtensionStageSettings: []
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings] questions: [{"@odata.type":"#microsoft.graph.accessPackageTextInputQuestion","id":"00000000-0000-0000-0000-000000000002","isAnswerEditable":true,"isRequired":false,"isSingleLineQuestion":true,"localizations":[],"regexPattern":null,"sequence":1,"text":"oer-s113: an optional question that an update must keep"}]
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings] reviewSettings: null
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings] notificationSettings: {"isAssignmentNotificationDisabled":false}
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings] accessPackageNotificationSettings: absent
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings] allowedTargetScope: "specificDirectoryUsers"
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings] specificAllowedTargets: [{"@odata.type":"#microsoft.graph.groupMembers","description":"oer-s113-grp-old","groupId":"00000000-0000-0000-0000-000000000003"}]
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings($expand=customExtension)] keys (17): @odata.context, allowedTargetScope, automaticRequestSettings, createdDateTime, customExtensionStageSettings, description, displayName, expiration, id, modifiedDateTime, notificationSettings, questions, person1@example.com, requestApprovalSettings, requestorSettings, reviewSettings, specificAllowedTargets
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings($expand=customExtension)] automaticRequestSettings: null
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings($expand=customExtension)] customExtensionStageSettings: []
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings($expand=customExtension)] questions: [{"@odata.type":"#microsoft.graph.accessPackageTextInputQuestion","id":"00000000-0000-0000-0000-000000000002","isAnswerEditable":true,"isRequired":false,"isSingleLineQuestion":true,"localizations":[],"regexPattern":null,"sequence":1,"text":"oer-s113: an optional question that an update must keep"}]
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings($expand=customExtension)] reviewSettings: null
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings($expand=customExtension)] notificationSettings: {"isAssignmentNotificationDisabled":false}
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings($expand=customExtension)] accessPackageNotificationSettings: absent
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings($expand=customExtension)] allowedTargetScope: "specificDirectoryUsers"
+[oer-s113] oer-s113-policy [$expand=customExtensionStageSettings($expand=customExtension)] specificAllowedTargets: [{"@odata.type":"#microsoft.graph.groupMembers","description":"oer-s113-grp-old","groupId":"00000000-0000-0000-0000-000000000003"}]
+[oer-s113] oer-s113-policy [$expand=catalog] keys (18): @odata.context, allowedTargetScope, automaticRequestSettings, catalog, createdDateTime, customExtensionStageSettings, description, displayName, expiration, id, modifiedDateTime, notificationSettings, questions, person1@example.com, requestApprovalSettings, requestorSettings, reviewSettings, specificAllowedTargets
+[oer-s113] oer-s113-policy [$expand=catalog] automaticRequestSettings: null
+[oer-s113] oer-s113-policy [$expand=catalog] customExtensionStageSettings: []
+[oer-s113] oer-s113-policy [$expand=catalog] questions: [{"@odata.type":"#microsoft.graph.accessPackageTextInputQuestion","id":"00000000-0000-0000-0000-000000000002","isAnswerEditable":true,"isRequired":false,"isSingleLineQuestion":true,"localizations":[],"regexPattern":null,"sequence":1,"text":"oer-s113: an optional question that an update must keep"}]
+[oer-s113] oer-s113-policy [$expand=catalog] reviewSettings: null
+[oer-s113] oer-s113-policy [$expand=catalog] notificationSettings: {"isAssignmentNotificationDisabled":false}
+[oer-s113] oer-s113-policy [$expand=catalog] accessPackageNotificationSettings: absent
+[oer-s113] oer-s113-policy [$expand=catalog] allowedTargetScope: "specificDirectoryUsers"
+[oer-s113] oer-s113-policy [$expand=catalog] specificAllowedTargets: [{"@odata.type":"#microsoft.graph.groupMembers","description":"oer-s113-grp-old","groupId":"00000000-0000-0000-0000-000000000003"}]
+[oer-s113] oer-s113-policy [$expand=accessPackage,customExtensionStageSettings] keys (18): @odata.context, accessPackage, allowedTargetScope, automaticRequestSettings, createdDateTime, customExtensionStageSettings, description, displayName, expiration, id, modifiedDateTime, notificationSettings, questions, person1@example.com, requestApprovalSettings, requestorSettings, reviewSettings, specificAllowedTargets
+[oer-s113] oer-s113-policy [$expand=accessPackage,customExtensionStageSettings] automaticRequestSettings: null
+[oer-s113] oer-s113-policy [$expand=accessPackage,customExtensionStageSettings] customExtensionStageSettings: []
+[oer-s113] oer-s113-policy [$expand=accessPackage,customExtensionStageSettings] questions: [{"@odata.type":"#microsoft.graph.accessPackageTextInputQuestion","id":"00000000-0000-0000-0000-000000000002","isAnswerEditable":true,"isRequired":false,"isSingleLineQuestion":true,"localizations":[],"regexPattern":null,"sequence":1,"text":"oer-s113: an optional question that an update must keep"}]
+[oer-s113] oer-s113-policy [$expand=accessPackage,customExtensionStageSettings] reviewSettings: null
+[oer-s113] oer-s113-policy [$expand=accessPackage,customExtensionStageSettings] notificationSettings: {"isAssignmentNotificationDisabled":false}
+[oer-s113] oer-s113-policy [$expand=accessPackage,customExtensionStageSettings] accessPackageNotificationSettings: absent
+[oer-s113] oer-s113-policy [$expand=accessPackage,customExtensionStageSettings] allowedTargetScope: "specificDirectoryUsers"
+[oer-s113] oer-s113-policy [$expand=accessPackage,customExtensionStageSettings] specificAllowedTargets: [{"@odata.type":"#microsoft.graph.groupMembers","description":"oer-s113-grp-old","groupId":"00000000-0000-0000-0000-000000000003"}]
+[oer-s113] oer-s113-autopolicy: not present
+[oer-s113] token requests: 0
+RUNNER: m1-reads-a exit code 0; started 2026-10-13T22:08:47Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.2. A description-only update through the module, before the change
 
-- [ ] **1.2** The update of the request policy removes its custom extension stage; the update of the automatic policy is refused.
+- [x] **1.2** The update of the request policy removes its custom extension stage; the update of the automatic policy is refused.
 
 ```powershell
 Connect-OerLive -Arm
@@ -531,11 +1057,91 @@ Disconnect-OerLive
 read back unchanged.
 **Failure looks like:** an error that is not Microsoft Graph's answer to the PUT.
 
-Result: (not run yet)
+Result: 2026-10-14 01:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: MEASURED, before the change. The request policy's description-only update through Set-OERAccessPackageAssignmentPolicy sent a body WITHOUT customExtensionStageSettings, and afterwards the stage was gone ('customExtensionStageSettings: [] (CHANGED)'); the question and every other field were unchanged. A read without a query, and the module's own read, return the stage as id and stage only; the custom extension's id needs the nested expand. The automatic policy's update was refused (output objects 0; errors) and nothing changed (1.3).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== M.2 PUT through the module at d9a13cc ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] oer-s113-policy before, read without a query: customExtensionStageSettings [{"id":"00000000-0000-0000-0000-000000000004","stage":"assignmentRequestCreated"}]
+[oer-s113] oer-s113-policy before, read with the module's own query ($expand=accessPackage): customExtensionStageSettings [{"id":"00000000-0000-0000-0000-000000000004","stage":"assignmentRequestCreated"}]
+[oer-s113] oer-s113-policy before allowedTargetScope: "specificDirectoryUsers"
+[oer-s113] oer-s113-policy before specificAllowedTargets: [{"@odata.type":"#microsoft.graph.groupMembers","description":"oer-s113-grp-old","groupId":"00000000-0000-0000-0000-000000000003"}]
+[oer-s113] oer-s113-policy before automaticRequestSettings: null
+[oer-s113] oer-s113-policy before customExtensionStageSettings: [{"customExtension":{"@odata.type":"#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension","authenticationConfiguration":{"@odata.type":"#microsoft.graph.azureAdPopTokenAuthentication"},"callbackConfiguration":null,"clientConfiguration":null,"createdDateTime":"2026-10-13T22:11:39.893Z","description":"Omnicit.EntraRBAC live verification (oer-s113-): the custom extension an update must keep.","displayName":"oer-s113-ext","endpointConfiguration":{"@odata.type":"#microsoft.graph.logicAppTriggerEndpointConfiguration","logicAppWorkflowName":"oer-s113-la","resourceGroupName":"oer-s113-rg","subscriptionId":"00000000-0000-0000-0000-000000000005","url":"(url not printed)"},"id":"00000000-0000-0000-0000-000000000006","lastModifiedDateTime":"2026-10-13T22:11:39.893Z"},"id":"00000000-0000-0000-0000-000000000004","stage":"assignmentRequestCreated"}]
+[oer-s113] oer-s113-policy before questions: [{"@odata.type":"#microsoft.graph.accessPackageTextInputQuestion","id":"00000000-0000-0000-0000-000000000007","isAnswerEditable":true,"isRequired":false,"isSingleLineQuestion":true,"localizations":[],"regexPattern":null,"sequence":1,"text":"oer-s113: an optional question that an update must keep"}]
+[oer-s113] oer-s113-policy before requestorSettings: {"allowCustomAssignmentSchedule":false,"enableOnBehalfRequestorsToAddAccess":false,"enableOnBehalfRequestorsToRemoveAccess":false,"enableOnBehalfRequestorsToUpdateAccess":false,"enableTargetsToSelfAddAccess":true,"enableTargetsToSelfRemoveAccess":true,"enableTargetsToSelfUpdateAccess":false,"onBehalfRequestors":[]}
+[oer-s113] oer-s113-policy before requestApprovalSettings: {"isApprovalRequiredForAdd":false,"isApprovalRequiredForUpdate":false,"isRequestorJustificationRequired":false,"stages":[]}
+[oer-s113] oer-s113-policy before expiration: {"duration":null,"endDateTime":null,"type":"noExpiration"}
+[oer-s113] oer-s113-policy before reviewSettings: null
+[oer-s113] oer-s113-policy before notificationSettings: {"isAssignmentNotificationDisabled":false}
+[oer-s113] oer-s113-policy before description: "Omnicit.EntraRBAC live verification (oer-s113-): only the members of oer-s113-grp-old (none) may request."
+[oer-s113] oer-s113-policy before displayName: "oer-s113-policy"
+[oer-s113] oer-s113-policy update: output objects 1; errors 0
+[oer-s113] oer-s113-policy update: the PUT body the module sent has the keys: accessPackage, allowedTargetScope, description, displayName, expiration, id, notificationSettings, questions, requestApprovalSettings, requestorSettings, specificAllowedTargets
+[oer-s113] oer-s113-policy after allowedTargetScope: "specificDirectoryUsers" (unchanged)
+[oer-s113] oer-s113-policy after specificAllowedTargets: [{"@odata.type":"#microsoft.graph.groupMembers","description":"oer-s113-grp-old","groupId":"00000000-0000-0000-0000-000000000003"}] (unchanged)
+[oer-s113] oer-s113-policy after automaticRequestSettings: null (unchanged)
+[oer-s113] oer-s113-policy after customExtensionStageSettings: [] (CHANGED)
+[oer-s113] oer-s113-policy after questions: [{"@odata.type":"#microsoft.graph.accessPackageTextInputQuestion","id":"00000000-0000-0000-0000-000000000007","isAnswerEditable":true,"isRequired":false,"isSingleLineQuestion":true,"localizations":[],"regexPattern":null,"sequence":1,"text":"oer-s113: an optional question that an update must keep"}] (unchanged)
+[oer-s113] oer-s113-policy after requestorSettings: {"allowCustomAssignmentSchedule":false,"enableOnBehalfRequestorsToAddAccess":false,"enableOnBehalfRequestorsToRemoveAccess":false,"enableOnBehalfRequestorsToUpdateAccess":false,"enableTargetsToSelfAddAccess":true,"enableTargetsToSelfRemoveAccess":true,"enableTargetsToSelfUpdateAccess":false,"onBehalfRequestors":[]} (unchanged)
+[oer-s113] oer-s113-policy after requestApprovalSettings: {"isApprovalRequiredForAdd":false,"isApprovalRequiredForUpdate":false,"isRequestorJustificationRequired":false,"stages":[]} (unchanged)
+[oer-s113] oer-s113-policy after expiration: {"duration":null,"endDateTime":null,"type":"noExpiration"} (unchanged)
+[oer-s113] oer-s113-policy after reviewSettings: null (unchanged)
+[oer-s113] oer-s113-policy after notificationSettings: {"isAssignmentNotificationDisabled":false} (unchanged)
+[oer-s113] oer-s113-policy after description: "Updated by the step 3 measurement at 2026-10-13T22:12:16Z" (CHANGED)
+[oer-s113] oer-s113-policy after displayName: "oer-s113-policy" (unchanged)
+[oer-s113] oer-s113-autopolicy before, read without a query: customExtensionStageSettings []
+[oer-s113] oer-s113-autopolicy before, read with the module's own query ($expand=accessPackage): customExtensionStageSettings []
+[oer-s113] oer-s113-autopolicy before allowedTargetScope: "specificDirectoryUsers"
+[oer-s113] oer-s113-autopolicy before specificAllowedTargets: [{"@odata.type":"#microsoft.graph.attributeRuleMembers","description":"oer-s113: no user","membershipRule":"(user.department -eq \"oer-s113-no-such-department\")"}]
+[oer-s113] oer-s113-autopolicy before automaticRequestSettings: {"gracePeriodBeforeAccessRemoval":"P7D","removeAccessWhenTargetLeavesAllowedTargets":true,"requestAccessForAllowedTargets":true}
+[oer-s113] oer-s113-autopolicy before customExtensionStageSettings: []
+[oer-s113] oer-s113-autopolicy before questions: []
+[oer-s113] oer-s113-autopolicy before requestorSettings: {"allowCustomAssignmentSchedule":true,"enableOnBehalfRequestorsToAddAccess":false,"enableOnBehalfRequestorsToRemoveAccess":false,"enableOnBehalfRequestorsToUpdateAccess":false,"enableTargetsToSelfAddAccess":false,"enableTargetsToSelfRemoveAccess":false,"enableTargetsToSelfUpdateAccess":false,"onBehalfRequestors":[]}
+[oer-s113] oer-s113-autopolicy before requestApprovalSettings: {"isApprovalRequiredForAdd":false,"isApprovalRequiredForUpdate":false,"isRequestorJustificationRequired":false,"stages":[]}
+[oer-s113] oer-s113-autopolicy before expiration: {"duration":null,"endDateTime":null,"type":"noExpiration"}
+[oer-s113] oer-s113-autopolicy before reviewSettings: null
+[oer-s113] oer-s113-autopolicy before notificationSettings: {"isAssignmentNotificationDisabled":false}
+[oer-s113] oer-s113-autopolicy before description: "Omnicit.EntraRBAC live verification (oer-s113-): an automatic assignment policy whose rule matches no user."
+[oer-s113] oer-s113-autopolicy before displayName: "oer-s113-autopolicy"
+[oer-s113] oer-s113-autopolicy update: output objects 0; errors 11 -- : 
+[oer-s113] oer-s113-autopolicy update: the PUT body the module sent has the keys: accessPackage, allowedTargetScope, description, displayName, expiration, id, notificationSettings, requestApprovalSettings, requestorSettings, specificAllowedTargets
+[oer-s113] oer-s113-autopolicy after allowedTargetScope: "specificDirectoryUsers" (unchanged)
+[oer-s113] oer-s113-autopolicy after specificAllowedTargets: [{"@odata.type":"#microsoft.graph.attributeRuleMembers","description":"oer-s113: no user","membershipRule":"(user.department -eq \"oer-s113-no-such-department\")"}] (unchanged)
+[oer-s113] oer-s113-autopolicy after automaticRequestSettings: {"gracePeriodBeforeAccessRemoval":"P7D","removeAccessWhenTargetLeavesAllowedTargets":true,"requestAccessForAllowedTargets":true} (unchanged)
+[oer-s113] oer-s113-autopolicy after customExtensionStageSettings: [] (unchanged)
+[oer-s113] oer-s113-autopolicy after questions: [] (unchanged)
+[oer-s113] oer-s113-autopolicy after requestorSettings: {"allowCustomAssignmentSchedule":true,"enableOnBehalfRequestorsToAddAccess":false,"enableOnBehalfRequestorsToRemoveAccess":false,"enableOnBehalfRequestorsToUpdateAccess":false,"enableTargetsToSelfAddAccess":false,"enableTargetsToSelfRemoveAccess":false,"enableTargetsToSelfUpdateAccess":false,"onBehalfRequestors":[]} (unchanged)
+[oer-s113] oer-s113-autopolicy after requestApprovalSettings: {"isApprovalRequiredForAdd":false,"isApprovalRequiredForUpdate":false,"isRequestorJustificationRequired":false,"stages":[]} (unchanged)
+[oer-s113] oer-s113-autopolicy after expiration: {"duration":null,"endDateTime":null,"type":"noExpiration"} (unchanged)
+[oer-s113] oer-s113-autopolicy after reviewSettings: null (unchanged)
+[oer-s113] oer-s113-autopolicy after notificationSettings: {"isAssignmentNotificationDisabled":false} (unchanged)
+[oer-s113] oer-s113-autopolicy after description: "Omnicit.EntraRBAC live verification (oer-s113-): an automatic assignment policy whose rule matches no user." (unchanged)
+[oer-s113] oer-s113-autopolicy after displayName: "oer-s113-autopolicy" (unchanged)
+[oer-s113] token requests: 0
+RUNNER: m2-put-before exit code 0; started 2026-10-13T22:12:11Z; took 18 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.3. Why the automatic policy's update was refused
 
-- [ ] **1.3** Microsoft Graph's answer to the automatic policy's update, as the module records it.
+- [x] **1.3** Microsoft Graph's answer to the automatic policy's update, as the module records it.
 
 ```powershell
 Connect-OerLive -Arm
@@ -561,11 +1167,91 @@ Disconnect-OerLive
 **Expect:** Microsoft Graph's error code and message.
 **Failure looks like:** no record.
 
-Result: (not run yet)
+Result: 2026-10-14 01:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: MEASURED, before the change. Microsoft Graph refused the automatic policy's update with 400 InvalidSpecificAllowedTargets: 'If the allowed target scope is set to specific targets, at least one valid target must be provided.' The module sent the policy's own attributeRuleMembers target; the body lacked automaticRequestSettings (1.4 shows that with them the same body is accepted). The -ErrorVariable holds the inner records too; the cmdlet's own record is the last one.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== M.2b the automatic policy update at d9a13cc ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] oer-s113-autopolicy update: output objects 0; records in -ErrorVariable: 9
+[oer-s113] record 1: (not an ErrorRecord: System.Management.Automation.CmdletInvocationException) -- System.Management.Automation.CmdletInvocationException: PUT https://graph.microsoft.com/v1.0/identityGovernance/entitlementManagement/assignmentPolicies/00000000-0000-0000-0000-000000000008
+HTTP/1.1 400 Bad Request
+Transfer-Encoding: chunked
+Vary: Accept-Encoding
+Strict-Transport-Security: max-age=31536000
+request-id: 00000000-0000-0000-0000-000000000009
+client-request-id: 00000000-0000-0000-0000-000000000010
+x-ms-ags-diagnostic: {"ServerInfo":{"DataCenter":"Sweden Central","Slice":"E","Ring":"3","ScaleUnit":"000","RoleInstance":"GVX0EPF0007417E"}}
+Date: Tue, 13 Oct 2026 22:12:53 GMT
+Content-Type: application/json
+
+{"error":{"code":"InvalidSpecificAllowedTargets","message":"If the allowed target scope is set to specific targets, at least one valid target must be provided.","details":[],"innerError":{"date":"2026-10-13T22:12:54","request-id":"00000000-0000-0000-0000-000000000009","client-request-id":"00000000-0000-0000-0000-000000000010"}}}
+ ---> Microsoft.Graph.PowerShell.Authentication.Helpers.HttpResponseException: Response status code does not indicate success: BadRequest (Bad Request).
+   at System.Management.Automation.MshCommandRuntime.ThrowTerminatingError(ErrorRecord errorRecord)
+   --- End of inner exception stack trace ---
+   at System.Management.Automation.ExceptionHandlingOps.CheckActionPreference(FunctionContext funcContext, Exception exception)
+   at System.Management.Automation.Interpreter.ActionCallInstruction`2.Run(InterpretedFrame frame)
+   at System.Management.Automation.Interpreter.EnterTryCatchFinallyInstruction.Run(InterpretedFrame frame)
+   at System.Management.Automation.Interpreter.EnterTryCatchFinallyInstruction.Run(InterpretedFrame frame)
+[oer-s113] record 2: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: BadRequest (Bad Request). -- details: PUT https://graph.microsoft.com/v1.0/identityGovernance/entitlementManagement/assignmentPolicies/00000000-0000-0000-0000-000000000008
+HTTP/1.1 400 Bad Request
+Transfer-Encoding: chunked
+Vary: Accept-Encoding
+Strict-Transport-Security: max-age=31536000
+request-id: 00000000-0000-0000-0000-000000000009
+client-request-id: 00000000-0000-0000-0000-000000000010
+x-ms-ags-diagnostic: {"ServerInfo":{"DataCenter":"Sweden Central","Slice":"E","Ring":"3","ScaleUnit":"000","RoleInstance":"GVX0EPF0007417E"}}
+Date: Tue, 13 Oct 2026 22:12:53 GMT
+Content-Type: application/json
+
+{"error":{"code":"InvalidSpecificAllowedTargets","message":"If the allowed target scope is set to specific targets, at least one valid target must be provided.","details":[],"innerError":{"date":"2026-10-13T22:12:54","request-id":"00000000-0000-0000-0000-000000000009","client-request-id":"00000000-0000-0000-0000-000000000010"}}}
+[oer-s113] record 3: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: BadRequest (Bad Request). -- details: PUT https://graph.microsoft.com/v1.0/identityGovernance/entitlementManagement/assignmentPolicies/00000000-0000-0000-0000-000000000008
+HTTP/1.1 400 Bad Request
+Transfer-Encoding: chunked
+Vary: Accept-Encoding
+Strict-Transport-Security: max-age=31536000
+request-id: 00000000-0000-0000-0000-000000000009
+client-request-id: 00000000-0000-0000-0000-000000000010
+x-ms-ags-diagnostic: {"ServerInfo":{"DataCenter":"Sweden Central","Slice":"E","Ring":"3","ScaleUnit":"000","RoleInstance":"GVX0EPF0007417E"}}
+Date: Tue, 13 Oct 2026 22:12:53 GMT
+Content-Type: application/json
+
+{"error":{"code":"InvalidSpecificAllowedTargets","message":"If the allowed target scope is set to specific targets, at least one valid target must be provided.","details":[],"innerError":{"date":"2026-10-13T22:12:54","request-id":"00000000-0000-0000-0000-000000000009","client-request-id":"00000000-0000-0000-0000-000000000010"}}}
+[oer-s113] record 4: InvalidSpecificAllowedTargets -- InvalidSpecificAllowedTargets: If the allowed target scope is set to specific targets, at least one valid target must be provided. -- details: InvalidSpecificAllowedTargets: If the allowed target scope is set to specific targets, at least one valid target must be provided.
+[oer-s113] record 5: InvalidSpecificAllowedTargets -- InvalidSpecificAllowedTargets: If the allowed target scope is set to specific targets, at least one valid target must be provided. -- details: InvalidSpecificAllowedTargets: If the allowed target scope is set to specific targets, at least one valid target must be provided.
+[oer-s113] record 6: InvalidSpecificAllowedTargets -- InvalidSpecificAllowedTargets: If the allowed target scope is set to specific targets, at least one valid target must be provided. -- details: InvalidSpecificAllowedTargets: If the allowed target scope is set to specific targets, at least one valid target must be provided.
+[oer-s113] record 7: (not an ErrorRecord: System.Management.Automation.RuntimeException) -- System.Management.Automation.RuntimeException: InvalidSpecificAllowedTargets: If the allowed target scope is set to specific targets, at least one valid target must be provided.
+ ---> System.Exception: InvalidSpecificAllowedTargets: If the allowed target scope is set to specific targets, at least one valid target must be provided.
+   --- End of inner exception stack trace ---
+   at System.Management.Automation.ExceptionHandlingOps.CheckActionPreference(FunctionContext funcContext, Exception exception)
+   at System.Management.Automation.Interpreter.ActionCallInstruction`2.Run(InterpretedFrame frame)
+   at System.Management.Automation.Interpreter.EnterTryCatchFinallyInstruction.Run(InterpretedFrame frame)
+   at System.Management.Automation.Interpreter.EnterTryCatchFinallyInstruction.Run(InterpretedFrame frame)
+[oer-s113] record 8: InvalidSpecificAllowedTargets -- InvalidSpecificAllowedTargets: If the allowed target scope is set to specific targets, at least one valid target must be provided. -- details: InvalidSpecificAllowedTargets: If the allowed target scope is set to specific targets, at least one valid target must be provided.
+[oer-s113] record 9: InvalidSpecificAllowedTargets,Set-OERAccessPackageAssignmentPolicy -- InvalidSpecificAllowedTargets: If the allowed target scope is set to specific targets, at least one valid target must be provided. -- details: InvalidSpecificAllowedTargets: If the allowed target scope is set to specific targets, at least one valid target must be provided.
+[oer-s113] token requests: 0
+RUNNER: m2b-auto-error exit code 0; started 2026-10-13T22:12:49Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.4. The same body with the automatic settings carried, sent raw
 
-- [ ] **1.4** The combined `$expand` read is accepted, and the body the module builds plus `automaticRequestSettings` is accepted and keeps them.
+- [x] **1.4** The combined `$expand` read is accepted, and the body the module builds plus `automaticRequestSettings` is accepted and keeps them.
 
 ```powershell
 Connect-OerLive -Arm
@@ -599,11 +1285,42 @@ Disconnect-OerLive
 **Expect:** a measurement: the read's status, the PUT's status and each field read back.
 **Failure looks like:** a refusal of the read or the PUT.
 
-Result: (not run yet)
+Result: 2026-10-14 01:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: MEASURED. The combined read $expand=accessPackage,customExtensionStageSettings($expand=customExtension) answered 200 with the package id. The body ConvertTo-OERPolicyBody builds for a description-only update, plus the live automaticRequestSettings, sent raw, answered 200: automaticRequestSettings, specificAllowedTargets and allowedTargetScope unchanged, the description changed. This is the shape the branch now sends.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== M.3 carrying automaticRequestSettings, raw ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] Combined query on oer-s113-policy answered 200 ; accessPackage id present: True; stages: 0; every stage names its custom extension's id and type: True
+[oer-s113] M.3 body keys: accessPackage, allowedTargetScope, automaticRequestSettings, description, displayName, expiration, id, notificationSettings, requestApprovalSettings, requestorSettings, specificAllowedTargets
+[oer-s113] M.3 PUT of oer-s113-autopolicy with automaticRequestSettings carried answered 200 
+[oer-s113] M.3 oer-s113-autopolicy after automaticRequestSettings: {"gracePeriodBeforeAccessRemoval":"P7D","removeAccessWhenTargetLeavesAllowedTargets":true,"requestAccessForAllowedTargets":true} (unchanged)
+[oer-s113] M.3 oer-s113-autopolicy after specificAllowedTargets: [{"@odata.type":"#microsoft.graph.attributeRuleMembers","description":"oer-s113: no user","membershipRule":"(user.department -eq \"oer-s113-no-such-department\")"}] (unchanged)
+[oer-s113] M.3 oer-s113-autopolicy after allowedTargetScope: "specificDirectoryUsers" (unchanged)
+[oer-s113] M.3 oer-s113-autopolicy after description: "Updated by the step 3 measurement M.3 at 2026-10-13T22:14:29Z" (CHANGED)
+[oer-s113] token requests: 0
+RUNNER: m3-carry-probe exit code 0; started 2026-10-13T22:14:25Z; took 11 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.5. Which mailNickname values Microsoft Graph accepts
 
-- [ ] **1.5** One PATCH per character, 64 and 65 characters and the empty string on `oer-s113-grp-old`, then the alias is put back.
+- [x] **1.5** One PATCH per character, 64 and 65 characters and the empty string on `oer-s113-grp-old`, then the alias is put back.
 
 ```powershell
 Connect-OerLive -Arm
@@ -639,13 +1356,78 @@ Disconnect-OerLive
 oer-s113-grp-old: 204`.
 **Failure looks like:** the alias not put back.
 
-Result: (not run yet)
+Result: 2026-10-14 01:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: MEASURED (PATCH on a security group, app-only). Refused with 400 Request_BadRequest: each of @ ( ) \ [ ] " ; : < > , a space, a tab, 65 characters and the empty string. Accepted with 204: . - _ / ' ~ ! # $ % & * + = ? ^ ` { | }, the non-ASCII letter U+00E5 and 64 characters. The alias was put back to oer-s113-grp-old (204, read back).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== M.4 which mailNickname values Graph accepts ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] oer-s113-grp-old mailNickname before: oer-s113-grp-old
+[oer-s113] mailNickname with character '.' (U+002E) (length 12): 204
+[oer-s113] mailNickname with character '-' (U+002D) (length 12): 204
+[oer-s113] mailNickname with character '_' (U+005F) (length 12): 204
+[oer-s113] mailNickname with character '/' (U+002F) (length 12): 204
+[oer-s113] mailNickname with character ''' (U+0027) (length 12): 204
+[oer-s113] mailNickname with character '@' (U+0040) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character '(' (U+0028) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character ')' (U+0029) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character '\' (U+005C) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character '[' (U+005B) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character ']' (U+005D) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character '"' (U+0022) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character ';' (U+003B) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character ':' (U+003A) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character '<' (U+003C) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character '>' (U+003E) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character ',' (U+002C) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character ' ' (U+0020) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with character '~' (U+007E) (length 12): 204
+[oer-s113] mailNickname with character '!' (U+0021) (length 12): 204
+[oer-s113] mailNickname with character '#' (U+0023) (length 12): 204
+[oer-s113] mailNickname with character '$' (U+0024) (length 12): 204
+[oer-s113] mailNickname with character '%' (U+0025) (length 12): 204
+[oer-s113] mailNickname with character '&' (U+0026) (length 12): 204
+[oer-s113] mailNickname with character '*' (U+002A) (length 12): 204
+[oer-s113] mailNickname with character '+' (U+002B) (length 12): 204
+[oer-s113] mailNickname with character '=' (U+003D) (length 12): 204
+[oer-s113] mailNickname with character '?' (U+003F) (length 12): 204
+[oer-s113] mailNickname with character '^' (U+005E) (length 12): 204
+[oer-s113] mailNickname with character '`' (U+0060) (length 12): 204
+[oer-s113] mailNickname with character '{' (U+007B) (length 12): 204
+[oer-s113] mailNickname with character '|' (U+007C) (length 12): 204
+[oer-s113] mailNickname with character '}' (U+007D) (length 12): 204
+[oer-s113] mailNickname with character U+00E5 (a with ring, not ASCII) (length 12): 204
+[oer-s113] mailNickname with character U+0009 (tab, an ASCII control character) (length 12): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with length 64 (length 64): 204
+[oer-s113] mailNickname with length 65 (length 65): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] mailNickname with the empty string (length 0): 400 Request_BadRequest -- Invalid value specified for property 'mailNickname' of resource 'Group'.
+[oer-s113] Restored the mailNickname to oer-s113-grp-old: 204
+[oer-s113] oer-s113-grp-old mailNickname reads oer-s113-grp-old again: converged after 1 read(s), 0.1 s.
+[oer-s113] token requests: 0
+RUNNER: m4-mailnickname exit code 0; started 2026-10-13T22:16:11Z; took 9 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 2. A policy update keeps what Microsoft Graph would drop
 
 ### 2.1. A description-only update through the module keeps the stage and the automatic settings
 
-- [ ] **2.1** The request policy's update sends its custom extension stage and keeps it; the automatic policy's update is accepted and keeps `automaticRequestSettings`.
+- [x] **2.1** The request policy's update sends its custom extension stage and keeps it; the automatic policy's update is accepted and keeps `automaticRequestSettings`.
 
 ```powershell
 Connect-OerLive -Arm
@@ -696,11 +1478,91 @@ Disconnect-OerLive
 **Failure looks like:** `after customExtensionStageSettings: [] (CHANGED)` (the stage removed again), or
 an error `InvalidSpecificAllowedTargets` for the automatic policy (1.2 and 1.3, before the change).
 
-Result: (not run yet)
+Result: 2026-10-14 01:38 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. oer-s113-policy: output 1, errors 0; the PUT body now carries customExtensionStageSettings; afterwards the stage (oer-s113-ext, the same stage id) and the question are unchanged and only the description changed -- where 1.2 showed the stage removed. oer-s113-autopolicy: output 1, errors 0; the PUT body carries automaticRequestSettings; afterwards automaticRequestSettings, specificAllowedTargets and allowedTargetScope are unchanged and only the description changed -- where 1.3 showed the update refused.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] oer-s113-policy before, read without a query: customExtensionStageSettings [{"id":"00000000-0000-0000-0000-000000000011","stage":"assignmentRequestCreated"}]
+[oer-s113] oer-s113-policy before, read with the module's own query ($expand=accessPackage): customExtensionStageSettings [{"id":"00000000-0000-0000-0000-000000000011","stage":"assignmentRequestCreated"}]
+[oer-s113] oer-s113-policy before allowedTargetScope: "specificDirectoryUsers"
+[oer-s113] oer-s113-policy before specificAllowedTargets: [{"@odata.type":"#microsoft.graph.groupMembers","description":"oer-s113-grp-old","groupId":"00000000-0000-0000-0000-000000000003"}]
+[oer-s113] oer-s113-policy before automaticRequestSettings: null
+[oer-s113] oer-s113-policy before customExtensionStageSettings: [{"customExtension":{"@odata.type":"#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension","authenticationConfiguration":{"@odata.type":"#microsoft.graph.azureAdPopTokenAuthentication"},"callbackConfiguration":null,"clientConfiguration":null,"createdDateTime":"2026-10-13T22:11:39.893Z","description":"Omnicit.EntraRBAC live verification (oer-s113-): the custom extension an update must keep.","displayName":"oer-s113-ext","endpointConfiguration":{"@odata.type":"#microsoft.graph.logicAppTriggerEndpointConfiguration","logicAppWorkflowName":"oer-s113-la","resourceGroupName":"oer-s113-rg","subscriptionId":"00000000-0000-0000-0000-000000000005","url":"(url not printed)"},"id":"00000000-0000-0000-0000-000000000006","lastModifiedDateTime":"2026-10-13T22:11:39.893Z"},"id":"00000000-0000-0000-0000-000000000011","stage":"assignmentRequestCreated"}]
+[oer-s113] oer-s113-policy before questions: [{"@odata.type":"#microsoft.graph.accessPackageTextInputQuestion","id":"00000000-0000-0000-0000-000000000012","isAnswerEditable":true,"isRequired":false,"isSingleLineQuestion":true,"localizations":[],"regexPattern":null,"sequence":1,"text":"oer-s113: an optional question that an update must keep"}]
+[oer-s113] oer-s113-policy before requestorSettings: {"allowCustomAssignmentSchedule":false,"enableOnBehalfRequestorsToAddAccess":false,"enableOnBehalfRequestorsToRemoveAccess":false,"enableOnBehalfRequestorsToUpdateAccess":false,"enableTargetsToSelfAddAccess":true,"enableTargetsToSelfRemoveAccess":true,"enableTargetsToSelfUpdateAccess":false,"onBehalfRequestors":[]}
+[oer-s113] oer-s113-policy before requestApprovalSettings: {"isApprovalRequiredForAdd":false,"isApprovalRequiredForUpdate":false,"isRequestorJustificationRequired":false,"stages":[]}
+[oer-s113] oer-s113-policy before expiration: {"duration":null,"endDateTime":null,"type":"noExpiration"}
+[oer-s113] oer-s113-policy before reviewSettings: null
+[oer-s113] oer-s113-policy before notificationSettings: {"isAssignmentNotificationDisabled":false}
+[oer-s113] oer-s113-policy before description: "Omnicit.EntraRBAC live verification (oer-s113-): only the members of oer-s113-grp-old (none) may request."
+[oer-s113] oer-s113-policy before displayName: "oer-s113-policy"
+[oer-s113] oer-s113-policy update: output objects 1; errors 0
+[oer-s113] oer-s113-policy update: the PUT body the module sent has the keys: accessPackage, allowedTargetScope, customExtensionStageSettings, description, displayName, expiration, id, notificationSettings, questions, requestApprovalSettings, requestorSettings, specificAllowedTargets
+[oer-s113] oer-s113-policy after allowedTargetScope: "specificDirectoryUsers" (unchanged)
+[oer-s113] oer-s113-policy after specificAllowedTargets: [{"@odata.type":"#microsoft.graph.groupMembers","description":"oer-s113-grp-old","groupId":"00000000-0000-0000-0000-000000000003"}] (unchanged)
+[oer-s113] oer-s113-policy after automaticRequestSettings: null (unchanged)
+[oer-s113] oer-s113-policy after customExtensionStageSettings: [{"customExtension":{"@odata.type":"#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension","authenticationConfiguration":{"@odata.type":"#microsoft.graph.azureAdPopTokenAuthentication"},"callbackConfiguration":null,"clientConfiguration":null,"createdDateTime":"2026-10-13T22:11:39.893Z","description":"Omnicit.EntraRBAC live verification (oer-s113-): the custom extension an update must keep.","displayName":"oer-s113-ext","endpointConfiguration":{"@odata.type":"#microsoft.graph.logicAppTriggerEndpointConfiguration","logicAppWorkflowName":"oer-s113-la","resourceGroupName":"oer-s113-rg","subscriptionId":"00000000-0000-0000-0000-000000000005","url":"(url not printed)"},"id":"00000000-0000-0000-0000-000000000006","lastModifiedDateTime":"2026-10-13T22:11:39.893Z"},"id":"00000000-0000-0000-0000-000000000011","stage":"assignmentRequestCreated"}] (unchanged)
+[oer-s113] oer-s113-policy after questions: [{"@odata.type":"#microsoft.graph.accessPackageTextInputQuestion","id":"00000000-0000-0000-0000-000000000012","isAnswerEditable":true,"isRequired":false,"isSingleLineQuestion":true,"localizations":[],"regexPattern":null,"sequence":1,"text":"oer-s113: an optional question that an update must keep"}] (unchanged)
+[oer-s113] oer-s113-policy after requestorSettings: {"allowCustomAssignmentSchedule":false,"enableOnBehalfRequestorsToAddAccess":false,"enableOnBehalfRequestorsToRemoveAccess":false,"enableOnBehalfRequestorsToUpdateAccess":false,"enableTargetsToSelfAddAccess":true,"enableTargetsToSelfRemoveAccess":true,"enableTargetsToSelfUpdateAccess":false,"onBehalfRequestors":[]} (unchanged)
+[oer-s113] oer-s113-policy after requestApprovalSettings: {"isApprovalRequiredForAdd":false,"isApprovalRequiredForUpdate":false,"isRequestorJustificationRequired":false,"stages":[]} (unchanged)
+[oer-s113] oer-s113-policy after expiration: {"duration":null,"endDateTime":null,"type":"noExpiration"} (unchanged)
+[oer-s113] oer-s113-policy after reviewSettings: null (unchanged)
+[oer-s113] oer-s113-policy after notificationSettings: {"isAssignmentNotificationDisabled":false} (unchanged)
+[oer-s113] oer-s113-policy after description: "Updated by the step 3 measurement at 2026-10-14T01:38:03Z" (CHANGED)
+[oer-s113] oer-s113-policy after displayName: "oer-s113-policy" (unchanged)
+[oer-s113] oer-s113-autopolicy before, read without a query: customExtensionStageSettings []
+[oer-s113] oer-s113-autopolicy before, read with the module's own query ($expand=accessPackage): customExtensionStageSettings []
+[oer-s113] oer-s113-autopolicy before allowedTargetScope: "specificDirectoryUsers"
+[oer-s113] oer-s113-autopolicy before specificAllowedTargets: [{"@odata.type":"#microsoft.graph.attributeRuleMembers","description":"oer-s113: no user","membershipRule":"(user.department -eq \"oer-s113-no-such-department\")"}]
+[oer-s113] oer-s113-autopolicy before automaticRequestSettings: {"gracePeriodBeforeAccessRemoval":"P7D","removeAccessWhenTargetLeavesAllowedTargets":true,"requestAccessForAllowedTargets":true}
+[oer-s113] oer-s113-autopolicy before customExtensionStageSettings: []
+[oer-s113] oer-s113-autopolicy before questions: []
+[oer-s113] oer-s113-autopolicy before requestorSettings: {"allowCustomAssignmentSchedule":true,"enableOnBehalfRequestorsToAddAccess":false,"enableOnBehalfRequestorsToRemoveAccess":false,"enableOnBehalfRequestorsToUpdateAccess":false,"enableTargetsToSelfAddAccess":false,"enableTargetsToSelfRemoveAccess":false,"enableTargetsToSelfUpdateAccess":false,"onBehalfRequestors":[]}
+[oer-s113] oer-s113-autopolicy before requestApprovalSettings: {"isApprovalRequiredForAdd":false,"isApprovalRequiredForUpdate":false,"isRequestorJustificationRequired":false,"stages":[]}
+[oer-s113] oer-s113-autopolicy before expiration: {"duration":null,"endDateTime":null,"type":"noExpiration"}
+[oer-s113] oer-s113-autopolicy before reviewSettings: null
+[oer-s113] oer-s113-autopolicy before notificationSettings: {"isAssignmentNotificationDisabled":false}
+[oer-s113] oer-s113-autopolicy before description: "Updated by the step 3 measurement M.3 at 2026-10-13T22:14:29Z"
+[oer-s113] oer-s113-autopolicy before displayName: "oer-s113-autopolicy"
+[oer-s113] oer-s113-autopolicy update: output objects 1; errors 0
+[oer-s113] oer-s113-autopolicy update: the PUT body the module sent has the keys: accessPackage, allowedTargetScope, automaticRequestSettings, description, displayName, expiration, id, notificationSettings, requestApprovalSettings, requestorSettings, specificAllowedTargets
+[oer-s113] oer-s113-autopolicy after allowedTargetScope: "specificDirectoryUsers" (unchanged)
+[oer-s113] oer-s113-autopolicy after specificAllowedTargets: [{"@odata.type":"#microsoft.graph.attributeRuleMembers","description":"oer-s113: no user","membershipRule":"(user.department -eq \"oer-s113-no-such-department\")"}] (unchanged)
+[oer-s113] oer-s113-autopolicy after automaticRequestSettings: {"gracePeriodBeforeAccessRemoval":"P7D","removeAccessWhenTargetLeavesAllowedTargets":true,"requestAccessForAllowedTargets":true} (unchanged)
+[oer-s113] oer-s113-autopolicy after customExtensionStageSettings: [] (unchanged)
+[oer-s113] oer-s113-autopolicy after questions: [] (unchanged)
+[oer-s113] oer-s113-autopolicy after requestorSettings: {"allowCustomAssignmentSchedule":true,"enableOnBehalfRequestorsToAddAccess":false,"enableOnBehalfRequestorsToRemoveAccess":false,"enableOnBehalfRequestorsToUpdateAccess":false,"enableTargetsToSelfAddAccess":false,"enableTargetsToSelfRemoveAccess":false,"enableTargetsToSelfUpdateAccess":false,"onBehalfRequestors":[]} (unchanged)
+[oer-s113] oer-s113-autopolicy after requestApprovalSettings: {"isApprovalRequiredForAdd":false,"isApprovalRequiredForUpdate":false,"isRequestorJustificationRequired":false,"stages":[]} (unchanged)
+[oer-s113] oer-s113-autopolicy after expiration: {"duration":null,"endDateTime":null,"type":"noExpiration"} (unchanged)
+[oer-s113] oer-s113-autopolicy after reviewSettings: null (unchanged)
+[oer-s113] oer-s113-autopolicy after notificationSettings: {"isAssignmentNotificationDisabled":false} (unchanged)
+[oer-s113] oer-s113-autopolicy after description: "Updated by the step 3 measurement at 2026-10-14T01:38:03Z" (CHANGED)
+[oer-s113] oer-s113-autopolicy after displayName: "oer-s113-autopolicy" (unchanged)
+[oer-s113] token requests: 0
+RUNNER: check-2.1 exit code 0; started 2026-10-14T01:37:59Z; took 17 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.2. The same through the document, three times (G8)
 
-- [ ] **2.2** A document changing both policies' descriptions updates them once and keeps the stage and the automatic settings; the second and third runs report only `Unchanged` and write nothing.
+- [x] **2.2** A document changing both policies' descriptions updates them once and keeps the stage and the automatic settings; the second and third runs report only `Unchanged` and write nothing.
 
 ```powershell
 Connect-OerLive -Arm
@@ -736,13 +1598,64 @@ descriptions `(CHANGED)` to the document's text.
 **Failure looks like:** a write in run 2 or 3 (the document does not converge), or the stage or the
 automatic settings `(CHANGED)`.
 
-Result: (not run yet)
+Result: 2026-10-14 01:39 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 1: the package Unchanged and both policies Updated (description), 2 writes (two PUT; the counter prints the method only for a relative Graph path); runs 2 and 3: only Unchanged rows, 0 writes (G8). Afterwards the custom extension stage, the question, the automatic settings and the attribute rule target are unchanged; only the two descriptions changed, to the document's text.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.2 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] 2.2 run 1 rows: 3
+[oer-s113] 2.2 run 1 row: accessPackages | oer-s113-ap | Unchanged | access package properties match
+[oer-s113] 2.2 run 1 row: accessPackages | oer-s113-ap | Updated | updated assignmentPolicy 'oer-s113-policy' (description)
+[oer-s113] 2.2 run 1 row: accessPackages | oer-s113-ap | Updated | updated assignmentPolicy 'oer-s113-autopolicy' (description)
+[oer-s113] 2.2 run 1 warnings: 0
+[oer-s113] 2.2 run 1 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 2.2 run 1 sent: token requests: 0; Microsoft Graph requests: 10, writes: 2 (PUT , PUT ); Azure Resource Manager requests: 0, writes: 0
+[oer-s113] 2.2 run 2 rows: 3
+[oer-s113] 2.2 run 2 row: accessPackages | oer-s113-ap | Unchanged | access package properties match
+[oer-s113] 2.2 run 2 row: accessPackages | oer-s113-ap | Unchanged | assignmentPolicy 'oer-s113-policy' matches
+[oer-s113] 2.2 run 2 row: accessPackages | oer-s113-ap | Unchanged | assignmentPolicy 'oer-s113-autopolicy' matches
+[oer-s113] 2.2 run 2 warnings: 0
+[oer-s113] 2.2 run 2 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 2.2 run 2 sent: token requests: 0; Microsoft Graph requests: 6, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s113] 2.2 run 3 rows: 3
+[oer-s113] 2.2 run 3 row: accessPackages | oer-s113-ap | Unchanged | access package properties match
+[oer-s113] 2.2 run 3 row: accessPackages | oer-s113-ap | Unchanged | assignmentPolicy 'oer-s113-policy' matches
+[oer-s113] 2.2 run 3 row: accessPackages | oer-s113-ap | Unchanged | assignmentPolicy 'oer-s113-autopolicy' matches
+[oer-s113] 2.2 run 3 warnings: 0
+[oer-s113] 2.2 run 3 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 2.2 run 3 sent: token requests: 0; Microsoft Graph requests: 6, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s113] 2.2 policy customExtensionStageSettings after the three runs: [{"customExtension":{"@odata.type":"#microsoft.graph.accessPackageAssignmentRequestWorkflowExtension","authenticationConfiguration":{"@odata.type":"#microsoft.graph.azureAdPopTokenAuthentication"},"callbackConfiguration":null,"clientConfiguration":null,"createdDateTime":"2026-10-13T22:11:39.893Z","description":"Omnicit.EntraRBAC live verification (oer-s113-): the custom extension an update must keep.","displayName":"oer-s113-ext","endpointConfiguration":{"@odata.type":"#microsoft.graph.logicAppTriggerEndpointConfiguration","logicAppWorkflowName":"oer-s113-la","resourceGroupName":"oer-s113-rg","subscriptionId":"00000000-0000-0000-0000-000000000005","url":"(url not printed)"},"id":"00000000-0000-0000-0000-000000000006","lastModifiedDateTime":"2026-10-13T22:11:39.893Z"},"id":"00000000-0000-0000-0000-000000000011","stage":"assignmentRequestCreated"}] (unchanged)
+[oer-s113] 2.2 policy questions after the three runs: [{"@odata.type":"#microsoft.graph.accessPackageTextInputQuestion","id":"00000000-0000-0000-0000-000000000012","isAnswerEditable":true,"isRequired":false,"isSingleLineQuestion":true,"localizations":[],"regexPattern":null,"sequence":1,"text":"oer-s113: an optional question that an update must keep"}] (unchanged)
+[oer-s113] 2.2 auto automaticRequestSettings after the three runs: {"gracePeriodBeforeAccessRemoval":"P7D","removeAccessWhenTargetLeavesAllowedTargets":true,"requestAccessForAllowedTargets":true} (unchanged)
+[oer-s113] 2.2 auto specificAllowedTargets after the three runs: [{"@odata.type":"#microsoft.graph.attributeRuleMembers","description":"oer-s113: no user","membershipRule":"(user.department -eq \"oer-s113-no-such-department\")"}] (unchanged)
+[oer-s113] 2.2 policy description after the three runs: "Updated through the document by check 2.2" (CHANGED)
+[oer-s113] 2.2 auto description after the three runs: "Updated through the document by check 2.2" (CHANGED)
+[oer-s113] token requests: 0
+RUNNER: check-2.2 exit code 0; started 2026-10-14T01:38:26Z; took 55 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 3. An access package in a catalog the same document creates
 
 ### 3.1. The validator accepts the document
 
-- [ ] **3.1** `Test-OERStructure` reports the document valid.
+- [x] **3.1** `Test-OERStructure` reports the document valid.
 
 ```powershell
 Connect-OerLive -Arm
@@ -766,11 +1679,37 @@ Disconnect-OerLive
 **Expect:** `3.1 valid: True; errors: 0`.
 **Failure looks like:** an `Error` finding.
 
-Result: (not run yet)
+Result: 2026-10-14 01:39 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. valid: True, errors: 0. The two Warnings are the existing rule on omitted collection keys (catalogs[0].resources and accessPackages[0].resourceRoles are reconciled under -Prune when omitted); this file never runs the document with -Prune.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.1 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] 3.1 valid: True; errors: 0; warnings: 2
+[oer-s113] 3.1 finding: Warning | catalogs[0].resources | 'resources' is omitted at catalogs[0]. An omitted resources key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+[oer-s113] 3.1 finding: Warning | accessPackages[0].resourceRoles | 'resourceRoles' is omitted at accessPackages[0]. An omitted resourceRoles key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+RUNNER: check-3.1 exit code 0; started 2026-10-14T01:39:32Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.2. The plan says "would create" for the catalog, the package and the policy
 
-- [ ] **3.2** `Invoke-OERStructure -WhatIf` plans the catalog, the package and its policy as created, with no `Failed` row and no write.
+- [x] **3.2** `Invoke-OERStructure -WhatIf` plans the catalog, the package and its policy as created, with no `Failed` row and no write.
 
 ```powershell
 Connect-OerLive -Arm
@@ -787,11 +1726,43 @@ access package is created`; no `Failed` row; `errors of Invoke-OERStructure: 0`;
 **Failure looks like:** `Failed | failed to look up access packages in catalog 'oer-s113-newcat': ...
 the access package was NOT created` (the plan before this branch).
 
-Result: (not run yet)
+Result: 2026-10-14 01:39 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The plan reports 'would create catalog oer-s113-newcat', 'would create access package oer-s113-newap' and 'would create assignmentPolicy 'oer-s113-newpol' after access package is created'; no Failed row, no error; one Microsoft Graph read (the catalog lookup) and 0 writes. Before this branch the package row was Failed, NOT created.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.2 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Create catalog" on target "oer-s113-newcat".
+What if: Performing the operation "Create access package" on target "oer-s113-newap".
+[oer-s113] 3.2 plan rows: 3
+[oer-s113] 3.2 plan row: catalogs | oer-s113-newcat | Skipped | would create catalog oer-s113-newcat
+[oer-s113] 3.2 plan row: accessPackages | oer-s113-newap | Skipped | would create access package oer-s113-newap
+[oer-s113] 3.2 plan row: accessPackages | oer-s113-newap | Skipped | would create assignmentPolicy 'oer-s113-newpol' after access package is created
+[oer-s113] 3.2 plan warnings: 0
+[oer-s113] 3.2 plan errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 3.2 plan sent: token requests: 0; Microsoft Graph requests: 1, writes: 0; Azure Resource Manager requests: 0, writes: 0
+RUNNER: check-3.2 exit code 0; started 2026-10-14T01:39:36Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.3. The run creates them
 
-- [ ] **3.3** The same document, applied, creates the catalog, the package and the policy.
+- [x] **3.3** The same document, applied, creates the catalog, the package and the policy.
 
 ```powershell
 Connect-OerLive -Arm
@@ -807,11 +1778,41 @@ package and the policy POST).
 **Failure looks like:** a `Failed` row -- a catalog lookup right after its creation can lag (record the
 answer; a rerun of 3.3 is then the convergence check).
 
-Result: (not run yet)
+Result: 2026-10-14 01:40 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The run created oer-s113-newcat, oer-s113-newap and the policy oer-s113-newpol (three Created rows, no Failed row, no error), with 3 writes (three POST). The real run is the same as before this branch.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.3 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] 3.3 run rows: 3
+[oer-s113] 3.3 run row: catalogs | oer-s113-newcat | Created | created catalog oer-s113-newcat (00000000-0000-0000-0000-000000000013)
+[oer-s113] 3.3 run row: accessPackages | oer-s113-newap | Created | created access package oer-s113-newap (00000000-0000-0000-0000-000000000014)
+[oer-s113] 3.3 run row: accessPackages | oer-s113-newap | Created | created assignmentPolicy 'oer-s113-newpol'
+[oer-s113] 3.3 run warnings: 0
+[oer-s113] 3.3 run errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 3.3 run sent: token requests: 0; Microsoft Graph requests: 12, writes: 3 (POST , POST , POST ); Azure Resource Manager requests: 0, writes: 0
+RUNNER: check-3.3 exit code 0; started 2026-10-14T01:39:52Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.4. The same document twice more: only Unchanged (G8)
 
-- [ ] **3.4** Two more runs report only `Unchanged` and write nothing.
+- [x] **3.4** Two more runs report only `Unchanged` and write nothing.
 
 ```powershell
 Connect-OerLive -Arm
@@ -827,13 +1828,50 @@ Disconnect-OerLive
 **Expect:** both runs: only `Unchanged` rows (the catalog, the package and the policy), `writes: 0`.
 **Failure looks like:** a write in either run.
 
-Result: (not run yet)
+Result: 2026-10-14 01:41 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Runs 2 and 3, 30 and 15 seconds apart: only Unchanged rows (the catalog, the package and the policy), 0 writes each (G8).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.4 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] 3.4 run 2 rows: 3
+[oer-s113] 3.4 run 2 row: catalogs | oer-s113-newcat | Unchanged | catalog properties match
+[oer-s113] 3.4 run 2 row: accessPackages | oer-s113-newap | Unchanged | access package properties match
+[oer-s113] 3.4 run 2 row: accessPackages | oer-s113-newap | Unchanged | assignmentPolicy 'oer-s113-newpol' matches
+[oer-s113] 3.4 run 2 warnings: 0
+[oer-s113] 3.4 run 2 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 3.4 run 2 sent: token requests: 0; Microsoft Graph requests: 10, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s113] 3.4 run 3 rows: 3
+[oer-s113] 3.4 run 3 row: catalogs | oer-s113-newcat | Unchanged | catalog properties match
+[oer-s113] 3.4 run 3 row: accessPackages | oer-s113-newap | Unchanged | access package properties match
+[oer-s113] 3.4 run 3 row: accessPackages | oer-s113-newap | Unchanged | assignmentPolicy 'oer-s113-newpol' matches
+[oer-s113] 3.4 run 3 warnings: 0
+[oer-s113] 3.4 run 3 errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 3.4 run 3 sent: token requests: 0; Microsoft Graph requests: 10, writes: 0; Azure Resource Manager requests: 0, writes: 0
+RUNNER: check-3.4 exit code 0; started 2026-10-14T01:40:08Z; took 52 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 4. previousDisplayName on an administrative unit is refused
 
 ### 4.1. The validator refuses it
 
-- [ ] **4.1** `Test-OERStructure` reports `previousDisplayName` on an administrative unit as an `Error`.
+- [x] **4.1** `Test-OERStructure` reports `previousDisplayName` on an administrative unit as an `Error`.
 
 ```powershell
 Connect-OerLive -Arm
@@ -849,11 +1887,38 @@ Disconnect-OerLive
 saying that only groups can be renamed and that the engine would create a new administrative unit.
 **Failure looks like:** `valid: True` (the key was ignored before this branch).
 
-Result: (not run yet)
+Result: 2026-10-14 01:41 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. valid: False with one Error at administrativeUnits[0].previousDisplayName: not supported for an administrative unit yet, only groups can be renamed, and the engine would create a new administrative unit beside the existing one. The two Warnings are the existing rule on omitted collection keys.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 4.1 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] 4.1 valid: False; errors: 1; warnings: 2
+[oer-s113] 4.1 finding: Error | administrativeUnits[0].previousDisplayName | 'previousDisplayName' at administrativeUnits[0] is not supported for an administrative unit yet: only groups can be renamed through the document. Invoke-OERStructure does not read previousDisplayName for an administrative unit, so it would create a new administrative unit named by displayName beside the existing one instead of renaming it. Remove previousDisplayName, and rename the existing object outside the document first.
+[oer-s113] 4.1 finding: Warning | administrativeUnits[0].members | 'members' is omitted at administrativeUnits[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+[oer-s113] 4.1 finding: Warning | administrativeUnits[0].scopedRoles | 'scopedRoles' is omitted at administrativeUnits[0]. An omitted scopedRoles key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+RUNNER: check-4.1 exit code 0; started 2026-10-14T01:41:08Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 4.2. Invoke-OERStructure writes nothing, planned or applied
 
-- [ ] **4.2** `Invoke-OERStructure`, with `-WhatIf` and without, refuses the document before it signs in, and no administrative unit with the prefix exists afterwards.
+- [x] **4.2** `Invoke-OERStructure`, with `-WhatIf` and without, refuses the document before it signs in, and no administrative unit with the prefix exists afterwards.
 
 ```powershell
 Connect-OerLive -Arm
@@ -870,13 +1935,51 @@ finding, `token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resou
 0, writes: 0`; the sweep lists no administrative unit with the prefix.
 **Failure looks like:** a request, or a `Created` row for `oer-s113-au-new`.
 
-Result: (not run yet)
+Result: 2026-10-14 01:41 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The plan and the run each wrote one StructureValidationFailed error naming the finding and no row, with 0 token requests, 0 Microsoft Graph and 0 Azure Resource Manager requests: refused before the sign-in. The sweep lists no administrative unit with the prefix (only the group, the two catalogs and the two packages this file created).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 4.2 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] 4.2 plan rows: 0
+[oer-s113] 4.2 plan warnings: 0
+[oer-s113] 4.2 plan error: StructureValidationFailed,Invoke-OERStructure: Structure document failed validation: administrativeUnits[0].previousDisplayName: 'previousDisplayName' at administrativeUnits[0] is not supported for an administrative unit yet: only groups can be renamed through the document. Invoke-OERStructure does not read previousDisplayName for an administrative unit, so it would create a new administrative unit named by displayName beside the existing one instead of renaming it. Remove previousDisplayName, and rename the existing object outside the document first.
+[oer-s113] 4.2 plan errors of Invoke-OERStructure: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 4.2 plan sent: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s113] 4.2 run rows: 0
+[oer-s113] 4.2 run warnings: 0
+[oer-s113] 4.2 run error: StructureValidationFailed,Invoke-OERStructure: Structure document failed validation: administrativeUnits[0].previousDisplayName: 'previousDisplayName' at administrativeUnits[0] is not supported for an administrative unit yet: only groups can be renamed through the document. Invoke-OERStructure does not read previousDisplayName for an administrative unit, so it would create a new administrative unit named by displayName beside the existing one instead of renaming it. Remove previousDisplayName, and rename the existing object outside the document first.
+[oer-s113] 4.2 run errors of Invoke-OERStructure: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 4.2 run sent: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s113] Sweep: group 'oer-s113-grp-old' (00000000-0000-0000-0000-000000000003) carries the prefix.
+[oer-s113] Sweep: catalog 'oer-s113-newcat' (00000000-0000-0000-0000-000000000013) carries the prefix.
+[oer-s113] Sweep: catalog 'oer-s113-catalog' (00000000-0000-0000-0000-000000000015) carries the prefix.
+[oer-s113] Sweep: access package 'oer-s113-newap' (00000000-0000-0000-0000-000000000014) carries the prefix.
+[oer-s113] Sweep: access package 'oer-s113-ap' (00000000-0000-0000-0000-000000000016) carries the prefix.
+RUNNER: check-4.2 exit code 0; started 2026-10-14T01:41:12Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 5. A renamed group and its mail alias
 
 ### 5.1. The validator: a renamed group's alias
 
-- [ ] **5.1** A rename with no `mailNickname`, or with the alias derived from the old name, is a `Warning`; a new alias is not; an alias Microsoft Graph refuses is an `Error`.
+- [x] **5.1** A rename with no `mailNickname`, or with the alias derived from the old name, is a `Warning`; a new alias is not; an alias Microsoft Graph refuses is an `Error`.
 
 ```powershell
 Connect-OerLive -Arm
@@ -896,17 +1999,53 @@ foreach ($Key in $Cases.Keys) {
 Disconnect-OerLive
 ```
 
-**Expect:** a: `valid: True; errors: 0; warnings: 1`, the Warning at `groups[0].mailNickname` saying the
-group declares no mailNickname and that the alias does not follow a rename; b: the same with the
-Warning that `'oer-s113-grp-old'` is the alias derived from the old name; c: `warnings: 0`; d:
-`valid: False`, an `Error` at `groups[0].mailNickname` naming the space and the parentheses.
+**Expect:** a: `valid: True; errors: 0`, the Warning at `groups[0].mailNickname` saying the group declares
+no mailNickname and that the alias does not follow a rename; b: the same with the Warning that
+`'oer-s113-grp-old'` is the alias derived from the old name; c: no Warning at `groups[0].mailNickname`;
+d: `valid: False`, an `Error` at `groups[0].mailNickname` naming the space and the parentheses. Each
+document also carries the existing Warning for its omitted `members` key (corrected after the run:
+the first version of this line counted only the alias Warning).
 **Failure looks like:** no Warning for a or b, or `valid: True` for d.
 
-Result: (not run yet)
+Result: 2026-10-14 01:42 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. a: valid, the Warning at groups[0].mailNickname that the renamed group declares no mailNickname and keeps its alias; b: valid, the Warning that 'oer-s113-grp-old' is the alias derived from the old name; c: valid, no alias Warning; d: invalid, one Error naming U+0020, '(' and ')' with the measured set. Each document also carries the existing Warning for its omitted members key, which the first version of the Expect did not count (corrected).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 5.1 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] 5.1 a no mailNickname valid: True; errors: 0; warnings: 2
+[oer-s113] 5.1 a no mailNickname finding: Warning | groups[0].mailNickname | Group at groups[0] is renamed from 'oer-s113-grp-old' and declares no mailNickname, so it keeps its current mail alias: the alias does not follow a rename. If that alias was derived from the old name, declare mailNickname with the alias the new name should carry.
+[oer-s113] 5.1 a no mailNickname finding: Warning | groups[0].members | 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+[oer-s113] 5.1 b the old derived alias valid: True; errors: 0; warnings: 2
+[oer-s113] 5.1 b the old derived alias finding: Warning | groups[0].mailNickname | Group at groups[0] is renamed from 'oer-s113-grp-old' but its mailNickname 'oer-s113-grp-old' is the alias derived from the old name: the alias does not follow a rename. Declare the alias the new name should carry, or keep this one on purpose.
+[oer-s113] 5.1 b the old derived alias finding: Warning | groups[0].members | 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+[oer-s113] 5.1 c a new alias valid: True; errors: 0; warnings: 1
+[oer-s113] 5.1 c a new alias finding: Warning | groups[0].members | 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+[oer-s113] 5.1 d an alias Graph refuses valid: False; errors: 1; warnings: 1
+[oer-s113] 5.1 d an alias Graph refuses finding: Error | groups[0].mailNickname | 'mailNickname' at groups[0] contains U+0020, '(', ')', which the validator refuses in a mail alias (Microsoft Graph was measured to refuse @ ( ) \ [ ] " ; : < > , a space and a tab; other white space and control characters are refused too).
+[oer-s113] 5.1 d an alias Graph refuses finding: Warning | groups[0].members | 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+RUNNER: check-5.1 exit code 0; started 2026-10-14T01:41:29Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 5.2. The plan renames the group and writes nothing
 
-- [ ] **5.2** `Invoke-OERStructure -WhatIf` with document a plans the rename, writes nothing, and the group still carries its old name and alias.
+- [x] **5.2** `Invoke-OERStructure -WhatIf` with document a plans the rename, writes nothing, and the group still carries its old name and alias.
 
 ```powershell
 Connect-OerLive -Arm
@@ -919,18 +2058,50 @@ foreach ($Row in @($G.Body['value'])) { Write-OerLiveStep "5.2 after: group $([s
 Disconnect-OerLive
 ```
 
-**Expect:** a row `groups | oer-s113-grp-new | Skipped | would rename ...` (the planned rename), the
-validator's Warning about the alias among the warnings, `writes: 0`; afterwards exactly one group,
-`oer-s113-grp-old`, with mailNickname `oer-s113-grp-old`.
+**Expect:** a row `groups | oer-s113-grp-new | Skipped | would rename ...` (the planned rename), `writes:
+0`; afterwards exactly one group, `oer-s113-grp-old`, with mailNickname `oer-s113-grp-old`.
+`Invoke-OERStructure` stops on a validator `Error` but does not print the validator's Warnings, so the
+alias Warning is `Test-OERStructure`'s (5.1), not this plan's (corrected after the run: the first
+version of this line expected it among the plan's warnings).
 **Failure looks like:** a write, or the group renamed.
 
-Result: (not run yet)
+Result: 2026-10-14 01:42 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS on the corrected Expect. The plan has one row, 'would rename group 'oer-s113-grp-old' to 'oer-s113-grp-new'' (and its What if line), 5 Microsoft Graph reads, 0 writes; afterwards the one group is still oer-s113-grp-old with mailNickname oer-s113-grp-old. The plan prints no warning: Invoke-OERStructure stops on a validator Error but has never printed the validator's Warnings, so the alias Warning is Test-OERStructure's (5.1). The first version of the Expect expected it among the plan's warnings; that was the checklist's mistake, not the module's, and every text of the branch says the validator (Test-OERStructure) warns.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 5.2 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Rename group 'oer-s113-grp-old' to 'oer-s113-grp-new'" on target "oer-s113-grp-new".
+[oer-s113] 5.2 plan rows: 1
+[oer-s113] 5.2 plan row: groups | oer-s113-grp-new | Skipped | would rename group 'oer-s113-grp-old' to 'oer-s113-grp-new'
+[oer-s113] 5.2 plan warnings: 0
+[oer-s113] 5.2 plan errors of Invoke-OERStructure: 0; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 5.2 plan sent: token requests: 0; Microsoft Graph requests: 5, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s113] 5.2 after: group oer-s113-grp-old mailNickname oer-s113-grp-old
+RUNNER: check-5.2 exit code 0; started 2026-10-14T01:41:33Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 6. A scope with a dot segment is refused
 
 ### 6.1. The validator refuses the spelling and accepts the plain path
 
-- [ ] **6.1** A scope with a `..` or `.` segment, a `%` escape or white space is an `Error` in `roleAssignments` and in `roleManagementPolicies`; the same scope written plainly is valid.
+- [x] **6.1** A scope with a `..` or `.` segment, a `%` escape or white space is an `Error` in `roleAssignments` and in `roleManagementPolicies`; the same scope written plainly is valid.
 
 ```powershell
 Connect-OerLive -Arm
@@ -957,11 +2128,40 @@ space`) and at `roleManagementPolicies[0].scope` (a segment); plain: `valid: Tru
 **Failure looks like:** `valid: True` for the spelled document (before this branch only a trailing or
 doubled `/` was refused).
 
-Result: (not run yet)
+Result: 2026-10-14 01:42 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The spelled document is invalid with four Errors: a '..' segment at roleAssignments[0], a '%' escape at roleAssignments[1], white space at roleAssignments[2] (with the way out: such a resource cannot be declared; remove the entry) and a '.' segment at roleManagementPolicies[0]. The same resource group written plainly is valid with no finding.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 6.1 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] 6.1 spelled valid: False; errors: 4; warnings: 0
+[oer-s113] 6.1 spelled finding: Error | roleAssignments[0].scope | 'scope' at roleAssignments[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-x/../oer-s113-rg'.
+[oer-s113] 6.1 spelled finding: Error | roleAssignments[1].scope | 'scope' at roleAssignments[1] must be written without a '%' escape: the request would decode it and name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/%2e'.
+[oer-s113] 6.1 spelled finding: Error | roleAssignments[2].scope | 'scope' at roleAssignments[2] must be written without white space. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113 rg'. An Azure resource whose name holds white space cannot be declared in a document; remove the entry.
+[oer-s113] 6.1 spelled finding: Error | roleManagementPolicies[0].scope | 'scope' at roleManagementPolicies[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/./resourceGroups/oer-s113-rg'.
+[oer-s113] 6.1 plain valid: True; errors: 0; warnings: 0
+RUNNER: check-6.1 exit code 0; started 2026-10-14T01:42:31Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 6.2. Invoke-OERStructure writes nothing, with -Prune, planned or applied
 
-- [ ] **6.2** `Invoke-OERStructure -Prune`, with `-WhatIf` and without, refuses the document before it signs in and sends no request, and no role assignment exists at `oer-s113-rg` afterwards.
+- [x] **6.2** `Invoke-OERStructure -Prune`, with `-WhatIf` and without, refuses the document before it signs in and sends no request, and no role assignment exists at `oer-s113-rg` afterwards.
 
 ```powershell
 Connect-OerLive -Arm
@@ -981,13 +2181,47 @@ Disconnect-OerLive
 assignments exactly at oer-s113-rg afterwards: 0`.
 **Failure looks like:** any request, or a role assignment at the resource group.
 
-Result: (not run yet)
+Result: 2026-10-14 01:42 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With -Prune, the plan and the run each wrote one StructureValidationFailed error naming the four findings and no row, with 0 token, 0 Microsoft Graph and 0 Azure Resource Manager requests; afterwards no role assignment exists exactly at oer-s113-rg.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 6.2 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] 6.2 plan rows: 0
+[oer-s113] 6.2 plan warnings: 0
+[oer-s113] 6.2 plan error: StructureValidationFailed,Invoke-OERStructure: Structure document failed validation: roleAssignments[0].scope: 'scope' at roleAssignments[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-x/../oer-s113-rg'.; roleAssignments[1].scope: 'scope' at roleAssignments[1] must be written without a '%' escape: the request would decode it and name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/%2e'.; roleAssignments[2].scope: 'scope' at roleAssignments[2] must be written without white space. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113 rg'. An Azure resource whose name holds white space cannot be declared in a document; remove the entry.; roleManagementPolicies[0].scope: 'scope' at roleManagementPolicies[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/./resourceGroups/oer-s113-rg'.
+[oer-s113] 6.2 plan errors of Invoke-OERStructure: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 6.2 plan sent: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s113] 6.2 run rows: 0
+[oer-s113] 6.2 run warnings: 0
+[oer-s113] 6.2 run error: StructureValidationFailed,Invoke-OERStructure: Structure document failed validation: roleAssignments[0].scope: 'scope' at roleAssignments[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-x/../oer-s113-rg'.; roleAssignments[1].scope: 'scope' at roleAssignments[1] must be written without a '%' escape: the request would decode it and name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113-rg/%2e'.; roleAssignments[2].scope: 'scope' at roleAssignments[2] must be written without white space. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/resourceGroups/oer-s113 rg'. An Azure resource whose name holds white space cannot be declared in a document; remove the entry.; roleManagementPolicies[0].scope: 'scope' at roleManagementPolicies[0] must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '/subscriptions/00000000-0000-0000-0000-000000000005/./resourceGroups/oer-s113-rg'.
+[oer-s113] 6.2 run errors of Invoke-OERStructure: 1; other items in -ErrorVariable (counted, not printed): 0
+[oer-s113] 6.2 run sent: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s113] 6.2 role assignments exactly at oer-s113-rg afterwards: 0
+RUNNER: check-6.2 exit code 0; started 2026-10-14T01:42:36Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 7. New-OERGroup refuses an alias it cannot derive
 
 ### 7.1. A name whose derived alias is too long
 
-- [ ] **7.1** `New-OERGroup` with a 69-character prefixed name and no `-MailNickname` writes `DerivedMailNicknameInvalid` and creates nothing; only the existence lookup is sent.
+- [x] **7.1** `New-OERGroup` with a 69-character prefixed name and no `-MailNickname` writes `DerivedMailNicknameInvalid` and creates nothing; only the existence lookup is sent.
 
 ```powershell
 Connect-OerLive -Arm
@@ -1015,13 +2249,41 @@ GET); `groups named so afterwards: 0`.
 **Failure looks like:** a POST, or Microsoft Graph's own refusal (`Request_BadRequest`), which is what
 the module sent before this branch.
 
-Result: (not run yet)
+Result: 2026-10-14 01:43 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. New-OERGroup returned nothing and wrote one DerivedMailNicknameInvalid error: the alias derived from the 69-character name is 69 characters long, Microsoft Graph accepts 1 to 64, nothing was sent. One Microsoft Graph request, a GET (the existence lookup New-OERGroup makes first, since it returns an existing group of that name), no write; no group of that name exists afterwards. Before this branch the alias was sent and Microsoft Graph refused it (1.5: 65 characters, 400 Request_BadRequest).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 7.1 ===
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] 7.1 output objects: 0; errors of New-OERGroup: 1
+[oer-s113] 7.1 error: DerivedMailNicknameInvalid,New-OERGroup: The mail alias derived from the group name 'oer-s113-gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg' is 69 characters long; Microsoft Graph accepts 1 to 64 characters. Nothing was sent. Pass -MailNickname with the alias the group should carry.
+[oer-s113] 7.1 sent: token requests: 0; Microsoft Graph requests: 1, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s113] 7.1 Graph requests: GET 
+[oer-s113] 7.1 groups named so afterwards: 0
+RUNNER: check-7.1 exit code 0; started 2026-10-14T01:42:51Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## T. Teardown
 
 ### T.1. Remove every oer-s113- object
 
-- [ ] **T.1** The teardown deletes the policy holding the custom extension stage and the custom extension, then the policies, the packages, the catalogs and the group, then the resource group with the Logic App; the sweep finds nothing; the counts equal the baseline.
+- [x] **T.1** The teardown deletes the policy holding the custom extension stage and the custom extension, then the policies, the packages, the catalogs and the group, then the resource group with the Logic App; the sweep finds nothing; the counts equal the baseline.
 
 ```powershell
 & pwsh -NoProfile -NonInteractive -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS113Prereq.ps1') -Teardown -Unattended
@@ -1034,11 +2296,74 @@ other policies, the two packages, the two catalogs and the group with residue 0;
 oer-s113-rg and oer-s113-la.`; every `Counts:` line `equal: True`; exit code 0.
 **Failure looks like:** a `RESIDUE` line or exit code 3 -- record each residue row here.
 
-Result: (not run yet)
+Result: 2026-10-14 01:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Teardown A deleted oer-s113-policy (it held the custom extension stage) and the custom extension oer-s113-ext (204 each); the library removed the two other policies, the two packages, the two catalogs and the group (removed 7, residue 0, unreadable 0); Teardown C deleted oer-s113-rg and the Logic App oer-s113-la in it (read gone after 62 s). The sweep finds nothing with the prefix and every count equals the baseline; exit code 0.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s113] Transcript (redacted): raw\s113\teardown-20261014-014308Z.log; OerLive 1.0.3.
+[oer-s113] Mode: REMOVE. Prefix 'oer-s113-'. Objects (fixed): oer-s113-grp-old (security group, no member); oer-s113-catalog (catalog, no resource); oer-s113-ap (hidden access package, no resource role); oer-s113-rg (tagged) with oer-s113-la (Logic App, nothing calls it); oer-s113-ext (custom extension); oer-s113-policy (requestable by the members of oer-s113-grp-old only, one question, the custom extension stage); oer-s113-autopolicy (automatic, its rule matches no user). The checklist's own objects: oer-s113-newcat, oer-s113-newap and its policy. OerLive 1.0.3.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s113] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s113] Teardown A: deleted oer-s113-ap: assignment policy 'oer-s113-policy' (it holds a custom extension stage) (204).
+[oer-s113] Teardown A: deleted custom extension oer-s113-ext (204, 1 attempt(s)).
+[oer-s113] Teardown of 'oer-s113-': users 0, groups 1, access packages 2, catalogs 2; administrative units 0 and app registrations 0 are reported only.
+[oer-s113] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s113] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s113] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s113] Deleted: oer-s113-newap: assignment policy 'oer-s113-newpol' (204).
+[oer-s113] Deleted: access package oer-s113-newap (204, 1 attempt(s)).
+[oer-s113] Deleted: oer-s113-ap: assignment policy 'oer-s113-autopolicy' (204).
+[oer-s113] Deleted: access package oer-s113-ap (204, 1 attempt(s)).
+[oer-s113] Deleted: catalog oer-s113-newcat (204, 1 attempt(s)).
+[oer-s113] Deleted: catalog oer-s113-catalog (204, 1 attempt(s)).
+[oer-s113] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s113] Teardown 5/6: the prefixed groups.
+[oer-s113] Deleted: group oer-s113-grp-old (204).
+[oer-s113] Teardown 6/6: the prefixed users.
+[oer-s113] Teardown of 'oer-s113-': removed 7, residue 0, unreadable 0.
+[oer-s113] oer-s113-rg is gone: not yet (read 1, 0.5 s, likely replication delay) -- reading again in 2 s.
+[oer-s113] oer-s113-rg is gone: not yet (read 2, 2.9 s, likely replication delay) -- reading again in 4 s.
+[oer-s113] oer-s113-rg is gone: not yet (read 3, 6.9 s, likely replication delay) -- reading again in 8 s.
+[oer-s113] oer-s113-rg is gone: not yet (read 4, 15.1 s, likely replication delay) -- reading again in 16 s.
+[oer-s113] oer-s113-rg is gone: not yet (read 5, 31.5 s, likely replication delay) -- reading again in 30 s.
+[oer-s113] oer-s113-rg is gone: converged after 6 read(s), 62 s.
+[oer-s113] Teardown C: deleted oer-s113-rg and oer-s113-la.
+[oer-s113] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s113-' is left.
+[oer-s113] no 'oer-s113-' object is listed: converged after 1 read(s), 0.6 s.
+[oer-s113] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s113-' is left.
+[oer-s113] Resource group oer-s113-rg exists after the teardown: False
+[oer-s113] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s113] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s113] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s113] Removed the recorded ids.
+[oer-s113] Done.
+[oer-s113] exit code: 0
+RUNNER: check-T.1 exit code 0; started 2026-10-14T01:43:06Z; took 79 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### T.2. Read back
 
-- [ ] **T.2** Nothing with the prefix is left, and the counts equal the baseline.
+- [x] **T.2** Nothing with the prefix is left, and the counts equal the baseline.
 
 ```powershell
 & pwsh -NoProfile -NonInteractive -File (Join-Path $env:OER_LIVE_DIR 'Initialize-OerS113Prereq.ps1') -ReadBack
@@ -1049,7 +2374,48 @@ Write-OerLiveStep "exit code: $LASTEXITCODE"
 `prefixed objects left: 0; unread collections: 0`; no residue row with this step's prefix.
 **Failure looks like:** anything left with the prefix.
 
-Result: (not run yet)
+Result: 2026-10-14 01:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Nothing with the prefix is left, no resource group oer-s113-rg, every count equal to the baseline, no unread collection; raw\residue.json holds 5 rows of other prefixes (opim-s1-, opim-s2-), none of this step's, untouched.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.2 ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s113] Transcript (redacted): raw\s113\readback-20261014-014427Z.log; OerLive 1.0.3.
+[oer-s113] Mode: READ BACK. Prefix 'oer-s113-'. Objects (fixed): oer-s113-grp-old (security group, no member); oer-s113-catalog (catalog, no resource); oer-s113-ap (hidden access package, no resource role); oer-s113-rg (tagged) with oer-s113-la (Logic App, nothing calls it); oer-s113-ext (custom extension); oer-s113-policy (requestable by the members of oer-s113-grp-old only, one question, the custom extension stage); oer-s113-autopolicy (automatic, its rule matches no user). The checklist's own objects: oer-s113-newcat, oer-s113-newap and its policy. OerLive 1.0.3.
+[oer-s113] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg3\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s113] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s113] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s113] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s113-' is left.
+[oer-s113] Read-back: resource group oer-s113-rg exists: False
+[oer-s113] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s113] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s113] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s113] Read-back: residue row: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:09Z, attempts 3: 404 SubjectNotFound The subject is not found.; read back: still listed -- OerLive: Residue: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal': read back after the 'does not exist' answer -- not converged within budget (180 s, 10 reads).
+[oer-s113] Read-back: residue row: PIM for Groups assignment 'opim-s1-grp: PIM for Groups owner assignment of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:12Z, attempts 3: 403 UnauthorizedAccessException {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup,PrivilegedAccess.ReadWrite.AzureADGroup,PrivilegedAssignmentSchedule.Remove.AzureADGroup.","instanceAnnotations":[]}
+[oer-s113] Read-back: residue row: PIM for Groups eligibility 'opim-s2-grp: PIM for Groups member eligibility of a principal' (prefix opim-s2-), first refused 2026-10-10T23:39:01Z, attempts 1: 400 BadRequest {"error":{"code":"Request_BadRequest","message":"The source resource object or one of the objects being referenced do not exist.","innerError":{"date":"2026-10-10T23:39:01","request-id":"00000000-0000-0000-0000-000000000007","client-request-id":"00000000-0000-0000-0000-000000000009"}}}
+[oer-s113] Read-back: residue row: user 'opim-s2-live-user@example.com' (prefix opim-s2-), first refused 2026-10-10T23:39:02Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s113] Read-back: residue row: user 'opim-s2-live-user@example.com' (prefix opim-s2-), first refused 2026-10-11T14:55:13Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s113] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 5, of them with this step's prefix: 0.
+[oer-s113] Done.
+[oer-s113] exit code: 0
+RUNNER: check-T.2 exit code 0; started 2026-10-14T01:44:25Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## B. Proved offline only (class B)
 
