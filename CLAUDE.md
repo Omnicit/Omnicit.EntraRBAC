@@ -1000,9 +1000,15 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   declares**, and `Resolve-OERAssignmentPolicyId` of the assignment policy name lookup it shares with
   creation (`Resolve-OERAccessReviewScopeTarget`). A review that does not is refused with
   `AccessReviewScopeMismatch` before any reviewer lookup or `ShouldProcess`, and nothing is written to
-  it. Never re-implement either check, or the policy lookup, inline.
+  it. Never re-implement either check, or the policy lookup, inline. There is ONE named deviation:
+  `Get-OERInventory`'s check of whether an access review's access package or assignment policy name is
+  unique sends the same two lookups as `Resolve-OERAccessPackageId` and `Resolve-OERAssignmentPolicyId`
+  itself, so a shared name never raises `AmbiguousName` inside the export; the Context "the export's
+  review-reference lookups agree with the resolvers (named deviation)" in
+  `tests/Unit/Public/Get-OERInventory.Tests.ps1` holds the two in step. Never add a second.
   `Why: docs/development/rationale.md#root-scope-is-not-in-the-document`,
-  `docs/development/rationale.md#access-review-target`
+  `docs/development/rationale.md#access-review-target`,
+  `docs/development/rationale.md#roster-identity-and-shared-names`
 - **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared, and
   `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax** -- never re-implement
   either inline; the first is pure, since the offline validator uses it. A document scope that
@@ -1147,9 +1153,24 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Format-OERUnreadCauseClause` is the single owner of the causes clause of an inventory's
   `InventoryPartial` message** -- the deduplication with the failing object's id normalised away, the
   cap and the wording -- and `Get-OERSharedNameCause` of the text for objects left out because two of
-  them share a name. The clause is built by `Get-OERInventory` and `Export-OERInventory`, the
-  shared-name text by `Get-OERInventory` and `Get-OERInventoryGroup`; never word either inline.
-  `Why: docs/development/rationale.md#export-group-selection`
+  them share a name, which carries how many live objects share it (`-Count`). The clause is built by
+  `Get-OERInventory` and `Export-OERInventory`, the shared-name text by `Get-OERInventory` and
+  `Get-OERInventoryGroup`; never word either inline.
+  `Why: docs/development/rationale.md#export-group-selection`,
+  `docs/development/rationale.md#roster-identity-and-shared-names`
+- **`Get-OERGroupNameIndex` is the single owner of which groups in the tenant carry a display
+  name**: from the groups given (`-Group`, the export's roster) with no request, or from ONE paged
+  listing `v1.0/groups?$select=id,displayName&$top=999`, which `Get-OERInventory` reads at most once
+  per invocation. It never throws and never writes an error record: it returns `Read`, `IdsByName`
+  (a name, compared without regard to letter case, to the lower-cased ids that carry it; `$null` when
+  the listing failed, never an empty index) and `Message`. **`Get-OERGroupReference` is the single
+  owner of how the export names a group it references as the principal of a role assignment or a
+  directory role assignment**: its display name only when the index was read and exactly this group
+  carries the name; otherwise its object id, written with `principalType` `Group` in
+  `roleAssignments` and `directoryRoleAssignments`. A group named as an eligibility principal, a
+  reviewer, a catalog resource or a resource role is outside it and keeps its display name (R-6).
+  Never re-implement either inline.
+  `Why: docs/development/rationale.md#roster-identity-and-shared-names`
 - **`Test-OERRolePolicyModified` is the single owner of whether an Azure role management policy has
   been changed** -- the list row's `policyAssignmentProperties.policy` (carried as `PolicyMetadata`
   by `Get-OERRoleManagementPolicyForScope`, with no request of its own) with a non-empty

@@ -16,7 +16,8 @@ BeforeAll {
             [switch]$IncludeSyncedGroups,
             [switch]$ExcludeSharedName,
             [switch]$SecurityEnabledOnly,
-            [string]$ProgressActivity
+            [string]$ProgressActivity,
+            [object]$GroupNameIndex
         )
         $Arguments = @{
             Filter              = $Filter
@@ -27,6 +28,7 @@ BeforeAll {
             ExcludeSharedName   = [bool]$ExcludeSharedName
             SecurityEnabledOnly = [bool]$SecurityEnabledOnly
             ProgressActivity    = $ProgressActivity
+            GroupNameIndex      = $GroupNameIndex
         }
         InModuleScope Omnicit.EntraRBAC -Parameters $Arguments {
             $Params = @{ Filter = $Filter }
@@ -37,6 +39,7 @@ BeforeAll {
             if ($ExcludeSharedName) { $Params.ExcludeSharedName = $true }
             if ($SecurityEnabledOnly) { $Params.SecurityEnabledOnly = $true }
             if ($ProgressActivity) { $Params.ProgressActivity = $ProgressActivity }
+            if ($null -ne $GroupNameIndex) { $Params.GroupNameIndex = $GroupNameIndex }
             $Stream = @(Get-OERInventoryGroup @Params -Verbose -ErrorVariable ReadErr -ErrorAction SilentlyContinue `
                     -WarningVariable ReadWarn -WarningAction SilentlyContinue 4>&1)
             [PSCustomObject]@{
@@ -45,6 +48,16 @@ BeforeAll {
                 Warned  = @($ReadWarn | ForEach-Object { "$_" })
                 Errors  = @($ReadErr)
             }
+        }
+    }
+
+    # BL-131: an index of the given groups by display name, built by the real Get-OERGroupNameIndex
+    # with no request, the way Export-OERInventory builds it from its roster.
+    function New-TestGroupNameIndex {
+        param([object[]]$Group)
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ G = $Group } {
+            param($G)
+            Get-OERGroupNameIndex -Group $G
         }
     }
 }
@@ -391,7 +404,17 @@ Describe 'Get-OERInventoryGroup' {
             $Read.Result.PSObject.Properties.Name | Should -Contain 'Groups'
             $Read.Result.PSObject.Properties.Name | Should -Contain 'Unread'
             $Read.Result.PSObject.Properties.Name | Should -Contain 'Causes'
+            $Read.Result.PSObject.Properties.Name | Should -Contain 'SharedNames'
             @($Read.Result.Groups).Count | Should -Be 1
+        }
+
+        It 'holds SharedNames as an empty array when no name is shared, with -ExcludeSharedName and without (BL-131)' {
+            foreach ($Exclude in @($true, $false)) {
+                $Read = Invoke-GroupRead -ExcludeSharedName:$Exclude
+                , $Read.Result.SharedNames | Should -BeOfType ([object[]])
+                $Read.Result.SharedNames.Count | Should -Be 0
+                @($Read.Result.Groups).Count | Should -Be 1
+            }
         }
 
         It 'holds real arrays, empty ones included, so a caller can enumerate without a null check' {
@@ -1460,13 +1483,19 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
 
         It 'leaves out every group whose name another shares, and names the name once with its first spelling and the cause (Review Focus 4)' {
             $Read = Invoke-GroupRead -RelevantOnly -ExcludeSharedName
-            $Expected = InModuleScope Omnicit.EntraRBAC { Get-OERSharedNameCause -Path 'groups/Admins' }
+            $Expected = InModuleScope Omnicit.EntraRBAC { Get-OERSharedNameCause -Path 'groups/Admins' -Count 2 }
+            $Expected | Should -BeLike '2 live objects share the name groups/Admins *'
             @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-EL', 'G-MOD')
             @($Read.Result.Unread) | Should -Be @('groups/Admins')
             @($Read.Result.Causes).Count | Should -Be 1
             $Read.Result.Causes[0].Cause | Should -BeExactly $Expected
             $Read.Result.Causes[0].Target | Should -Be 'groups/Admins'
             @($Read.Verbose) | Should -Contain "Get-OERInventory: $Expected"
+            # BL-131: the name with its count, once.
+            @($Read.Result.SharedNames).Count | Should -Be 1
+            $Read.Result.SharedNames[0].Section | Should -BeExactly 'groups'
+            $Read.Result.SharedNames[0].Name | Should -BeExactly 'Admins'
+            $Read.Result.SharedNames[0].Count | Should -Be 2
         }
 
         It 'leaves out the shared name in a full read too' {
@@ -1479,6 +1508,96 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             $Read = Invoke-GroupRead -RelevantOnly
             @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('Admins', 'G-EL', 'G-MOD')
             $Read.Result.Unread.Count | Should -Be 0
+        }
+
+        It 'counts the two listed groups when the index holds <Label> (BL-131)' -ForEach @(
+            @{ Label = 'the same two'; Extra = 0; Lag = $false; Count = 2 }
+            @{ Label = 'a third, a Microsoft 365 group the listing never holds'; Extra = 1; Lag = $false; Count = 3 }
+            @{ Label = 'only one of them, since it lags behind the listing'; Extra = 0; Lag = $true; Count = 2 }
+        ) {
+            # The index is every group in the tenant. It counts the larger of the two counts, so a
+            # third namesake outside the listing raises the count and an index that lags never lowers it.
+            # A lagging index misses G-SYNC as well, a group of a unique name created after it was read:
+            # a name the index does not hold is counted over the listing alone.
+            $Roster = @(foreach ($G in $script:Tenant) {
+                    if ($Lag -and $G.Id -in @($script:IdPlain, $script:IdSync)) { continue }
+                    [PSCustomObject]@{ Id = $G.Id; DisplayName = $G.Name }
+                })
+            if ($Extra) { $Roster += [PSCustomObject]@{ Id = '77777777-7777-7777-7777-777777777777'; DisplayName = 'ADMINS' } }
+            $Index = New-TestGroupNameIndex -Group $Roster
+            $Read = Invoke-GroupRead -RelevantOnly -ExcludeSharedName -GroupNameIndex $Index
+            $Expected = InModuleScope Omnicit.EntraRBAC -Parameters @{ N = $Count } { param($N) Get-OERSharedNameCause -Path 'groups/Admins' -Count $N }
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-EL', 'G-MOD')
+            @($Read.Result.Unread) | Should -Be @('groups/Admins')
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Read.Result.Causes[0].Cause | Should -BeExactly $Expected
+            @($Read.Result.SharedNames).Count | Should -Be 1
+            $Read.Result.SharedNames[0].Name | Should -BeExactly 'Admins'
+            $Read.Result.SharedNames[0].Count | Should -Be $Count
+        }
+    }
+
+    Context 'shared names counted over every group in the tenant (BL-131)' {
+        # The listing holds the security groups only; the index holds every group in the tenant, here
+        # the six listed ones and a Microsoft 365 group that carries G-RA's name in another letter case.
+        BeforeAll {
+            $script:IdM365 = '77777777-7777-7777-7777-777777777777'
+            $script:NewRoster = {
+                @(foreach ($G in $script:Tenant) { [PSCustomObject]@{ Id = $G.Id; DisplayName = $G.Name } }) +
+                @([PSCustomObject]@{ Id = $script:IdM365; DisplayName = 'g-ra' })
+            }
+        }
+
+        It 'leaves out a security group whose name only a group outside the listing shares, and reports it once with the index''s count (<Mode>)' -ForEach @(
+            @{ Mode = 'relevant-only'; Relevant = $true; Kept = @('G-EL', 'G-MOD') }
+            @{ Mode = 'full'; Relevant = $false; Kept = @('G-EL', 'G-MOD', 'G-PLAIN', 'G-SYNC', 'G-DYN') }
+        ) {
+            $Index = New-TestGroupNameIndex -Group (& $script:NewRoster)
+            $Read = Invoke-GroupRead -RelevantOnly:$Relevant -ExcludeSharedName -GroupNameIndex $Index
+            $Expected = InModuleScope Omnicit.EntraRBAC { Get-OERSharedNameCause -Path 'groups/G-RA' -Count 2 }
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be $Kept
+            @($Read.Result.Unread) | Should -Be @('groups/G-RA')
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Read.Result.Causes[0].Cause | Should -BeExactly $Expected
+            $Read.Result.Causes[0].Target | Should -Be 'groups/G-RA'
+            @($Read.Verbose | Where-Object { $_ -eq "Get-OERInventory: $Expected" }).Count | Should -Be 1
+            @($Read.Result.SharedNames).Count | Should -Be 1
+            $Read.Result.SharedNames[0].Section | Should -BeExactly 'groups'
+            $Read.Result.SharedNames[0].Name | Should -BeExactly 'G-RA'
+            $Read.Result.SharedNames[0].Count | Should -Be 2
+            # The Microsoft 365 group is never read: the listing does not hold it.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*77777777-7777-7777-7777-777777777777*' }
+        }
+
+        It 'keeps the group when no index is given, and reports nothing' {
+            $Read = Invoke-GroupRead -RelevantOnly -ExcludeSharedName
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD')
+            $Read.Result.Unread.Count | Should -Be 0
+            $Read.Result.SharedNames.Count | Should -Be 0
+        }
+
+        It 'counts over the listed groups alone when the index was not read (<Label>)' -ForEach @(
+            @{ Label = 'no ids, as Get-OERGroupNameIndex returns a failed listing'; Populated = $false }
+            @{ Label = 'ids it must not trust'; Populated = $true }
+        ) {
+            # The second form is the guard's proof: an index whose Read is not true is never counted,
+            # whatever it holds.
+            $Ids = $null
+            if ($Populated) { $Ids = (New-TestGroupNameIndex -Group (& $script:NewRoster)).IdsByName }
+            $Unread = [PSCustomObject]@{ Read = $false; IdsByName = $Ids; Message = 'Could not list every group to count the names groups share: Too many requests (429)' }
+            $Read = Invoke-GroupRead -RelevantOnly -ExcludeSharedName -GroupNameIndex $Unread
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD')
+            $Read.Result.Unread.Count | Should -Be 0
+            $Read.Result.Causes.Count | Should -Be 0
+            $Read.Result.SharedNames.Count | Should -Be 0
+        }
+
+        It 'changes nothing without -ExcludeSharedName' {
+            $Index = New-TestGroupNameIndex -Group (& $script:NewRoster)
+            $Read = Invoke-GroupRead -RelevantOnly -GroupNameIndex $Index
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-RA', 'G-EL', 'G-MOD')
+            $Read.Result.Unread.Count | Should -Be 0
+            $Read.Result.SharedNames.Count | Should -Be 0
         }
     }
 

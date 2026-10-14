@@ -3628,3 +3628,358 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
     }
 }
+
+Describe 'Invoke-OERStructure applies what an export writes by id: a package''s catalog and a review''s access package and assignment policy (BL-39, BL-142)' {
+    # Get-OERInventory writes an access package's catalog as the catalog's object id when another catalog
+    # carries its name, and an access review's accessPackage and assignmentPolicy as their ids when the
+    # engine's own name lookup would not find that object alone. These prove such entries apply: the real
+    # engine, the real handlers, the real cmdlets they call and the real lookups run (Resolve-OERCatalogId,
+    # Resolve-OERAccessPackageId, Resolve-OERAssignmentPolicyId, Get-OERAccessReviewTargetMismatch,
+    # Resolve-OERAccessReviewChange); only the sign-in and the transport are faked, by a tenant that keeps
+    # what the first run creates. Each document is applied twice: created, then Unchanged. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        $script:IdCatId = 'eeee5555-0000-0000-0000-000000000051'
+        $script:IdNewPkgId = 'aaaa1111-0000-0000-0000-000000000052'
+        $script:IdPkgId = 'aaaa1111-0000-0000-0000-000000000051'
+        $script:IdPolId = 'bbbb2222-0000-0000-0000-000000000051'
+        # The entry as the export writes it, the catalog by its id.
+        $script:IdPackageDoc = ('{ "version": "1.0", "accessPackages": [ { "displayName": "AP-ById", ' +
+            '"catalog": "eeee5555-0000-0000-0000-000000000051", "hidden": false, "resourceRoles": [], "assignmentPolicies": [] } ] }')
+        $script:IdReviewDoc = ('{ "version": "1.0", "accessReviews": [ { "displayName": "Q3 by id", ' +
+            '"accessPackage": "aaaa1111-0000-0000-0000-000000000051", "assignmentPolicy": "bbbb2222-0000-0000-0000-000000000051", ' +
+            '"reviewers": [], "durationInDays": 14 } ] }')
+        function script:ConvertTo-IdRowLine {
+            param([object[]]$Row)
+            @($Row | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.Section, $_.Item, $_.Action, $_.Detail })
+        }
+        # The requests of one run, as '<METHOD> <uri>', taken from the fake tenant's log.
+        function script:Get-IdRequest {
+            param([int]$From)
+            @($script:IdTenant.Requests | Select-Object -Skip $From)
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        # The tenant: the access package a review is made for (in another catalog), and nothing else.
+        $script:IdTenant = @{
+            Packages = [System.Collections.Generic.List[object]]::new()
+            Reviews  = [System.Collections.Generic.List[object]]::new()
+            Requests = [System.Collections.Generic.List[string]]::new()
+            Posts    = [System.Collections.Generic.List[object]]::new()
+        }
+        $script:IdTenant.Packages.Add(@{
+                id = 'aaaa1111-0000-0000-0000-000000000051'; displayName = 'AP-Review'; description = $null; isHidden = $false
+                catalog = @{ id = 'eeee5555-0000-0000-0000-000000000052' }
+            })
+        # The transport, answering every request these entries make as Microsoft Graph does, and refusing
+        # any other. Single-quoted prefixes keep '$filter' and '$expand' literal.
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            $Verb = if ($Method) { ([string]$Method).ToUpperInvariant() } else { 'GET' }
+            $script:IdTenant.Requests.Add("$Verb $Uri")
+            $ApBase = 'v1.0/identityGovernance/entitlementManagement/accessPackages'
+            $ArBase = 'v1.0/identityGovernance/accessReviews/definitions'
+            if ($Verb -eq 'POST' -and $Uri -eq $ApBase) {
+                $script:IdTenant.Posts.Add($Body)
+                $Created = @{
+                    id = 'aaaa1111-0000-0000-0000-000000000052'; displayName = $Body.displayName; description = $Body.description
+                    isHidden = [bool]$Body.isHidden; catalog = @{ id = $Body.catalog.id }
+                }
+                $script:IdTenant.Packages.Add($Created)
+                # Graph answers the create with the entity, which carries no catalog.
+                return @{ id = $Created.id; displayName = $Created.displayName; description = $Created.description; isHidden = $Created.isHidden }
+            }
+            if ($Verb -eq 'POST' -and $Uri -eq $ArBase) {
+                $script:IdTenant.Posts.Add($Body)
+                $Created = @{ id = 'cccc3333-0000-0000-0000-000000000051'; status = 'InProgress' }
+                foreach ($Key in $Body.Keys) { $Created[$Key] = $Body[$Key] }
+                $script:IdTenant.Reviews.Add($Created)
+                return $Created
+            }
+            if ($Verb -ne 'GET') { throw "unexpected Graph request: $Verb $Uri" }
+            $ByCatalog = $ApBase + '?$filter=catalog/id eq '''
+            if ($Uri.StartsWith($ByCatalog)) {
+                $CatalogId = $Uri.Substring($ByCatalog.Length).Split("'")[0]
+                return @{ value = @($script:IdTenant.Packages | Where-Object { $_.catalog.id -eq $CatalogId }) }
+            }
+            $ByName = $ApBase + '?$filter=displayName eq '''
+            if ($Uri.StartsWith($ByName)) {
+                $Name = [uri]::UnescapeDataString($Uri.Substring($ByName.Length).Split("'")[0]).Replace("''", "'")
+                return @{ value = @($script:IdTenant.Packages | Where-Object { $_.displayName -eq $Name } | ForEach-Object { @{ id = $_.id; displayName = $_.displayName } }) }
+            }
+            if ($Uri.StartsWith($ApBase + '/')) {
+                $Rest = $Uri.Substring($ApBase.Length + 1)
+                $PackageId = ($Rest -split '[/?]')[0]
+                if ($Rest -like '*/resourceRoleScopes*') { return @{ value = @() } }
+                $Package = @($script:IdTenant.Packages | Where-Object { $_.id -eq $PackageId })
+                if ($Package.Count -eq 1) { return $Package[0] }
+                throw "unexpected Graph request for a package the tenant does not hold: $Verb $Uri"
+            }
+            if ($Uri.StartsWith('v1.0/identityGovernance/entitlementManagement/assignmentPolicies?$filter=accessPackage/id eq ')) {
+                return @{ value = @() }
+            }
+            $ReviewByFilter = $ArBase + '?$filter='
+            if ($Uri.StartsWith($ReviewByFilter)) {
+                $Filter = [uri]::UnescapeDataString($Uri.Substring($ReviewByFilter.Length))
+                $ReviewName = if ($Filter -match "^displayName eq '(.*)'$") { $Matches[1].Replace("''", "'") } else { throw "unexpected review filter: $Filter" }
+                return @{ value = @($script:IdTenant.Reviews | Where-Object { $_.displayName -eq $ReviewName }) }
+            }
+            throw "unexpected Graph request: $Verb $Uri"
+        }
+    }
+
+    It 'creates an access package in the catalog its catalog id names, and reaches Unchanged on a second run (BL-39)' {
+        # The validator warns that the catalog is not declared in the document, and refuses nothing.
+        $Validation = Test-OERStructure -Json $script:IdPackageDoc
+        $Validation.Valid | Should -BeTrue
+        @($Validation.Errors | ForEach-Object { "$($_.Severity)|$($_.Message)" }) | Should -Be @(
+            "Warning|Catalog 'eeee5555-0000-0000-0000-000000000051' is not declared in this document. It may already exist in the tenant."
+        )
+
+        $First = @(Invoke-OERStructure -Json $script:IdPackageDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-IdRowLine -Row $First) | Should -Be @("accessPackages|AP-ById|Created|created access package AP-ById ($($script:IdNewPkgId))")
+        # Created in the catalog the id names, which was read and written by that id: no catalog name lookup.
+        @($script:IdTenant.Posts).Count | Should -Be 1
+        $script:IdTenant.Posts[0].displayName | Should -BeExactly 'AP-ById'
+        $script:IdTenant.Posts[0].catalog.id | Should -BeExactly $script:IdCatId
+        $script:IdTenant.Requests | Should -Contain ("GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=catalog/id eq '$($script:IdCatId)'&`$expand=catalog")
+        @($script:IdTenant.Requests | Where-Object { $_ -like '*/catalogs*' }) | Should -BeNullOrEmpty
+        $FirstCount = $script:IdTenant.Requests.Count
+
+        $Second = @(Invoke-OERStructure -Json $script:IdPackageDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-IdRowLine -Row $Second) | Should -Be @('accessPackages|AP-ById|Unchanged|access package properties match')
+        $SecondRequests = @(Get-IdRequest -From $FirstCount)
+        # The positive control: the second run found the package in the catalog by the id, and wrote nothing.
+        $SecondRequests | Should -Contain ("GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=catalog/id eq '$($script:IdCatId)'&`$expand=catalog")
+        @($SecondRequests | Where-Object { $_ -notlike 'GET *' }) | Should -BeNullOrEmpty
+        @($script:IdTenant.Packages).Count | Should -Be 2
+    }
+
+    It 'fails, writing nothing, a package to be created in the catalog its id names while a package of that name is in another catalog (twin catalogs)' {
+        # The catalog the id names does not hold AP-ById; a package of that name exists in another catalog --
+        # the case the export's catalog id makes reachable for two catalogs that share a name.
+        # New-OERAccessPackage's tenant-wide name check finds that package and returns it, read with its
+        # catalog: the entry must fail with nothing written to that package or for the entry.
+        $TwinId = 'aaaa1111-0000-0000-0000-000000000053'
+        $OtherCatalogId = 'eeee5555-0000-0000-0000-000000000052'
+        $script:IdTenant.Packages.Add(@{
+                id = $TwinId; displayName = 'AP-ById'; description = $null; isHidden = $false
+                catalog = @{ id = $OtherCatalogId }
+            })
+
+        $Rows = @(Invoke-OERStructure -Json $script:IdPackageDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-IdRowLine -Row $Rows) | Should -Be @(
+            ("accessPackages|AP-ById|Failed|access package 'AP-ById' was not created in catalog '$($script:IdCatId)': a package of that name " +
+            "already exists in another catalog ($OtherCatalogId), and New-OERAccessPackage returned it ($TwinId); nothing was written to it")
+        )
+        # Reached: the declared catalog was read by its id, and New-OERAccessPackage made its tenant-wide name
+        # check and read the package it found with its catalog.
+        $script:IdTenant.Requests | Should -Contain ("GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=catalog/id eq '$($script:IdCatId)'&`$expand=catalog")
+        $script:IdTenant.Requests | Should -Contain "GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-ById'&`$select=id,displayName"
+        $script:IdTenant.Requests | Should -Contain "GET v1.0/identityGovernance/entitlementManagement/accessPackages/$TwinId`?`$expand=catalog"
+        # Nothing written, and nothing else read for the twin: no resource role or policy read, no catalog lookup.
+        @($script:IdTenant.Posts).Count | Should -Be 0
+        @($script:IdTenant.Requests | Where-Object { $_ -notlike 'GET *' }) | Should -BeNullOrEmpty
+        @($script:IdTenant.Requests | Where-Object { $_ -like '*resourceRoleScopes*' -or $_ -like '*assignmentPolicies*' -or $_ -like '*/catalogs*' }) | Should -BeNullOrEmpty
+        @($script:IdTenant.Packages).Count | Should -Be 2
+    }
+
+    It 'creates an access review on its access package and assignment policy ids, and on a second run matches it and reaches Unchanged (BL-142)' {
+        $Validation = Test-OERStructure -Json $script:IdReviewDoc
+        $Validation.Valid | Should -BeTrue
+        @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' }) | Should -BeNullOrEmpty
+
+        $First = @(Invoke-OERStructure -Json $script:IdReviewDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-IdRowLine -Row $First) | Should -Be @("accessReviews|Q3 by id|Created|created access review 'Q3 by id' (recurrence: OneTime)")
+        # Created on the two ids: the package id confirmed by one existence read, the policy id taken as it
+        # is, and neither looked up by name.
+        @($script:IdTenant.Posts).Count | Should -Be 1
+        $script:IdTenant.Posts[0].scope.query | Should -BeExactly ("/identityGovernance/entitlementManagement/assignments?`$filter=accessPackage/id eq " +
+            "'$($script:IdPkgId)' and assignmentPolicy/id eq '$($script:IdPolId)'")
+        $script:IdTenant.Requests | Should -Contain ("GET v1.0/identityGovernance/entitlementManagement/accessPackages/$($script:IdPkgId)?`$select=id")
+        @($script:IdTenant.Requests | Where-Object { $_ -like '*accessPackages?$filter=displayName*' -or $_ -like '*assignmentPolicies*' }) | Should -BeNullOrEmpty
+        $FirstCount = $script:IdTenant.Requests.Count
+
+        $Second = @(Invoke-OERStructure -Json $script:IdReviewDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        # Matched by display name, its target check passed on the two ids (a review of another target is
+        # refused, Failed), and nothing differs.
+        @(ConvertTo-IdRowLine -Row $Second) | Should -Be @("accessReviews|Q3 by id|Unchanged|access review 'Q3 by id' already matches")
+        $SecondRequests = @(Get-IdRequest -From $FirstCount)
+        $SecondRequests | Should -Contain ('GET v1.0/identityGovernance/accessReviews/definitions?$filter=' + [uri]::EscapeDataString("displayName eq 'Q3 by id'"))
+        @($SecondRequests | Where-Object { $_ -notlike 'GET *' }) | Should -BeNullOrEmpty
+        @($SecondRequests | Where-Object { $_ -like '*accessPackages*' -or $_ -like '*assignmentPolicies*' }) | Should -BeNullOrEmpty
+        @($script:IdTenant.Reviews).Count | Should -Be 1
+    }
+}
+
+Describe 'Invoke-OERStructure applies a group principal an export writes by its object id (BL-131, Task 3c)' {
+    # Get-OERInventory writes a group named as a principal in roleAssignments and directoryRoleAssignments
+    # by its object id, with principalType Group, when another group in the tenant carries its name. These
+    # prove such an entry applies: created for that object id, Unchanged on a second run, and the prune pass
+    # keyed on the object id, so the second -Prune run removes nothing. The real engine, the real handlers
+    # and the real principal resolver run (Resolve-OERStructurePrincipal returns a GUID verbatim); the
+    # Microsoft Graph transport refuses every request, so the group is never looked up by name. For
+    # roleAssignments the real ARM cmdlets run against a fake ARM transport that keeps what the first run
+    # writes; for directoryRoleAssignments the directory role readers and writers are faked the same way.
+    # No id below is version-4 shaped.
+    BeforeAll {
+        $script:GpEngGroup = 'eeee4444-0000-0000-0000-000000000001'
+        $script:GpEngOther = 'dddd4444-0000-0000-0000-000000000009'
+        $script:GpEngSignedIn = 'dddd4444-0000-0000-0000-0000000000ff'
+        $script:GpEngSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:GpEngReader = "$($script:GpEngSub)/providers/Microsoft.Authorization/roleDefinitions/bbbb4444-0000-0000-0000-000000000001"
+        $script:GpEngOtherRa = "$($script:GpEngSub)/providers/Microsoft.Authorization/roleAssignments/cccc4444-0000-0000-0000-000000000009"
+        $script:GpEngDirRole = '44444444-0000-0000-0000-000000000001'
+        # The entries as the export writes them.
+        $script:GpEngRaDoc = ('{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", ' +
+            '"role": "Reader", "principal": "eeee4444-0000-0000-0000-000000000001", "principalType": "Group" } ] }')
+        $script:GpEngDirDoc = ('{ "version": "1.0", "directoryRoleAssignments": [ { "role": "Reports Reader", ' +
+            '"principal": "eeee4444-0000-0000-0000-000000000001", "principalType": "Group", "assignmentType": "Eligible" } ] }')
+        function script:ConvertTo-GpEngRowLine {
+            param([object[]]$Row)
+            @($Row | ForEach-Object { '{0}|{1}|{2}' -f $_.Section, $_.Item, $_.Action })
+        }
+        # One eligible directory role schedule, the shape the eligibility reader returns.
+        function script:New-GpEngDirRow {
+            param([string]$PrincipalId, [string]$PrincipalType, [string]$ScheduleId)
+            [PSCustomObject]@{
+                ScheduleId = $ScheduleId; RoleDefinitionId = $script:GpEngDirRole; RoleName = 'Reports Reader'
+                PrincipalId = $PrincipalId; PrincipalDisplayName = 'fixture'; PrincipalType = $PrincipalType
+                DirectoryScopeId = '/'; MemberType = 'Direct'; Status = 'Provisioned'
+                StartDateTime = '2026-01-01T00:00:00Z'; EndDateTime = $null; ExpirationType = 'noExpiration'; DurationDays = $null
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected Graph request: $Uri" }
+    }
+
+    It 'creates a roleAssignments entry for the group''s object id, prunes on the object id, and reaches Unchanged with nothing removed on a second run' {
+        # The validator accepts the entry as the export writes it.
+        $Validation = Test-OERStructure -Json $script:GpEngRaDoc
+        $Validation.Valid | Should -BeTrue
+        @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' }) | Should -BeNullOrEmpty
+
+        # The tenant: at the subscription, one assignment of another principal that the document does not
+        # declare. Each ARM request is logged as '<METHOD> <path>'.
+        $script:GpEngArm = @{
+            Log         = [System.Collections.Generic.List[string]]::new()
+            Puts        = [System.Collections.Generic.List[object]]::new()
+            Assignments = [System.Collections.Generic.List[object]]::new()
+        }
+        $script:GpEngArm.Assignments.Add([PSCustomObject]@{ id = $script:GpEngOtherRa; name = 'cccc4444-0000-0000-0000-000000000009'
+                properties = [PSCustomObject]@{ scope = $script:GpEngSub; principalId = $script:GpEngOther; principalType = 'User'; roleDefinitionId = $script:GpEngReader } })
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest {
+            $RequestMethod = if ($Method) { $Method } else { 'GET' }
+            $script:GpEngArm.Log.Add("$RequestMethod $Path")
+            $AssignmentsPath = "$($script:GpEngSub)/providers/Microsoft.Authorization/roleAssignments"
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:GpEngSub)/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=roleName%20eq%20%27Reader%27") {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:GpEngReader }) }
+            }
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$AssignmentsPath`?api-version=2022-04-01&`$filter=atScope()") {
+                return [PSCustomObject]@{ value = @($script:GpEngArm.Assignments) }
+            }
+            if ($RequestMethod -eq 'PUT' -and $Path -like "$AssignmentsPath/*?api-version=2022-04-01") {
+                $script:GpEngArm.Puts.Add($Body)
+                $Created = [PSCustomObject]@{ id = $Path.Split('?')[0]; name = ($Path.Split('?')[0] -split '/')[-1]
+                    properties = [PSCustomObject]@{ scope = $script:GpEngSub; principalId = $Body.properties.principalId
+                        principalType = $Body.properties.principalType; roleDefinitionId = $Body.properties.roleDefinitionId } }
+                $script:GpEngArm.Assignments.Add($Created)
+                return $Created
+            }
+            if ($RequestMethod -eq 'DELETE') {
+                $Gone = @($script:GpEngArm.Assignments | Where-Object { "$($_.id)?api-version=2022-04-01" -eq $Path })
+                if ($Gone.Count -ne 1) { throw "unexpected ARM delete: $Path" }
+                $null = $script:GpEngArm.Assignments.Remove($Gone[0])
+                return $Gone[0]
+            }
+            throw "unexpected ARM call: $RequestMethod $Path"
+        }
+
+        $First = @(Invoke-OERStructure -Json $script:GpEngRaDoc -Include RoleAssignments -Prune -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-GpEngRowLine -Row $First) | Should -Be @(
+            "roleAssignments|Reader -> $($script:GpEngGroup) @ $($script:GpEngSub)|Created"
+            "roleAssignments|bbbb4444-0000-0000-0000-000000000001 -> $($script:GpEngOther) @ $($script:GpEngSub)|Removed"
+        )
+        # Created for the group's object id, as a group: the id the entry names, never looked up.
+        $script:GpEngArm.Puts.Count | Should -Be 1
+        $script:GpEngArm.Puts[0].properties.principalId | Should -BeExactly $script:GpEngGroup
+        $script:GpEngArm.Puts[0].properties.principalType | Should -BeExactly 'Group'
+        $script:GpEngArm.Puts[0].properties.roleDefinitionId | Should -BeExactly $script:GpEngReader
+        @($script:GpEngArm.Log | Where-Object { $_ -like 'DELETE *' }) | Should -Be @("DELETE $($script:GpEngOtherRa)?api-version=2022-04-01")
+        $FirstCount = $script:GpEngArm.Log.Count
+
+        $Second = @(Invoke-OERStructure -Json $script:GpEngRaDoc -Include RoleAssignments -Prune -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-GpEngRowLine -Row $Second) | Should -Be @("roleAssignments|Reader -> $($script:GpEngGroup) @ $($script:GpEngSub)|Unchanged")
+        # The positive control: the second run read the scope, and wrote and removed nothing -- the prune
+        # pass keyed the created assignment on the group's object id and found it declared.
+        $SecondRequests = @($script:GpEngArm.Log | Select-Object -Skip $FirstCount)
+        $SecondRequests | Should -Contain "GET $($script:GpEngSub)/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()"
+        @($SecondRequests | Where-Object { $_ -notlike 'GET *' }) | Should -BeNullOrEmpty
+        @($script:GpEngArm.Assignments).Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'creates a directoryRoleAssignments entry for the group''s object id, prunes on the object id, and reaches Unchanged with nothing removed on a second run' {
+        $Validation = Test-OERStructure -Json $script:GpEngDirDoc
+        $Validation.Valid | Should -BeTrue
+        @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' }) | Should -BeNullOrEmpty
+
+        # The tenant: one eligible assignment of the role for another principal, which the document does not
+        # declare. The readers filter it by role and principal as the real readers do.
+        $script:GpEngDir = @{
+            Live    = [System.Collections.Generic.List[object]]::new()
+            Created = [System.Collections.Generic.List[object]]::new()
+            Removed = [System.Collections.Generic.List[string]]::new()
+        }
+        $script:GpEngDir.Live.Add((New-GpEngDirRow -PrincipalId $script:GpEngOther -PrincipalType 'User' -ScheduleId 'schedule-9'))
+        Mock -ModuleName $script:moduleName Resolve-OERDirectoryRoleDefinitionId {
+            if ($Role -eq 'Reports Reader' -or $Role -eq $script:GpEngDirRole) { $script:GpEngDirRole }
+        }
+        Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment {
+            @($script:GpEngDir.Live | Where-Object {
+                    (-not $Role -or $_.RoleDefinitionId -eq $Role) -and (-not $PrincipalId -or $_.PrincipalId -eq $PrincipalId)
+                })
+        }
+        Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { @() }
+        Mock -ModuleName $script:moduleName New-OEREligibleDirectoryRoleAssignment {
+            $script:GpEngDir.Created.Add([PSCustomObject]@{ Role = $Role; PrincipalId = $PrincipalId; Action = $Action; Permanent = [bool]$Permanent })
+            $script:GpEngDir.Live.Add((New-GpEngDirRow -PrincipalId $PrincipalId -PrincipalType 'Group' -ScheduleId 'schedule-1'))
+        }
+        Mock -ModuleName $script:moduleName Remove-OEREligibleDirectoryRoleAssignment {
+            $script:GpEngDir.Removed.Add("$Role|$PrincipalId")
+            foreach ($Gone in @($script:GpEngDir.Live | Where-Object { $_.RoleDefinitionId -eq $Role -and $_.PrincipalId -eq $PrincipalId })) {
+                $null = $script:GpEngDir.Live.Remove($Gone)
+            }
+        }
+        Mock -ModuleName $script:moduleName Remove-OERActiveDirectoryRoleAssignment { throw 'unexpected removal of an active assignment' }
+        Mock -ModuleName $script:moduleName Get-OERSignedInObjectId { $script:GpEngSignedIn }
+        Mock -ModuleName $script:moduleName Get-OERMemberGroupId { @() }
+
+        $First = @(Invoke-OERStructure -Json $script:GpEngDirDoc -Include DirectoryRoleAssignments -Prune -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        # The section-wide prune pass runs first, then the entry.
+        @(ConvertTo-GpEngRowLine -Row $First) | Should -Be @(
+            "directoryRoleAssignments|Reports Reader -> $($script:GpEngOther) (Eligible)|Removed"
+            "directoryRoleAssignments|Reports Reader -> $($script:GpEngGroup) (Eligible)|Created"
+        )
+        # Created for the group's object id, permanent as declared: the id the entry names, never looked up.
+        @($script:GpEngDir.Created | ForEach-Object { "$($_.Role)|$($_.PrincipalId)|$($_.Action)|$($_.Permanent)" }) |
+            Should -Be @("$($script:GpEngDirRole)|$($script:GpEngGroup)|adminAssign|True")
+        @($script:GpEngDir.Removed) | Should -Be @("$($script:GpEngDirRole)|$($script:GpEngOther)")
+
+        $Second = @(Invoke-OERStructure -Json $script:GpEngDirDoc -Include DirectoryRoleAssignments -Prune -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-GpEngRowLine -Row $Second) | Should -Be @("directoryRoleAssignments|Reports Reader -> $($script:GpEngGroup) (Eligible)|Unchanged")
+        # The positive control: the prune pass read the pair once in each run -- in the second, with the
+        # group's own assignment live -- and kept it, since it keyed it on the group's object id.
+        Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 2 -Exactly -ParameterFilter { $Role -eq $script:GpEngDirRole -and -not $PrincipalId }
+        @($script:GpEngDir.Created).Count | Should -Be 1
+        @($script:GpEngDir.Removed).Count | Should -Be 1
+        @($script:GpEngDir.Live | ForEach-Object { $_.PrincipalId }) | Should -Be @($script:GpEngGroup)
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+}

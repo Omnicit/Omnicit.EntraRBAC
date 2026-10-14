@@ -242,6 +242,11 @@ function Invoke-OERStructure {
     -WhatIf and a real run report the same row. An entry at any other scope in the same document is
     applied and pruned as before. Test-OERStructure reports such an entry as a Warning.
 
+    An access package that has to be created in the catalog it declares while a package of that name
+    exists in another catalog is reported Failed, with nothing written to that package or for the
+    entry, since New-OERAccessPackage, which looks the name up in the whole tenant, returns that
+    package in place of creating one.
+
     AccessReviews target check: an existing access review is found by its display name in the whole
     tenant, and display names are not unique, so the review found can be one of a group, a role or
     another access package. It is updated only when it reviews the access package and the assignment
@@ -255,8 +260,9 @@ function Invoke-OERStructure {
     matches nothing is reported Failed with AccessPackageNotFound or AssignmentPolicyNotFound, and a
     lookup that fails (an ambiguous name, a 403) with its own error, and nothing is written either.
     An access package name is not unique in the tenant, nor an assignment policy name in its access
-    package, and Get-OERInventory exports both by name: when such a name is shared, the entry is
-    reported Failed with AmbiguousName until it names the package or the policy by id. The check runs
+    package: when such a name is shared, the entry is reported Failed with AmbiguousName until it
+    names the package or the policy by id. Get-OERInventory exports either by id whenever this lookup
+    would not find that package or policy alone, so an exported entry applies. The check runs
     before the reviewer lookups and before any ShouldProcess, so -WhatIf and a real run report the
     same Failed row. Under -ErrorAction Stop the error stops the command, as any error does.
 

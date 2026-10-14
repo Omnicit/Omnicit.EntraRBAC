@@ -22,7 +22,11 @@ function Get-OERGroup {
     on-premises Active Directory, which is managed there and read-only in the cloud
     (Invoke-OERStructure writes nothing to it), False for a group that was synchronized and no longer
     is, and empty for a group that never was, or whose source of authority was converted to the
-    cloud. Nothing is filtered out on it.
+    cloud. Nothing is filtered out on it. Every group also carries MailEnabled, Visibility and
+    CreatedDateTime, Microsoft Graph's own values (CreatedDateTime as a UTC ISO 8601 string, for
+    example 2026-01-02T03:04:05Z); each is empty when Graph gave none, which is the case for
+    Visibility on most security groups. The default table view keeps its usual columns, so use
+    Format-List or Select-Object * to see them.
 
     .PARAMETER Group
     The group to act on, given as either its object id (GUID) or its display name -- the same

@@ -6307,12 +6307,19 @@ give it `memberCount` null -- fewer requests, one roster count lost.
 not read in full: a security group found not relevant, one outside `-GroupFilter`, one left out for
 a shared name, and every group that is not security-enabled. A one-request count
 (`groups/{id}/members/$count`) needs the `ConsistencyLevel: eventual` header, which the module's
-single Graph transport never sends, answers from an index that can lag behind recent changes
-(Microsoft Learn, List group members), and its treatment of service principals -- which the full
-read includes -- is not measured. The roster join is keyed on the object id alone: the display-name
-fallback it used to have gave a non-security group that shared a security group's name that group's
-count. Cost if wrong: add header support to `Invoke-OERGraphRequest` and a `$count` read, after
-measuring that it counts service principals.
+single Graph transport never sends, and answers from an index that can lag behind recent changes
+(Microsoft Learn, List group members). Measured on 2026-10-14 (measurement B of
+[#roster-identity-and-shared-names](#roster-identity-and-shared-names)): without the header it
+answered `400 Request_UnsupportedQuery` on every group tried; with it, the count equalled the full
+read, which includes service principals, on the five groups read; the step's live checklist then
+added a service principal as a member, which `$count` with the header counted and the full read
+counted too, and showed that both counts trail a membership change by seconds (6 s for the eventual
+count, 16 s for the full read, after an add). A count for every group
+is not added: it would cost a request per group, and the transport cannot send the header. The
+roster join is keyed on the object id alone: the display-name fallback it used to have gave a
+non-security group that shared a security group's name that group's count. Cost if wrong: add
+header support to `Invoke-OERGraphRequest` and a `$count` read per group, now that the live checklist
+has shown that it counts service principals.
 
 **R4 (the partial signal).** The export's group read has its own `IncompleteReads` entry, placed
 first, naming the same triples `Get-OERInventory` would have named; its causes, deduplicated and
@@ -6331,7 +6338,9 @@ is ANDed as `securityEnabled eq true and (...)` around the operator's text, and 
 not the guard, since an expression can close them (`x eq 1) or (securityEnabled eq false` lists every
 group the second operand matches). The guard is the post-read check, `-SecurityEnabledOnly`: only a
 group whose `securityEnabled` the read shows as a boolean true stays, dropped straight after the list
-is read and before the shared names are counted and the relevance is decided. A blank or white-space
+is read and before the shared names are counted (among the listed groups; see
+[#roster-identity-and-shared-names](#roster-identity-and-shared-names)) and the relevance is decided.
+A blank or white-space
 filter is refused at binding (the BL-96 pattern). The parameter is declared last, since the
 cmdlet's parameters carry no `Position` and positional binding follows declaration order. It applies
 to the Groups section only. Cost if wrong: escape or parse the expression, which would refuse valid
@@ -6359,7 +6368,12 @@ same cause text as `Get-OERInventory` (now owned by `Get-OERSharedNameCause`), s
 matches what it was. The names are counted over every listed group in scope, before the relevance
 decision, so a relevant group whose namesake is not relevant is left out too, although that namesake
 is never read in full. Cost if wrong: a relevant group whose namesake is not relevant would reach the
-document, where the apply engine refuses the ambiguous name.
+document, where the apply engine refuses the ambiguous name. Since Sprint 11 step 5 a name is
+counted over every group in the tenant as well, through the index the export builds from its
+roster, so a security group whose name a Microsoft 365 group, a distribution group or a group
+`-SecurityEnabledOnly` dropped also carries is left out too, and each name reaches the export's one
+warning and its README with its count
+([#roster-identity-and-shared-names](#roster-identity-and-shared-names)).
 
 **A reader that stops.** An error nothing in the reader catches ends the read, the reader's progress
 `finally` unwinds it, and the call returns nothing. Both callers catch that, scrub, warn
@@ -8240,6 +8254,14 @@ then says where the review was found. An `accessPackage` or `assignmentPolicy` n
 run's rename map holds an id, a package or policy the same document renames, is compared as that id,
 as written, with no lookup (`## rename-policies-and-reviews`, D5 and D6).
 
+**Since Sprint 11 step 5.** The export no longer writes a shared name here: `Get-OERInventory` sends
+the same two lookups this check sends and keeps a review's `accessPackage` or `assignmentPolicy` name
+only when the lookup finds that object and no other, and writes the id otherwise, so an export
+re-applied unchanged is no longer refused for a shared name. The rule above is unchanged: a document
+that names a shared package or policy is still refused with `AmbiguousName`. The export's lookups are
+a named deviation from the single owner of the policy lookup, held in step by an agreement test
+([#roster-identity-and-shared-names](#roster-identity-and-shared-names)).
+
 ## policy-update-keeps-custom-extensions
 
 Sprint 11 step 3 made `Set-OERAccessPackageAssignmentPolicy` stop dropping what Microsoft Graph
@@ -8666,8 +8688,11 @@ says that the document applies such a change only together with another changed 
 (known limit (e)). A review's previous name is a claim of the accessReviews duplicate check. P4:
 among the assignment policies of one package, a `previousDisplayName` is a claim of a new duplicate
 check, an Error only when at least one of the two colliding claims is a `previousDisplayName`, naming
-the earlier policy by its position in the package; two policies declaring one `displayName` stay
-unreported, as before this step. If wrong: a stricter check is one condition. Rule 14 has a policy
+the earlier policy by its position in the package; two policies declaring one `displayName` stayed
+unreported, as before this step. If wrong: a stricter check is one condition. Sprint 11 step 5 made
+that condition: two policies of one package declaring one `displayName` are an Error too, and the
+export leaves out every policy whose name another policy of its package carries
+([#roster-identity-and-shared-names](#roster-identity-and-shared-names)). Rule 14 has a policy
 half: a review whose `assignmentPolicy` equals, ignoring case, the previous name (not an object id)
 of a policy the document renames in the package the review names -- by its `displayName`, or by the
 name or object id it renames from -- is a Warning, since once the rename is applied no policy of the
@@ -8738,3 +8763,258 @@ package handler sends the declared `displayName` on every update of a policy, an
 warning for a policy says so; a review is given it only by
 `Set-OERAccessReviewDefinition -DisplayName`, since the review handler sends `-DisplayName` only for
 a rename.
+
+## roster-identity-and-shared-names
+
+Sprint 11 step 5 (BL-131 and BL-142, decision A17) gave every `groupsRoster.json` row the group's
+object id and type, counted the names groups share over every group in the tenant, left out the
+assignment policies of one access package that share a name, and made the export write a reference
+to an object whose name is shared by that object's id. This anchor records the problem, the three
+measurements, the rulings with what each costs if it is wrong, the one named deviation from a
+single-owner rule, and the known limits. `Get-OERGroupNameIndex` is the single owner of which groups
+in the tenant carry a display name, `Get-OERGroupReference` of how the export names a group it
+references as a principal, and `Get-OERSharedNameCause` of the cause text, which now carries the
+count (CLAUDE.md, Code Style). No ErrorId and no public parameter was added or changed (A9);
+`Get-OERGroup`'s output gained three properties, which A17 allows. Apart from measurements A, B and
+C, nothing here was measured on its own: the rules were derived from the code and proven with mocked
+tests, and the step's live checklist,
+`docs/live-verification/feat-roster-identity-and-shared-names-checklist.md`, records the live runs
+and names the cases that could not be run live.
+
+**The problem.** Microsoft Entra ID does not keep display names unique, and the apply engine refuses
+a name that more than one live object answers to, with nothing written. The export already left out
+the objects whose names collided among the objects it read
+([#export-group-selection](#export-group-selection), R8), but four gaps remained, and each of the
+first three wrote a document that the apply engine refused in part:
+
+1. A group's name was counted among the security-enabled groups the read listed only, so a security
+   group that shared its name with a Microsoft 365 group or a distribution group was written, and
+   refused when applied.
+2. Two assignment policies of one access package that shared a name were both written, and the
+   validator left them unreported (Ruling P4 of [#rename-policies-and-reviews](#rename-policies-and-reviews)).
+3. A reference was written by name even when the name was shared: an access package's catalog (a
+   pair of catalogs of one name that Microsoft Graph no longer lets anyone make, measurement C, but
+   that a tenant can still hold from before), an access review's access package or assignment policy
+   ([#access-review-target](#access-review-target)), and a group named as the principal of a role
+   assignment or a directory role assignment. Each such entry was refused when applied until it was
+   edited by hand to an id.
+4. `groupsRoster.json` carried names and flags only, so a reader could not tell apart two groups that
+   shared a name, nor see which groups were Microsoft 365 or distribution groups.
+
+And the export said that a name was left out, never how many objects carried it.
+
+**Measurement A (the three fields; live, read-only, as `oer-live-cc`, 2026-10-14).** `v1.0/groups`
+without `$select` listed 97 groups in the test tenant: 89 security groups, 6 Microsoft 365 groups, 1
+distribution group and 1 mail-enabled security group. `mailEnabled` was present and non-null on 97
+of 97; `visibility` was present on 97 and non-null on 15 (6 Microsoft 365 groups `Private`, 9 security
+groups `Private`), null on the other 82; `createdDateTime` was present and non-null on 97 of 97, and
+the Microsoft Graph PowerShell SDK handed it over as a `[DateTime]`, not a string. So
+`ConvertTo-OERGroup` reads all three from the listing the roster already makes, with no `$select` and
+no extra request.
+
+**Measurement B (the member count; the same run).** `v1.0/groups/{id}/members/$count` WITHOUT the
+`ConsistencyLevel: eventual` header answered `400 Request_UnsupportedQuery` on every group tried.
+WITH it, the count equalled the full read -- the member list joined with its
+`microsoft.graph.servicePrincipal` cast -- on the five groups read (0, 1, 1, 2 and 5 members), and so
+did the inline `$count=true&$top=1`; the `$count` body arrives as a string. No group in the test
+tenant had a service principal as a member (97 reads), so the two open parts were measured in this
+step's live checklist, `docs/live-verification/feat-roster-identity-and-shared-names-checklist.md`
+(checks 1.2 and 1.3; live, the test tenant, `oer-live-cc`, 2026-10-14), with prefixed objects.
+A service principal (1.2): a security group whose only member was a service principal listed 0
+members with the v1.0 member list, which leaves the service principal out, 1 with the
+`microsoft.graph.servicePrincipal` cast and 1 in the module's full read, which joins the two;
+`members/$count` with `ConsistencyLevel: eventual` answered 1, so it counts the service principal
+and equals the full read, and without the header it answered `400 Request_UnsupportedQuery`. Right
+after a change (1.3): a second member was added to a group and removed again. After the add, both
+reads still showed the old count at once; the eventual count showed the new one at 6 s, the full read
+only at 16 s. After the remove both showed the old count at once and the new one at 6 s. So in this
+tenant the eventual count trailed a change no more than the full read did; both trail by seconds.
+Decision, unchanged: no member count for every group in this step -- it would cost a request per
+group, and the module's single Graph transport cannot send the header
+([#export-group-selection](#export-group-selection), R3).
+
+**Measurement C (catalog names; live, the test tenant, `oer-live-cc`, 2026-10-14, check 0.2 of the
+same checklist).** Microsoft Graph refuses to create a catalog whose name another catalog carries,
+letter case aside (`400 DuplicateCatalog`, for the exact name and for a name differing only in
+letter case), and refuses to rename a catalog to such a name (`409 DuplicateKey`). So two catalogs
+that share a name cannot be made today; a tenant may still hold such a pair from before this refusal
+(not measured). BL-39's twin-catalog case (a package written with its catalog's id, R-5) is
+therefore proved offline only (the checklist's B.8), and the guard that fails a package re-created
+into another catalog was proved live on the older case: a package declared in a uniquely named
+catalog while a package of the same name exists in another catalog (check 3.5, one `Failed` row,
+nothing written).
+
+**R-1 (the roster shape).** `ConvertTo-OERGroup`, the single owner of the group shape, gains
+`MailEnabled` (after `SecurityEnabled`), `Visibility` and `CreatedDateTime` (last). A boolean
+`mailEnabled` is carried as itself and anything else as empty; the visibility as given, or empty; the
+creation time as one UTC ISO 8601 string (`yyyy-MM-ddTHH:mm:ssZ`) whatever form it arrives in -- a
+`[DateTime]` (measured), a `[DateTimeOffset]` or the string -- with a `[DateTime]` of unspecified kind
+taken as UTC and never converted from local time, and an unreadable value empty, never an error.
+Each roster row keeps its five keys and gains, after them, `id`, `securityEnabled`, `mailEnabled`,
+`groupTypes` (always an array of strings, empty for a group that is neither a Microsoft 365 group nor
+dynamic), `visibility` and `createdDateTime`, read from the converted object and never from the raw
+response. `inventory.json` stays without an id key on its entries. Cost if wrong: the roster reads
+three raw fields itself, and `Get-OERGroup` does not show them.
+
+**R-1b (the table view).** The Group table view keeps its four columns, and the new properties show
+with `Format-List` or `Select-Object *`: seven columns no longer fit a console. Cost if wrong: one more
+column in the view.
+
+**R-2 (one index of every group's name, one rule for a group reference).** `Get-OERGroupNameIndex`
+builds the index from the groups it is given (`-Group`, the export's roster, with no request) or
+from ONE paged listing `v1.0/groups?$select=id,displayName&$top=999`, which `Get-OERInventory` makes
+at most once per invocation -- when its Groups section read at least one group, or when a section
+holds a group principal whose name was read -- and shares between them. It keys a name without regard to letter case,
+the key the validator refuses a duplicate on, and lists each group's id once, lower-cased. A failed
+listing comes back as `Read` false with its message: never thrown, and never an empty index.
+`Get-OERGroupReference` writes a group's display name only when the index was read and exactly this
+group carries that name, and the object id otherwise -- an index not read, a blank name, a name the
+index lists under another group or under several -- which the apply engine resolves verbatim. A
+group principal whose name is blank, or is its id because its name could not be read, is written by
+its id without reading the listing, since the rule returns the id for it whatever the index holds.
+One listing per invocation was chosen over a lookup per name. Cost if wrong, and it multiplies:
+`Export-OERInventory` calls `Get-OERInventory` once per Azure scope it walks, and a scope's role
+assignment read returns the assignments inherited from above it too, so one group assignment at a
+management group makes every scope beneath it list every group once -- ceil(G/999) Graph requests
+per such scope for G groups in the tenant, for example about 9,300 requests for 300 scopes and
+30,000 groups. A listing that fails costs no more than its own requests: the group principals of
+that invocation are written by id (R-3c). A lookup per name was considered and costs the same
+order: k names per scope, an inherited name looked up again at every scope beneath its assignment.
+The controller raises the multiplier to the architect.
+
+**R-3 (the counts reach the export).** `Get-OERInventory` hands every name it left out, with its
+section and count, to its caller in ONE information record tagged `Omnicit.EntraRBAC.SharedName` (a
+`Names` list of `Section`, `Name` and `Count`), the pattern of the root-scope record
+([#root-scope-is-not-in-the-document](#root-scope-is-not-in-the-document)), and the group reader
+returns its own in a new `SharedNames` list. `Export-OERInventory` collects the record with
+`-InformationVariable` under `-InformationAction SilentlyContinue`, joins the reader's names first and
+`Get-OERInventory`'s after, writes ONE warning before its `ShouldProcess`, and hands the names to the
+bundle README, whose section "Names two or more objects share" follows "Role assignments at the root
+scope (elevated access)". The names stay in `IncompleteReads` as before. No public parameter and no
+hidden channel. Cost if wrong: an information record a caller sees with `-InformationAction Continue`.
+
+**R-3b (a review reference is checked with the apply engine's own lookups).** A review's
+`accessPackage` or `assignmentPolicy` name stays only when the lookup the apply engine makes for it
+finds exactly that object: the access package name in the whole tenant (`Resolve-OERAccessPackageId`'s
+URI, the name escaped the same way), the assignment policy name among the policies of the review's
+access package (`Resolve-OERAssignmentPolicyId`'s listing, compared as it compares). Otherwise the id
+is written and nothing is reported, since the id applies. Each answer is cached for the invocation,
+so the reviews of one access package cost one lookup of each kind however many there are: one request
+per access package name and one per access package. A lookup that fails writes the id too and is
+reported like a failed name read -- the cause, and the review's `accessPackage` or `assignmentPolicy`
+named unread under `accessReviews` -- since an id otherwise reads as a deleted target. Cost if wrong:
+up to two extra requests per distinct package.
+
+**The named deviation (the controller's ruling on the review of Task 3b).** CLAUDE.md makes
+`Resolve-OERAssignmentPolicyId` the single owner of the assignment policy name lookup, and
+`Resolve-OERAccessPackageId` resolves an access package name. `Get-OERInventory` sends the two lookups
+itself instead of calling the resolvers, which throw `AmbiguousName` for a shared name -- the very
+case the check exists for -- and would leave stray records in a caller's `-ErrorVariable`, the reason
+the review's name read is a transport read too. The Context "the export's review-reference lookups
+agree with the resolvers (named deviation)" in `tests/Unit/Public/Get-OERInventory.Tests.ps1` drives
+the resolvers and the export's lookups under one mock and asserts the same URIs and the same
+decisions for a unique name, a shared one, none and another object. CLAUDE.md names it as the one
+exception to its bullet. Cost if wrong: two copies of a lookup that only a test keeps in step.
+
+**R-3c (an index that could not be read).** When the listing of every group fails, every group
+principal is written by its object id -- an exact reference the apply engine resolves verbatim -- so
+nothing is missing from the document and no group principal is reported unread; the verbose stream
+says so once per invocation. The Groups section, which counts names, reports `groupNames` unread
+with the cause instead and counts the names among the groups it read. Cost if wrong: an export whose
+group principals are all ids, with only a verbose line saying why.
+
+**R-3d (what the README lists).** The README lists the names LEFT OUT of a section -- groups,
+administrative units, catalogs, the access packages of one catalog, access reviews and the
+assignment policies of one access package -- one bullet per name, with how many objects carry it and
+its section. A reference written as an id is explained in the section's introduction and in the
+prompt, not listed per name. Cost if wrong: the reader cannot see which reference ids stand for
+shared names.
+
+**R-3e (the warning's numbers).** The export's one warning gives how many names were left out and
+how many objects carry them in all, over every section, a group's name counted over the whole
+tenant, Microsoft 365 and distribution groups included. Cost if wrong: a number that includes
+namesakes never in `inventory.json`'s scope.
+
+**R-4 (texts that carry the controller's numbers).** Task 4, measurement B written into R3 of
+[#export-group-selection](#export-group-selection), was batched with the texts of Task 5 into one
+dispatch, and the outcome of the live checklist (measurements B and C) was added after the live run by
+a small follow-up: both are texts that carry numbers only the controller holds. Cost if wrong: none beyond one batched
+review.
+
+**R-5 (a package's catalog, and `-Catalog`).** An access package whose catalog's name another
+catalog the export read carries is written with the catalog's object id, which the apply engine takes
+as the catalog itself (`Resolve-OERCatalogId` returns a GUID as given), so access packages of one
+name in two such catalogs are two entries and not a collision; the unread paths of such a catalog
+name it the same way. The catalogs themselves are left out as before. The names are counted over the
+catalogs the export read, with no extra lookup: `-Catalog` given as an id reads that catalog alone,
+so a package in it keeps the catalog's name even when another catalog in the tenant carries it, and
+given as a name it reads every catalog Microsoft Graph matches by that name, which are counted. Such
+a pair of catalogs can be held only by a tenant that made it before Microsoft Graph refused to create
+or rename a catalog to a name another carries (measurement C), so the rule serves those tenants and
+has no live case in the test tenant. Cost if wrong: a package in a filtered catalog whose name another catalog shares is written by name and
+refused when applied (`AmbiguousName`, nothing written).
+
+**R-6 (what this step does not cover).** A group named as a PIM for Groups eligibility principal, as
+an access review's reviewer, or as a catalog resource or an access package resource role keeps its
+display name: none of these positions has a `principalType` key, and A17 names a group as a
+principal, with `principalType` `Group`. They are reported as findings outside this step's scope.
+Cost if wrong: those positions still write a shared group name, which the apply engine refuses
+(`AmbiguousName`, nothing written).
+
+**The validator and the policies of one package (Task 3a).** `Test-OERStructureSchema` drops the
+exception of Ruling P4: two assignment policies of one access package that claim one name are an
+Error whatever the two claims are -- two `displayName`s, a `displayName` and a `previousDisplayName`,
+or two `previousDisplayName`s -- at the later claim's path, naming the earlier policy by its position;
+the same name in two packages is two policies. The export leaves out every policy whose name another
+policy of its package carries, letter case aside, and reports the name once with its count, named
+`accessPackages/` followed by the package name, `/assignmentPolicies/` and the policy name (section
+`assignmentPolicies`, reported as `<package>/<policy>`); the policies of two packages never count
+against each other. Leaving a policy out removes nothing, since the apply engine never removes an
+assignment policy. Cost if wrong: a document an earlier version exported that holds such a pair is
+now refused whole by the offline check, where before only that policy's entry was refused when
+applied.
+
+**The widened filter (the controller's ruling on Task 2).** A security group whose name a group
+carries that a widened `-GroupFilter` listed and `-SecurityEnabledOnly` dropped -- a group that is not
+security-enabled -- is left out when the roster was read, since the index holds every group in the
+tenant. That overrides, for the count only, the rule of R5 and R6 of
+[#export-group-selection](#export-group-selection) that a dropped group is out of scope before the
+shared names are counted: A17 counts shared names over every group, and the apply engine would refuse
+the name anyway. When the roster could not be read, the rule holds as before. Cost if wrong: one
+security group fewer in `inventory.json`, named in `IncompleteReads` and the README.
+
+**Root-scope rows (the controller's ruling on Task 3c).** A role assignment row passes the group rule
+of R-2 before the root-scope split
+([#root-scope-is-not-in-the-document](#root-scope-is-not-in-the-document)), so two root-scope groups
+that share a name are named by id in the warning, the information record and the README list: one
+reference rule for every row the section reads. Cost if wrong: a root-scope finding names a group by
+its id instead of its shared name.
+
+**Known limits.** (a) `-Catalog` given as an id (R-5) and the positions R-6 leaves out still write a
+shared name, refused when applied. (b) A display name of an access package or an assignment policy
+that is shaped like a GUID is read by the apply engine as an object id, and the export can keep such
+a name in a review, where the engine then reads it as an id and not as the name; very improbable. (c) Closed in this
+step (the controller's ruling on the final review): `New-OERAccessPackage` looks a package up by name
+in the whole tenant, so re-creating a package declared in catalog A while exactly one package of that
+name exists in catalog B returned B's package, and `Sync-OERStructureAccessPackage` reported it
+`Created` and went on to write the declared resource roles and assignment policies to it. The gap is
+older than this step, for every catalog named uniquely; the catalog id written here let it reach a
+package whose catalog's name is shared (refused as ambiguous before), a pair only a tenant from
+before Microsoft Graph's refusal can hold (measurement C). The handler now compares the
+catalog of the package `New-OERAccessPackage` returns with the declared catalog, as ids without
+regard to letter case -- an id as written, a name looked up once with `Resolve-OERCatalogId` -- and
+when they differ reports the entry as one `Failed` row and returns, with nothing written to that
+package or for the entry; a lookup that fails is scrubbed first and reported `Failed` with its error,
+nothing further written. A package with no catalog in the answer is one the create sent into the
+declared catalog whose confirmation read did not answer, and is reported `Created` as before. No
+ErrorId was added. Residual: none. (d) `Get-OERInventory` reads the listing of every group once per
+invocation that meets a group principal whose name was read, and `Export-OERInventory` makes one
+invocation per Azure scope, whose role assignment read returns inherited assignments too: one group
+assignment at a management group costs ceil(G/999) requests at every scope beneath it (about 9,300
+for 300 scopes and 30,000 groups, R-2), raised to the architect; a lookup per name costs the same
+order. A group row at the root scope alone makes `Get-OERInventory` read the listing, and the
+verbose line of R-3c says "every group principal" even when only root-scope rows met it. (e) The policies of a
+package that is itself left out for a shared name are still reported, and two same-named packages of
+one catalog that each hold a same-named pair of policies report the policy name twice, the same way:
+noise, since neither package is written. (f) Closed by the live checklist (measurement B): `$count` counts a
+service principal, and it trails a membership change by seconds, as the full read does.

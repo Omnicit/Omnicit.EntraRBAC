@@ -11,6 +11,41 @@ BeforeAll {
     Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment {
         [PSCustomObject]@{ Read = $true; Value = @(); Message = $null; Exception = $null }
     }
+    # BL-131: the groups section counts a group's name over every group in the tenant, through one
+    # paged listing (Get-OERGroupNameIndex). Answered here as an index that was read and holds no
+    # name, so every name is counted over the groups a fixture lists, exactly as before the listing
+    # existed, and no fixture's transport mock has to answer it. The Context 'shared names are counted
+    # over every group in the tenant (BL-131)' answers it with names, and drives the real helper
+    # through the transport.
+    $script:NewEmptyGroupNameIndex = {
+        $Index = [PSCustomObject]@{
+            Read      = $true
+            IdsByName = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[string]]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            Message   = $null
+        }
+        $Index.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupNameIndex')
+        $Index
+    }
+    Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewEmptyGroupNameIndex }
+    # BL-131 (Task 3c): a group named as a principal in RoleAssignments or DirectoryRoleAssignments is
+    # written by its display name only when the index holds that name for this group alone, so the empty
+    # index above names every such group by its object id. A Context whose fixtures name groups as
+    # principals answers the index with this instead: every group the fixture describes, each id under
+    # its display name (-NameById: id -> name), so a name is shared or unique exactly as the fixture
+    # says.
+    $script:NewGroupNameIndexOf = {
+        param([hashtable]$NameById)
+        $Ids = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[string]]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($GroupId in $NameById.Keys) {
+            $GroupName = [string]$NameById[$GroupId]
+            if ([string]::IsNullOrWhiteSpace($GroupName)) { continue }
+            if (-not $Ids.ContainsKey($GroupName)) { $Ids[$GroupName] = [System.Collections.Generic.List[string]]::new() }
+            $Ids[$GroupName].Add(([string]$GroupId).ToLowerInvariant())
+        }
+        $Index = [PSCustomObject]@{ Read = $true; IdsByName = $Ids; Message = $null }
+        $Index.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupNameIndex')
+        $Index
+    }
     # Three Split-Path hops from tests\Unit\Public: tests\Unit\Public -> tests\Unit -> tests ->
     # repo root. A two-hop version resolves to tests\ and was corrected once already on this
     # branch (Task 1) -- do not repeat that mistake.
@@ -1271,6 +1306,15 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
                 $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
             }
+            # BL-142: a name read is written only when the apply engine's own lookup of it finds this
+            # object and no other, so the two lookups are answered too: one access package in the
+            # tenant carries 'AP-Sales', and one policy of ap-1 carries 'Default'.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'ap-1'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'pol-1'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'ap-1'"
+            }
         }
 
         It 'projects a round-trippable access review (names, reviewers, recurrence)' {
@@ -1791,6 +1835,13 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
                 $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
             }
+            # BL-142: the apply engine's own lookups of the two names, each finding this object alone.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'ap-1'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'pol-1'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'ap-1'"
+            }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
                 @{
                     '00000000-0000-0000-0000-000000000049' = 'anna@contoso.com'
@@ -1956,6 +2007,15 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Get-OERAccessPackage { }
             Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+            # BL-142: a name read is written only when the apply engine's own lookup of it finds this
+            # object and no other. Answered here as that: one access package carries 'AP-Sales', and one
+            # policy of the package carries 'Default'. The Context below tests the lookups themselves.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq '11111111-1111-1111-1111-111111111111'"
+            }
         }
 
         It 'writes the names the by-id reads return, each read declaring its own not-found codes' {
@@ -2098,6 +2158,410 @@ Describe 'Get-OERInventory' {
             $Causes = ($Partial[0].Exception.Message -split 'Causes: ')[1]
             @([regex]::Matches($Causes, "Could not read an access review's access package name")).Count | Should -Be 1
             @([regex]::Matches($Causes, "Could not read an access review's assignment policy name")).Count | Should -Be 1
+        }
+
+        It 'sends no uniqueness lookup for a reference already written by id' {
+            # Only a NAME is checked: the id of a deleted package or policy is written as it is.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { & $script:NewArMarker 'AccessPackageNotFound' } -ParameterFilter { $Uri -eq $script:ArApUri }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { & $script:NewArMarker 'PolicyNotFound' } -ParameterFilter { $Uri -eq $script:ArPolUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews)[0].accessPackage | Should -Be $script:ArApId
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*$filter=*' }
+            @($InvErr).Count | Should -Be 0
+        }
+    }
+
+    Context 'access review references are written by id when the apply engine could not resolve the name (BL-142)' {
+        # The apply engine resolves a review's accessPackage name in the whole tenant
+        # (Resolve-OERAccessPackageId) and its assignmentPolicy name among the policies of the package
+        # (Resolve-OERAssignmentPolicyId), and refuses a name either finds more than once. The export
+        # repeats those two lookups, with the same URIs, and keeps a name only when the lookup finds this
+        # object and no other; otherwise it writes the id, which the engine takes as the object itself.
+        # No id below is version-4 shaped.
+        BeforeAll {
+            $script:UqApId = 'aaaa1111-0000-0000-0000-000000000041'
+            $script:UqPolId = 'bbbb2222-0000-0000-0000-000000000041'
+            $script:UqOtherApId = 'aaaa1111-0000-0000-0000-000000000042'
+            $script:UqOtherPolId = 'bbbb2222-0000-0000-0000-000000000042'
+            # The engine's lookups: the access package name tenant-wide, the policies of the package.
+            $script:UqApLookupUri = "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            $script:UqPolLookupUri = "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'aaaa1111-0000-0000-0000-000000000041'"
+            function script:New-UqReview {
+                param([string]$Name, [string]$AccessPackageId = $script:UqApId, [string]$AssignmentPolicyId = $script:UqPolId)
+                [PSCustomObject]@{
+                    Id = "ar-$Name"; DisplayName = $Name; AccessPackageId = $AccessPackageId; AssignmentPolicyId = $AssignmentPolicyId
+                    Reviewers = @(); Recurrence = $null; DurationInDays = 14
+                }
+            }
+            function script:Get-UqPartial {
+                param([object[]]$Record)
+                @($Record | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            }
+        }
+
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { New-UqReview -Name 'Q3 AP review' }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+            # The by-id name reads: the review's package is AP-Sales and its policy Default.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000041?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'bbbb2222-0000-0000-0000-000000000041'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/bbbb2222-0000-0000-0000-000000000041?$expand=accessPackage'
+            }
+            # The lookups as a tenant where each name is unique answers them.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq $script:UqApLookupUri
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'bbbb2222-0000-0000-0000-000000000041'; displayName = 'Default' }, @{ id = 'bbbb2222-0000-0000-0000-000000000043'; displayName = 'Premium' }) }
+            } -ParameterFilter { $Uri -eq $script:UqPolLookupUri }
+        }
+
+        It 'writes the access package by id when another access package in the tenant carries its name, and keeps the policy name' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' }, @{ id = 'aaaa1111-0000-0000-0000-000000000042'; displayName = 'ap-sales' }) }
+            } -ParameterFilter { $Uri -eq $script:UqApLookupUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -BeExactly $script:UqApId
+            $Ar.assignmentPolicy | Should -BeExactly 'Default'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:UqApLookupUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:UqPolLookupUri }
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0 -Because 'a shared name written by id is applicable, so nothing is reported for it'
+        }
+
+        It 'writes the assignment policy by id when another policy of the package carries its name in another letter case, and keeps the package name' {
+            # The resolver compares with -eq, which ignores letter case, so 'DEFAULT' is the same name.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'bbbb2222-0000-0000-0000-000000000041'; displayName = 'Default' }, @{ id = 'bbbb2222-0000-0000-0000-000000000042'; displayName = 'DEFAULT' }) }
+            } -ParameterFilter { $Uri -eq $script:UqPolLookupUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -BeExactly 'AP-Sales'
+            $Ar.assignmentPolicy | Should -BeExactly $script:UqPolId
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:UqPolLookupUri }
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'writes the id when the lookup finds one object of the name and it is another one' {
+            # The lookup is what the engine would resolve the name to: here another package and another
+            # policy, so the name would not reach the review's own target.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000042'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq $script:UqApLookupUri
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'bbbb2222-0000-0000-0000-000000000042'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq $script:UqPolLookupUri
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -BeExactly $script:UqApId
+            $Ar.assignmentPolicy | Should -BeExactly $script:UqPolId
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'keeps both names when each lookup finds this object alone, comparing the id without regard to letter case' {
+            # The policy listing also holds a policy of another name, which the name filter leaves out.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'AAAA1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq $script:UqApLookupUri
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -BeExactly 'AP-Sales'
+            $Ar.assignmentPolicy | Should -BeExactly 'Default'
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'looks each name up once per invocation: one package lookup per name and one policy listing per package' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                New-UqReview -Name 'Q3 AP review'
+                New-UqReview -Name 'Q4 AP review'
+                New-UqReview -Name 'Other review' -AccessPackageId 'aaaa1111-0000-0000-0000-000000000042' -AssignmentPolicyId 'bbbb2222-0000-0000-0000-000000000042'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'aaaa1111-0000-0000-0000-000000000042'; displayName = 'AP-Other' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000042?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'bbbb2222-0000-0000-0000-000000000042'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/bbbb2222-0000-0000-0000-000000000042?$expand=accessPackage'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000042'; displayName = 'AP-Other' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Other'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'bbbb2222-0000-0000-0000-000000000042'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'aaaa1111-0000-0000-0000-000000000042'"
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews | ForEach-Object { "$($_.displayName)|$($_.accessPackage)|$($_.assignmentPolicy)" }) | Should -Be @(
+                'Q3 AP review|AP-Sales|Default'
+                'Q4 AP review|AP-Sales|Default'
+                'Other review|AP-Other|Default'
+            )
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:UqApLookupUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:UqPolLookupUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Other'&`$select=id,displayName"
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'aaaa1111-0000-0000-0000-000000000042'"
+            }
+            # The positive control: each review's names were read by id, once per review.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000041?$expand=catalog'
+            }
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'looks an access package name up once for two reviews whose package names differ only in letter case, and writes both by id' {
+            # Two packages, 'AP-Sales' and 'ap-sales': the tenant-wide lookup finds both, whichever spelling
+            # asks, so the answer to the first serves the second and both are written by id.
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                New-UqReview -Name 'Q3 AP review'
+                New-UqReview -Name 'Other review' -AccessPackageId 'aaaa1111-0000-0000-0000-000000000042' -AssignmentPolicyId 'bbbb2222-0000-0000-0000-000000000042'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'aaaa1111-0000-0000-0000-000000000042'; displayName = 'ap-sales' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000042?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'bbbb2222-0000-0000-0000-000000000042'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/bbbb2222-0000-0000-0000-000000000042?$expand=accessPackage'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' }, @{ id = 'aaaa1111-0000-0000-0000-000000000042'; displayName = 'ap-sales' }) }
+            } -ParameterFilter { $Uri -eq $script:UqApLookupUri }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'bbbb2222-0000-0000-0000-000000000042'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'aaaa1111-0000-0000-0000-000000000042'"
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews | ForEach-Object { "$($_.displayName)|$($_.accessPackage)" }) | Should -Be @(
+                "Q3 AP review|$($script:UqApId)"
+                "Other review|$($script:UqOtherApId)"
+            )
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq $script:UqApLookupUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter {
+                $Uri -ceq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'ap-sales'&`$select=id,displayName"
+            }
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'lists the policies of an access package once for two reviews whose package id differs only in letter case' {
+            # The second review's scope spells the same package id in upper case.
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                New-UqReview -Name 'Q3 AP review'
+                New-UqReview -Name 'Q4 AP review' -AccessPackageId 'AAAA1111-0000-0000-0000-000000000041' -AssignmentPolicyId 'BBBB2222-0000-0000-0000-000000000041'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' } } -ParameterFilter {
+                $Uri -ceq 'v1.0/identityGovernance/entitlementManagement/accessPackages/AAAA1111-0000-0000-0000-000000000041?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'bbbb2222-0000-0000-0000-000000000041'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -ceq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/BBBB2222-0000-0000-0000-000000000041?$expand=accessPackage'
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews | ForEach-Object { "$($_.displayName)|$($_.accessPackage)|$($_.assignmentPolicy)" }) | Should -Be @(
+                'Q3 AP review|AP-Sales|Default'
+                'Q4 AP review|AP-Sales|Default'
+            )
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq $script:UqPolLookupUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter {
+                $Uri -ceq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'AAAA1111-0000-0000-0000-000000000041'"
+            }
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'escapes the access package name in the lookup as the resolver does' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = "Lee's AP & Co" } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000041?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = "Lee's AP & Co" }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'Lee%27%27s%20AP%20%26%20Co'&`$select=id,displayName"
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews)[0].accessPackage | Should -BeExactly "Lee's AP & Co"
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'writes the id of every review of the package and reports the check unread once looked up, when the access package lookup fails' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                New-UqReview -Name 'Q3 AP review'
+                New-UqReview -Name 'Q4 AP review'
+            }
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Too many requests (package lookup).'), 'TooManyRequests',
+                    [System.Management.Automation.ErrorCategory]::LimitsExceeded, $null)
+            } -ParameterFilter { $Uri -eq $script:UqApLookupUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews | ForEach-Object { "$($_.displayName)|$($_.accessPackage)|$($_.assignmentPolicy)" }) | Should -Be @(
+                "Q3 AP review|$($script:UqApId)|Default"
+                "Q4 AP review|$($script:UqApId)|Default"
+            )
+            # One failed lookup serves both reviews.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:UqApLookupUri }
+            $Partial = @(Get-UqPartial -Record @($InvErr))
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'accessReviews/Q3 AP review/accessPackage, accessReviews/Q4 AP review/accessPackage'
+            $Causes = ($Partial[0].Exception.Message -split 'Causes: ')[1]
+            @([regex]::Matches($Causes, [regex]::Escape("Could not check whether an access review's access package name is unique: Too many requests (package lookup).")) ).Count |
+                Should -Be 1 -Because 'one cause, stated once for the two reviews it left unread'
+            # The catch was reached (the partial above) and the record it caught was scrubbed.
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'Too many requests (package lookup).'
+            }
+        }
+
+        It 'writes the policy id and reports the check unread when the assignment policy listing fails' {
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Insufficient privileges to complete the operation (policy listing).'), 'Authorization_RequestDenied',
+                    [System.Management.Automation.ErrorCategory]::NotSpecified, $null)
+            } -ParameterFilter { $Uri -eq $script:UqPolLookupUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -BeExactly 'AP-Sales'
+            $Ar.assignmentPolicy | Should -BeExactly $script:UqPolId
+            $Partial = @(Get-UqPartial -Record @($InvErr))
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'accessReviews/Q3 AP review/assignmentPolicy'
+            $Partial[0].Exception.Message | Should -BeLike "*Causes: Could not check whether an access review's assignment policy name is unique: Insufficient privileges to complete the operation (policy listing).*"
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'Insufficient privileges to complete the operation (policy listing).'
+            }
+        }
+
+        It 'states the rule in the help' {
+            $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
+            $Help | Should -Match ([regex]::Escape('So the projection writes a name only when that same lookup finds this access package or assignment policy and no other'))
+            $Help | Should -Match ([regex]::Escape('a name whose uniqueness could not be checked, because the lookup above failed'))
+            $Help | Should -Not -Match ([regex]::Escape('until the entry names it by id'))
+        }
+    }
+
+    Context "the export's review-reference lookups agree with the resolvers (named deviation)" {
+        # A NAMED DEVIATION from the single-owner rule (Task 3b ruling): Get-OERInventory repeats the
+        # access package lookup of Resolve-OERAccessPackageId and the assignment policy lookup of
+        # Resolve-OERAssignmentPolicyId over the transport instead of calling them, since a resolver throws
+        # AmbiguousName for a shared name and would leave stray records in a caller's -ErrorVariable. This
+        # Context holds the copies in step: under ONE transport mock, the resolvers and the export answer
+        # the same four tenants, and (a) send byte-identical URIs and (b) agree -- the export keeps a name
+        # exactly when the resolver returns this object's id, and writes the id when the resolver throws
+        # AmbiguousName, returns $null or returns another id. The access package name needs escaping, so a
+        # change to the escaping shows. No id below is version-4 shaped.
+        BeforeAll {
+            $script:AgApId = 'aaaa1111-0000-0000-0000-000000000061'
+            $script:AgPolId = 'bbbb2222-0000-0000-0000-000000000061'
+            $script:AgOtherApId = 'aaaa1111-0000-0000-0000-000000000062'
+            $script:AgOtherPolId = 'bbbb2222-0000-0000-0000-000000000062'
+            $script:AgApName = "AP Sales & Co's #1"
+            $script:AgPolName = 'Default'
+            # What the resolver did: 'This' (returned this object's id), 'Other' (another id), 'Null' or
+            # 'Ambiguous' (threw AmbiguousName). Any other throw fails the test.
+            function script:Get-AgResolverOutcome {
+                param([scriptblock]$Resolve, [string]$ThisId)
+                try {
+                    $Result = & $Resolve
+                } catch {
+                    if ([string]$PSItem.FullyQualifiedErrorId -like 'AmbiguousName*') { return 'Ambiguous' }
+                    throw
+                }
+                if ($null -eq $Result) { return 'Null' }
+                if ([string]$Result -ieq $ThisId) { return 'This' }
+                'Other'
+            }
+        }
+
+        BeforeEach {
+            $script:AgCalls = [System.Collections.Generic.List[string]]::new()
+            $script:AgPackages = @()
+            $script:AgPolicies = @()
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-agree'; DisplayName = 'Agreement review'
+                    AccessPackageId = 'aaaa1111-0000-0000-0000-000000000061'; AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000061'
+                    Reviewers = @(); Recurrence = $null; DurationInDays = 14
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            # The ONE transport mock both sides send through. It dispatches on the URI's shape, not on the
+            # exact string, so a URI that drifts on one side is still answered and the comparison below
+            # is what reports it.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                $script:AgCalls.Add([string]$Uri)
+                $Base = 'v1.0/identityGovernance/entitlementManagement/'
+                if ($Uri.StartsWith($Base + 'accessPackages/')) { return @{ id = $script:AgApId; displayName = $script:AgApName } }
+                if ($Uri.StartsWith($Base + 'assignmentPolicies/')) { return @{ id = $script:AgPolId; displayName = $script:AgPolName } }
+                if ($Uri.StartsWith($Base + 'accessPackages?')) { return @{ value = @($script:AgPackages) } }
+                if ($Uri.StartsWith($Base + 'assignmentPolicies?')) { return @{ value = @($script:AgPolicies) } }
+                throw "Unexpected Graph request: $Uri"
+            }
+        }
+
+        It 'agrees with both resolvers on <Case>' -ForEach @(
+            @{ Case = 'a name this object alone carries'; Tenant = 'Unique'; Outcome = 'This' }
+            @{ Case = 'a name two objects carry, in two letter cases'; Tenant = 'Shared'; Outcome = 'Ambiguous' }
+            @{ Case = 'a name no object carries'; Tenant = 'None'; Outcome = 'Null' }
+            @{ Case = 'a name one other object alone carries'; Tenant = 'Another'; Outcome = 'Other' }
+        ) {
+            $This = @{ Ap = @{ id = $script:AgApId; displayName = $script:AgApName }; Pol = @{ id = $script:AgPolId; displayName = $script:AgPolName } }
+            switch ($Tenant) {
+                'Unique' {
+                    $script:AgPackages = @($This.Ap)
+                    $script:AgPolicies = @($This.Pol, @{ id = $script:AgOtherPolId; displayName = 'Premium' })
+                }
+                'Shared' {
+                    $script:AgPackages = @($This.Ap, @{ id = $script:AgOtherApId; displayName = $script:AgApName.ToUpperInvariant() })
+                    $script:AgPolicies = @($This.Pol, @{ id = $script:AgOtherPolId; displayName = $script:AgPolName.ToUpperInvariant() })
+                }
+                'None' {
+                    $script:AgPackages = @()
+                    $script:AgPolicies = @(@{ id = $script:AgOtherPolId; displayName = 'Premium' })
+                }
+                'Another' {
+                    $script:AgPackages = @(@{ id = $script:AgOtherApId; displayName = $script:AgApName })
+                    $script:AgPolicies = @(@{ id = $script:AgOtherPolId; displayName = $script:AgPolName })
+                }
+            }
+
+            # The resolvers, as the apply engine calls them for a name.
+            $script:AgCalls.Clear()
+            $ApOutcome = Get-AgResolverOutcome -ThisId $script:AgApId -Resolve {
+                InModuleScope $script:moduleName -Parameters @{ Name = $script:AgApName } {
+                    param($Name)
+                    Resolve-OERAccessPackageId -DisplayName $Name
+                }
+            }
+            $ResolverApUri = @($script:AgCalls)
+            $script:AgCalls.Clear()
+            $PolOutcome = Get-AgResolverOutcome -ThisId $script:AgPolId -Resolve {
+                InModuleScope $script:moduleName -Parameters @{ PackageId = $script:AgApId; Name = $script:AgPolName } {
+                    param($PackageId, $Name)
+                    Resolve-OERAssignmentPolicyId -AccessPackageId $PackageId -AssignmentPolicy $Name
+                }
+            }
+            $ResolverPolUri = @($script:AgCalls)
+
+            # The export.
+            $script:AgCalls.Clear()
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $ExportApUri = @($script:AgCalls | Where-Object { $_.StartsWith('v1.0/identityGovernance/entitlementManagement/accessPackages?') })
+            $ExportPolUri = @($script:AgCalls | Where-Object { $_.StartsWith('v1.0/identityGovernance/entitlementManagement/assignmentPolicies?') })
+
+            # Each case reaches the resolver outcome it is about, so the four together cover all four.
+            $ApOutcome | Should -BeExactly $Outcome
+            $PolOutcome | Should -BeExactly $Outcome
+            # (a) The same request, byte for byte.
+            $ResolverApUri.Count | Should -Be 1
+            $ExportApUri.Count | Should -Be 1
+            $ExportApUri[0] | Should -BeExactly $ResolverApUri[0]
+            $ResolverPolUri.Count | Should -Be 1
+            $ExportPolUri.Count | Should -Be 1
+            $ExportPolUri[0] | Should -BeExactly $ResolverPolUri[0]
+            # (b) The same decision: the name exactly when the resolver returns this object's id.
+            $Ar.accessPackage | Should -BeExactly $(if ($ApOutcome -eq 'This') { $script:AgApName } else { $script:AgApId })
+            $Ar.assignmentPolicy | Should -BeExactly $(if ($PolOutcome -eq 'This') { $script:AgPolName } else { $script:AgPolId })
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
         }
     }
 
@@ -2396,6 +2860,8 @@ Describe 'Get-OERInventory' {
                 }
             }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ 'fg-1' = 'Partner Admins' } }
+            # The one group in the tenant that carries the name (BL-131, Task 3c), so it is written by it.
+            Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewGroupNameIndexOf @{ 'fg-1' = 'Partner Admins' } }
             $ra = (Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).RoleAssignments[0]
             $ra.principal | Should -Be 'Partner Admins'
             $ra.PSObject.Properties.Name | Should -Not -Contain 'principalType'
@@ -2550,6 +3016,16 @@ Describe 'Get-OERInventory' {
                 }
                 $Map
             }
+            # BL-131 (Task 3c): the tenant's groups are the groups the rows name, each under the name the
+            # fixture gives it, so a group principal is shared or unique as the fixture says.
+            Mock -ModuleName $script:moduleName Get-OERGroupNameIndex {
+                $NameById = @{}
+                foreach ($Row in @($script:RootRas)) {
+                    if ([string]$Row.PrincipalType -notin @('Group', 'ForeignGroup')) { continue }
+                    if ($script:RootNames.ContainsKey([string]$Row.PrincipalId)) { $NameById[[string]$Row.PrincipalId] = $script:RootNames[[string]$Row.PrincipalId] }
+                }
+                & $script:NewGroupNameIndexOf $NameById
+            }
         }
 
         It 'leaves the inherited root row out of a read at <Target>, names it in one warning and in one information record' -ForEach @(
@@ -2639,6 +3115,35 @@ Describe 'Get-OERInventory' {
         }
 
         It 'names two root rows that share a principal name by that name: the collision pass never sees them' {
+            # Two users the name lookup names alike: the collision pass would name them by id if it saw
+            # them. (Two GROUPS of one name are named by id before the split, by the group rule; the next
+            # test holds that.)
+            $script:RootNames = @{
+                'dddd2222-0000-0000-0000-000000000008' = 'Ops'
+                'dddd2222-0000-0000-0000-000000000009' = 'Ops'
+            }
+            $script:RootRas = @(
+                New-RootRa -Scope '/' -RoleName 'Owner' -PrincipalId 'dddd2222-0000-0000-0000-000000000008' -PrincipalType 'User' `
+                    -PrincipalName 'Ops' -RoleAssignmentId '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000008'
+                New-RootRa -Scope '/' -RoleName 'Owner' -PrincipalId 'dddd2222-0000-0000-0000-000000000009' -PrincipalType 'User' `
+                    -PrincipalName 'Ops' -RoleAssignmentId '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000009'
+            )
+            $W = $null
+            $Info = $null
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM -WarningVariable W -WarningAction SilentlyContinue -InformationVariable Info
+            @($Inv.roleAssignments).Count | Should -Be 0
+            [string]$W[0].Message | Should -BeExactly (Get-RootWarningText -Count 2 -Rows "'Owner' for 'Ops' (User); 'Owner' for 'Ops' (User)")
+            # The record tells the two apart by their role assignment ids.
+            @((Get-RootNotice -Information @($Info))[0].MessageData.Assignments | ForEach-Object { $_.RoleAssignmentId }) | Should -Be @(
+                '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000008'
+                '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000009'
+            )
+        }
+
+        It 'names two root group rows whose name the tenant shares by their object ids: the group rule runs before the split' {
+            # BL-131 (Task 3c): a group principal is named once, where the row is projected, and the root
+            # rows are taken out after that, so the warning and the record name a group of a shared name
+            # the way the document would have.
             $script:RootNames = @{
                 'dddd2222-0000-0000-0000-000000000008' = 'Ops'
                 'dddd2222-0000-0000-0000-000000000009' = 'Ops'
@@ -2653,12 +3158,13 @@ Describe 'Get-OERInventory' {
             $Info = $null
             $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM -WarningVariable W -WarningAction SilentlyContinue -InformationVariable Info
             @($Inv.roleAssignments).Count | Should -Be 0
-            [string]$W[0].Message | Should -BeExactly (Get-RootWarningText -Count 2 -Rows "'Owner' for 'Ops' (Group); 'Owner' for 'Ops' (Group)")
-            # The record tells the two apart by their role assignment ids.
-            @((Get-RootNotice -Information @($Info))[0].MessageData.Assignments | ForEach-Object { $_.RoleAssignmentId }) | Should -Be @(
-                '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000008'
-                '/providers/Microsoft.Authorization/roleAssignments/cccc2222-0000-0000-0000-000000000009'
+            [string]$W[0].Message | Should -BeExactly (Get-RootWarningText -Count 2 -Rows ("'Owner' for 'dddd2222-0000-0000-0000-000000000008' (Group); " +
+                    "'Owner' for 'dddd2222-0000-0000-0000-000000000009' (Group)"))
+            @((Get-RootNotice -Information @($Info))[0].MessageData.Assignments | ForEach-Object { "$($_.Principal)|$($_.PrincipalType)" }) | Should -Be @(
+                'dddd2222-0000-0000-0000-000000000008|Group'
+                'dddd2222-0000-0000-0000-000000000009|Group'
             )
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
         }
 
         It 'writes no warning and no information record when no row is at the root scope, and the document is as before' {
@@ -2717,6 +3223,17 @@ Describe 'Get-OERInventory' {
                     MembershipType = 'Assigned'; Visibility = $null; Members = @(); ScopedRoles = @()
                 }
             }
+            # An assignment policy as Get-OERAccessPackageAssignmentPolicy returns one, complete enough
+            # for the projection to run on and valid once written.
+            function script:New-DupPolicy {
+                param([string]$Name, [string]$Id)
+                [PSCustomObject]@{
+                    Id = $Id; DisplayName = $Name; Description = $null; RequestorScope = $null; RequestorSettings = $null
+                    RequireApproval = $false; RequireRequestorJustification = $false; RequireApprovalForUpdate = $false
+                    ApprovalStages = @(); DurationInDays = 30; DurationInHours = $null; ExpirationDateTime = $null
+                    NotificationsDisabled = $false
+                }
+            }
             function script:New-DupRoleAssignment {
                 param(
                     [string]$PrincipalId, [string]$PrincipalType, [string]$PrincipalName,
@@ -2761,6 +3278,7 @@ Describe 'Get-OERInventory' {
             $script:DupAdministrativeUnits = @()
             $script:DupCatalogs = @()
             $script:DupAccessPackages = @{}
+            $script:DupAssignmentPolicies = @{}
             $script:DupRoleAssignments = @()
             $script:DupNames = @{}
             $script:DupPolicies = @()
@@ -2774,7 +3292,11 @@ Describe 'Get-OERInventory' {
                 $script:DupAccessPackages[[string]$Catalog]
             }
             Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole { @() }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @() }
+            # The policies of a package by the package id; a package with none answers nothing.
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy {
+                param($AccessPackage)
+                if ($script:DupAssignmentPolicies.ContainsKey([string]$AccessPackage)) { $script:DupAssignmentPolicies[[string]$AccessPackage] }
+            }
             Mock -ModuleName $script:moduleName Get-OERRoleAssignment { $script:DupRoleAssignments }
             Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy { $script:DupPolicies }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
@@ -2785,6 +3307,16 @@ Describe 'Get-OERInventory' {
                 }
                 $Map
             }
+            # BL-131 (Task 3c): the tenant's groups are the groups the role assignments name, each under
+            # the name the fixture gives it, so a group principal is shared or unique as the fixture says.
+            Mock -ModuleName $script:moduleName Get-OERGroupNameIndex {
+                $NameById = @{}
+                foreach ($Ra in @($script:DupRoleAssignments)) {
+                    if ([string]$Ra.PrincipalType -notin @('Group', 'ForeignGroup')) { continue }
+                    $NameById[[string]$Ra.PrincipalId] = $(if ($script:DupNames.ContainsKey([string]$Ra.PrincipalId)) { $script:DupNames[[string]$Ra.PrincipalId] } else { $Ra.PrincipalDisplayName })
+                }
+                & $script:NewGroupNameIndexOf $NameById
+            }
             # A review's access package and assignment policy names are read through the transport.
             # The catch-all FIRST makes any other request a loud failure instead of a real call.
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
@@ -2793,6 +3325,13 @@ Describe 'Get-OERInventory' {
             }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
                 $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
+            }
+            # BL-142: the apply engine's own lookups of the two names, each finding this object alone.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'ap-1'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'pol-1'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'ap-1'"
             }
         }
 
@@ -2828,7 +3367,7 @@ Describe 'Get-OERInventory' {
             $Partial = Get-DupPartial -Record @($InvErr)
             $Partial.Count | Should -Be 1
             [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Dup'
-            $Partial[0].Exception.Message | Should -Match 'Two or more live objects share the name groups/Dup'
+            $Partial[0].Exception.Message | Should -Match '2 live objects share the name groups/Dup'
             $Partial[0].Exception.Message |
                 Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are not stated as facts in the document*'
         }
@@ -2942,6 +3481,272 @@ Describe 'Get-OERInventory' {
             Assert-DupDocumentValid -Inventory $Inv
         }
 
+        # BL-39 (Sprint 11 step 5): a catalog whose name another catalog carries is left out, and the apply
+        # engine refuses its name as ambiguous, so a package in it is written with the catalog's object
+        # id, which the engine takes as the catalog itself. The ids are the GUIDs Graph gives a catalog.
+        It 'writes a package in a catalog whose name another catalog carries with the catalog''s id, and a package in a unique catalog with its name (BL-39)' {
+            $script:DupCatalogs = @(
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000001'; DisplayName = 'Core'; Description = 'one' }
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000002'; DisplayName = 'core'; Description = 'two' }
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000003'; DisplayName = 'Solo Catalog'; Description = 'three' }
+            )
+            # A package of one name in each of the two catalogs that share a name: two packages, two keys.
+            $script:DupAccessPackages = @{
+                'eeee5555-0000-0000-0000-000000000001' = @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'Sales'; Description = $null })
+                'eeee5555-0000-0000-0000-000000000002' = @([PSCustomObject]@{ Id = 'ap-2'; DisplayName = 'Sales'; Description = $null })
+                'eeee5555-0000-0000-0000-000000000003' = @([PSCustomObject]@{ Id = 'ap-3'; DisplayName = 'Edge'; Description = $null })
+            }
+            $Inv = Get-OERInventory -Include Catalogs, AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+
+            @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @(
+                'eeee5555-0000-0000-0000-000000000001|Sales'
+                'eeee5555-0000-0000-0000-000000000002|Sales'
+                'Solo Catalog|Edge'
+            )
+            @($Inv.catalogs | ForEach-Object { $_.displayName }) | Should -Be @('Solo Catalog')
+            # The catalogs are the only names left out: the two packages named Sales do not collide.
+            $Partial = Get-DupPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'catalogs/Core'
+            $Names = @((@($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }))[0].MessageData.Names)
+            @($Names | ForEach-Object { "$($_.Section)|$($_.Name)|$($_.Count)" }) | Should -Be @('catalogs|Core|2')
+            # The validator warns that the catalog id is not declared in the document, and refuses nothing.
+            $Validation = Get-DupValidation -Inventory $Inv
+            Get-DupValidationError -Validation $Validation | Should -BeNullOrEmpty
+            $Validation.Valid | Should -BeTrue
+            @($Validation.Errors | Where-Object { $_.Severity -eq 'Warning' } | ForEach-Object { $_.Message }) | Should -Be @(
+                "Catalog 'eeee5555-0000-0000-0000-000000000001' is not declared in this document. It may already exist in the tenant."
+                "Catalog 'eeee5555-0000-0000-0000-000000000002' is not declared in this document. It may already exist in the tenant."
+            )
+        }
+
+        It 'counts catalog names over the catalogs read, so with -Catalog given as an id a package keeps its catalog''s name (BL-39, documented limit)' {
+            # -Catalog given as an id reads that catalog alone, so the export cannot see a catalog elsewhere
+            # in the tenant that carries the same name.
+            $script:DupCatalogs = @([PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000001'; DisplayName = 'Core'; Description = 'one' })
+            $script:DupAccessPackages = @{
+                'eeee5555-0000-0000-0000-000000000001' = @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'Sales'; Description = $null })
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -Catalog 'eeee5555-0000-0000-0000-000000000001' -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly -ParameterFilter { $Id -eq 'eeee5555-0000-0000-0000-000000000001' }
+            @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @('Core|Sales')
+            (Get-DupPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'writes the packages by catalog id when -Catalog given as a name reads two catalogs that carry it (BL-39)' {
+            # -Catalog given as a name reads every catalog Microsoft Graph matches by that name (here both
+            # spellings), and those are counted like any other list.
+            $script:DupCatalogs = @(
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000001'; DisplayName = 'Core'; Description = 'one' }
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000002'; DisplayName = 'core'; Description = 'two' }
+            )
+            $script:DupAccessPackages = @{
+                'eeee5555-0000-0000-0000-000000000001' = @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'Sales'; Description = $null })
+                'eeee5555-0000-0000-0000-000000000002' = @([PSCustomObject]@{ Id = 'ap-2'; DisplayName = 'Sales'; Description = $null })
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -Catalog 'Core' -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'Core' }
+            @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @(
+                'eeee5555-0000-0000-0000-000000000001|Sales'
+                'eeee5555-0000-0000-0000-000000000002|Sales'
+            )
+            (Get-DupPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'names an unread collection of a catalog whose name another catalog carries by the catalog id, and of a unique catalog by its name (BL-39)' {
+            # Two catalogs of one name must not read alike in the InventoryPartial error: each is named by the
+            # reference its packages are written with.
+            $script:DupCatalogs = @(
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000001'; DisplayName = 'Core'; Description = 'one' }
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000002'; DisplayName = 'core'; Description = 'two' }
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000003'; DisplayName = 'Solo Catalog'; Description = 'three' }
+            )
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                param($Catalog)
+                if ($Catalog -eq 'eeee5555-0000-0000-0000-000000000001') { throw 'resources refused (core one)' }
+                @()
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+                param($Catalog)
+                if ($Catalog -in @('eeee5555-0000-0000-0000-000000000002', 'eeee5555-0000-0000-0000-000000000003')) { throw 'packages refused' }
+                @()
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessPackages).Count | Should -Be 0
+            $Partial = Get-DupPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly ('accessPackages/eeee5555-0000-0000-0000-000000000001/catalogResourceNames, ' +
+                'accessPackages/eeee5555-0000-0000-0000-000000000002/packages, accessPackages/Solo Catalog/packages')
+        }
+
+        # BL-131 (Sprint 11 step 5): two assignment policies of ONE access package that carry one name,
+        # without regard to letter case, are two entries the validator now refuses and the apply engine
+        # cannot tell apart, so neither is written and the name is reported once, with its count. A package
+        # with one catalog and one package is all the cases below need.
+        Context 'assignment policies of one access package that share a name (BL-131)' {
+            BeforeEach {
+                $script:DupCatalogs = @([PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'Core'; Description = 'one' })
+                $script:DupAccessPackages = @{
+                    'cat-1' = @(
+                        [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'Sales'; Description = $null }
+                        [PSCustomObject]@{ Id = 'ap-2'; DisplayName = 'Support'; Description = $null }
+                    )
+                }
+            }
+
+            It 'leaves out both policies of the shared name, reports the name with its count and writes the policy of another name' {
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-1'
+                        New-DupPolicy -Name 'Default' -Id 'pol-2'
+                        New-DupPolicy -Name 'Solo Policy' -Id 'pol-3'
+                    )
+                }
+                $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+                # Reach proof: the policies of the package were read, and the package was written.
+                Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+                $Sales = @($Inv.accessPackages | Where-Object displayName -ceq 'Sales')
+                $Sales.Count | Should -Be 1
+                @($Sales[0].assignmentPolicies | ForEach-Object { $_.displayName }) | Should -Be @('Solo Policy')
+                $Partial = Get-DupPartial -Record @($InvErr)
+                $Partial.Count | Should -Be 1
+                [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/Sales/assignmentPolicies/Default'
+                $Partial[0].Exception.Message | Should -Match 'Unread: accessPackages/Sales/assignmentPolicies/Default\. '
+                $Partial[0].Exception.Message |
+                    Should -BeLike '*Causes: 2 live objects share the name accessPackages/Sales/assignmentPolicies/Default (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.*'
+                $Notice = @($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' })
+                $Notice.Count | Should -Be 1
+                $Names = @($Notice[0].MessageData.Names)
+                $Names.Count | Should -Be 1
+                $Names[0].Section | Should -BeExactly 'assignmentPolicies'
+                $Names[0].Name | Should -BeExactly 'Sales/Default'
+                $Names[0].Count | Should -Be 2
+                Assert-DupDocumentValid -Inventory $Inv
+            }
+
+            It 'treats two policy names that differ only in letter case as shared, reporting the name as first read' {
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-1'
+                        New-DupPolicy -Name 'DEFAULT' -Id 'pol-2'
+                    )
+                }
+                $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+                Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+                $Sales = @($Inv.accessPackages | Where-Object displayName -ceq 'Sales')
+                $Sales.Count | Should -Be 1
+                $null -ne $Sales[0].PSObject.Properties['assignmentPolicies'] | Should -BeTrue
+                @($Sales[0].assignmentPolicies).Count | Should -Be 0 -Because 'both spellings of the shared name are left out'
+                $Partial = Get-DupPartial -Record @($InvErr)
+                $Partial.Count | Should -Be 1
+                [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/Sales/assignmentPolicies/Default'
+                $Names = @((@($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }))[0].MessageData.Names)
+                $Names.Count | Should -Be 1
+                $Names[0].Name | Should -BeExactly 'Sales/Default'
+                $Names[0].Count | Should -Be 2
+                Assert-DupDocumentValid -Inventory $Inv
+            }
+
+            It 'counts three policies of one name once, under the spelling of the first one read' {
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'DEFAULT' -Id 'pol-1'
+                        New-DupPolicy -Name 'Default' -Id 'pol-2'
+                        New-DupPolicy -Name 'default' -Id 'pol-3'
+                    )
+                }
+                $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+                @(@($Inv.accessPackages | Where-Object displayName -ceq 'Sales')[0].assignmentPolicies).Count | Should -Be 0
+                $Partial = Get-DupPartial -Record @($InvErr)
+                $Partial.Count | Should -Be 1
+                [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/Sales/assignmentPolicies/DEFAULT'
+                $Partial[0].Exception.Message | Should -BeLike '*Causes: 3 live objects share the name accessPackages/Sales/assignmentPolicies/DEFAULT *'
+                $Names = @((@($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }))[0].MessageData.Names)
+                $Names.Count | Should -Be 1
+                $Names[0].Name | Should -BeExactly 'Sales/DEFAULT'
+                $Names[0].Count | Should -Be 3
+            }
+
+            It 'writes every policy of a unique name as before and reports nothing' {
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-1'
+                        New-DupPolicy -Name 'Premium' -Id 'pol-2'
+                    )
+                }
+                $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+                Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+                $Sales = @($Inv.accessPackages | Where-Object displayName -ceq 'Sales')
+                @($Sales[0].assignmentPolicies | ForEach-Object { $_.displayName }) | Should -Be @('Default', 'Premium')
+                (Get-DupPartial -Record @($InvErr)).Count | Should -Be 0
+                @($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }).Count | Should -Be 0
+                Assert-DupDocumentValid -Inventory $Inv
+            }
+
+            It 'counts the policies of each package alone: a name two packages carry once each is not shared' {
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-1'
+                        New-DupPolicy -Name 'Extra' -Id 'pol-2'
+                    )
+                    'ap-2' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-3'
+                        New-DupPolicy -Name 'default' -Id 'pol-4'
+                    )
+                }
+                $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+                Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 2 -Exactly
+                $Sales = @($Inv.accessPackages | Where-Object displayName -ceq 'Sales')
+                $Support = @($Inv.accessPackages | Where-Object displayName -ceq 'Support')
+                @($Sales[0].assignmentPolicies | ForEach-Object { $_.displayName }) | Should -Be @('Default', 'Extra')
+                @($Support[0].assignmentPolicies).Count | Should -Be 0
+                $Partial = Get-DupPartial -Record @($InvErr)
+                $Partial.Count | Should -Be 1
+                [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/Support/assignmentPolicies/Default'
+                $Names = @((@($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }))[0].MessageData.Names)
+                $Names.Count | Should -Be 1
+                $Names[0].Name | Should -BeExactly 'Support/Default'
+                Assert-DupDocumentValid -Inventory $Inv
+            }
+
+            It 'states each colliding policy name once on the verbose stream' {
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-1'
+                        New-DupPolicy -Name 'default' -Id 'pol-2'
+                    )
+                }
+                $Err = $null
+                $Stream = @(Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable Err -Verbose 4>&1)
+                $Said = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+                $Cause = 'Get-OERInventory: 2 live objects share the name accessPackages/Sales/assignmentPolicies/Default (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.'
+                @($Said | Where-Object { $_ -ceq $Cause }).Count | Should -Be 1 -Because 'one cause line per colliding name, never one per policy'
+                (Get-DupPartial -Record @($Err)).Count | Should -Be 1 -Because 'the run reached the partial the verbose line belongs to'
+            }
+
+            It 'hands a policy name over in the same information record as a name of another section, the policy first' {
+                $script:DupCatalogs += [PSCustomObject]@{ Id = 'cat-2'; DisplayName = 'core'; Description = 'two' }
+                $script:DupAccessPackages['cat-2'] = @()
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-1'
+                        New-DupPolicy -Name 'Default' -Id 'pol-2'
+                    )
+                }
+                $Stream = @(Get-OERInventory -Include Catalogs, AccessPackages -ErrorAction SilentlyContinue -InformationAction Continue 6>&1)
+                $Records = @($Stream | Where-Object { $_ -is [System.Management.Automation.InformationRecord] -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' })
+                $Records.Count | Should -Be 1 -Because 'one record carries every name, whatever its section'
+                (@($Records[0].MessageData.Names) | ForEach-Object { "$($_.Section)|$($_.Name)|$($_.Count)" }) -join ';' |
+                    Should -BeExactly 'assignmentPolicies|Sales/Default|2;catalogs|Core|2'
+            }
+
+            It 'names assignment policies of one access package in the help' {
+                $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
+                $Help | Should -Match ([regex]::Escape('access packages of one catalog, or assignment policies of one access package whose names match, without regard to letter case, are left out of the document -- all of them -- and each such name is reported through the InventoryPartial error'))
+                $Help | Should -Match ([regex]::Escape('leaving an assignment policy out removes nothing either, because the apply engine never removes an assignment policy.'))
+            }
+        }
+
         It 'leaves out two access reviews that share a name without regard to letter case' {
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
                 foreach ($Name in 'Quarterly', 'quarterly', 'Solo Review') {
@@ -2978,22 +3783,28 @@ Describe 'Get-OERInventory' {
         }
 
         It 'puts principalType directly after principal, so the entry keeps its key order' {
-            $script:DupNames = @{ $script:DupGrp1 = 'Ops'; $script:DupGrp2 = 'Ops' }
+            # A group whose name no other group carries keeps it until the collision pass meets the user
+            # that carries the same string; the pass then inserts principalType for both. Two groups of
+            # one name never reach the pass: the group rule names them by id first (BL-131, Task 3c).
+            $script:DupNames = @{ $script:DupUser1 = 'person1@example.com'; $script:DupGrp1 = 'person1@example.com' }
             $script:DupRoleAssignments = @(
-                New-DupRoleAssignment -PrincipalId $script:DupGrp1 -PrincipalType 'Group' -PrincipalName 'Ops'
-                New-DupRoleAssignment -PrincipalId $script:DupGrp2 -PrincipalType 'Group' -PrincipalName 'Ops'
+                New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One'
+                New-DupRoleAssignment -PrincipalId $script:DupGrp1 -PrincipalType 'Group' -PrincipalName 'person1@example.com'
             )
             $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
             @(@($Inv.roleAssignments)[0].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType')
+            @(@($Inv.roleAssignments)[1].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType')
         }
 
         It 'counts two scope spellings that differ in letter case as one scope when it looks for a collision' {
             # Azure Resource Manager never returns a scope with a trailing '/', and the validator refuses
-            # one in a document (A15), so the spellings here differ in letter case only.
-            $script:DupNames = @{ $script:DupGrp1 = 'Ops'; $script:DupGrp2 = 'Ops' }
+            # one in a document (A15), so the spellings here differ in letter case only. Two service
+            # principals, which only the collision pass names by id (a group of a shared name is named by
+            # id before it, BL-131).
+            $script:DupNames = @{ $script:DupGrp1 = 'Automation'; $script:DupGrp2 = 'Automation' }
             $script:DupRoleAssignments = @(
-                New-DupRoleAssignment -PrincipalId $script:DupGrp1 -PrincipalType 'Group' -PrincipalName 'Ops'
-                New-DupRoleAssignment -PrincipalId $script:DupGrp2 -PrincipalType 'Group' -PrincipalName 'Ops' -Scope $script:DupSub1.ToUpperInvariant()
+                New-DupRoleAssignment -PrincipalId $script:DupGrp1 -PrincipalType 'ServicePrincipal' -PrincipalName 'Automation'
+                New-DupRoleAssignment -PrincipalId $script:DupGrp2 -PrincipalType 'ServicePrincipal' -PrincipalName 'Automation' -Scope $script:DupSub1.ToUpperInvariant()
             )
             $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
             @($Inv.roleAssignments | ForEach-Object { $_.principal }) | Should -Be @($script:DupGrp1, $script:DupGrp2)
@@ -3001,14 +3812,16 @@ Describe 'Get-OERInventory' {
         }
 
         It 'leaves two principals that share a name at DIFFERENT scopes alone' {
-            $script:DupNames = @{ $script:DupGrp1 = 'Ops'; $script:DupGrp2 = 'Ops' }
+            # Service principals: the collision pass is per scope. A group of a shared name is named by
+            # id whatever its scope (BL-131), which the Context on group principals holds.
+            $script:DupNames = @{ $script:DupGrp1 = 'Automation'; $script:DupGrp2 = 'Automation' }
             $script:DupRoleAssignments = @(
-                New-DupRoleAssignment -PrincipalId $script:DupGrp1 -PrincipalType 'Group' -PrincipalName 'Ops'
-                New-DupRoleAssignment -PrincipalId $script:DupGrp2 -PrincipalType 'Group' -PrincipalName 'Ops' -Scope "$($script:DupSub1)/resourceGroups/rg-one"
+                New-DupRoleAssignment -PrincipalId $script:DupGrp1 -PrincipalType 'ServicePrincipal' -PrincipalName 'Automation'
+                New-DupRoleAssignment -PrincipalId $script:DupGrp2 -PrincipalType 'ServicePrincipal' -PrincipalName 'Automation' -Scope "$($script:DupSub1)/resourceGroups/rg-one"
             )
             $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
             @($Inv.roleAssignments).Count | Should -Be 2
-            @($Inv.roleAssignments | ForEach-Object { $_.principal }) | Should -Be @('Ops', 'Ops')
+            @($Inv.roleAssignments | ForEach-Object { $_.principal }) | Should -Be @('Automation', 'Automation')
             Assert-DupDocumentValid -Inventory $Inv
         }
 
@@ -3081,6 +3894,26 @@ Describe 'Get-OERInventory' {
             Assert-DupDocumentValid -Inventory $Inv
         }
 
+        It 'names a ForeignGroup whose name only a user carries by its object id in the collision pass, with principalType Group' {
+            # The ForeignGroup's name is unique among groups, so the group rule keeps it; it equals a user's
+            # principal name at the same scope and role, so the collision pass moves both to their ids and
+            # stamps the normalised type: Group for the ForeignGroup, never ForeignGroup.
+            $script:DupNames = @{ $script:DupUser1 = 'person1@example.com'; $script:DupGrp1 = 'person1@example.com' }
+            $script:DupRoleAssignments = @(
+                New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One'
+                New-DupRoleAssignment -PrincipalId $script:DupGrp1 -PrincipalType 'ForeignGroup' -PrincipalName 'person1@example.com'
+            )
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @(
+                "$($script:DupUser1)|User"
+                "$($script:DupGrp1)|Group"
+            )
+            @(@($Inv.roleAssignments)[1].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType')
+            # Reach proof: the group rule read the index, which holds the ForeignGroup's name for it alone.
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+            Assert-DupDocumentValid -Inventory $Inv
+        }
+
         It 'names two service principals that share a name by their object ids and keeps the principalType they already carried in place' {
             $script:DupNames = @{ $script:DupGrp1 = 'Automation'; $script:DupGrp2 = 'Automation' }
             $script:DupRoleAssignments = @(
@@ -3097,13 +3930,15 @@ Describe 'Get-OERInventory' {
         }
 
         It 'repeats until nothing collides, since an object id can equal another principal name' {
-            # The third group is called by the FIRST group's object id. Naming the first two groups by
+            # The third service principal is called by the FIRST one's object id. Naming the first two by
             # id makes the third one collide with the first, so the third has to move on a second pass.
+            # Service principals, since the group rule would name two groups of one name by id before the
+            # pass (BL-131).
             $script:DupNames = @{ $script:DupGrp1 = 'Ops'; $script:DupGrp2 = 'Ops'; $script:DupGrp3 = $script:DupGrp1 }
             $script:DupRoleAssignments = @(
-                New-DupRoleAssignment -PrincipalId $script:DupGrp1 -PrincipalType 'Group' -PrincipalName 'Ops'
-                New-DupRoleAssignment -PrincipalId $script:DupGrp2 -PrincipalType 'Group' -PrincipalName 'Ops'
-                New-DupRoleAssignment -PrincipalId $script:DupGrp3 -PrincipalType 'Group' -PrincipalName 'Third'
+                New-DupRoleAssignment -PrincipalId $script:DupGrp1 -PrincipalType 'ServicePrincipal' -PrincipalName 'Ops'
+                New-DupRoleAssignment -PrincipalId $script:DupGrp2 -PrincipalType 'ServicePrincipal' -PrincipalName 'Ops'
+                New-DupRoleAssignment -PrincipalId $script:DupGrp3 -PrincipalType 'ServicePrincipal' -PrincipalName 'Third'
             )
             $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
             @($Inv.roleAssignments | ForEach-Object { $_.principal }) | Should -Be @($script:DupGrp1, $script:DupGrp2, $script:DupGrp3)
@@ -3187,7 +4022,7 @@ Describe 'Get-OERInventory' {
             $Err = $null
             $Stream = @(Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -Verbose 4>&1)
             $Said = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
-            $Cause = 'Get-OERInventory: Two or more live objects share the name groups/Dup (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.'
+            $Cause = 'Get-OERInventory: 2 live objects share the name groups/Dup (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.'
             @($Said | Where-Object { $_ -ceq $Cause }).Count | Should -Be 1 -Because 'one cause line per colliding name, never one per object'
             (Get-DupPartial -Record @($Err)).Count | Should -Be 1 -Because 'the run reached the partial the verbose line belongs to'
         }
@@ -3211,7 +4046,7 @@ Describe 'Get-OERInventory' {
             [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Dup, administrativeUnits/Team'
             $Message = $Partial[0].Exception.Message
             $Message | Should -Match 'Unread: groups/Dup, administrativeUnits/Team\. '
-            @([regex]::Matches($Message, 'Two or more live objects share the name')).Count | Should -Be 1 -Because 'the second collision has the same cause, so it is not stated again'
+            @([regex]::Matches($Message, '2 live objects share the name')).Count | Should -Be 1 -Because 'the second collision has the same cause, so it is not stated again'
         }
 
         It 'writes a role policy that was read twice once' {
@@ -3234,6 +4069,445 @@ Describe 'Get-OERInventory' {
             Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly
             @($Inv.roleManagementPolicies | ForEach-Object { $_.role }) | Should -Be @('Reader', 'Owner')
             Assert-DupDocumentValid -Inventory $Inv
+        }
+    }
+
+    Context 'shared names are counted over every group in the tenant (BL-131)' {
+        # The groups section reads the security groups only, but the apply engine refuses a name any
+        # live group answers to, so a group's name is counted over every group in the tenant too: the
+        # index Get-OERGroupNameIndex reads with one listing. It is answered here by a mock that hands
+        # back the index each case builds; the real helper is driven through the transport in the
+        # Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' below. No id
+        # is version-4 shaped.
+        BeforeAll {
+            $script:NiSec1 = 'eeee1111-0000-0000-0000-000000000001'
+            $script:NiSec2 = 'eeee1111-0000-0000-0000-000000000002'
+            $script:NiSec3 = 'eeee1111-0000-0000-0000-000000000003'
+            $script:NiM365a = 'eeee1111-0000-0000-0000-0000000000a1'
+            $script:NiM365b = 'eeee1111-0000-0000-0000-0000000000a2'
+            function script:New-NiGroup {
+                param([string]$Name, [string]$Id)
+                [PSCustomObject]@{
+                    Id = $Id; DisplayName = $Name; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Members = @(); Owners = @(); PimEligibility = @()
+                }
+            }
+            function script:New-NiAdministrativeUnit {
+                param([string]$Name, [string]$Id)
+                [PSCustomObject]@{
+                    Id = $Id; DisplayName = $Name; Description = $null; IsMemberManagementRestricted = $false
+                    MembershipType = 'Assigned'; Visibility = $null; Members = @(); ScopedRoles = @()
+                }
+            }
+            # An index the way Get-OERGroupNameIndex returns one: Read, the ids by name compared
+            # without regard to letter case, and the message.
+            function script:New-NiIndex {
+                param([hashtable]$IdsByName = @{}, [bool]$Read = $true, [string]$Message)
+                $Ids = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[string]]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                foreach ($Name in $IdsByName.Keys) {
+                    $Ids[$Name] = [System.Collections.Generic.List[string]]::new()
+                    foreach ($Id in @($IdsByName[$Name])) { $Ids[$Name].Add($Id) }
+                }
+                $Index = [PSCustomObject]@{ Read = $Read; IdsByName = $Ids; Message = $(if ($Message) { $Message } else { $null }) }
+                $Index.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupNameIndex')
+                $Index
+            }
+            # The InventoryPartial records Get-OERInventory itself published.
+            function script:Get-NiPartial {
+                param([object[]]$Record)
+                @($Record | Where-Object {
+                        $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' -and
+                        $_.FullyQualifiedErrorId -like 'InventoryPartial*'
+                    })
+            }
+            # The information records tagged Omnicit.EntraRBAC.SharedName.
+            function script:Get-NiNotice {
+                param([object[]]$Record)
+                @($Record | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' })
+            }
+        }
+
+        BeforeEach {
+            $script:NiGroups = @()
+            $script:NiAdministrativeUnits = @()
+            $script:NiIndex = New-NiIndex
+            Mock -ModuleName $script:moduleName Get-OERGroup { $script:NiGroups }
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy { $null }
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit { $script:NiAdministrativeUnits }
+            Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { $script:NiIndex }
+        }
+
+        It 'leaves out a security group whose name only a Microsoft 365 group outside the section shares, and names the count' {
+            $script:NiGroups = @(
+                New-NiGroup -Name 'Admins' -Id $script:NiSec1
+                New-NiGroup -Name 'Solo' -Id $script:NiSec2
+            )
+            # Every group in the tenant: the two security groups and a Microsoft 365 group that carries
+            # the first one's name in another letter case.
+            $script:NiIndex = New-NiIndex -IdsByName @{ 'Admins' = @($script:NiSec1, $script:NiM365a); 'Solo' = @($script:NiSec2) }
+            $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+            @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('Solo')
+            $Partial = Get-NiPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Admins'
+            $Partial[0].Exception.Message | Should -BeLike '*Causes: 2 live objects share the name groups/Admins (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.*'
+            # The index is read once, as a listing: no groups are handed to it.
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1 -ParameterFilter { -not $PSBoundParameters.ContainsKey('Group') }
+            $Notice = Get-NiNotice -Record @($Info)
+            $Notice.Count | Should -Be 1
+            @($Notice[0].MessageData.Names).Count | Should -Be 1
+            $Notice[0].MessageData.Names[0].Section | Should -BeExactly 'groups'
+            $Notice[0].MessageData.Names[0].Name | Should -BeExactly 'Admins'
+            $Notice[0].MessageData.Names[0].Count | Should -Be 2
+        }
+
+        It 'counts the larger of the listed groups and the index, so an index that lags behind the listing never lowers the count' {
+            # Two listed groups of one name, and an index read before the second was created.
+            $script:NiGroups = @(
+                New-NiGroup -Name 'Dup' -Id $script:NiSec1
+                New-NiGroup -Name 'dup' -Id $script:NiSec2
+                New-NiGroup -Name 'Solo' -Id $script:NiSec3
+            )
+            $script:NiIndex = New-NiIndex -IdsByName @{ 'Dup' = @($script:NiSec1) }
+            $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+            @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('Solo')
+            $Partial = Get-NiPartial -Record @($InvErr)
+            $Partial[0].Exception.Message | Should -BeLike '*Causes: 2 live objects share the name groups/Dup *'
+            (Get-NiNotice -Record @($Info))[0].MessageData.Names[0].Count | Should -Be 2
+        }
+
+        It 'counts the index when it holds more of a name than the listing' {
+            $script:NiGroups = @(
+                New-NiGroup -Name 'Dup' -Id $script:NiSec1
+                New-NiGroup -Name 'dup' -Id $script:NiSec2
+            )
+            $script:NiIndex = New-NiIndex -IdsByName @{ 'DUP' = @($script:NiSec1, $script:NiSec2, $script:NiM365a) }
+            $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+            @($Inv.groups).Count | Should -Be 0
+            (Get-NiPartial -Record @($InvErr))[0].Exception.Message | Should -BeLike '*Causes: 3 live objects share the name groups/Dup *'
+            (Get-NiNotice -Record @($Info))[0].MessageData.Names[0].Count | Should -Be 3
+        }
+
+        It 'writes a group of a unique name as before, reports nothing and writes no information record' {
+            # The index holds another name only, so a name it does not hold is counted over the listing.
+            $script:NiGroups = @(New-NiGroup -Name 'Solo' -Id $script:NiSec1)
+            $script:NiIndex = New-NiIndex -IdsByName @{ 'Other' = @($script:NiM365a) }
+            $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+            @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('Solo')
+            (Get-NiPartial -Record @($InvErr)).Count | Should -Be 0
+            (Get-NiNotice -Record @($Info)).Count | Should -Be 0
+            # Reach proof: the index was read for the group.
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+        }
+
+        It 'names groupNames unread with its cause when the index could not be read, and counts over the groups read' {
+            # An index that was not read is never counted, whatever it holds: these ids would make
+            # Admins shared.
+            $script:NiGroups = @(
+                New-NiGroup -Name 'Admins' -Id $script:NiSec1
+                New-NiGroup -Name 'Dup' -Id $script:NiSec2
+                New-NiGroup -Name 'dup' -Id $script:NiSec3
+            )
+            $script:NiIndex = New-NiIndex -Read $false -IdsByName @{ 'Admins' = @($script:NiSec1, $script:NiM365a) } `
+                -Message 'Could not list every group to count the names groups share: Too many requests (429)'
+            $Stream = @(Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info -Verbose 4>&1)
+            $Inv = @($Stream | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })[0]
+            $Said = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+            @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('Admins')
+            $Partial = Get-NiPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'groupNames, groups/Dup'
+            $Partial[0].Exception.Message | Should -BeLike '*Could not list every group to count the names groups share: Too many requests (429)*'
+            $Partial[0].Exception.Message | Should -BeLike '*2 live objects share the name groups/Dup *'
+            @($Said | Where-Object { $_ -ceq 'Get-OERInventory: Could not list every group to count the names groups share: Too many requests (429)' }).Count | Should -Be 1
+            (Get-NiNotice -Record @($Info))[0].MessageData.Names.Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+        }
+
+        It 'hands every name it left out over in ONE information record, a group and an administrative unit, before the inventory' {
+            $script:NiGroups = @(New-NiGroup -Name 'Admins' -Id $script:NiSec1)
+            $script:NiIndex = New-NiIndex -IdsByName @{ 'Admins' = @($script:NiSec1, $script:NiM365a, $script:NiM365b) }
+            $script:NiAdministrativeUnits = @(
+                New-NiAdministrativeUnit -Name 'Team' -Id $script:NiSec2
+                New-NiAdministrativeUnit -Name 'TEAM' -Id $script:NiSec3
+            )
+            $Stream = @(Get-OERInventory -Include Groups, AdministrativeUnits -ErrorAction SilentlyContinue -InformationAction Continue 6>&1)
+            $Records = @($Stream | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+            $Notice = Get-NiNotice -Record $Records
+            $Notice.Count | Should -Be 1
+            $Notice[0].MessageData.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.SharedNameNotice'
+            @($Notice[0].MessageData.PSObject.Properties.Name) | Should -Be @('Names')
+            $Names = @($Notice[0].MessageData.Names)
+            $Names.Count | Should -Be 2
+            ($Names | ForEach-Object { "$($_.Section)|$($_.Name)|$($_.Count)" }) -join ';' | Should -BeExactly 'groups|Admins|3;administrativeUnits|Team|2'
+            # The record precedes the inventory object it describes.
+            $InventoryAt = [array]::IndexOf($Stream, @($Stream | Where-Object { $_ -isnot [System.Management.Automation.InformationRecord] })[0])
+            [array]::IndexOf($Stream, $Notice[0]) | Should -BeLessThan $InventoryAt
+        }
+
+        It 'does not read the index when <Case>' -ForEach @(
+            @{ Case = 'the Groups section is not included'; Include = @('AdministrativeUnits'); Listed = $true }
+            @{ Case = 'the Groups section read no group'; Include = @('Groups'); Listed = $false }
+        ) {
+            if ($Listed) { $script:NiGroups = @(New-NiGroup -Name 'Admins' -Id $script:NiSec1) }
+            $script:NiAdministrativeUnits = @(New-NiAdministrativeUnit -Name 'Team' -Id $script:NiSec2)
+            $Inv = Get-OERInventory -Include $Include -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
+            (Get-NiPartial -Record @($InvErr)).Count | Should -Be 0
+            # Reach proof: the sections included were read.
+            if ($Include -contains 'Groups') { Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Exactly -Times 1 }
+            else { @($Inv.administrativeUnits).Count | Should -Be 1 }
+        }
+
+        It 'states the index listing and the information record in the help' {
+            $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
+            $Help | Should -Match ([regex]::Escape("A group's name is counted among every group in the tenant -- one extra paged listing of every group's id and display name, made at most once per call, when the Groups section read at least one group or when a role assignment or directory role assignment names a group -- so a security group that shares its name with a Microsoft 365 group or a distribution group, which the default filter never reads, is left out too"))
+            $Help | Should -Match ([regex]::Escape('When that listing fails, groupNames is reported unread through the InventoryPartial error, with its cause, and the names are counted among the groups read.'))
+            $Help | Should -Match ([regex]::Escape('Each name left out is also handed over in one information record tagged Omnicit.EntraRBAC.SharedName, whose Names list carries the Section, Name and Count of each; under the default $InformationPreference the record is not displayed.'))
+        }
+    }
+
+    Context 'a group named as a principal is written by its object id when another group carries its name (BL-131, Task 3c)' {
+        # The apply engine refuses a group name more than one live group answers to, and a role
+        # assignment's or a directory role assignment's group may share its name with a group the export
+        # never lists (a Microsoft 365 group, or a group of another scope). So a group principal is
+        # written by its display name only when the index of every group in the tenant holds that name for
+        # this group alone (Get-OERGroupReference), and by its object id with principalType Group
+        # otherwise. The tenant here: 'Ops' and 'OPS' (one name in two letter cases) and 'Solo'. No id
+        # below is version-4 shaped.
+        BeforeAll {
+            $script:GpOps = 'eeee2222-0000-0000-0000-000000000001'
+            $script:GpOpsOther = 'eeee2222-0000-0000-0000-000000000002'
+            $script:GpSolo = 'eeee2222-0000-0000-0000-000000000003'
+            $script:GpUser = 'dddd3333-0000-0000-0000-000000000001'
+            $script:GpSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $script:GpDirRole = '11111111-1111-1111-1111-111111111111'
+            $script:GpTenant = @{ $script:GpOps = 'Ops'; $script:GpOpsOther = 'OPS'; $script:GpSolo = 'Solo' }
+            $script:GpNoteSuffix = '; every group principal is written by its object id.'
+            function script:New-GpRa {
+                param([string]$PrincipalId, [string]$PrincipalType, [string]$RoleName = 'Reader')
+                [PSCustomObject]@{
+                    Scope = $script:GpSub; RoleName = $RoleName
+                    RoleDefinitionId = "$($script:GpSub)/providers/Microsoft.Authorization/roleDefinitions/bbbb1111-0000-0000-0000-000000000001"
+                    PrincipalId = $PrincipalId; PrincipalType = $PrincipalType; PrincipalDisplayName = 'fixture'
+                    RoleAssignmentId = "$($script:GpSub)/providers/Microsoft.Authorization/roleAssignments/$PrincipalId"
+                }
+            }
+            # A direct, tenant-scope, permanent eligible row, the shape ConvertTo-OERDirectoryRoleAssignment emits.
+            function script:New-GpDirRow {
+                param([string]$PrincipalId, [string]$PrincipalType = 'Group', [string]$ScheduleId)
+                $Out = [PSCustomObject][ordered]@{
+                    ScheduleId = $ScheduleId; RoleDefinitionId = $script:GpDirRole; RoleName = 'Fixture Role A'
+                    PrincipalId = $PrincipalId; PrincipalDisplayName = 'fixture'; PrincipalType = $PrincipalType
+                    DirectoryScopeId = '/'; MemberType = 'Direct'; Status = 'Provisioned'
+                    StartDateTime = '2026-01-01T00:00:00Z'; EndDateTime = $null; ExpirationType = 'noExpiration'; DurationDays = $null
+                }
+                $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.EligibleDirectoryRoleAssignment')
+                $Out
+            }
+            function script:New-GpGroup {
+                param([string]$Name, [string]$Id)
+                [PSCustomObject]@{
+                    Id = $Id; DisplayName = $Name; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Members = @(); Owners = @(); PimEligibility = @()
+                }
+            }
+            # The InventoryPartial records Get-OERInventory itself published.
+            function script:Get-GpPartial {
+                param([object[]]$Record)
+                @($Record | Where-Object {
+                        $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' -and
+                        $_.FullyQualifiedErrorId -like 'InventoryPartial*'
+                    })
+            }
+        }
+
+        BeforeEach {
+            $script:GpRas = @()
+            $script:GpEligible = @()
+            $script:GpGroups = @()
+            $script:GpIndex = & $script:NewGroupNameIndexOf $script:GpTenant
+            $script:GpNames = @{ $script:GpOps = 'Ops'; $script:GpOpsOther = 'OPS'; $script:GpSolo = 'Solo'; $script:GpUser = 'person1@example.com' }
+            Mock -ModuleName $script:moduleName Get-OERRoleAssignment { $script:GpRas }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                param([string[]]$Id)
+                $Map = @{}
+                foreach ($One in @($Id)) { if ($script:GpNames.ContainsKey($One)) { $Map[$One] = $script:GpNames[$One] } }
+                $Map
+            }
+            Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment { $script:GpEligible }
+            Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { @() }
+            Mock -ModuleName $script:moduleName Get-OERGroup { $script:GpGroups }
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy { $null }
+            Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { $script:GpIndex }
+            # Nothing here may reach the transport: the index is the mock above.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected transport call: $Uri" }
+        }
+
+        It 'writes a role assignment group whose name another group in the tenant carries by its object id, with principalType Group directly after principal' {
+            # 'Ops' is the only group of that name the section reads: the other one is not assigned here,
+            # so only the index of every group tells the two apart.
+            $script:GpRas = @(New-GpRa -PrincipalId $script:GpOps -PrincipalType 'Group')
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            $Ra = @($Inv.roleAssignments)
+            $Ra.Count | Should -Be 1
+            $Ra[0].principal | Should -BeExactly $script:GpOps
+            $Ra[0].principalType | Should -BeExactly 'Group'
+            @($Ra[0].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType')
+            # Read as one listing of every group, not built from groups handed to it.
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1 -ParameterFilter { -not $PSBoundParameters.ContainsKey('Group') }
+            (Test-OERStructure -InputObject $Inv).Valid | Should -BeTrue
+        }
+
+        It 'writes a role assignment group whose name no other group carries by that name, with no principalType' {
+            $script:GpRas = @(New-GpRa -PrincipalId $script:GpSolo -PrincipalType 'Group')
+            $Ra = @((Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).roleAssignments)
+            $Ra[0].principal | Should -BeExactly 'Solo'
+            $Ra[0].PSObject.Properties.Name | Should -Not -Contain 'principalType'
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+        }
+
+        It 'writes a ForeignGroup whose name another group carries by its object id, with principalType Group' {
+            $script:GpRas = @(New-GpRa -PrincipalId $script:GpOps -PrincipalType 'ForeignGroup')
+            $Ra = @((Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).roleAssignments)
+            $Ra[0].principal | Should -BeExactly $script:GpOps
+            $Ra[0].principalType | Should -BeExactly 'Group'
+            @($Ra[0].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType')
+        }
+
+        It 'leaves a user and a service principal as they were and does not read the index when no row names a group' {
+            $script:GpNames['cccc3333-0000-0000-0000-000000000001'] = 'Ops'
+            $script:GpRas = @(
+                New-GpRa -PrincipalId $script:GpUser -PrincipalType 'User'
+                New-GpRa -PrincipalId 'cccc3333-0000-0000-0000-000000000001' -PrincipalType 'ServicePrincipal' -RoleName 'Owner'
+            )
+            $script:GpEligible = @(New-GpDirRow -PrincipalId $script:GpUser -PrincipalType 'User' -ScheduleId 's-1')
+            $Inv = Get-OERInventory -Include RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM
+            # Reach proof: both sections wrote their rows, by name.
+            @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @('person1@example.com|', 'Ops|ServicePrincipal')
+            @($Inv.directoryRoleAssignments).principal | Should -Be @('person1@example.com')
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
+        }
+
+        It 'leaves a group row that carries no object id as it was, with no error and no index read' {
+            # Azure Resource Manager and Microsoft Graph always return one; the rule needs it, so a row
+            # without it is named as before (the display name the read carried, or nothing).
+            $Ra = New-GpRa -PrincipalId $script:GpOps -PrincipalType 'Group'
+            $Ra.PrincipalId = $null
+            $Ra.PrincipalDisplayName = 'Ops'
+            $script:GpRas = @($Ra)
+            $script:GpEligible = @(New-GpDirRow -PrincipalId '' -ScheduleId 's-1')
+            $InvErr = $null
+            $Inv = Get-OERInventory -Include RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM -ErrorVariable InvErr
+            @($InvErr) | Should -BeNullOrEmpty
+            # Reach proof: both rows were written.
+            @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @('Ops|')
+            @($Inv.directoryRoleAssignments).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
+        }
+
+        It 'writes a group principal whose name <Case> by its object id, with no index read' -ForEach @(
+            @{ Case = 'could not be read'; Blank = $false; Lookups = 2 }
+            @{ Case = 'was read blank'; Blank = $true; Lookups = 1 }
+        ) {
+            # The name each section holds for the group is its object id (no name was read) or blank, and
+            # Get-OERGroupReference returns the id for either whatever the index holds: the listing of every
+            # group is not read for it.
+            $Unnamed = 'eeee2222-0000-0000-0000-000000000009'
+            if ($Blank) { $script:GpNames[$Unnamed] = ' ' }
+            $Ra = New-GpRa -PrincipalId $Unnamed -PrincipalType 'Group'
+            $Ra.PrincipalDisplayName = $null
+            $script:GpRas = @($Ra)
+            $script:GpEligible = @(New-GpDirRow -PrincipalId $Unnamed -ScheduleId 's-1')
+            $InvErr = $null
+            $Inv = Get-OERInventory -Include RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM -ErrorVariable InvErr
+            @($InvErr) | Should -BeNullOrEmpty
+            # Reach proof: the sections asked for the group's name (each section while the shared cache did
+            # not hold it) and wrote the group by its object id with principalType Group.
+            @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @("$Unnamed|Group")
+            @($Inv.directoryRoleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @("$Unnamed|Group")
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times $Lookups -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
+        }
+
+        It 'writes a directory role group whose name another group carries by its object id, and a unique one by its name' {
+            $script:GpEligible = @(
+                New-GpDirRow -PrincipalId $script:GpOps -ScheduleId 's-1'
+                New-GpDirRow -PrincipalId $script:GpSolo -ScheduleId 's-2'
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            @($Inv.directoryRoleAssignments | Sort-Object -Property principal | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @(
+                "$($script:GpOps)|Group"
+                'Solo|Group'
+            )
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+            (Test-OERStructure -InputObject $Inv).Valid | Should -BeTrue
+        }
+
+        It 'reads the index once for the group principals of both sections, and says nothing about a failed read when it was read' {
+            # The Task 2 once-only rule (Get-GroupNameIndexOnce) with a second caller: one listing per call.
+            $script:GpRas = @(New-GpRa -PrincipalId $script:GpOps -PrincipalType 'Group')
+            $script:GpEligible = @(New-GpDirRow -PrincipalId $script:GpSolo -ScheduleId 's-1')
+            $Stream = @(Get-OERInventory -Include RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM -Verbose 4>&1)
+            $Inv = @($Stream | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })[0]
+            $Said = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+            # Reach proof: each section named its group through the index.
+            @($Inv.roleAssignments).principal | Should -Be @($script:GpOps)
+            @($Inv.directoryRoleAssignments).principal | Should -Be @('Solo')
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+            # The index was read, so no line says every group principal is written by its object id.
+            @($Said | Where-Object { $_.EndsWith($script:GpNoteSuffix, [System.StringComparison]::Ordinal) }) | Should -BeNullOrEmpty
+        }
+
+        It 'shares the one listing with the Groups section' {
+            $script:GpGroups = @(New-GpGroup -Name 'Solo' -Id $script:GpSolo)
+            $script:GpRas = @(New-GpRa -PrincipalId $script:GpOps -PrincipalType 'Group')
+            $script:GpEligible = @(New-GpDirRow -PrincipalId $script:GpSolo -ScheduleId 's-1')
+            $Inv = Get-OERInventory -Include Groups, RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM
+            @($Inv.groups).displayName | Should -Be @('Solo')
+            @($Inv.roleAssignments).principal | Should -Be @($script:GpOps)
+            @($Inv.directoryRoleAssignments).principal | Should -Be @('Solo')
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+        }
+
+        It 'writes every group principal by its object id when the index could not be read, says so once, and reports nothing unread' {
+            $script:GpIndex = [PSCustomObject]@{ Read = $false; IdsByName = $null; Message = 'Could not list every group to count the names groups share: Too many requests (429)' }
+            $script:GpRas = @(New-GpRa -PrincipalId $script:GpSolo -PrincipalType 'Group')
+            $script:GpEligible = @(New-GpDirRow -PrincipalId $script:GpSolo -ScheduleId 's-1')
+            $Stream = @(Get-OERInventory -Include RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM `
+                    -ErrorAction SilentlyContinue -ErrorVariable InvErr -Verbose 4>&1)
+            $Inv = @($Stream | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })[0]
+            $Said = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+            # A unique name, written by id: the index that would say so was not read.
+            @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @("$($script:GpSolo)|Group")
+            @($Inv.directoryRoleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @("$($script:GpSolo)|Group")
+            $Note = "Get-OERInventory: Could not list every group to count the names groups share: Too many requests (429)$($script:GpNoteSuffix)"
+            @($Said | Where-Object { $_ -ceq $Note }).Count | Should -Be 1
+            (Get-GpPartial -Record @($InvErr)).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+        }
+
+        It 'names groupNames unread once for the Groups section, and still writes the group principals by id, when the shared index could not be read' {
+            $script:GpIndex = [PSCustomObject]@{ Read = $false; IdsByName = $null; Message = 'Could not list every group to count the names groups share: denied' }
+            $script:GpGroups = @(New-GpGroup -Name 'Solo' -Id $script:GpSolo)
+            $script:GpRas = @(New-GpRa -PrincipalId $script:GpSolo -PrincipalType 'Group')
+            $Stream = @(Get-OERInventory -Include Groups, RoleAssignments -Subscription 'Prod' -IncludeARM `
+                    -ErrorAction SilentlyContinue -ErrorVariable InvErr -Verbose 4>&1)
+            $Inv = @($Stream | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })[0]
+            $Said = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+            @($Inv.roleAssignments).principal | Should -Be @($script:GpSolo)
+            $Partial = Get-GpPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'groupNames'
+            @($Said | Where-Object { $_ -ceq 'Get-OERInventory: Could not list every group to count the names groups share: denied' }).Count | Should -Be 1
+            @($Said | Where-Object { $_ -ceq "Get-OERInventory: Could not list every group to count the names groups share: denied$($script:GpNoteSuffix)" }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+        }
+
+        It 'states the rule for a group principal in the help' {
+            $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
+            $Help | Should -Match ([regex]::Escape('In RoleAssignments and DirectoryRoleAssignments, a group is written by its display name only when no other group in the tenant carries that name, compared without regard to letter case; otherwise, or when the listing of every group fails, it is written by its object id with principalType Group, which Invoke-OERStructure resolves verbatim.'))
         }
     }
 
@@ -3352,6 +4626,13 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
                 $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
             }
+            # BL-142: the apply engine's own lookups of the two names, each finding this object alone.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'ap-1'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'pol-1'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'ap-1'"
+            }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $Inv = Get-OERInventory -Include AccessReviews
             $Doc = $Inv | ConvertTo-Json -Depth 12 | ConvertFrom-Json
@@ -3385,6 +4666,13 @@ Describe 'Get-OERInventory' {
             }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
                 $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
+            }
+            # BL-142: the apply engine's own lookups of the two names, each finding this object alone.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'ap-1'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'pol-1'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'ap-1'"
             }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $Inv = Get-OERInventory -Include AccessReviews
@@ -5642,6 +6930,16 @@ Describe 'Get-OERInventory' {
                 New-DirPolicy -RoleDefinitionId $script:DirRoleB -PolicyId 'policy-b'
                 New-DirPolicy -RoleDefinitionId $script:DirRoleC -PolicyId 'policy-c'
             )
+            # BL-131 (Task 3c): the tenant's groups are the groups the rows name, each under its name in
+            # $script:DirNames, so a group principal is shared or unique as the fixture says.
+            Mock -ModuleName $script:moduleName Get-OERGroupNameIndex {
+                $NameById = @{}
+                foreach ($Row in @($script:DirEligible) + @($script:DirActive)) {
+                    if ($null -eq $Row -or [string]$Row.PrincipalType -ne 'Group') { continue }
+                    if ($script:DirNames.ContainsKey([string]$Row.PrincipalId)) { $NameById[[string]$Row.PrincipalId] = $script:DirNames[[string]$Row.PrincipalId] }
+                }
+                & $script:NewGroupNameIndexOf $NameById
+            }
             Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment { $script:DirEligible }
             Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { $script:DirActive }
             Mock -ModuleName $script:moduleName Get-OERDirectoryRoleManagementPolicy { $script:DirPolicies }
@@ -5751,8 +7049,10 @@ Describe 'Get-OERInventory' {
             # Entra does not keep group display names unique. Two groups both named 'Fixture Group'
             # would otherwise export two identical (role, principal, assignmentType) entries, which the
             # validator refuses as a duplicate -- invalidating the whole document. A third group whose
-            # name equals a user's UPN in the same role and kind collides the same way. The user, and a
-            # same-named group holding a DIFFERENT role, keep their names.
+            # name equals a user's UPN in the same role and kind collides the same way (the collision
+            # pass names it by id, since no other group carries its name). The user keeps its name. A
+            # same-named group holding a DIFFERENT role is named by its id too: the name is shared in
+            # the tenant, so the apply engine would refuse it (BL-131, Task 3c).
             $DirGroup2 = 'bbbbbbbb-0000-0000-0000-000000000002'
             $DirGroup3 = 'bbbbbbbb-0000-0000-0000-000000000003'
             $DirGroup4 = 'bbbbbbbb-0000-0000-0000-000000000004'
@@ -5773,7 +7073,7 @@ Describe 'Get-OERInventory' {
                     "Fixture Role A|$DirGroup2|Group"
                     "Fixture Role A|$DirGroup3|Group"
                     'Fixture Role A|person1@example.com|User'
-                    'Fixture Role B|Fixture Group|Group'
+                    "Fixture Role B|$DirGroup4|Group"
                 )
                 $Doc = [PSCustomObject]@{ version = '1.0'; directoryRoleAssignments = @($Inv.directoryRoleAssignments) }
                 $Validation = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
@@ -5785,6 +7085,37 @@ Describe 'Get-OERInventory' {
                 $Validation.Valid | Should -BeTrue
             } finally {
                 foreach ($One in $DirGroup2, $DirGroup3, $DirGroup4) { $script:DirNames.Remove($One) }
+            }
+        }
+
+        It 'keeps the name of a group that only a principal holding ANOTHER role carries: the collision is per role' {
+            # The group's name is unique among groups, so the group rule keeps it; it equals the UPN of a
+            # user who holds role A, while the group holds role B. The two entries differ in role, so the
+            # validator accepts them, and the collision pass, keyed on the role definition id as well as
+            # the kind and the name, leaves the group by its name.
+            $DirGroup5 = 'bbbbbbbb-0000-0000-0000-000000000005'
+            $script:DirNames[$DirGroup5] = 'person2@example.com'
+            try {
+                $script:DirEligible = @(
+                    New-DirRow -ScheduleId 's-1' -PrincipalId $script:DirUser2
+                    New-DirRow -ScheduleId 's-2' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -PrincipalId $DirGroup5 -PrincipalType 'Group'
+                )
+                $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+                @($Inv.directoryRoleAssignments | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalType)" }) | Should -Be @(
+                    'Fixture Role A|person2@example.com|User'
+                    'Fixture Role B|person2@example.com|Group'
+                )
+                # Reach proof: the group was named through the index of every group, which holds it alone.
+                Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
+                $Doc = [PSCustomObject]@{ version = '1.0'; directoryRoleAssignments = @($Inv.directoryRoleAssignments) }
+                $Validation = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                    param($Doc)
+                    Test-OERStructureSchema -Document $Doc
+                }
+                @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' } | ForEach-Object { "$($_.Path): $($_.Message)" }) |
+                    Should -BeNullOrEmpty
+            } finally {
+                $script:DirNames.Remove($DirGroup5)
             }
         }
 
@@ -6071,6 +7402,10 @@ Describe 'Get-OERInventory does not provoke a PimPolicyNotFound for a group that
         # These cases pin the policy-id pre-check and the read behind it, which the section reaches
         # only for a group Test-OERGroupPimInUse reports in use -- so it answers in use here.
         Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x' } }
+        # BL-131: the root default mock of the group name index is gone here -- this Describe imports
+        # the module again, and a mock lives in the module instance it was made in -- so it is made
+        # again, with the same answer: an index that was read and holds no name.
+        Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewEmptyGroupNameIndex }
     }
 
     It 'never calls Get-OERGroupPimPolicy at all when the group has no policy id' {
@@ -6859,10 +8194,13 @@ Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' {
     # Get-OERGroupRelation -- can only run here. Only the transport is answered.
     BeforeAll {
         $script:moduleName = 'Omnicit.EntraRBAC'
-        # BL-125: the root default mock of the PIM for Groups assignment read is gone by now -- the
-        # Describes above re-import the module, and a mock lives in the module instance it was made
-        # in -- so it is made again here, with the same answer: a read that lists nothing, so the
-        # members and owners below read as standing.
+        # BL-131: imported again HERE, so the root default mocks are gone whether or not a Describe
+        # above ran (a filtered run skips them): the real Get-OERGroupNameIndex has to run below,
+        # through the transport, and the root mock of it would answer instead.
+        Import-Module $script:moduleName -Force
+        # BL-125: the root default mock of the PIM for Groups assignment read is gone too -- a mock
+        # lives in the module instance it was made in -- so it is made again here, with the same
+        # answer: a read that lists nothing, so the members and owners below read as standing.
         Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment {
             [PSCustomObject]@{ Read = $true; Value = @(); Message = $null; Exception = $null }
         }
@@ -6885,6 +8223,12 @@ Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' {
                 @{ value = @(@{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_team'; securityEnabled = $true
                             isAssignableToRole = $false; groupTypes = @(); description = $null; mailNickname = $null }) }
             } -ParameterFilter { $Uri -eq 'v1.0/groups?$filter=securityEnabled%20eq%20true' }
+            # BL-131: the one listing of every group in the tenant the shared names are counted over,
+            # answered through the transport so the real Get-OERGroupNameIndex reads it: the tenant
+            # holds the one group, so its name is unique.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_team' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups?$select=id,displayName&$top=999' }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 @{ value = @(@{ '@odata.type' = '#microsoft.graph.group'; id = 'g-nested'; displayName = 'nested' }) }
             } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
@@ -6923,6 +8267,32 @@ Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' {
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
                 $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' -and $All
             }
+        }
+
+        It 'lists every group''s name once through the transport, and leaves out the group a Microsoft 365 group shares its name with (BL-131)' {
+            # The listing of every group in the tenant holds a second group, outside the security
+            # listing, that carries the name in another letter case.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(
+                        @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_team' }
+                        @{ id = '33333333-3333-3333-3333-333333333333'; displayName = 'ROLE_SEC_TEAM' }
+                    ) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups?$select=id,displayName&$top=999' }
+            $Err = $null
+            $Info = $null
+            $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue -InformationVariable Info
+            @($Inv.groups).Count | Should -Be 0
+            $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'groups/role_sec_team'
+            $Partial[0].Exception.Message | Should -BeLike '*Causes: 2 live objects share the name groups/role_sec_team (compared without regard to letter case)*'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -like 'v1.0/groups?$select=*' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter {
+                $Uri -ceq 'v1.0/groups?$select=id,displayName&$top=999' -and $All
+            }
+            $Notice = @($Info | Where-Object { $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' })
+            $Notice.Count | Should -Be 1
+            ($Notice[0].MessageData.Names | ForEach-Object { "$($_.Section)|$($_.Name)|$($_.Count)" }) | Should -BeExactly 'groups|role_sec_team|2'
         }
 
         Context 'a failed typed read leaves the collection unread' {

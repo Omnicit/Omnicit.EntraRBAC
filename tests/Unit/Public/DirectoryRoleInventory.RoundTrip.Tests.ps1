@@ -218,7 +218,20 @@ Describe 'Directory role inventory round trip' {
         $script:RefuseReads = $false
         $script:ReadsAfterRefusal = [System.Collections.Generic.List[string]]::new()
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
-        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected transport call: $Uri" }
+        # The one transport read answered: the listing of every group's id and display name, which the
+        # export reads once to learn whether a group principal's name is unique in the tenant (BL-131,
+        # Task 3c; Get-OERGroupNameIndex runs for real). The tenant's groups are the eligible group and
+        # the approver group, each of a name no other group carries. Any other request fails loudly.
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            if ($Uri -eq 'v1.0/groups?$select=id,displayName&$top=999') {
+                Assert-ReadAllowed -Name 'groups listing'
+                return @{ value = @(
+                        @{ id = $script:Group1; displayName = 'Fixture Eligible Group' }
+                        @{ id = $script:ApproverGroup; displayName = 'Fixture Approvers' }
+                    ) }
+            }
+            throw "unexpected transport call: $Uri"
+        }
 
         # The readers answer the export (unfiltered) and the apply (filtered by -Role and -PrincipalId)
         # from the same fixture list.

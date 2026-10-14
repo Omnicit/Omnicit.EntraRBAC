@@ -39,6 +39,21 @@ function Get-OERInventoryReadme {
     -RootScopeAssignments is empty it says that none was read. That parameter is mandatory for the same
     reason as the four above.
 
+    Directly after it comes the section "Names two or more objects share" (BL-131). It says that
+    Microsoft Entra ID does not keep display names unique and the apply engine refuses an ambiguous
+    name, so every object whose name another object of its kind shares is left out of inventory.json
+    and the per-area files, all of them, and is named under "What this export could not read" too;
+    that groups are counted over every group in the tenant, Microsoft 365 and distribution groups
+    included, an access package's name among the packages of its catalog, an assignment policy's
+    among the policies of its own access package only, and the name of an administrative unit, a
+    catalog or an access review among the ones the export read; how a reference to such an object
+    elsewhere in the document is written (by its id); and that leaving them out changes nothing in
+    the tenant. Then it lists one bullet per -SharedNames
+    entry, in the order given: the name as a code span (the same fence rule as the entries above),
+    how many objects carry it, and its section as a code span. When -SharedNames is empty it says
+    that no two objects the export read share a name. That parameter is mandatory for the same
+    reason as the five above.
+
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
     collections or objects that could not be read, could not be written without an empty name, or
@@ -74,26 +89,39 @@ function Get-OERInventoryReadme {
     PrincipalType (the principal type, or an empty string when unknown). Any other property, such as
     RoleAssignmentId, is not written. Pass an empty array when there are none.
 
-    .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @()
-    Returns the README Markdown as a single string. Its "What this export could not read" section
-    says that nothing was left unread, its "Members and owners left out as PIM for Groups access"
-    section that none was left out, and its "Role assignments at the root scope (elevated access)"
-    section that none was read.
+    .PARAMETER SharedNames
+    The names the export left out of inventory.json and the per-area files because two or more live
+    objects share them (BL-131): the group reader's SharedNames list followed by the names
+    Get-OERInventory hands over in its information records tagged Omnicit.EntraRBAC.SharedName. One
+    object per name with Section (the document section, 'groups' for instance), Name (the name as
+    reported) and Count (how many live objects carry it). Pass an empty array when there are none.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @() -RootScopeAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @()
+    Returns the README Markdown as a single string. Its "What this export could not read" section
+    says that nothing was left unread, its "Members and owners left out as PIM for Groups access"
+    section that none was left out, its "Role assignments at the root scope (elevated access)"
+    section that none was read, and its "Names two or more objects share" section that no two
+    objects share a name.
+
+    .EXAMPLE
+    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @() -RootScopeAssignments @() -SharedNames @()
     Returns the README Markdown with one bullet per entry under "What this export could not read".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut -RootScopeAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut -RootScopeAssignments @() -SharedNames @()
     Returns the README Markdown with one bullet per group under "Members and owners left out as PIM
     for Groups access".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @([PSCustomObject]@{ Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' })
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @([PSCustomObject]@{ Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' }) -SharedNames @()
     Returns the README Markdown with the count and one bullet per role assignment under "Role
     assignments at the root scope (elevated access)".
+
+    .EXAMPLE
+    Get-OERInventoryReadme -IncompleteReads @('groups/Admins') -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @([PSCustomObject]@{ Section = 'groups'; Name = 'Admins'; Count = 2 })
+    Returns the README Markdown with one bullet per name under "Names two or more objects share":
+    the name, how many objects carry it and its section.
     #>
     [OutputType([string])]
     [CmdletBinding()]
@@ -102,7 +130,8 @@ function Get-OERInventoryReadme {
         [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$SkippedScopes,
         [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$SkippedEligibilityScopes,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$PimLeftOut,
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RootScopeAssignments
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RootScopeAssignments,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$SharedNames
     )
 
     # A text written as a Markdown code span, so '<all Azure scopes: scope enumeration failed>' is
@@ -239,6 +268,43 @@ out of the export changes nothing in the tenant.
         $RootIntro + "`n`n" + "None. No role assignment this export read is at the root scope ``/``. Role assignments are read only`nwhen the export includes ``RoleAssignments``."
     }
 
+    # BL-131 (R-3): the names two or more live objects share, one bullet per entry in the order the
+    # export holds them (the group reader's first, then Get-OERInventory's): the name and the section as
+    # code spans, and how many objects carry the name. The parameter is mandatory, so binding has
+    # already refused a null entry.
+    $SharedBullets = [System.Collections.Generic.List[string]]::new()
+    foreach ($Entry in @($SharedNames)) {
+        $SharedBullets.Add("- $(Format-CodeSpan -Text ([string]$Entry.Name)) -- $([int]$Entry.Count) objects, section $(Format-CodeSpan -Text ([string]$Entry.Section))")
+    }
+    $SharedIntro = @'
+## Names two or more objects share
+
+Microsoft Entra ID does not keep display names unique, and `Invoke-OERStructure` refuses a name that
+more than one live object answers to. So every object whose name another object of its kind shares,
+compared without regard to letter case, is left out of `inventory.json` and the per-area files -- all
+of them -- and is named under "What this export could not read" too. Groups are counted over every
+group in the tenant, Microsoft 365 groups and distribution groups included, so a security group that
+shares its name with one of those is left out as well; when the group roster could not be read
+(`groupsRoster` under "What this export could not read"), groups are counted among the security
+groups the export read. An access package's name is counted among the packages of its catalog, and
+an assignment policy's among the policies of its own access package only; a policy is listed with
+section `assignmentPolicies` as `<package>/<policy>`. The name of an administrative unit, a catalog or
+an access review is counted among the ones this export read, an access review's among the
+access-package reviews it captured. A reference to such an object elsewhere in the document is
+written as the object's id: the catalog of an access package, the access package and assignment
+policy of an access review, and a group named as the principal of a role assignment or a directory
+role assignment, written with `principalType` `Group`. A group named in any other place -- an
+eligibility principal, a reviewer, a catalog resource, a resource role, a member of a group or an
+administrative unit -- still carries its name (or its id where the export always writes ids), and an
+ambiguous name there is refused when applied, with nothing written for it. Leaving them out of the
+export changes nothing in the tenant.
+'@
+    $SharedNameSection = if ($SharedBullets.Count -gt 0) {
+        $SharedIntro + "`n`n" + ($SharedBullets -join "`n")
+    } else {
+        $SharedIntro + "`n`n" + 'None. No two objects this export read share a name.'
+    }
+
     $Readme = @'
 # OER RBAC Inventory Bundle
 
@@ -252,6 +318,8 @@ includes a predefined prompt that turns it into appliable improvement proposals.
 
 @@ROOT-SCOPE@@
 
+@@SHARED-NAMES@@
+
 ## Files
 
 - `inventory.json` -- the canonical, round-trippable inventory, in the exact apply-document shape,
@@ -261,9 +329,12 @@ includes a predefined prompt that turns it into appliable improvement proposals.
   `accessReviews.json`, `directoryRoleManagementPolicies.json`, `directoryRoleAssignments.json`,
   `roleAssignments.json`, `roleManagementPolicies.json` -- the same data split per area, so you can
   feed an LLM one area at a time without hitting its context limit.
-- `groupsRoster.json` -- a lightweight roster of EVERY group in the tenant, of every group type
-  (names + flags, including `onPremisesSynced`), read unfiltered. Read-only context, not an apply
-  document. It is deliberately wider than `inventory.json`: see "Which groups are covered" below.
+- `groupsRoster.json` -- a lightweight roster of EVERY group in the tenant, of every group type,
+  read unfiltered: one row per group with its `id` and `displayName`, its type (`securityEnabled`,
+  `mailEnabled` and `groupTypes`), `visibility`, `createdDateTime` and flags, including
+  `onPremisesSynced`. The `id` tells apart two groups that share a name. Read-only context, not an
+  apply document. It is deliberately wider than `inventory.json`: see "Which groups are covered"
+  below.
   Its `memberCount` is the group's member count when the export read the group in full (every
   security group with `-AllGroupsDetailed`), and `null` otherwise -- not known, which is not zero:
   a count would cost a request per group. A group left out of `inventory.json` and `groups.json`
@@ -387,5 +458,5 @@ came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in anothe
 remove `tenantId` first.
 '@
 
-    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection)
+    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection).Replace('@@SHARED-NAMES@@', $SharedNameSection)
 }

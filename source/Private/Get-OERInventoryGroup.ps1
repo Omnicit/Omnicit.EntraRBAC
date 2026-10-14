@@ -54,9 +54,11 @@ function Get-OERInventoryGroup {
 
     With -SecurityEnabledOnly a listed group whose securityEnabled is not a boolean true -- false,
     null, missing, a text or a number -- is dropped straight after the list is read, before the
-    shared names are counted and before the relevance decision, as if it had never been listed: it
-    is not projected, not asked the PIM-in-use criterion, has no members, owners or policy read by
-    this function, and adds nothing to the Unread list. Under a full read Get-OERGroup has already
+    shared names are counted among the listed groups and before the relevance decision, as if it had
+    never been listed: it is not projected, not asked the PIM-in-use criterion, has no members,
+    owners or policy read by this function, and adds nothing to the Unread list. A -GroupNameIndex
+    holds every group in the tenant, so through the index such a group still counts towards a name
+    it shares with a security group (see -ExcludeSharedName below). Under a full read Get-OERGroup has already
     read its members, owners and PIM eligibility with the list, before this function sees the group,
     so a collection of it may have failed to read; that failure is no gap in the document, which
     does not hold the group, so this function removes every cause whose Target is the dropped
@@ -67,12 +69,19 @@ function Get-OERInventoryGroup {
     wrapped in can list groups the caller never meant to cover, and this check is what keeps them
     out of the document.
 
-    With -ExcludeSharedName a group whose display name another listed group shares, compared without
-    regard to letter case, is left out in either mode, and the name is reported once, with the
-    spelling of the first such group, in the Unread list ('groups/<name>') and with the
-    Get-OERSharedNameCause text in the Causes list. The names are counted over every listed group
-    that is in scope (every one -SecurityEnabledOnly keeps), so a group -RelevantOnly does not keep
-    still makes its name shared, and a group -SecurityEnabledOnly dropped does not.
+    With -ExcludeSharedName a group whose display name another group shares, compared without regard
+    to letter case, is left out in either mode, and the name is reported once, with the spelling of
+    the first such group, in the Unread list ('groups/<name>'), with the Get-OERSharedNameCause text
+    (which names the count) in the Causes list, and in the SharedNames list below. The count of a
+    name is the LARGER of two counts: how many listed groups that are in scope carry it (every one
+    -SecurityEnabledOnly keeps), so a group -RelevantOnly does not keep still makes its name shared,
+    and a group -SecurityEnabledOnly dropped does not make it shared in this count; and, when
+    -GroupNameIndex is given and was read, how many groups in the whole tenant carry it, a group
+    -SecurityEnabledOnly dropped included. So with the index a security group that shares its name
+    with a Microsoft 365 group or a distribution group, which the listing never holds, is left out
+    and reported exactly like two security groups that share it, and so is one whose namesake a
+    widened filter listed and -SecurityEnabledOnly dropped. Without the index, or with one that
+    could not be read, the names are counted over the listed groups alone.
 
     It returns ONE tagged Omnicit.EntraRBAC.InventoryGroupRead object and never writes an error
     record. It writes a warning for a group list that could not be read and, under
@@ -91,6 +100,10 @@ function Get-OERInventoryGroup {
       many were left out) and Basis -- 'Assignments' when the assignments decided it, 'Eligibility'
       when the assignment read failed and the eligibility decided it. A group left out under
       -ExcludeSharedName has no entry. An empty array when nothing was left out.
+    - SharedNames: one object per name -ExcludeSharedName reported, in the order reported: Section
+      ('groups'), Name (the spelling of the first listed group that carries it, as in the Unread
+      list) and Count (the larger count described above). Always an array, empty when no name was
+      reported.
 
     With -ProgressActivity it shows progress while it reads (Write-Progress): a status for the list
     read, then one record per listed group -- every listed group in scope, the ones -RelevantOnly
@@ -130,15 +143,26 @@ function Get-OERInventoryGroup {
     this switch changes nothing.
 
     .PARAMETER ExcludeSharedName
-    Leave out every group whose display name another listed group shares, compared without regard to
-    letter case, and report each such name once in the Unread and Causes lists.
+    Leave out every group whose display name another group shares, compared without regard to letter
+    case, and report each such name once in the Unread, Causes and SharedNames lists. The names are
+    counted over the listed groups, and over every group in the tenant when -GroupNameIndex is given.
+
+    .PARAMETER GroupNameIndex
+    An index of every group in the tenant by display name, as Get-OERGroupNameIndex returns it
+    (Export-OERInventory builds it from its roster). Under -ExcludeSharedName, when its Read is true,
+    a listed group's name counts the larger of the listed groups and the index's groups that carry
+    it. The index holds every group in the tenant, a group -SecurityEnabledOnly drops from the
+    listing included, so such a group counts here although it does not in the listed count. An
+    index whose Read is not true, or none, leaves the count over the listed groups alone. Without
+    -ExcludeSharedName it changes nothing.
 
     .PARAMETER SecurityEnabledOnly
     Drop every listed group whose securityEnabled is not a boolean true (false, null, missing, a text
-    or a number) straight after the list is read, before the shared names are counted and before the
-    relevance decision, and write ONE warning that names how many were dropped. Use it when the
-    filter is not the caller's own, so a filter that lists more than the security-enabled scope
-    cannot widen the result.
+    or a number) straight after the list is read, before the shared names are counted among the
+    listed groups and before the relevance decision, and write ONE warning that names how many were
+    dropped. A dropped group still counts towards a shared name through a -GroupNameIndex, which
+    holds every group in the tenant. Use it when the filter is not the caller's own, so a filter that
+    lists more than the security-enabled scope cannot widen the result.
 
     .PARAMETER ProgressActivity
     The activity name to show progress under (Write-Progress -Activity). Export-OERInventory passes
@@ -156,6 +180,13 @@ function Get-OERInventoryGroup {
     $Read = Get-OERInventoryGroup -Filter 'securityEnabled eq true' -IncludeId -ExcludeSharedName -RelevantOnly
     Reads only the RBAC-relevant security-enabled groups in full, after at most two requests per
     listed group, stamps their ids, and leaves out every group whose name another shares.
+
+    .EXAMPLE
+    $Read = Get-OERInventoryGroup -Filter 'securityEnabled eq true' -ExcludeSharedName -GroupNameIndex (Get-OERGroupNameIndex -Group $RosterGroups)
+    $Read.SharedNames
+    Reads the security-enabled groups and leaves out every one whose name another group in the
+    tenant shares, a Microsoft 365 or distribution group included, and lists each such name with how
+    many groups carry it.
 
     .EXAMPLE
     $Read = Get-OERInventoryGroup -Filter "securityEnabled eq true and (startswith(displayName,'role_'))" -SecurityEnabledOnly -RelevantOnly
@@ -184,6 +215,8 @@ function Get-OERInventoryGroup {
 
         [switch]$ExcludeSharedName,
 
+        [object]$GroupNameIndex,
+
         [switch]$SecurityEnabledOnly,
 
         [string]$ProgressActivity
@@ -197,6 +230,8 @@ function Get-OERInventoryGroup {
     $Causes            = [System.Collections.Generic.List[object]]::new()
     # BL-125: one entry per projected group that left a member or owner out as PIM for Groups access.
     $PimLeftOut        = [System.Collections.Generic.List[object]]::new()
+    # BL-131: one entry per name -ExcludeSharedName reports (Section, Name, Count).
+    $SharedNames       = [System.Collections.Generic.List[object]]::new()
     function Add-UnreadCause {
         param(
             [string]$Cause,
@@ -300,7 +335,9 @@ function Get-OERInventoryGroup {
         # text or a number is not security-enabled either, and a group that fails it is out of scope as
         # if it had never been listed. That is why it runs here, straight after the list is read and
         # BEFORE the shared-name count below and the relevance decision: a group that is out of scope
-        # must neither be read in full nor make a security group's name "shared". The count goes into
+        # must neither be read in full nor make a security group's name "shared" in the count over the
+        # listed groups (a -GroupNameIndex holds every group in the tenant, so through the index it
+        # still counts, BL-131: the apply engine refuses the name either way). The count goes into
         # ONE warning, written here (the caller's ShouldProcess comes after this read, so -WhatIf and a
         # -Confirm prompt both show it). Under a full read the list has already carried the collections of
         # such a group (Get-OERGroup read them with the list), which is the only read it costs: a
@@ -341,6 +378,20 @@ function Get-OERInventoryGroup {
             foreach ($G in $GroupItems) {
                 $NameKey = [string]$G.DisplayName
                 $SharedNameCount[$NameKey] = 1 + $(if ($SharedNameCount.ContainsKey($NameKey)) { $SharedNameCount[$NameKey] } else { 0 })
+            }
+            # BL-131: the listing holds the security-enabled groups only, but the apply engine refuses a
+            # name ANY live group answers to -- a Microsoft 365 group or a distribution group included.
+            # So when the caller hands over an index of every group in the tenant (Get-OERGroupNameIndex,
+            # which Export-OERInventory builds from its unfiltered roster) and it was read, a name counts
+            # the larger of the two: the index can lag behind the listing (a group created between the
+            # two reads), and the listing never holds what the filter left out. An index that was not
+            # read changes nothing here: the names are counted over the listed groups, as before.
+            if ($null -ne $GroupNameIndex -and $GroupNameIndex.Read -eq $true) {
+                foreach ($NameKey in @($SharedNameCount.Keys)) {
+                    if (-not $GroupNameIndex.IdsByName.ContainsKey($NameKey)) { continue }
+                    $IndexCount = $GroupNameIndex.IdsByName[$NameKey].Count
+                    if ($IndexCount -gt $SharedNameCount[$NameKey]) { $SharedNameCount[$NameKey] = $IndexCount }
+                }
             }
         }
 
@@ -810,17 +861,20 @@ function Get-OERInventoryGroup {
                 if ($SharedNameCount[$SharedName] -le 1 -or -not $ReportedNames.Add($SharedName)) { continue }
                 $SharedPath = "groups/$SharedName"
                 $UnreadCollections.Add($SharedPath)
-                $SharedCause = Get-OERSharedNameCause -Path $SharedPath
+                $SharedCause = Get-OERSharedNameCause -Path $SharedPath -Count $SharedNameCount[$SharedName]
                 Write-Verbose "Get-OERInventory: $SharedCause"
                 Add-UnreadCause -Cause $SharedCause -Target $SharedPath
+                # BL-131: the name with its count, for the export's one warning and its README.
+                $SharedNames.Add([PSCustomObject]@{ Section = 'groups'; Name = $SharedName; Count = $SharedNameCount[$SharedName] })
             }
         }
 
         $Result = [PSCustomObject]@{
-            Groups     = $Groups.ToArray()
-            Unread     = $UnreadCollections.ToArray()
-            Causes     = $Causes.ToArray()
-            PimLeftOut = $PimLeftOut.ToArray()
+            Groups      = $Groups.ToArray()
+            Unread      = $UnreadCollections.ToArray()
+            Causes      = $Causes.ToArray()
+            PimLeftOut  = $PimLeftOut.ToArray()
+            SharedNames = $SharedNames.ToArray()
         }
         $Result.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.InventoryGroupRead')
         $Result

@@ -121,11 +121,15 @@ function Get-OERInventory {
     review is matched by displayName and created when it does not exist; when it does, it is
     reconciled field by field only if it reviews the accessPackage and assignmentPolicy the entry
     declares, and is otherwise refused, since the scope of a review cannot be changed -- see the
-    Invoke-OERStructure help). The projection writes accessPackage and assignmentPolicy as names, and
-    the apply engine resolves a name as creation resolves it, so when the access package name is not
-    unique in the tenant, or the assignment policy name is not unique in its access package,
-    re-applying the entry is refused with the lookup's AmbiguousName error, and nothing is written,
-    until the entry names it by id. A multi-stage review (StageCount greater than zero) is skipped
+    Invoke-OERStructure help). The apply engine resolves an accessPackage or assignmentPolicy name as
+    creation resolves it -- the access package name in the whole tenant, the assignment policy name
+    among the policies of its access package -- and refuses a name that lookup finds more than once
+    with the lookup's AmbiguousName error. So the projection writes a name only when that same lookup
+    finds this access package or assignment policy and no other; an access package name another
+    access package in the tenant carries, or an assignment policy name another policy of the same
+    access package carries, is written by id instead, so the entry applies. The check costs one
+    request per access package name and one per access package, however many reviews share them.
+    A multi-stage review (StageCount greater than zero) is skipped
     with a warning instead of being exported, because its reviewers live in stageSettings -- which
     the apply schema does not model -- and the top-level reviewers collection Graph returns for it is
     empty by construction, which would otherwise be misreported as a configured self review. A
@@ -142,18 +146,29 @@ function Get-OERInventory {
     sentinel; a positive value above 365 is dropped with a warning, because that is real
     configuration the schema cannot carry.
     A review's accessPackage and assignmentPolicy are written under their display names, read by
-    id. A package or policy that no longer exists is written by its id: that is a fact about the
-    review, so nothing is reported for it. A name that could not be read -- a refused, throttled
-    or failed read -- is written by id too, and is reported as an unread collection (accessReviews,
-    the review's display name, then accessPackage or assignmentPolicy) in the InventoryPartial
-    error, so a document written by id for that reason is never mistaken for one whose target was
-    deleted.
+    id, and by their id in four cases. A package or policy that no longer exists is written by its
+    id: that is a fact about the review, so nothing is reported for it. A name the lookup above
+    would not resolve to this object alone -- another object carries it, or the lookup does not
+    find this one -- is written by id too, and nothing is reported for it either, since the id
+    applies. A name that could not be read -- a refused, throttled or failed read -- and a
+    name whose uniqueness could not be checked, because the lookup above failed, are written by id
+    as well, and each is reported as an unread collection (accessReviews, the review's display name,
+    then accessPackage or assignmentPolicy) in the InventoryPartial error, so a document written by
+    id for either reason is never mistaken for one whose target was deleted.
     The AccessPackages projection
     carries the hidden flag so a hidden package stays
     hidden across a round-trip. The RoleAssignments projection carries the ABAC condition,
     conditionVersion and description so a condition-scoped assignment is not exported as an
-    unconditioned one. A role assignment at the Azure root scope '/', above every management group
-    and subscription in the tenant, is left out of the RoleAssignments section: it is elevated
+    unconditioned one. In RoleAssignments and DirectoryRoleAssignments, a group is written by its
+    display name only when no other group in the tenant carries that name, compared without regard
+    to letter case; otherwise, or when the listing of every group fails, it is written by its object
+    id with principalType Group, which Invoke-OERStructure resolves verbatim. The listing is the one
+    described below, made at most once per call, when the Groups section read at least one group or
+    when a section holds a group principal whose name was read (one whose name could not be read is
+    written by its object id with no listing), and shared by both; when it fails, the verbose stream
+    says so and no group principal is reported unread, since an object id names the group exactly.
+    A role assignment at the Azure root scope '/', above every management group and subscription in
+    the tenant, is left out of the RoleAssignments section: it is elevated
     access, a finding to review rather than part of the RBAC model a document describes, and
     Invoke-OERStructure never creates or removes one. A read at a management group or a subscription
     returns it as inherited. One warning names every such assignment, each by role and principal and,
@@ -182,14 +197,16 @@ function Get-OERInventory {
     scoped to an administrative unit are never exported, by the same rule Invoke-OERStructure matches
     and prunes by (Select-OERManagedDirectoryRoleAssignment). A user is named by its user principal
     name and a group by its display name, each falling back to the object id when no name can be
-    read; a service principal, or a principal of unknown type, is named by its object id, and
-    principalType is carried whenever the type is known. Entra does not keep group display names
-    unique, so a group whose display name matches, without regard to letter case, that of another
-    principal holding the same role and assignment type is named by its object id instead (still with
-    principalType Group): two entries with the same role, principal and assignmentType would be
-    refused by the validator. A time-bound assignment carries durationDays reconstructed from the
-    schedule window the same way the apply engine measures it, so a re-applied export is Unchanged; a
-    permanent one carries neither durationDays nor permanent. Two live schedules for one role,
+    read, and a group by its object id as well when another group in the tenant carries its display
+    name, as described above; a service principal, or a principal of unknown type, is named by its
+    object id, and principalType is carried whenever the type is known. Entra does not keep group
+    display names unique, so a group whose display name matches, without regard to letter case,
+    that of another principal holding the same role and assignment type is named by its object id
+    instead (still with principalType Group): two entries with the same role, principal and
+    assignmentType would be refused by the validator. A time-bound assignment carries durationDays
+    reconstructed from the schedule window the same way the apply engine measures it, so a
+    re-applied export is Unchanged; a permanent one carries neither durationDays nor permanent. Two
+    live schedules for one role,
     principal and kind export only the first this read returns, with a warning: Invoke-OERStructure
     compares against the first schedule Microsoft Graph returns for that role and principal, which is
     not guaranteed to be the same one, so such an entry may report a change when applied.
@@ -202,15 +219,36 @@ function Get-OERInventory {
     reported as partial.
     The export never writes two entries that the validator would refuse as duplicates, so a document
     it emits is not refused by Invoke-OERStructure for that reason. Live groups, administrative
-    units, catalogs, access reviews, or access packages of one catalog whose names match, without
-    regard to letter case, are left out of the document -- all of them -- and each such name is
-    reported through the InventoryPartial error, since the apply engine refuses an ambiguous name and
-    neither entry could be applied; leaving a top-level entry out removes nothing, because -Prune acts
-    on child collections only. Role assignments whose scope (compared in its canonical form), role
-    and principal collide are written with the principal's object id and, when the principal is
-    already an id, with the role's full definition id; principalType is then written for a user,
-    group or service principal. A role management policy read twice, for example by naming the same
-    role twice in -Role, is written once.
+    units, catalogs, access reviews, access packages of one catalog, or assignment policies of one
+    access package whose names match, without regard to letter case, are left out of the document --
+    all of them -- and each such name is reported through the InventoryPartial error, since the apply
+    engine refuses an ambiguous name and neither entry could be applied; leaving a top-level entry out
+    removes nothing, because -Prune acts on child collections only, and leaving an assignment policy
+    out removes nothing either, because the apply engine never removes an assignment policy. A
+    policy name is reported as accessPackages/ followed by the package name, /assignmentPolicies/ and
+    the policy name, and the policies of two different packages never count against each other. An
+    access package in a catalog whose name another catalog carries is written with that catalog's
+    object id as its catalog, which the apply engine takes as the catalog itself, so access packages
+    of one name in two such catalogs are two entries and not a collision; the catalogs themselves are
+    left out as described. Catalog names are counted among the catalogs read only. -Catalog given as
+    an id reads that catalog alone, so a package in it keeps the catalog's name even when another
+    catalog in the tenant carries it; -Catalog given as a name reads every catalog Microsoft Graph
+    matches by that name, and when that is more than one, their packages are written with the
+    catalog ids. A group's name is counted among every group in the tenant -- one extra paged
+    listing of every group's id and display name, made at most once per call, when the Groups
+    section read at least one group or when a role assignment or directory role assignment names a
+    group -- so a security group that shares its name with a Microsoft 365 group or a
+    distribution group, which the default filter never reads, is left out too; the reported cause
+    names how many live objects carry the name. When that listing fails, groupNames is reported
+    unread through the InventoryPartial
+    error, with its cause, and the names are counted among the groups read. Each name left out is
+    also handed over in one information record tagged Omnicit.EntraRBAC.SharedName, whose Names list
+    carries the Section, Name and Count of each; under the default $InformationPreference the record
+    is not displayed. Role assignments whose scope
+    (compared in its canonical form), role and principal collide are written with the principal's
+    object id and, when the principal is already an id, with the role's full definition id;
+    principalType is then written for a user, group or service principal. A role management policy
+    read twice, for example by naming the same role twice in -Role, is written once.
 
     The inventory carries a top-level tenantId, directly after its version: the tenant ID the session's
     Microsoft Graph token was issued for, never the tenant as named with -TenantId (a domain, or
@@ -410,12 +448,36 @@ function Get-OERInventory {
         # or a pair the validator refuses is written. An access package is keyed '<catalog>|<name>'
         # there, so it is keyed that way here. -NameOf, when given, builds the name that is REPORTED
         # for an entry ('<catalog>/<name>', the path an operator reads); without it the key is the name.
+        #
+        # -ExternalIds (BL-131), when given, is a dictionary from a key to the ids of every live object
+        # that carries it, counted wider than the entries: for the groups, the index of every group in the
+        # tenant (Get-OERGroupNameIndex), which holds the Microsoft 365 and distribution groups the
+        # security-enabled listing never does. A key then counts the larger of the entries and the ids,
+        # so a group whose name only a group outside the listing shares is left out too. The other
+        # sections pass nothing and are counted over their entries alone.
+        #
+        # -UnreadOf (BL-131), when given, builds the unread entry of a name left out from the first entry
+        # that carries it, where the default '<section>/<reported name>' is not the path an operator
+        # reads: the assignment policies of one access package are named
+        # 'accessPackages/<package>/assignmentPolicies/<policy>' (the section of the record and the
+        # README stays 'assignmentPolicies', the reported name '<package>/<policy>').
+        #
+        # Each name left out is also recorded, with its section and count, in $SharedNameList, which
+        # the information record tagged Omnicit.EntraRBAC.SharedName hands over below.
         function Select-UniqueNamedEntry {
-            param([object[]]$Entry, [string]$Section, [scriptblock]$KeyOf, [scriptblock]$NameOf)
+            param([object[]]$Entry, [string]$Section, [scriptblock]$KeyOf, [scriptblock]$NameOf, [scriptblock]$UnreadOf, [System.Collections.IDictionary]$ExternalIds)
             $Count = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($E in $Entry) {
                 $K = [string](& $KeyOf $E)
                 $Count[$K] = 1 + $(if ($Count.ContainsKey($K)) { $Count[$K] } else { 0 })
+            }
+            if ($null -ne $ExternalIds) {
+                # The keys are copied first: the dictionary is written while they are walked.
+                foreach ($K in @($Count.Keys)) {
+                    if (-not $ExternalIds.ContainsKey($K)) { continue }
+                    $ExternalCount = @($ExternalIds[$K]).Count
+                    if ($ExternalCount -gt $Count[$K]) { $Count[$K] = $ExternalCount }
+                }
             }
             $Reported = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($E in $Entry) {
@@ -423,18 +485,67 @@ function Get-OERInventory {
                 if ($Count[$K] -gt 1) {
                     if ($Reported.Add($K)) {
                         $ReportedName = if ($NameOf) { [string](& $NameOf $E) } else { $K }
-                        $Unread = "$Section/$ReportedName"
+                        $Unread = if ($UnreadOf) { [string](& $UnreadOf $E) } else { "$Section/$ReportedName" }
                         $UnreadCollections.Add($Unread)
-                        $NameCause = Get-OERSharedNameCause -Path $Unread
+                        $NameCause = Get-OERSharedNameCause -Path $Unread -Count $Count[$K]
                         # Every cause is written to the verbose stream as it is seen, like at every other
-                        # Add-UnreadCause site: this one is added last, so it is the first the cap drops.
+                        # Add-UnreadCause site. The cap keeps causes in the order they are added: the five
+                        # calls made once every section is read add theirs last, so the cap drops those
+                        # first, while the assignment policies' call adds its causes as each access package
+                        # is read, ahead of the causes of the sections read after it.
                         Write-Verbose "Get-OERInventory: $NameCause"
                         Add-UnreadCause -Cause $NameCause -Target $Unread
+                        $SharedNameList.Add([PSCustomObject]@{ Section = $Section; Name = $ReportedName; Count = $Count[$K] })
                     }
                     continue
                 }
                 $E
             }
+        }
+
+        # BL-131: the names Select-UniqueNamedEntry left out, each with its section and count, in the
+        # order reported. Handed over in ONE information record before the inventory is emitted.
+        $SharedNameList = [System.Collections.Generic.List[object]]::new()
+
+        # BL-131: the index of every group in the tenant by display name (Get-OERGroupNameIndex, one
+        # paged listing of every group's id and display name), built at most ONCE per invocation and
+        # only when a section asks for it. Any section may call this; the first call reads the index
+        # and every later call returns the same object, so the Groups section and the principals of
+        # the RoleAssignments and DirectoryRoleAssignments sections share one listing. A failed
+        # listing is returned as it is (Read false, with its message), and each caller decides what
+        # it means: the Groups section counts names, so it reports 'groupNames' unread; a group
+        # principal is written by its object id instead, which is exact, so nothing is unread there
+        # (Get-GroupPrincipalReference). Kept in a holder, since a local function cannot assign a
+        # variable of this block.
+        $GroupNameIndexHolder = @{ Index = $null }
+        function Get-GroupNameIndexOnce {
+            if ($null -ne $GroupNameIndexHolder.Index) { return $GroupNameIndexHolder.Index }
+            $GroupNameIndexHolder.Index = Get-OERGroupNameIndex
+            $GroupNameIndexHolder.Index
+        }
+
+        # BL-131 (Task 3c): how a group named as a principal in the RoleAssignments and
+        # DirectoryRoleAssignments sections is written -- its display name only when no other group in
+        # the tenant carries that name, otherwise its object id (Get-OERGroupReference owns the rule).
+        # Called once per group row, so the index is read only when a section holds a group principal
+        # whose name was read.
+        # When the index could not be read, every group principal is written by its object id: an
+        # exact reference the apply engine resolves verbatim, so nothing is missing from the document
+        # and nothing is reported unread (R-3c). That is said once per invocation, on the verbose
+        # stream, whichever section meets it first.
+        $GroupPrincipalNote = @{ Written = $false }
+        function Get-GroupPrincipalReference {
+            param([string]$Id, [string]$Name)
+            # A blank name, or a name that is the id itself (a principal whose name could not be
+            # resolved), is written as the id whatever the index holds -- Get-OERGroupReference returns
+            # the id for both -- so the index is not read for it.
+            if ([string]::IsNullOrWhiteSpace($Name) -or $Name -ceq $Id) { return $Id }
+            $PrincipalIndex = Get-GroupNameIndexOnce
+            if ($PrincipalIndex.Read -ne $true -and -not $GroupPrincipalNote.Written) {
+                $GroupPrincipalNote.Written = $true
+                Write-Verbose "Get-OERInventory: $($PrincipalIndex.Message); every group principal is written by its object id."
+            }
+            Get-OERGroupReference -Id $Id -Name $Name -Index $PrincipalIndex
         }
 
         # Reads the display name of the access package or assignment policy an access review points
@@ -491,6 +602,64 @@ function Get-OERInventory {
             return $Name
         }
 
+        # BL-142: the apply engine resolves a review's accessPackage and assignmentPolicy NAME as creation
+        # resolves it -- the access package by Resolve-OERAccessPackageId, in the whole tenant, and the
+        # assignment policy by Resolve-OERAssignmentPolicyId, among the policies of the access package --
+        # and refuses a name that lookup finds more than once (AmbiguousName), so an entry written with a
+        # shared name could never be applied. A name Get-AccessReviewReferenceName returned is therefore
+        # kept only when the engine's own lookup, sent here with the same URI, answers with this object
+        # and no other; otherwise the id is written, which the engine takes as the object itself.
+        #
+        # A NAMED DEVIATION from the single-owner rule (Task 3b ruling): the two lookups are repeated here
+        # rather than calling the resolvers, which throw AmbiguousName for a shared name and so would
+        # leave stray records in a caller's -ErrorVariable -- the reason Get-AccessReviewReferenceName is a
+        # transport read too. The Context "the export's review-reference lookups agree with the resolvers
+        # (named deviation)" in tests/Unit/Public/Get-OERInventory.Tests.ps1 holds the URIs and the
+        # decisions in step with the resolvers.
+        #
+        # -MatchOf picks the candidates the lookup's answer holds for the name, exactly as the resolver
+        # does. Each answer is cached for the invocation under -CacheKey in -Cache, so the reviews of one
+        # access package cost one lookup of each kind however many there are. A lookup that fails is
+        # cached too, and every review that needed it writes the id and is reported like a failed name
+        # read (the cause, and the unread collection under the review): an id there otherwise reads as a
+        # deleted target.
+        function Get-AccessReviewUniqueReference {
+            param(
+                [string]$Name,
+                [string]$Id,
+                [string]$Uri,
+                [string]$CacheKey,
+                [hashtable]$Cache,
+                [scriptblock]$MatchOf,
+                [string]$ReviewName,
+                [string]$Part,
+                [string]$Label
+            )
+            if (-not $Cache.ContainsKey($CacheKey)) {
+                try {
+                    $Answer = Invoke-OERGraphRequest -Uri $Uri
+                    $Cache[$CacheKey] = [PSCustomObject]@{ Answer = $Answer; Failure = $null }
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $Cache[$CacheKey] = [PSCustomObject]@{ Answer = $null; Failure = [string]$PSItem.Exception.Message }
+                }
+            }
+            $Lookup = $Cache[$CacheKey]
+            if ($null -ne $Lookup.Failure) {
+                $UniqueCause = "Could not check whether an access review's $Label name is unique: $($Lookup.Failure)"
+                Write-Verbose "Get-OERInventory: $UniqueCause"
+                Add-UnreadCause -Cause $UniqueCause -Target $Id
+                $UnreadCollections.Add("accessReviews/$ReviewName/$Part")
+                return $Id
+            }
+            $Found = @(& $MatchOf $Lookup.Answer $Name)
+            if ($Found.Count -eq 1 -and [string]$Found[0].id -ieq $Id) { return $Name }
+            return $Id
+        }
+
+        # The ids by name the groups are counted against as well (BL-131): set below only when the
+        # index of every group in the tenant was read.
+        $GroupExternalIds = $null
         if ($Include -contains 'Groups') {
             $GroupReadFilter = if ($GroupFilter) { $GroupFilter } else { 'securityEnabled eq true' }
             # The reader catches what it expects and names it in Unread and Causes. This catch is for
@@ -512,6 +681,23 @@ function Get-OERInventory {
                 foreach ($GroupCause in @($GroupRead.Causes)) { Add-UnreadCause -Cause $GroupCause.Cause -Target $GroupCause.Target }
                 foreach ($GroupUnread in @($GroupRead.Unread)) { $UnreadCollections.Add($GroupUnread) }
                 foreach ($GroupEntry in @($GroupRead.Groups)) { $Groups.Add($GroupEntry) }
+            }
+            # BL-131: a group's name is counted over every group in the tenant, not only over the groups
+            # this section read, since the apply engine refuses a name a Microsoft 365 group or a
+            # distribution group shares as well. The index is read after the section, so its cause (when
+            # it fails) follows the section's own, and only when there is a group to count: a section
+            # that read none has no name to count. A failed index is reported here, once -- verbose,
+            # the cause list and 'groupNames' in the unread list -- since the names are then counted
+            # over the groups read only, which may miss a name another group shares.
+            if ($Groups.Count -gt 0) {
+                $GroupNameIndex = Get-GroupNameIndexOnce
+                if ($GroupNameIndex.Read -eq $true) {
+                    $GroupExternalIds = $GroupNameIndex.IdsByName
+                } else {
+                    Write-Verbose "Get-OERInventory: $($GroupNameIndex.Message)"
+                    Add-UnreadCause -Cause $GroupNameIndex.Message
+                    $UnreadCollections.Add('groupNames')
+                }
             }
         }
 
@@ -790,7 +976,27 @@ function Get-OERInventory {
             # -Catalog and the schema's catalogs[].displayName cross-reference both take the name).
             # $ResolvedCatalogList is hoisted above (shared with the Catalogs section) so an unqualified
             # Get-OERInventory does not resolve the -Catalog filter twice.
+            #
+            # BL-39: a catalog whose name another listed catalog carries, without regard to letter case,
+            # is left out of the catalogs section (Select-UniqueNamedEntry), and the apply engine refuses
+            # its name as ambiguous (Resolve-OERCatalogId), so a package in it could never be applied by
+            # that name. Such a package is written with the catalog's OBJECT ID instead, which the engine
+            # takes as the catalog itself (Resolve-OERCatalogId returns a GUID as it is). Since the
+            # package key is '<catalog>|<name>', packages of one name in two such catalogs are then two
+            # keys, not a collision. The names are counted over the catalogs listed here only: -Catalog
+            # given as an id lists that catalog alone, so a package in it keeps the catalog's name even
+            # when another catalog in the tenant carries it (a known limit, documented in the help);
+            # given as a name it lists every catalog Graph matches by that name, which are counted.
+            $ApCatalogNameCount = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($CountCat in @($ResolvedCatalogList)) {
+                $CountName = [string]$CountCat.DisplayName
+                $ApCatalogNameCount[$CountName] = 1 + $(if ($ApCatalogNameCount.ContainsKey($CountName)) { $ApCatalogNameCount[$CountName] } else { 0 })
+            }
             foreach ($ApCat in $ResolvedCatalogList) {
+                # The catalog reference every package of this catalog is written with: its name, or its
+                # object id when another listed catalog carries the name (see above). The unread paths of
+                # this catalog below name it the same way, so two catalogs of one name never read alike.
+                $ApCatalogRef = if ($ApCatalogNameCount[[string]$ApCat.DisplayName] -gt 1) { [string]$ApCat.Id } else { $ApCat.DisplayName }
                 # Build an OriginId -> resource display-name map ONCE per catalog. A resource role
                 # binding's scope carries the resource OriginId plus a scope LABEL (commonly 'Root'
                 # for the whole-resource scope) -- not the resource name. The apply engine resolves
@@ -819,7 +1025,7 @@ function Get-OERInventory {
                     $ApCatResCause = "Could not read a catalog's resources to name its access packages' bindings: $($PSItem.Exception.Message)"
                     Write-Verbose "Get-OERInventory: $ApCatResCause"
                     Add-UnreadCause -Cause $ApCatResCause -Target ([string]$ApCat.Id)
-                    $UnreadCollections.Add("accessPackages/$($ApCat.DisplayName)/catalogResourceNames")
+                    $UnreadCollections.Add("accessPackages/$ApCatalogRef/catalogResourceNames")
                     $ApCatRes = @()
                 }
                 $ApCurrentNames = & $GetCatalogResourceNames ([string]$ApCat.Id) $ApCatRes
@@ -845,13 +1051,13 @@ function Get-OERInventory {
                     $ApListCause = "Could not list a catalog's access packages: $($PSItem.Exception.Message)"
                     Write-Verbose "Get-OERInventory: $ApListCause"
                     Add-UnreadCause -Cause $ApListCause -Target ([string]$ApCat.Id)
-                    $UnreadCollections.Add("accessPackages/$($ApCat.DisplayName)/packages")
+                    $UnreadCollections.Add("accessPackages/$ApCatalogRef/packages")
                     $ApList = @()
                 }
                 foreach ($Ap in $ApList) {
                     $Proj = [ordered]@{
                         displayName = $Ap.DisplayName
-                        catalog     = $ApCat.DisplayName
+                        catalog     = $ApCatalogRef
                         description = $Ap.Description
                         # Cheap boolean -- always emitted so a hidden package stays hidden across a
                         # round-trip and a visible one is never silently re-hidden.
@@ -941,7 +1147,17 @@ function Get-OERInventory {
                         $UnreadCollections.Add("accessPackages/$($Ap.DisplayName)/assignmentPolicies")
                         $ApPolicies = @()
                     }
-                    $Proj.assignmentPolicies = @(foreach ($P in $ApPolicies) {
+                    # BL-131: the policies of ONE package are matched by name inside it, and the validator
+                    # refuses two entries of one name (Sprint 11 step 5), so a name that two policies of
+                    # the package carry, without regard to letter case, is written for none of them and
+                    # reported once, with its count, as accessPackages/<package>/assignmentPolicies/<policy>.
+                    # Leaving a policy out deletes nothing: Sync-OERStructureAccessPackage never removes an
+                    # assignment policy. The policies of ANOTHER package never count (the call is per package).
+                    $ApUniquePolicies = @(Select-UniqueNamedEntry -Entry $ApPolicies -Section 'assignmentPolicies' `
+                            -KeyOf { param($E) $E.DisplayName } `
+                            -NameOf { param($E) "$($Ap.DisplayName)/$($E.DisplayName)" } `
+                            -UnreadOf { param($E) "accessPackages/$($Ap.DisplayName)/assignmentPolicies/$($E.DisplayName)" })
+                    $Proj.assignmentPolicies = @(foreach ($P in $ApUniquePolicies) {
                         $PolProj = [ordered]@{ displayName = $P.DisplayName }
                         if ($P.Description) { $PolProj.description = $P.Description }
                         # requestorScope: always emit scope; emit users/groups only when non-empty.
@@ -1044,19 +1260,31 @@ function Get-OERInventory {
                     } else {
                         $Ra.PrincipalId
                     }
+                    # Normalize the ARM principal type to the apply schema enum
+                    # (User|Group|ServicePrincipal). A user UPN / group name routes via the apply
+                    # @-heuristic, so principalType is emitted only for a service principal (a name
+                    # cannot disambiguate one) and for a group written by its object id (below).
+                    # ForeignGroup -- a B2B / cross-tenant group -- maps to Group; any other ARM type
+                    # (e.g. Device) is omitted rather than emitting an invalid enum value that would
+                    # fail Test-OERStructure validation.
+                    $PrincipalType = if ($Ra.PrincipalType -eq 'ForeignGroup') { 'Group' } else { [string]$Ra.PrincipalType }
+                    # BL-131 (Task 3c): a group is written by its display name only when no other group
+                    # in the tenant carries that name (Get-OERGroupReference), since the apply engine
+                    # refuses a group name more than one live group answers to; otherwise by its object
+                    # id with principalType Group, directly after principal, which Invoke-OERStructure
+                    # resolves verbatim. Decided here, before the root-scope split and the collision
+                    # pass below, which run on the name chosen here.
+                    $GroupById = $false
+                    if ($PrincipalType -eq 'Group' -and $Ra.PrincipalId) {
+                        $PrincipalName = Get-GroupPrincipalReference -Id ([string]$Ra.PrincipalId) -Name ([string]$PrincipalName)
+                        $GroupById = ([string]$PrincipalName -eq [string]$Ra.PrincipalId)
+                    }
                     $Proj = [ordered]@{
                         scope     = $Ra.Scope
                         role      = $(if ($Ra.RoleName) { $Ra.RoleName } else { $Ra.RoleDefinitionId })
                         principal = $PrincipalName
                     }
-                    # Normalize the ARM principal type to the apply schema enum
-                    # (User|Group|ServicePrincipal). A user UPN / group name routes via the apply
-                    # @-heuristic, so principalType is emitted only for a service principal (a name
-                    # cannot disambiguate one). ForeignGroup -- a B2B / cross-tenant group -- maps to
-                    # Group; any other ARM type (e.g. Device) is omitted rather than emitting an invalid
-                    # enum value that would fail Test-OERStructure validation.
-                    $PrincipalType = if ($Ra.PrincipalType -eq 'ForeignGroup') { 'Group' } else { [string]$Ra.PrincipalType }
-                    if ($PrincipalType -eq 'ServicePrincipal') {
+                    if ($PrincipalType -eq 'ServicePrincipal' -or $GroupById) {
                         $Proj.principalType = $PrincipalType
                     }
                     # ABAC condition and the free-text description are writable by New-OERRoleAssignment
@@ -1227,6 +1455,12 @@ function Get-OERInventory {
                     Add-UnreadSection -Key 'accessReviews' -Cause "Could not read access reviews: $($PSItem.Exception.Message)"
                 }
             }
+            # BL-142: the engine's two name lookups, cached for the invocation (Get-AccessReviewUniqueReference):
+            # the access package lookup by the lower-cased name, the assignment policy listing by package id.
+            # A PowerShell hashtable already compares keys without regard to letter case; the keys are
+            # lower-cased as well so that stays true if the cache ever becomes an ordinal dictionary.
+            $ArPackageNameLookup = @{}
+            $ArPolicyListLookup = @{}
             foreach ($Ar in $ArItems) {
                 # Only access-package-scoped reviews round-trip: the apply schema requires both
                 # accessPackage and assignmentPolicy, and Invoke-OERStructure models access-package
@@ -1263,11 +1497,34 @@ function Get-OERInventory {
                     -NotFoundCode 'AccessPackageNotFound', 'NotFound' `
                     -Id ([string]$Ar.AccessPackageId) -ReviewName ([string]$Ar.DisplayName) `
                     -Part 'accessPackage' -Label 'access package'
+                # BL-142: a NAME (not the id) stays only when the engine's tenant-wide lookup of it
+                # (Resolve-OERAccessPackageId, same URI, the name escaped the same way) finds exactly this
+                # access package.
+                # Named deviation, held in step with the resolver by the Get-OERInventory.Tests.ps1 Context "the export's review-reference lookups agree with the resolvers (named deviation)".
+                if ([string]$Proj.accessPackage -ne [string]$Ar.AccessPackageId) {
+                    $ApLookupName = [string]$Proj.accessPackage
+                    $Proj.accessPackage = Get-AccessReviewUniqueReference -Name $ApLookupName -Id ([string]$Ar.AccessPackageId) `
+                        -Uri ("v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq '{0}'&`$select=id,displayName" -f (ConvertTo-OERODataFilterValue -Value $ApLookupName)) `
+                        -CacheKey $ApLookupName.ToLowerInvariant() -Cache $ArPackageNameLookup `
+                        -MatchOf { param($Answer) @($Answer.value | Where-Object { $null -ne $_ }) } `
+                        -ReviewName ([string]$Ar.DisplayName) -Part 'accessPackage' -Label 'access package'
+                }
                 $Proj.assignmentPolicy = Get-AccessReviewReferenceName `
                     -Uri ('v1.0/identityGovernance/entitlementManagement/assignmentPolicies/{0}?$expand=accessPackage' -f $Ar.AssignmentPolicyId) `
                     -NotFoundCode 'PolicyNotFound', 'NotFound' `
                     -Id ([string]$Ar.AssignmentPolicyId) -ReviewName ([string]$Ar.DisplayName) `
                     -Part 'assignmentPolicy' -Label 'assignment policy'
+                # BL-142: a NAME (not the id) stays only when exactly one policy of the review's access
+                # package carries it, compared as Resolve-OERAssignmentPolicyId compares (-eq), and that
+                # policy is this one. The listing is the resolver's, by the review's access package id.
+                # Named deviation, held in step with the resolver by the Get-OERInventory.Tests.ps1 Context "the export's review-reference lookups agree with the resolvers (named deviation)".
+                if ([string]$Proj.assignmentPolicy -ne [string]$Ar.AssignmentPolicyId) {
+                    $Proj.assignmentPolicy = Get-AccessReviewUniqueReference -Name ([string]$Proj.assignmentPolicy) -Id ([string]$Ar.AssignmentPolicyId) `
+                        -Uri ("v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq '{0}'" -f $Ar.AccessPackageId) `
+                        -CacheKey ([string]$Ar.AccessPackageId).ToLowerInvariant() -Cache $ArPolicyListLookup `
+                        -MatchOf { param($Answer, $ForName) @(@($Answer.value) | Where-Object { $_.displayName -eq $ForName }) } `
+                        -ReviewName ([string]$Ar.DisplayName) -Part 'assignmentPolicy' -Label 'assignment policy'
+                }
 
                 # reviewers -> friendly tokens (manager / self / resolved name). Every query is parsed
                 # through Resolve-OERReviewerScopeQuery, the module's single owner of that grammar. It
@@ -1527,7 +1784,11 @@ function Get-OERInventory {
 
             # A user by its UPN and a group by its display name, each falling back to the object id
             # when no name was read; a service principal, or a principal of unknown type, by its
-            # object id, which the apply engine resolves verbatim.
+            # object id, which the apply engine resolves verbatim. BL-131 (Task 3c): a group keeps its
+            # display name only when no other group in the tenant carries it (Get-OERGroupReference),
+            # since the apply engine refuses a group name more than one live group answers to; it is
+            # otherwise written by its object id, before the collision pass below. principalType Group
+            # is written for it either way.
             $DirectoryPrincipals = [string[]]::new($DirectoryKept.Count)
             for ($Index = 0; $Index -lt $DirectoryKept.Count; $Index++) {
                 $DirectoryRow = $DirectoryKept[$Index].Row
@@ -1536,6 +1797,9 @@ function Get-OERInventory {
                     [string]$PrincipalNameCache[$DirectoryPrincipalId]
                 } else {
                     $DirectoryPrincipalId
+                }
+                if ([string]$DirectoryRow.PrincipalType -eq 'Group' -and $DirectoryPrincipalId) {
+                    $DirectoryPrincipals[$Index] = Get-GroupPrincipalReference -Id $DirectoryPrincipalId -Name $DirectoryPrincipals[$Index]
                 }
             }
             # Entra does not keep group display names unique, so two groups holding one role and kind
@@ -1693,15 +1957,32 @@ function Get-OERInventory {
             }
         }
 
-        # Select-UniqueNamedEntry runs while these arguments are evaluated, which is before the
-        # InventoryPartial check below, so the objects it leaves out are reported with the rest.
+        # Select-UniqueNamedEntry runs into variables first, before the InventoryPartial check below,
+        # so the objects it leaves out are reported with the rest, and before the inventory is emitted,
+        # so the information record below precedes it.
+        $UniqueGroups = @(Select-UniqueNamedEntry -Entry $Groups.ToArray() -Section 'groups' -KeyOf { param($E) $E.displayName } -ExternalIds $GroupExternalIds)
+        $UniqueAdministrativeUnits = @(Select-UniqueNamedEntry -Entry $AdministrativeUnits.ToArray() -Section 'administrativeUnits' -KeyOf { param($E) $E.displayName })
+        $UniqueCatalogs = @(Select-UniqueNamedEntry -Entry $Catalogs.ToArray() -Section 'catalogs' -KeyOf { param($E) $E.displayName })
+        $UniqueAccessPackages = @(Select-UniqueNamedEntry -Entry $AccessPackages.ToArray() -Section 'accessPackages' -KeyOf { param($E) "$($E.catalog)|$($E.displayName)" } -NameOf { param($E) "$($E.catalog)/$($E.displayName)" })
+        $UniqueAccessReviews = @(Select-UniqueNamedEntry -Entry $AccessReviews.ToArray() -Section 'accessReviews' -KeyOf { param($E) $E.displayName })
+
+        # BL-131 (R-3): every name left out above, with its section and count, in ONE information record
+        # (the BL-126 root-scope pattern), so a caller -- Export-OERInventory among them -- reads the
+        # names without parsing the partial message. Under the default $InformationPreference it is not
+        # displayed.
+        if ($SharedNameList.Count -gt 0) {
+            $Notice = [PSCustomObject]@{ Names = $SharedNameList.ToArray() }
+            $Notice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.SharedNameNotice')
+            Write-Information -MessageData $Notice -Tags 'Omnicit.EntraRBAC.SharedName'
+        }
+
         ConvertTo-OERInventory `
             -TenantId $DocumentTenantId `
-            -Groups @(Select-UniqueNamedEntry -Entry $Groups.ToArray() -Section 'groups' -KeyOf { param($E) $E.displayName }) `
-            -AdministrativeUnits @(Select-UniqueNamedEntry -Entry $AdministrativeUnits.ToArray() -Section 'administrativeUnits' -KeyOf { param($E) $E.displayName }) `
-            -Catalogs @(Select-UniqueNamedEntry -Entry $Catalogs.ToArray() -Section 'catalogs' -KeyOf { param($E) $E.displayName }) `
-            -AccessPackages @(Select-UniqueNamedEntry -Entry $AccessPackages.ToArray() -Section 'accessPackages' -KeyOf { param($E) "$($E.catalog)|$($E.displayName)" } -NameOf { param($E) "$($E.catalog)/$($E.displayName)" }) `
-            -AccessReviews @(Select-UniqueNamedEntry -Entry $AccessReviews.ToArray() -Section 'accessReviews' -KeyOf { param($E) $E.displayName }) `
+            -Groups $UniqueGroups `
+            -AdministrativeUnits $UniqueAdministrativeUnits `
+            -Catalogs $UniqueCatalogs `
+            -AccessPackages $UniqueAccessPackages `
+            -AccessReviews $UniqueAccessReviews `
             -DirectoryRoleManagementPolicies $DirectoryRoleManagementPolicies.ToArray() `
             -DirectoryRoleAssignments $DirectoryRoleAssignments.ToArray() `
             -RoleAssignments $RoleAssignments.ToArray() `

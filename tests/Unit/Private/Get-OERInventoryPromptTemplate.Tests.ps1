@@ -56,12 +56,42 @@ Describe 'Get-OERInventoryPromptTemplate' {
         }
     }
 
-    It 'tells the model groupsRoster.json carries onPremisesSynced among its flags (A15)' {
+    It 'tells the model groupsRoster.json carries each group''s id and type, and onPremisesSynced among its flags (A15, BL-131)' {
         InModuleScope $script:moduleName {
             $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
-            $T | Should -Match ([regex]::Escape('- groupsRoster.json -- every group in the tenant (names + flags only, onPremisesSynced among them). Context for the landscape.'))
+            $T | Should -Match ([regex]::Escape('- groupsRoster.json -- every group in the tenant, of every type: one row per group with its id, displayName, type (securityEnabled, mailEnabled, groupTypes), visibility, createdDateTime and flags, onPremisesSynced among them. Context for the landscape; the id tells apart two groups that share a name.'))
+            # The roster rows carry the group's id and type now (Sprint 11 step 5), so "names + flags
+            # only" is no longer true of them.
+            $T | Should -Not -Match ([regex]::Escape('names + flags only'))
             # The old wording called the roster "every security group", which it is not: it is unfiltered.
             $T | Should -Not -Match ([regex]::Escape('groupsRoster.json -- every security group'))
+        }
+    }
+
+    It 'tells the model that an object id where a name is expected stands for a shared name, to keep it, and where the README lists the names (BL-131)' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            # The Inputs bullet of the README names the section that lists the shared names.
+            $T | Should -Match ([regex]::Escape('And it lists, under "Names two or more objects share", every name the export left out because two or more objects of one kind carry it, with how many: each object that carries one is absent from inventory.json (see "An OBJECT ID where the document otherwise carries a name" below)'))
+            # The README lists only the names the export LEFT OUT (R-3d), never every name objects share.
+            $T | Should -Not -Match ([regex]::Escape('every name that two or more objects of one kind carry'))
+            # The four places an id stands where a name is expected, what it means, and to keep it.
+            $T | Should -Match ([regex]::Escape("An OBJECT ID where the document otherwise carries a name -- an access package's catalog, an access review's accessPackage or assignmentPolicy, or a roleAssignments or directoryRoleAssignments principal written with principalType Group -- most often means that two or more objects share that name (for a group, two or more groups anywhere in the tenant, Microsoft 365 and distribution groups included), so the apply engine would refuse the name as ambiguous."))
+            $T | Should -Match ([regex]::Escape('It can also mean that the name could not be read, and for an access review that the object no longer exists. Keep such an id as it is in every proposal: the apply engine resolves an object id as the object itself, so never replace it with a name.'))
+            $T | Should -Match ([regex]::Escape('The objects whose names are shared are absent from inventory.json and the per-area files, all of them, and README.md lists each such name, with how many objects carry it, under "Names two or more objects share": their absence is not evidence that the tenant has none, and an entry you declare under one of those names is refused when it is applied.'))
+            # The paragraph stands in the document semantics, after the top-level section rule. Its
+            # opening is matched with the list that follows it, since the README bullet quotes the
+            # opening words alone.
+            $Opening = "An OBJECT ID where the document otherwise carries a name -- an access package's catalog"
+            $T.IndexOf($Opening) | Should -BeGreaterThan $T.IndexOf('A TOP-LEVEL section that could not be read at all')
+            $T.IndexOf($Opening) | Should -BeLessThan $T.IndexOf('# Principles to apply')
+        }
+    }
+
+    It 'tells the model to declare each assignment policy once per access package (Sprint 11 step 5)' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('and a second entry for one is an Error that refuses the whole document. Declare each assignment policy once per access package, the same way.'))
         }
     }
 

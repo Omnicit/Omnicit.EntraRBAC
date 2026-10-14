@@ -37,8 +37,10 @@ function Test-OERStructure {
     case-only rename is not possible through the document (an assignment policy is given the declared
     letter case only together with another changed field of it). A second entry of a section that
     claims a name an earlier entry already claims, as its displayName or as its previousDisplayName,
-    is an Error; among the assignment policies of one access package only when at least one of the
-    two claims is a previousDisplayName. An explicit null counts as not declared.
+    is an Error, and so is an assignment policy that claims a name an earlier policy of the same
+    access package claims, two equal displayNames included; the same name in two access packages is
+    two policies. An export made by an earlier version can hold two policies of one name in one
+    access package, and such a document is refused. An explicit null counts as not declared.
 
     A reference that still names a renamed object by its previous name is a Warning at the reference:
     a groups entry's administrativeUnit, an accessPackages entry's catalog, or an accessReviews
