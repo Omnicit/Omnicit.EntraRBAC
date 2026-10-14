@@ -9,11 +9,46 @@ function Sync-OERStructureAccessPackage {
     records describing what was created, updated, removed, skipped, or left unchanged.
 
     displayName is the match key within the declared catalog (names are unique per catalog, not
-    tenant-wide): an existing package is matched and updated by it. Renaming through the document
-    is not possible: this handler uses displayName purely to match, and never calls
-    Set-OERAccessPackage -NewDisplayName -- a changed displayName creates a new package under the
-    new name and leaves the old one in place, unreported. There is no top-level Extra reporting for
-    access packages either, so the renamed-away package is left in place silently.
+    tenant-wide): an existing package is matched and updated by it. To rename a package, the
+    document declares its new name as displayName and its current name as previousDisplayName, and
+    both names are matched in the declared catalog's package list on every run, before anything
+    else is read or written (Resolve-OERStructureRename owns the decision, its error ids and its
+    texts; BL-128, A5):
+    - Both match DIFFERENT packages of the catalog: the item emits exactly one Failed row and a
+      non-terminating AccessPackageRenameConflict error (category ResourceExists, target the new
+      name), and nothing else is read or written for it -- the document never merges two packages.
+    - Only previousDisplayName matches: that package takes the existing-package path, and the rename
+      is folded into the step-1 property update (Set-OERAccessPackage -NewDisplayName, in the same
+      call as every other changed property), reported as one Updated row "renamed access package
+      '<previous>' to '<new>'", or under -WhatIf one Skipped row "would rename access package
+      '<previous>' to '<new>'" with the resource roles and assignment policies planned against the
+      package found under its previous name. When that update fails, the Failed row is the last
+      one: no resource role or assignment policy is reconciled.
+    - Both match the SAME package, or only displayName matches: the item is applied normally (the
+      rename is already done; a second run reports Unchanged).
+    - Neither matches: the item emits exactly one Failed row and a non-terminating
+      AccessPackageRenameNotFound error (category ObjectNotFound, target the new name), and nothing
+      is created, read further or written for it, under -WhatIf too. A document that declares a
+      rename names a package that already exists; a package is created only by an entry WITHOUT
+      previousDisplayName.
+    previousDisplayName also accepts the package's object id, matched only against the Id of a
+    package in the declared catalog's list, which is already read (no request of its own): an id of
+    a package in another catalog, or of a deleted one, counts as not matching. A previous name that
+    several packages of the catalog carry is refused like a displayName several carry: one Failed
+    row naming every id, nothing written; declare previousDisplayName as the object id then. A
+    changed displayName WITHOUT previousDisplayName still creates a new package under the new name
+    and leaves the old one in place; there is no top-level Extra reporting for access packages, so
+    that one is left in place silently.
+
+    A catalog the same document renames (a catalogs[] entry with previousDisplayName) is addressed
+    through the run's rename map (-RenameMap): Microsoft Graph's name lookup cannot find the
+    catalog's new name yet, and under -WhatIf the rename is not even sent, so every call that names
+    the catalog -- the package list, the package create, the catalog resource read and the resource
+    role add -- passes the id the catalogs handler registered for it. The rows still name the
+    catalog as the document does. A catalog whose rename was refused (a conflict, or neither name
+    found) is not the catalog the document means, whatever now carries its new name: the package
+    gets one Failed row naming the refused rename and its error id, and nothing is created, read or
+    written for it. That row publishes no error record of its own; the catalog's own row carries it.
 
     Once the package has been resolved (or created), every downstream call that has to identify it --
     the property re-read, the resourceRoleScopes read, the resource role add and prune, the assignment
@@ -28,8 +63,8 @@ function Sync-OERStructureAccessPackage {
     Processing order within a single access package entry:
 
     1. Create the access package when absent, or diff and update the mutable description and the
-       hidden flag when it already exists. The catalog property is creation-only and is never
-       changed on an existing package.
+       hidden flag when it already exists (and its displayName, when previousDisplayName renames
+       it). The catalog property is creation-only and is never changed on an existing package.
 
     2. Reconcile declared resourceRoles (add missing bindings; emit Extra or prune undeclared
        bindings with -Prune, or report them Skipped while a declared resource cannot be resolved --
@@ -146,7 +181,10 @@ function Sync-OERStructureAccessPackage {
     that way without any read: the catalog does not exist yet, so the catalog-scoped lookup of the
     package would fail with CatalogNotFound and report the package Failed ("the access package was NOT
     created") while the real run creates the catalog and then the package. A catalog that is neither
-    in -PlannedCatalog nor in the tenant still fails the package, with or without -WhatIf.
+    in -PlannedCatalog nor in the tenant still fails the package, with or without -WhatIf. An entry
+    in such a catalog that declares previousDisplayName is not planned as created: nothing can be
+    renamed in a catalog that does not exist yet, so it fails with AccessPackageRenameNotFound, as
+    an entry neither of whose names matches.
 
     .PARAMETER Item
     One element from the accessPackages[] array in the structure document, as a PSCustomObject
@@ -182,6 +220,15 @@ function Sync-OERStructureAccessPackage {
     and assignment policies. When the list is omitted, empty or does not hold the catalog, the lookup
     runs as it always has. A real run never fills the list, so it is not affected.
 
+    .PARAMETER RenameMap
+    Optional run-scoped rename map Invoke-OERStructure creates once per document and the catalogs
+    handler fills (through Resolve-OERStructureRename) for every catalogs[] entry that declares
+    previousDisplayName. This handler only reads it, through Get-OERStructureRenameTarget, for the
+    entry's catalog: an entry naming the id of a catalog the run renames makes every call that names
+    the catalog pass that id, and an entry naming a refused rename fails the package with nothing
+    created, read or written. When the map is omitted or does not hold the catalog, the catalog is
+    named as the document names it, as it always has been.
+
     .EXAMPLE
     Sync-OERStructureAccessPackage -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
     Reconciles one access package entry from the document, pruning undeclared resource role
@@ -202,17 +249,40 @@ function Sync-OERStructureAccessPackage {
         [Parameter(Mandatory)][System.Management.Automation.PSCmdlet]$Caller,
         [switch]$Prune,
         [string]$TenantAlias,
-        [System.Collections.Generic.List[string]]$PlannedCatalog
+        [System.Collections.Generic.List[string]]$PlannedCatalog,
+        [System.Collections.Generic.Dictionary[string, object]]$RenameMap
     )
     process {
         # -- Resolve the display name -------------------------------------------------------
         $Name = $Item.displayName
 
+        # BL-128 (A5): a catalog the document renames in this run is found under its previous name, and
+        # Graph's name lookup cannot find the new name yet (under -WhatIf the rename is not even sent).
+        # The catalogs handler registered it in the run's rename map, so this package addresses the
+        # catalog by that id. A catalog whose rename was refused (a conflict, or neither name found) is
+        # not the catalog the document means, whatever now carries its new name: nothing is read or
+        # written for this package. Get-OERStructureRenameTarget owns the map's key.
+        $CatalogRef = $Item.catalog
+        $CatalogTarget = Get-OERStructureRenameTarget -Section 'catalogs' -Name ([string]$Item.catalog) -RenameMap $RenameMap
+        if ($CatalogTarget -and $CatalogTarget.Refused) {
+            ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
+                -Detail "catalog '$($Item.catalog)' was not reconciled in this run: its rename from '$($CatalogTarget.PreviousName)' was refused ($($CatalogTarget.ErrorId)), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it"
+            return
+        }
+        if ($CatalogTarget) { $CatalogRef = $CatalogTarget.Id }
+
         # -- Check existence ----------------------------------------------------------------
         # Access package display names are unique per CATALOG, not per tenant, so resolve inside the
         # declared catalog. Get-OERAccessPackage's -DisplayName and -Catalog are mutually exclusive
         # parameter sets, so list by catalog and match the name client-side.
+        # A declared previousDisplayName is resolved by every branch below, before anything else is
+        # read or written, into $PrevId ($null when it matches nothing); Resolve-OERStructureRename
+        # then decides once for all three branches.
         $ApId = $null
+        $HasPrev = Test-OERDeclaredProperty -Node $Item -Name 'previousDisplayName'
+        $PrevName = if ($HasPrev) { [string]$Item.previousDisplayName } else { $null }
+        $PrevId = $null
+        $RenameFrom = $null
         # BL-128 (A5): under -WhatIf a catalog the same document creates does not exist yet, so the
         # catalog-scoped lookup below would fail with CatalogNotFound and report the package Failed,
         # NOT created, while the real run creates it. Plan it as created instead. Only a name the
@@ -221,7 +291,10 @@ function Sync-OERStructureAccessPackage {
         $CatalogPlanned = ($null -ne $PlannedCatalog) -and (@($PlannedCatalog) -icontains [string]$Item.catalog)
         if ($CatalogPlanned) {
             # $ApId stays $null: the package cannot exist in a catalog that does not exist yet, so
-            # Step 1 takes its create branch, which under -WhatIf reports the plan and returns.
+            # Step 1 takes its create branch, which under -WhatIf reports the plan and returns. $PrevId
+            # stays $null too, so an entry that declares previousDisplayName fails below with
+            # AccessPackageRenameNotFound instead: nothing can be renamed in a catalog that does not
+            # exist yet, and such an entry is never planned as created.
             Write-Verbose "Access package '$Name': catalog '$($Item.catalog)' is created by this plan, so the catalog lookup is skipped."
         } elseif (Test-OERDeclaredProperty -Node $Item -Name 'catalog') {
             # A throw here (forced by -ErrorAction Stop) is a transport/permission/throttling failure on
@@ -231,10 +304,13 @@ function Sync-OERStructureAccessPackage {
             # non-terminating WriteError and simply emits no objects, so without -ErrorAction Stop this
             # read is indistinguishable from a genuine "no match" and would fall through to CREATE a
             # duplicate high-privilege access package. Catch it and stop instead of ever creating.
+            # The list is read once and matched for both names: displayName, and previousDisplayName
+            # when the entry declares one.
+            $InCatalogAll = $null
             $InCatalog = $null
             try {
-                $InCatalog = @(Get-OERAccessPackage -Catalog $Item.catalog -ErrorAction Stop |
-                        Where-Object { [string]$_.DisplayName -ieq $Name })
+                $InCatalogAll = @(Get-OERAccessPackage -Catalog $CatalogRef -ErrorAction Stop)
+                $InCatalog = @($InCatalogAll | Where-Object { [string]$_.DisplayName -ieq $Name })
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 $Caller.WriteError($PSItem)
@@ -250,6 +326,24 @@ function Sync-OERStructureAccessPackage {
                 return
             }
             if ($InCatalog.Count -eq 1) { $ApId = [string]$InCatalog[0].Id }
+            if ($HasPrev) {
+                # An object id matches only the Id of a package in THIS catalog's list (R5): a probe by
+                # id would also find a package of another catalog and rename it. An id the list does
+                # not hold -- another catalog's package, or a deleted one -- matches nothing, so it is
+                # never a conflict and never a create. The match takes the id as the list spells it.
+                $PrevMatch = if (Test-OERGuid -Value $PrevName) {
+                    @($InCatalogAll | Where-Object { [string]$_.Id -ieq $PrevName })
+                } else {
+                    @($InCatalogAll | Where-Object { [string]$_.DisplayName -ieq $PrevName })
+                }
+                if ($PrevMatch.Count -gt 1) {
+                    $PrevIds = ($PrevMatch | ForEach-Object { [string]$_.Id }) -join ', '
+                    ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
+                        -Detail "catalog '$($Item.catalog)' holds $($PrevMatch.Count) access packages named '$PrevName' ($PrevIds), the previousDisplayName of this entry; the name cannot identify one -- declare previousDisplayName as the object id of the package to rename"
+                    return
+                }
+                if ($PrevMatch.Count -eq 1) { $PrevId = [string]$PrevMatch[0].Id }
+            }
         } else {
             # THIS BRANCH IS UNREACHABLE THROUGH Invoke-OERStructure, and that is deliberate.
             # Get-OERStructureSchemaJson declares "required": [ "displayName", "catalog" ] on every
@@ -272,8 +366,12 @@ function Sync-OERStructureAccessPackage {
             # from here is $ApId = $null, which Step 1 reads as "create it" -- and creating on a
             # stale GUID would produce a live access package whose display name is that GUID. A
             # genuine no-match still returns $null and still creates, exactly as before.
+            # A declared previousDisplayName is resolved in the same try, tenant-wide like displayName:
+            # a stale object id throws AccessPackageNotFound there, so the item fails with nothing
+            # created or renamed (the safe direction), and an ambiguous name throws AmbiguousName.
             try {
                 $ApId = Resolve-OERAccessPackageId -DisplayName $Name
+                if ($HasPrev) { $PrevId = Resolve-OERAccessPackageId -DisplayName $PrevName }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 $Caller.WriteError($PSItem)
@@ -282,6 +380,23 @@ function Sync-OERStructureAccessPackage {
                     -ErrorRecord $PSItem
                 return
             }
+        }
+
+        # -- Rename through previousDisplayName -------------------------------------------
+        # Decided once both names are resolved and before anything else is read or written.
+        # Resolve-OERStructureRename owns the decision, the two refusals (AccessPackageRenameConflict
+        # when both names are different packages, AccessPackageRenameNotFound when neither matches)
+        # and their texts. No rename map is passed: nothing reads packages from it in this step.
+        if ($HasPrev) {
+            $Rename = Resolve-OERStructureRename -Section 'accessPackages' -Name $Name -PreviousName $PrevName `
+                -Id $ApId -PreviousId $PrevId -Catalog ([string]$Item.catalog)
+            if ($Rename.ErrorRecord) {
+                $Caller.WriteError($Rename.ErrorRecord)
+                $Rename.Result
+                return
+            }
+            $ApId = $Rename.Id
+            $RenameFrom = $Rename.RenameFrom
         }
 
         # -- Step 1: Create or update the access package object ----------------------------
@@ -308,7 +423,7 @@ function Sync-OERStructureAccessPackage {
             }
 
             # Build creation params
-            $NewParams = @{ DisplayName = $Name; Catalog = $Item.catalog; Confirm = $false }
+            $NewParams = @{ DisplayName = $Name; Catalog = $CatalogRef; Confirm = $false }
             if (Test-OERDeclaredProperty -Node $Item -Name 'description') { $NewParams.Description = $Item.description }
             if ((Test-OERDeclaredProperty -Node $Item -Name 'hidden') -and $Item.hidden -eq $true) { $NewParams.Hidden = $true }
 
@@ -355,6 +470,9 @@ function Sync-OERStructureAccessPackage {
             }
 
             $ApUpdateParams = @{}
+            # A rename through previousDisplayName travels in the same Set-OERAccessPackage call as
+            # every other changed property, so the package is renamed and updated in one call.
+            if ($RenameFrom) { $ApUpdateParams.NewDisplayName = $Name }
             if (Test-OERDeclaredProperty -Node $Item -Name 'description') {
                 if ($Cur.Description -ne $Item.description) { $ApUpdateParams.Description = $Item.description }
             }
@@ -363,17 +481,39 @@ function Sync-OERStructureAccessPackage {
             }
 
             if ($ApUpdateParams.Count -gt 0) {
-                if ($Caller.ShouldProcess($Name, "Update access package properties ($($ApUpdateParams.Keys -join ', '))")) {
+                # The rename is reported on its own terms; the other changed keys keep the wording
+                # every property update has always had.
+                $PropertyKeys = @($ApUpdateParams.Keys | Where-Object { $_ -ne 'NewDisplayName' })
+                $PropertyList = $PropertyKeys -join ', '
+                if ($RenameFrom) {
+                    $UpdateAction = "Rename access package '$RenameFrom' to '$Name'"
+                    $UpdatedDetail = "renamed access package '$RenameFrom' to '$Name'"
+                    $PlannedDetail = "would rename access package '$RenameFrom' to '$Name'"
+                    if ($PropertyKeys.Count -gt 0) {
+                        $UpdateAction += " and update access package properties ($PropertyList)"
+                        $UpdatedDetail += "; updated access package properties ($PropertyList)"
+                        $PlannedDetail += "; would update access package properties ($PropertyList)"
+                    }
+                } else {
+                    $UpdateAction = "Update access package properties ($PropertyList)"
+                    $UpdatedDetail = "updated access package properties ($PropertyList)"
+                    $PlannedDetail = "would update access package properties ($PropertyList)"
+                }
+                if ($Caller.ShouldProcess($Name, $UpdateAction)) {
                     try {
                         Set-OERAccessPackage -Id $Cur.Id @ApUpdateParams -Confirm:$false -ErrorAction Stop | Out-Null
-                        ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Updated' -Detail "updated access package properties ($($ApUpdateParams.Keys -join ', '))"
+                        ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Updated' -Detail $UpdatedDetail
                     } catch {
                         Remove-OERErrorRecord -Record $PSItem
                         $Caller.WriteError($PSItem)
                         ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' -Detail "access package update failed: $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+                        # The package still carries its previous name, not the one the document
+                        # declares, so none of its resource roles or assignment policies is reconciled
+                        # under the new name (R8).
+                        if ($RenameFrom) { return }
                     }
                 } else {
-                    ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Skipped' -Detail "would update access package properties ($($ApUpdateParams.Keys -join ', '))"
+                    ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Skipped' -Detail $PlannedDetail
                 }
             } else {
                 ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Unchanged' -Detail 'access package properties match'
@@ -458,7 +598,7 @@ function Sync-OERStructureAccessPackage {
             $CatResources = @()
             if (@($Item.resourceRoles).Count -gt 0) {
                 try {
-                    $CatResources = @(Get-OERCatalogResource -Catalog $Item.catalog -ErrorAction Stop)
+                    $CatResources = @(Get-OERCatalogResource -Catalog $CatalogRef -ErrorAction Stop)
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
                     $Caller.WriteError($PSItem)
@@ -622,7 +762,7 @@ function Sync-OERStructureAccessPackage {
                             # -AccessPackage takes the RESOLVED $ApId, not $Name -- see the note on
                             # the assignment policy read above: a display name here is resolved
                             # tenant-wide and ignores the declared catalog.
-                            Add-OERAccessPackageResourceRole -AccessPackage $ApId -Catalog $Item.catalog -ResourceOriginId $OriginId -Role $RoleName -Confirm:$false -ErrorAction Stop | Out-Null
+                            Add-OERAccessPackageResourceRole -AccessPackage $ApId -Catalog $CatalogRef -ResourceOriginId $OriginId -Role $RoleName -Confirm:$false -ErrorAction Stop | Out-Null
                             ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Created' -Detail "added resourceRole '$RoleName' on '$ResName'"
                         } catch {
                             Remove-OERErrorRecord -Record $PSItem
