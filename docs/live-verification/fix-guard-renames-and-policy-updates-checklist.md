@@ -81,13 +81,21 @@ before it merges.
 - **D. A scope with a dot segment, a `%` escape or white space is refused** ("fix: refuse a scope
   spelled with a dot segment, a percent escape or white space"), in `roleAssignments` and
   `roleManagementPolicies`; the `mg:`, `sub:` and `subscription:` forms are not affected.
+- **F. Round 1: the scope rule is narrowed to what a resource name cannot hold, and `\`, `?` and `#`
+  are refused** ("fix: accept a space inside a resource name in a scope and refuse a backslash, a
+  question mark and a hash"). Decision A13 was changed on 2026-10-14: one or more spaces between other
+  characters of a segment are accepted, since an Azure resource name can hold them and an export with a
+  role assignment at such a resource must stay appliable; white space at the start or end of the scope
+  or of a segment, white space other than a space and a control character stay refused; a `\` (read as
+  `/` by the request URI), a `?` and a `#` (either ends the path) are refused; the `%` message no longer
+  says every escape is decoded. Section 6 is run again for it (6.1 and 6.2, and the new 6.3 and 6.4).
 - **E. The texts** ("docs: say that only groups rename and how aliases, scopes and policy updates
   behave", "docs: say which mailNickname values Microsoft Graph was measured to refuse",
   "fix: say what the validator refuses in a mail alias and a scope, and word the rename refusal
   exactly" and "docs: record that a resource name with a space cannot be declared in a scope"). The last two
   also give the scope's white-space Error a way out: a resource whose name holds white space -- some
   Azure resource types allow one inside a name -- cannot be declared in a document, so such an entry is
-  removed.
+  removed. Round 1 (F) lifts that limit for a space between other characters of a segment.
 
 A live tenant is needed for B because the claim is about what Microsoft Graph does with a PUT: what it
 removes, what it refuses and what it keeps. It is needed for A, C and D to show, against the real
@@ -2097,11 +2105,15 @@ RUNNER: check-5.2 exit code 0; started 2026-10-14T01:41:33Z; took 5 s.
 LEAK CHECK: psd1 values surviving redaction: 0
 ```
 
-## 6. A scope with a dot segment is refused
+## 6. A scope spelled as another scope is refused, and a space inside a name is not
+
+Round 1 ran 6.1 and 6.2 again on its own build and added 6.3 and 6.4 (F). The resource group
+`oer-s113-rg` was deleted by the step's teardown before round 1, and section 6 needs no object: the
+validator reads no tenant, and a refused document is refused before any sign-in or request.
 
 ### 6.1. The validator refuses the spelling and accepts the plain path
 
-- [x] **6.1** A scope with a `..` or `.` segment, a `%` escape or white space is an `Error` in `roleAssignments` and in `roleManagementPolicies`; the same scope written plainly is valid.
+- [x] **6.1** A scope with a `..` or `.` segment or a `%` is an `Error` in `roleAssignments` and in `roleManagementPolicies`, and, since round 1, a space between other characters of a segment is not; the same scope written plainly is valid.
 
 ```powershell
 Connect-OerLive -Arm
@@ -2122,11 +2134,14 @@ Write-S113Validation -Label '6.1 plain' -Json $Good
 Disconnect-OerLive
 ```
 
-**Expect:** spelled: `valid: False`, an `Error` at `roleAssignments[0].scope` (a `'.' or '..'
-segment`), at `roleAssignments[1].scope` (a `'%' escape`), at `roleAssignments[2].scope` (`white
-space`) and at `roleManagementPolicies[0].scope` (a segment); plain: `valid: True; errors: 0`.
+**Expect:** spelled: `valid: False; errors: 3`, an `Error` at `roleAssignments[0].scope` (a `'.' or
+'..' segment`), at `roleAssignments[1].scope` (a `'%'`) and at `roleManagementPolicies[0].scope` (a
+segment); no finding at `roleAssignments[2].scope` since round 1: its resource group name holds a space
+between other characters, which Azure does not allow in a resource group name, but the validator does
+not know resource types and the request would name that one scope; plain: `valid: True; errors: 0`.
 **Failure looks like:** `valid: True` for the spelled document (before this branch only a trailing or
-doubled `/` was refused).
+doubled `/` was refused), or a white space `Error` at `roleAssignments[2].scope` (the rule before
+round 1).
 
 Result: 2026-10-14 01:42 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 
@@ -2169,16 +2184,25 @@ Start-S113NoPrompt
 $Doc = Get-Content -LiteralPath (Join-Path $Raw 'doc-section6.json') -Raw
 Invoke-S113Apply -Label '6.2 plan' -Json $Doc -Plan -Prune
 Invoke-S113Apply -Label '6.2 run' -Json $Doc -Prune
-$Ra = Invoke-OerLiveArm -All -Path "$SubScope/resourceGroups/oer-s113-rg/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()"
-Assert-OerLiveOk -Response $Ra -Activity 'Listing the role assignments at oer-s113-rg' | Out-Null
-$At = @(@($Ra.Body.value) | Where-Object { $null -ne $_ -and [string]::Equals(([string]$_.properties.scope).TrimEnd('/'), "$SubScope/resourceGroups/oer-s113-rg", [System.StringComparison]::OrdinalIgnoreCase) })
-Write-OerLiveStep "6.2 role assignments exactly at oer-s113-rg afterwards: $($At.Count)"
+# The step's teardown deleted oer-s113-rg before round 1; a role assignment cannot exist at a scope that does not.
+$RgRead = Invoke-OerLiveArm -Path "$SubScope/resourceGroups/oer-s113-rg?api-version=2021-04-01"
+if ($RgRead.Status -eq 404) {
+    Write-OerLiveStep "6.2 resource group oer-s113-rg exists afterwards: False ($($RgRead.Code)), so no role assignment exists at it"
+} else {
+    Assert-OerLiveOk -Response $RgRead -Activity 'Reading oer-s113-rg' | Out-Null
+    $Ra = Invoke-OerLiveArm -All -Path "$SubScope/resourceGroups/oer-s113-rg/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()"
+    Assert-OerLiveOk -Response $Ra -Activity 'Listing the role assignments at oer-s113-rg' | Out-Null
+    $At = @(@($Ra.Body.value) | Where-Object { $null -ne $_ -and [string]::Equals(([string]$_.properties.scope).TrimEnd('/'), "$SubScope/resourceGroups/oer-s113-rg", [System.StringComparison]::OrdinalIgnoreCase) })
+    Write-OerLiveStep "6.2 role assignments exactly at oer-s113-rg afterwards: $($At.Count)"
+}
 Disconnect-OerLive
 ```
 
-**Expect:** both: rows 0, `error: StructureValidationFailed,Invoke-OERStructure: ...`, `token requests:
-0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0`; then `role
-assignments exactly at oer-s113-rg afterwards: 0`.
+**Expect:** both: rows 0, `error: StructureValidationFailed,Invoke-OERStructure: ...` naming the three
+findings of 6.1, `token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager
+requests: 0, writes: 0`; then `resource group oer-s113-rg exists afterwards: False (ResourceGroupNotFound)`
+in round 1 (the teardown deleted it), or `role assignments exactly at oer-s113-rg afterwards: 0` while
+it exists.
 **Failure looks like:** any request, or a role assignment at the resource group.
 
 Result: 2026-10-14 01:42 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
@@ -2216,6 +2240,64 @@ Verdict: PASS. With -Prune, the plan and the run each wrote one StructureValidat
 RUNNER: check-6.2 exit code 0; started 2026-10-14T01:42:36Z; took 5 s.
 LEAK CHECK: psd1 values surviving redaction: 0
 ```
+
+### 6.3. A space inside a resource name is accepted; a trailing space, a tab, a backslash, '?' and '#' are refused
+
+- [ ] **6.3** Since round 1, a scope with spaces between other characters of a resource name is valid in `roleAssignments` and in `roleManagementPolicies`, and a scope with a trailing space, a tab, a `\`, a `?` or a `#` is one `Error` each. No resource named here exists or needs to.
+
+```powershell
+Connect-OerLive -Arm
+Start-S113NoPrompt
+$Sql = "$SubScope/resourceGroups/oer-s113-rg/providers/Microsoft.Sql/servers/oer-s113-sql/databases"
+$Spaced = New-S113Document -Section @{
+    roleAssignments        = @(
+        [ordered]@{ scope = "$Sql/oer-s113 sales data"; role = 'Reader'; principal = 'oer-s113-grp-old'; principalType = 'Group' }
+        [ordered]@{ scope = "$SubScope/resourceGroups/oer-s113-rg/providers/Microsoft.Insights/components/oer-s113 web  app"; role = 'Reader'; principal = 'oer-s113-grp-old'; principalType = 'Group' }
+    )
+    roleManagementPolicies = @([ordered]@{ scope = "$Sql/oer-s113 sales data"; role = 'Reader' })
+}
+Write-S113Validation -Label '6.3 spaced' -Json $Spaced
+$Refused = New-S113Document -Section @{
+    roleAssignments = @(
+        [ordered]@{ scope = "$Sql/oer-s113-db "; role = 'Reader'; principal = 'oer-s113-grp-old'; principalType = 'Group' }
+        [ordered]@{ scope = "$Sql/oer-s113`tdb"; role = 'Reader'; principal = 'oer-s113-grp-old'; principalType = 'Group' }
+        [ordered]@{ scope = "$SubScope/resourceGroups\oer-s113-rg"; role = 'Reader'; principal = 'oer-s113-grp-old'; principalType = 'Group' }
+        [ordered]@{ scope = "$Sql/oer-s113-db?x"; role = 'Reader'; principal = 'oer-s113-grp-old'; principalType = 'Group' }
+        [ordered]@{ scope = "$Sql/oer-s113-db#1"; role = 'Reader'; principal = 'oer-s113-grp-old'; principalType = 'Group' }
+    )
+}
+[System.IO.File]::WriteAllText((Join-Path $Raw 'doc-section6-round1.json'), $Refused, [System.Text.UTF8Encoding]::new($false))
+Write-S113Validation -Label '6.3 refused' -Json $Refused
+Disconnect-OerLive
+```
+
+**Expect:** spaced: `valid: True; errors: 0; warnings: 0`. Refused: `valid: False; errors: 5`, one
+`Error` at each `roleAssignments[N].scope`: N=0 white space at the end of a segment (no code point
+named), N=1 white space `It contains U+0009.`, N=2 a `'\'`, N=3 and N=4 a `'?' or '#'`; each message
+ends with `A resource whose name holds ... cannot be declared in a document; remove the entry.`
+**Failure looks like:** an `Error` in the spaced document (the rule before round 1), or a refused
+scope with no finding (`\`, `?` and `#` were accepted before round 1).
+
+Result:
+
+### 6.4. Invoke-OERStructure -WhatIf for the refused document sends nothing
+
+- [ ] **6.4** `Invoke-OERStructure -WhatIf -Prune` refuses the document of 6.3 before it signs in and sends no request.
+
+```powershell
+Connect-OerLive -Arm
+Start-S113NoPrompt
+$Doc = Get-Content -LiteralPath (Join-Path $Raw 'doc-section6-round1.json') -Raw
+Invoke-S113Apply -Label '6.4 plan' -Json $Doc -Plan -Prune
+Disconnect-OerLive
+```
+
+**Expect:** rows 0, warnings 0, one `error: StructureValidationFailed,Invoke-OERStructure: ...` naming
+the five findings of 6.3, `token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource
+Manager requests: 0, writes: 0`.
+**Failure looks like:** any request, or a plan row.
+
+Result:
 
 ## 7. New-OERGroup refuses an alias it cannot derive
 
@@ -2438,7 +2520,12 @@ LEAK CHECK: psd1 values surviving redaction: 0
   in `tests/Unit/Public/New-OERGroup.Tests.ps1`, including a runspace with no `try`.
 - **The scope spelling rule in both sections, the friendly forms exempt, the root interplay**: the A13
   tests in `tests/Unit/Private/Test-OERStructureSchema.Tests.ps1` and the validator-refusal test in
-  `tests/Unit/Public/Invoke-OERStructure.Tests.ps1`.
+  `tests/Unit/Public/Invoke-OERStructure.Tests.ps1`. Round 1 (F): every white space case, a no-break
+  space, an em space and a control character by code point, `\`, `?` and `#` in the same Describe; an
+  export with a role assignment at a resource whose name holds spaces is valid, and one whose name holds
+  a `#` is refused, in `tests/Unit/Public/Get-OERInventory.Tests.ps1` and in the self-check of
+  `tests/Unit/Public/Export-OERInventory.Tests.ps1` (no test tenant role assignment is at such a
+  resource).
 - **The texts**: `tests/QA/docsync.tests.ps1`, `tests/QA/about.tests.ps1`, `tests/QA/dochygiene.tests.ps1`,
   `tests/Unit/Private/Get-OERStructureSchemaJson.Tests.ps1` and
   `tests/Unit/Private/Get-OERInventoryPromptTemplate.Tests.ps1`.
