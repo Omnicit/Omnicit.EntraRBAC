@@ -51,11 +51,23 @@ function Sync-OERStructureCatalog {
     a second catalog. Once the new name resolves, remove previousDisplayName: a catalog created later
     under the old name makes the item fail.
 
+    A catalog that already exists is read in full before the first write for the entry: the catalog
+    itself (Get-OERCatalog -Id) and its resources (Get-OERCatalogResource), both with -ErrorAction
+    Stop (BL-144). A read that fails is never taken as an empty fact -- a failed catalog read would
+    make every declared property look changed and send it, a failed resource read would add again a
+    resource that exists. The item emits exactly one Failed row that names the read, carries the error
+    as itself and says that no catalog update was sent and no resource was added or removed, and the
+    error is written once through the caller (a non-terminating error, the cmdlet's own error id and
+    record). Nothing else is written for the item, with -Prune as without it, and under -WhatIf the
+    same Failed row is reported, since the reads are made in a plan too. A catalog read that answers
+    with no object and no error is a Failed row as well, with no error record. A catalog this call
+    creates has no resources to read.
+
     Processing order within a single catalog entry:
 
-    1. Create the catalog when absent, or diff and update the mutable description and externallyVisible
-       properties (and the display name, when previousDisplayName renames the catalog) when it already
-       exists.
+    1. Create the catalog when absent, or read it and its resources and then diff and update the
+       mutable description and externallyVisible properties (and the display name, when
+       previousDisplayName renames the catalog) when it already exists.
     2. Reconcile declared resources (add missing by type/name; emit Extra or prune undeclared with
        -Prune). A Group or Application resource is matched by OBJECT ID: its declared name (or object
        id) is resolved to the group's, or the enterprise application's service principal's, object
@@ -257,7 +269,48 @@ function Sync-OERStructureCatalog {
         } else {
             # Catalog exists -- diff mutable properties (description, externallyVisible) and, when
             # previousDisplayName renames it, send the new display name in the same update.
-            $Cur = Get-OERCatalog -Id $CatId
+            #
+            # BL-144 (D7): BOTH reads of the live state -- the catalog here, its resources below --
+            # happen before the first write for the entry, each with -ErrorAction Stop in a try, since
+            # Get-OERCatalog and Get-OERCatalogResource report a failed read as a NON-terminating error
+            # and emit nothing. Left at the preference's default, the error was written to the stream
+            # and the read became an empty fact: a failed catalog read made every declared property
+            # read as changed and sent it as a PATCH, and a failed resource read made every declared
+            # resource look absent, so a resource that exists was added again. A failed read is
+            # reported as itself, with one Failed row, and nothing is written for the entry.
+            $Cur = $null
+            try {
+                $Cur = Get-OERCatalog -Id $CatId -ErrorAction Stop
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $Caller.WriteError($PSItem)
+                ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Failed' `
+                    -Detail "failed to read catalog '$Name' ($CatId): $($PSItem.Exception.Message); no catalog update was sent and no resource was added or removed" `
+                    -ErrorRecord $PSItem
+                return
+            }
+            if (-not $Cur) {
+                # A read that answered with no error and no object is no evidence of anything either:
+                # comparing the declared properties with $null would send every one of them.
+                ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Failed' `
+                    -Detail "Get-OERCatalog returned no object for catalog '$Name' ($CatId); no catalog update was sent and no resource was added or removed"
+                return
+            }
+
+            # Read current resources for reconciliation, BEFORE the update below: a failed read of the
+            # resources must stop the entry before the PATCH, not after it. A failed read is never an
+            # empty list.
+            $CurrentResources = @()
+            try {
+                $CurrentResources = @(Get-OERCatalogResource -Catalog $CatId -ErrorAction Stop)
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $Caller.WriteError($PSItem)
+                ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Failed' `
+                    -Detail "failed to read the resources of catalog '$Name' ($CatId): $($PSItem.Exception.Message); no catalog update was sent and no resource was added or removed" `
+                    -ErrorRecord $PSItem
+                return
+            }
 
             $UpdateParams = @{}
             # A rename through previousDisplayName travels in the same PATCH as every other changed
@@ -313,9 +366,6 @@ function Sync-OERStructureCatalog {
             } else {
                 ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Unchanged' -Detail 'catalog properties match'
             }
-
-            # Read current resources for reconciliation
-            $CurrentResources = @(Get-OERCatalogResource -Catalog $CatId)
         }
 
         # -- Step 2: resources --------------------------------------------------------------

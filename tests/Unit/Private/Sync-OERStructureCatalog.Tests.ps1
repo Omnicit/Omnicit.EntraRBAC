@@ -1442,7 +1442,9 @@ Describe 'Sync-OERStructureCatalog' {
                 @($r).Count | Should -Be 1
                 $r[-1].Action | Should -BeExactly 'Failed'
                 $r[-1].Detail | Should -Match '^update failed: graph 400'
-                Should -Invoke Get-OERCatalogResource -Times 0
+                # BL-144: the resources are READ before the update is sent, so the failed rename does
+                # not take that read back -- but none of them is reconciled.
+                Should -Invoke Get-OERCatalogResource -Exactly -Times 1 -ParameterFilter { $Catalog -eq 'cat-old-id' }
                 Should -Invoke Add-OERCatalogResource -Times 0
                 Should -Invoke Remove-OERCatalogResource -Times 0
             }
@@ -1689,6 +1691,268 @@ Describe 'Sync-OERStructureCatalog' {
                 $Run[0].Detail | Should -BeExactly 'updated catalog properties (Description)'
                 $Plan.Count | Should -Be 1
                 $Plan[0].Detail | Should -BeExactly 'would update catalog properties (Description)'
+            }
+        }
+    }
+
+    # BL-144 (D7): the handler reads the live catalog and its resources with -ErrorAction Stop, both
+    # before the first write for the entry. Get-OERCatalog and Get-OERCatalogResource report a failed
+    # read as a NON-terminating error and emit nothing, so without Stop the failure became an empty
+    # fact: every declared property read as changed and was sent, and a resource that exists was added
+    # again. A failed read is reported as itself, with one Failed row, and nothing is written.
+    #
+    # The failure mocks are [CmdletBinding()] function bodies that call $PSCmdlet.WriteError, the
+    # shape the real cmdlets fail in. The calls below carry NO -ErrorAction, since any -ErrorAction on
+    # the wrapper sets the preference in the wrapper's scope and shadows the global one the module
+    # reads; the global preference is pinned to Continue instead, so the proof does not depend on the
+    # preference the runner happens to carry (Stop on GitHub Actions and Azure Pipelines would turn
+    # the mock's error terminating by itself and hide a missing -ErrorAction Stop).
+    Context 'a failed read of the live catalog or its resources (BL-144, D7)' {
+        BeforeAll {
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncCatReadViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param(
+                        [PSCustomObject]$Item,
+                        [switch]$Prune,
+                        [System.Collections.Generic.Dictionary[string, object]]$RenameMap
+                    )
+                    $Extra = @{}
+                    if ($PSBoundParameters.ContainsKey('RenameMap')) { $Extra.RenameMap = $RenameMap }
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -Prune:$Prune @Extra
+                }
+            }
+        }
+        BeforeEach {
+            $script:ReadFailSavedPreference = $global:ErrorActionPreference
+            $global:ErrorActionPreference = 'Continue'
+            InModuleScope $script:moduleName {
+                $script:ReadWriteLog = [System.Collections.Generic.List[string]]::new()
+                Mock Initialize-OERAuth { }
+                Mock Remove-OERErrorRecord { }
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Resolve-OERGroupId { 'aaaaaaaa-1111-1111-1111-000000000001' }
+                Mock Get-OERCatalog {
+                    param($Id)
+                    $script:ReadWriteLog.Add('Get-OERCatalog')
+                    [PSCustomObject]@{ Id = $Id; DisplayName = 'CAT-IT'; Description = 'old desc'; ExternallyVisible = $false }
+                }
+                Mock Get-OERCatalogResource {
+                    param($Catalog)
+                    $script:ReadWriteLog.Add('Get-OERCatalogResource')
+                    [PSCustomObject]@{ Id = 'r-extra'; DisplayName = 'undeclared_group'; ResourceType = 'Group'; OriginSystem = 'AadGroup'; OriginId = 'aaaaaaaa-1111-1111-1111-000000000099' }
+                }
+                Mock Set-OERCatalog { $script:ReadWriteLog.Add('Set-OERCatalog') }
+                Mock Add-OERCatalogResource { $script:ReadWriteLog.Add('Add-OERCatalogResource') }
+                Mock Remove-OERCatalogResource { $script:ReadWriteLog.Add('Remove-OERCatalogResource') }
+            }
+        }
+        AfterEach {
+            $global:ErrorActionPreference = $script:ReadFailSavedPreference
+        }
+
+        It 'reports one Failed row carrying the error as itself and writes nothing when the catalog read fails (<Mode>)' -ForEach @(
+            @{ Mode = 'a plain run'; Prune = $false; PlanOnly = $false }
+            @{ Mode = 'a run with -Prune'; Prune = $true; PlanOnly = $false }
+            @{ Mode = 'a -WhatIf plan'; Prune = $false; PlanOnly = $true }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Prune = $Prune; PlanOnly = $PlanOnly } {
+                param($Prune, $PlanOnly)
+                Mock Get-OERCatalog {
+                    [CmdletBinding()] param($Id)
+                    $script:ReadWriteLog.Add('Get-OERCatalog')
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('graph 503'), 'GraphServiceUnavailable',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation, $Id))
+                }
+                # A differing description and a declared resource: with the read taken as empty, both
+                # would be written.
+                $Item = [PSCustomObject]@{
+                    displayName = 'CAT-IT'
+                    description = 'new desc'
+                    resources   = @([PSCustomObject]@{ type = 'Group'; name = 'role_sec_x' })
+                }
+                $Switches = @{}
+                if ($Prune) { $Switches.Prune = $true }
+                if ($PlanOnly) { $Switches.WhatIf = $true }
+                $r = @(Invoke-SyncCatReadViaCaller -Item $Item @Switches -ErrorVariable Err 2>$null)
+
+                @($r).Count | Should -Be 1
+                $r[0].Section | Should -BeExactly 'catalogs'
+                $r[0].Item | Should -BeExactly 'CAT-IT'
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "failed to read catalog 'CAT-IT' (cat-1): graph 503; no catalog update was sent and no resource was added or removed"
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^GraphServiceUnavailable'
+                $r[0].Error.Exception.Message | Should -BeExactly 'graph 503'
+                # Written once through the caller. -ErrorVariable also holds the inner layers' records
+                # (the mock's own, the Stop wrapper's), so the handler's own is counted by the suffix
+                # the caller's WriteError gives its id: the command that wrote it.
+                $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'GraphServiceUnavailable,Invoke-SyncCatReadViaCaller' })
+                $Own.Count | Should -Be 1
+                $Own[0].Exception.Message | Should -BeExactly 'graph 503'
+
+                Should -Invoke Get-OERCatalog -Exactly -Times 1 -ParameterFilter { $Id -eq 'cat-1' }
+                Should -Invoke Remove-OERErrorRecord -Exactly -Times 1
+                # Nothing is read further, and nothing is written.
+                Should -Invoke Get-OERCatalogResource -Times 0
+                Should -Invoke Set-OERCatalog -Times 0
+                Should -Invoke Add-OERCatalogResource -Times 0
+                Should -Invoke Remove-OERCatalogResource -Times 0
+                @($script:ReadWriteLog) -join ',' | Should -BeExactly 'Get-OERCatalog'
+            }
+        }
+
+        It 'reports one Failed row carrying the error as itself and sends no update when the resource read fails (<Mode>)' -ForEach @(
+            @{ Mode = 'a plain run'; Prune = $false; PlanOnly = $false }
+            @{ Mode = 'a run with -Prune'; Prune = $true; PlanOnly = $false }
+            @{ Mode = 'a -WhatIf plan'; Prune = $false; PlanOnly = $true }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Prune = $Prune; PlanOnly = $PlanOnly } {
+                param($Prune, $PlanOnly)
+                Mock Get-OERCatalogResource {
+                    [CmdletBinding()] param($Catalog)
+                    $script:ReadWriteLog.Add('Get-OERCatalogResource')
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('graph 503'), 'GraphServiceUnavailable',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation, $Catalog))
+                }
+                # The catalog reads fine and its description differs: a property update is due, and the
+                # declared resource looks absent when the failed read is taken as an empty list.
+                $Item = [PSCustomObject]@{
+                    displayName = 'CAT-IT'
+                    description = 'new desc'
+                    resources   = @([PSCustomObject]@{ type = 'Group'; name = 'role_sec_x' })
+                }
+                $Switches = @{}
+                if ($Prune) { $Switches.Prune = $true }
+                if ($PlanOnly) { $Switches.WhatIf = $true }
+                $r = @(Invoke-SyncCatReadViaCaller -Item $Item @Switches -ErrorVariable Err 2>$null)
+
+                @($r).Count | Should -Be 1
+                $r[0].Section | Should -BeExactly 'catalogs'
+                $r[0].Item | Should -BeExactly 'CAT-IT'
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "failed to read the resources of catalog 'CAT-IT' (cat-1): graph 503; no catalog update was sent and no resource was added or removed"
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^GraphServiceUnavailable'
+                $r[0].Error.Exception.Message | Should -BeExactly 'graph 503'
+                $Own = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'GraphServiceUnavailable,Invoke-SyncCatReadViaCaller' })
+                $Own.Count | Should -Be 1
+                $Own[0].Exception.Message | Should -BeExactly 'graph 503'
+
+                Should -Invoke Get-OERCatalog -Exactly -Times 1 -ParameterFilter { $Id -eq 'cat-1' }
+                Should -Invoke Get-OERCatalogResource -Exactly -Times 1 -ParameterFilter { $Catalog -eq 'cat-1' }
+                Should -Invoke Remove-OERErrorRecord -Exactly -Times 1
+                # The property update that is due is NOT sent: both reads come before the first write.
+                Should -Invoke Set-OERCatalog -Times 0
+                Should -Invoke Add-OERCatalogResource -Times 0
+                Should -Invoke Remove-OERCatalogResource -Times 0
+                @($script:ReadWriteLog) -join ',' | Should -BeExactly 'Get-OERCatalog,Get-OERCatalogResource'
+            }
+        }
+
+        It 'reports one Failed row, with no error record, and writes nothing when the catalog read answers with no object (<Mode>)' -ForEach @(
+            @{ Mode = 'a plain run'; Prune = $false; PlanOnly = $false }
+            @{ Mode = 'a run with -Prune'; Prune = $true; PlanOnly = $false }
+            @{ Mode = 'a -WhatIf plan'; Prune = $false; PlanOnly = $true }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Prune = $Prune; PlanOnly = $PlanOnly } {
+                param($Prune, $PlanOnly)
+                Mock Get-OERCatalog { $script:ReadWriteLog.Add('Get-OERCatalog') }
+                $Item = [PSCustomObject]@{
+                    displayName = 'CAT-IT'
+                    description = 'new desc'
+                    resources   = @([PSCustomObject]@{ type = 'Group'; name = 'role_sec_x' })
+                }
+                $Switches = @{}
+                if ($Prune) { $Switches.Prune = $true }
+                if ($PlanOnly) { $Switches.WhatIf = $true }
+                $r = @(Invoke-SyncCatReadViaCaller -Item $Item @Switches -ErrorVariable Err 2>$null)
+
+                @($r).Count | Should -Be 1
+                $r[0].Section | Should -BeExactly 'catalogs'
+                $r[0].Item | Should -BeExactly 'CAT-IT'
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "Get-OERCatalog returned no object for catalog 'CAT-IT' (cat-1); no catalog update was sent and no resource was added or removed"
+                $r[0].Error | Should -BeNullOrEmpty
+                @($Err).Count | Should -Be 0
+
+                Should -Invoke Get-OERCatalog -Exactly -Times 1 -ParameterFilter { $Id -eq 'cat-1' }
+                Should -Invoke Get-OERCatalogResource -Times 0
+                Should -Invoke Set-OERCatalog -Times 0
+                Should -Invoke Add-OERCatalogResource -Times 0
+                Should -Invoke Remove-OERCatalogResource -Times 0
+                @($script:ReadWriteLog) -join ',' | Should -BeExactly 'Get-OERCatalog'
+            }
+        }
+
+        It 'sends no rename when the resource read of the renamed catalog fails, and leaves the entry''s map decision as the rename made it' {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERCatalogId { $null }
+                Mock Resolve-OERCatalogId { 'cat-old-id' } -ParameterFilter { $DisplayName -eq 'CAT-Old' }
+                Mock Get-OERCatalogResource {
+                    [CmdletBinding()] param($Catalog)
+                    $script:ReadWriteLog.Add('Get-OERCatalogResource')
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('graph 503'), 'GraphServiceUnavailable',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation, $Catalog))
+                }
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $Item = [PSCustomObject]@{
+                    displayName         = 'CAT-New'
+                    previousDisplayName = 'CAT-Old'
+                    resources           = @([PSCustomObject]@{ type = 'Group'; name = 'role_sec_x' })
+                }
+                $r = @(Invoke-SyncCatReadViaCaller -Item $Item -RenameMap $Map -ErrorVariable Err 2>$null)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "failed to read the resources of catalog 'CAT-New' (cat-old-id): graph 503; no catalog update was sent and no resource was added or removed"
+                Should -Invoke Get-OERCatalogResource -Exactly -Times 1 -ParameterFilter { $Catalog -eq 'cat-old-id' }
+                # The rename is part of the update that is not sent.
+                Should -Invoke Set-OERCatalog -Times 0
+                Should -Invoke Add-OERCatalogResource -Times 0
+                @($script:ReadWriteLog) -join ',' | Should -BeExactly 'Get-OERCatalog,Get-OERCatalogResource'
+                $Map['catalogs|cat-new'].Id | Should -BeExactly 'cat-old-id'
+            }
+        }
+
+        It 'reads the catalog and then its resources before the first write when both reads succeed, and writes as it always did' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{
+                    displayName = 'CAT-IT'
+                    description = 'new desc'
+                    resources   = @([PSCustomObject]@{ type = 'Group'; name = 'role_sec_x' })
+                }
+                $r = @(Invoke-SyncCatReadViaCaller -Item $Item -ErrorVariable Err 2>$null)
+
+                @($Err).Count | Should -Be 0
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                Should -Invoke Get-OERCatalog -Exactly -Times 1 -ParameterFilter { $Id -eq 'cat-1' }
+                Should -Invoke Get-OERCatalogResource -Exactly -Times 1 -ParameterFilter { $Catalog -eq 'cat-1' }
+                Should -Invoke Set-OERCatalog -Exactly -Times 1 -ParameterFilter { $Id -eq 'cat-1' -and $Description -eq 'new desc' }
+                Should -Invoke Add-OERCatalogResource -Exactly -Times 1 -ParameterFilter { $Catalog -eq 'cat-1' -and $GroupId -eq 'aaaaaaaa-1111-1111-1111-000000000001' }
+                @($script:ReadWriteLog) -join ',' | Should -BeExactly 'Get-OERCatalog,Get-OERCatalogResource,Set-OERCatalog,Add-OERCatalogResource'
+                @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq 'updated catalog properties (Description)' }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "added Group resource 'role_sec_x'" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -like "undeclared resource 'undeclared_group'*" }).Count | Should -Be 1
+            }
+        }
+
+        It 'reads both before anything under -WhatIf and under -Prune, and reports the plan as it always did' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{
+                    displayName = 'CAT-IT'
+                    description = 'new desc'
+                    resources   = @([PSCustomObject]@{ type = 'Group'; name = 'role_sec_x' })
+                }
+                $r = @(Invoke-SyncCatReadViaCaller -Item $Item -Prune -WhatIf -ErrorVariable Err 2>$null -WarningAction SilentlyContinue)
+
+                @($Err).Count | Should -Be 0
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($script:ReadWriteLog) -join ',' | Should -BeExactly 'Get-OERCatalog,Get-OERCatalogResource'
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq 'would update catalog properties (Description)' }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would add Group resource 'role_sec_x'" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would remove undeclared resource 'undeclared_group'" }).Count | Should -Be 1
             }
         }
     }
