@@ -2338,6 +2338,167 @@ Describe 'Sync-OERStructureGroup' {
         }
     }
 
+    # BL-128 (A5): a group created into an administrative unit the same document renames. Graph's name
+    # lookup cannot find the unit's new name in the run that renames it, so the engine's pre-pass
+    # registers the unit in the run's rename map and the create path reads it: the group is created into
+    # the unit by its id, or not created at all when the unit's rename was refused. Each map below is
+    # filled through Resolve-OERStructureRename, exactly as the administrative unit handler fills it.
+    Context 'a group created into an administrative unit the run renames (BL-128, A5)' {
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERGroupId { $null }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = $DisplayName } }
+            }
+        }
+
+        It 'creates the group into the unit the map registered, by its id, and records that id, for a reference spelled <Ref>' -ForEach @(
+            @{ Ref = 'AU-New' }
+            @{ Ref = 'au-NEW' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Ref = $Ref } {
+                param($Ref)
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[object]]$Created, [System.Collections.Generic.Dictionary[string, object]]$Map)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -CreatedUnitMembership $Created -RenameMap $Map
+                }
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name 'AU-New' -PreviousName 'AU-Old' -Id $null -PreviousId 'au-old-id' -RenameMap $Map
+                $Map.Count | Should -Be 1 -Because 'the rename must be registered for the reference below to have anything to read'
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Item = [PSCustomObject]@{ displayName = 'grp-new'; administrativeUnit = $Ref; members = @() }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Created $Created -Map $Map -ErrorAction Stop)
+
+                Should -Invoke New-OERGroup -Times 1 -Exactly
+                Should -Invoke New-OERGroup -Times 1 -Exactly -ParameterFilter { $AdministrativeUnit -eq 'au-old-id' }
+                @($r | Where-Object Action -eq 'Created').Count | Should -Be 1
+                @($r | Where-Object Action -eq 'Failed').Count | Should -Be 0
+                # BL-07: the record carries the unit's id, which the administrative unit handler compares
+                # as a GUID with the unit it renames.
+                $Created.Count | Should -Be 1
+                $Created[0].AdministrativeUnit | Should -BeExactly 'au-old-id'
+                $Created[0].GroupId | Should -BeExactly '88888888-8888-8888-8888-888888888888'
+                $Created[0].Label | Should -BeExactly 'grp-new'
+            }
+        }
+
+        It 'reports one Failed row naming the unit and its refused rename, with no error record, and creates nothing, when the rename was refused with <ErrorId> (<Mode>)' -ForEach @(
+            @{ UnitId = 'au-new-id'; PrevId = 'au-old-id'; ErrorId = 'AdministrativeUnitRenameConflict'; Mode = 'run' }
+            @{ UnitId = 'au-new-id'; PrevId = 'au-old-id'; ErrorId = 'AdministrativeUnitRenameConflict'; Mode = 'WhatIf' }
+            @{ UnitId = ''; PrevId = ''; ErrorId = 'AdministrativeUnitRenameNotFound'; Mode = 'run' }
+            @{ UnitId = ''; PrevId = ''; ErrorId = 'AdministrativeUnitRenameNotFound'; Mode = 'WhatIf' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ UnitId = $UnitId; PrevId = $PrevId; ErrorId = $ErrorId; Mode = $Mode } {
+                param($UnitId, $PrevId, $ErrorId, $Mode)
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[object]]$Created, [System.Collections.Generic.Dictionary[string, object]]$Map)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -CreatedUnitMembership $Created -RenameMap $Map
+                }
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name 'AU-New' -PreviousName 'AU-Old' -Id $UnitId -PreviousId $PrevId -RenameMap $Map
+                $Map['administrativeunits|au-new'].Refused | Should -BeTrue -Because 'the refusal must be registered for the reference below to read it'
+                $Created = [System.Collections.Generic.List[object]]::new()
+                # Declared children: under -WhatIf a create the guard did not stop would plan each of them.
+                $Item = [PSCustomObject]@{ displayName = 'grp-new'; administrativeUnit = 'AU-New'; members = @('person1@example.com'); owners = @('person2@example.com') }
+                $Errs = $null
+                $Run = @{ Item = $Item; Created = $Created; Map = $Map; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Errs' }
+                if ($Mode -eq 'WhatIf') { $Run.WhatIf = $true }
+                $r = @(Invoke-SyncGroupViaCaller @Run)
+
+                # Positive proof first: the item was reported, as exactly one row.
+                $r.Count | Should -Be 1
+                $r[0].Section | Should -BeExactly 'groups'
+                $r[0].Item | Should -BeExactly 'grp-new'
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' " +
+                    "was refused ($ErrorId), so the unit the group is to be created into cannot be identified")
+                # R9: the unit's own row carries the refusal; the reference publishes none of its own.
+                $r[0].Error | Should -BeNullOrEmpty
+                @($Errs).Count | Should -Be 0
+                Should -Invoke New-OERGroup -Times 0
+                $Created.Count | Should -Be 0
+            }
+        }
+
+        It 'creates the group into the unit by the name the document gives when <Label>' -ForEach @(
+            @{ Label = 'no map is passed'; Fill = 'none' }
+            @{ Label = 'the map is empty'; Fill = 'empty' }
+            @{ Label = 'the map holds only another unit and a catalog of the same name'; Fill = 'other' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Fill = $Fill } {
+                param($Fill)
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[object]]$Created, [System.Collections.Generic.Dictionary[string, object]]$Map)
+                    if ($PSBoundParameters.ContainsKey('Map')) {
+                        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -CreatedUnitMembership $Created -RenameMap $Map
+                    } else {
+                        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -CreatedUnitMembership $Created
+                    }
+                }
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Item = [PSCustomObject]@{ displayName = 'grp-new'; administrativeUnit = 'AU-New'; members = @() }
+                if ($Fill -eq 'none') {
+                    $r = @(Invoke-SyncGroupViaCaller -Item $Item -Created $Created -ErrorAction Stop)
+                } else {
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    if ($Fill -eq 'other') {
+                        $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name 'AU-Other' -PreviousName 'AU-Old' -Id $null -PreviousId 'au-old-id' -RenameMap $Map
+                        $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'AU-New' -PreviousName 'CAT-Old' -Id $null -PreviousId 'cat-old-id' -RenameMap $Map
+                        $Map.Count | Should -Be 2
+                    }
+                    $r = @(Invoke-SyncGroupViaCaller -Item $Item -Created $Created -Map $Map -ErrorAction Stop)
+                }
+
+                Should -Invoke New-OERGroup -Times 1 -Exactly
+                Should -Invoke New-OERGroup -Times 1 -Exactly -ParameterFilter { $AdministrativeUnit -eq 'AU-New' }
+                @($r | Where-Object Action -eq 'Created').Count | Should -Be 1
+                $Created.Count | Should -Be 1
+                $Created[0].AdministrativeUnit | Should -BeExactly 'AU-New'
+            }
+        }
+
+        It 'leaves a group that already exists as it is when its unit''s rename was <Label>: administrativeUnit applies only at creation' -ForEach @(
+            @{ Label = 'refused'; UnitId = 'au-new-id'; PrevId = 'au-old-id' }
+            @{ Label = 'registered'; UnitId = ''; PrevId = 'au-old-id' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ UnitId = $UnitId; PrevId = $PrevId } {
+                param($UnitId, $PrevId)
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[object]]$Created, [System.Collections.Generic.Dictionary[string, object]]$Map)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -CreatedUnitMembership $Created -RenameMap $Map
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-1'; DisplayName = 'grp-new'; Description = $null; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+                    }
+                }
+                Mock Set-OERGroup { }
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name 'AU-New' -PreviousName 'AU-Old' -Id $UnitId -PreviousId $PrevId -RenameMap $Map
+                $Map.Count | Should -Be 1
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Item = [PSCustomObject]@{ displayName = 'grp-new'; administrativeUnit = 'AU-New'; members = @() }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Created $Created -Map $Map -ErrorAction Stop)
+
+                Should -Invoke Get-OERGroup -Times 1 -Exactly
+                Should -Invoke New-OERGroup -Times 0
+                Should -Invoke Set-OERGroup -Times 0
+                $r.Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Unchanged'
+                $r[0].Detail | Should -BeExactly 'group properties match'
+                $Created.Count | Should -Be 0
+            }
+        }
+    }
+
     Context 'eligibility accessType, time-bound entries (site 565)' {
         It 'uses the declared accessType for a time-bound entry when declared with a value' {
             InModuleScope $script:moduleName {

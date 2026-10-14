@@ -234,12 +234,25 @@ function Sync-OERStructureGroup {
     A group created into an administrative unit (BL-07): administrativeUnit is passed to New-OERGroup
     -AdministrativeUnit when the group is created and never round-trips, so the unit's own
     administrativeUnits[] entry need not list the group. Right after New-OERGroup returns the group,
-    the handler adds a record -- the unit as the document declares it (a display name or an object
-    id), the new group's id and its name -- to the run-scoped list the engine passes as
-    -CreatedUnitMembership. Sync-OERStructureAdministrativeUnit, which the engine runs after this
-    section, then withholds the prune of that membership in the same run. Nothing is recorded under
-    -WhatIf (nothing is created), for a failed create, or for a group created without a unit; a group
-    New-OERGroup found already existing is recorded too, which can only withhold a prune.
+    the handler adds a record -- the unit as it was passed to New-OERGroup (the display name or object
+    id the document declares, or the unit's id from the rename map, see below), the new group's id
+    and its name -- to the run-scoped list the engine passes as -CreatedUnitMembership.
+    Sync-OERStructureAdministrativeUnit, which the engine runs after this section, then withholds the
+    prune of that membership in the same run. Nothing is recorded under -WhatIf (nothing is created),
+    for a failed create, or for a group created without a unit; a group New-OERGroup found already
+    existing is recorded too, which can only withhold a prune.
+
+    A group created into an administrative unit the document renames in the same run (BL-128, A5):
+    Microsoft Graph's name lookup cannot find a unit's new name in the run that renames it. When the
+    group's administrativeUnit names a unit the run's rename map (-RenameMap) holds -- an
+    administrativeUnits[] entry with previousDisplayName, which the engine's pre-pass resolves and
+    registers before this section runs -- the group is created into that unit by its object id. When
+    that unit's rename was refused (both names found different units, or neither found one), the unit
+    the group is to be created into cannot be identified: the item emits one Failed row naming the
+    unit and the refused rename, and nothing is created, read further or written for it. The check
+    comes before the create's ShouldProcess gate, so -WhatIf reports the same Failed row, and the row
+    carries no error record of its own: the unit's own row carries the refusal. administrativeUnit
+    applies only when the group is created, so a group that already exists is not affected either way.
 
     Service principals (decision A9): a live member or owner whose ObjectType is servicePrincipal is
     never removed from the group. Microsoft Graph's v1.0 member and owner lists leave service
@@ -390,6 +403,13 @@ function Sync-OERStructureGroup {
     unit it adds one record (AdministrativeUnit, GroupId, Label) to it; see the BL-07 paragraph above.
     Optional: without it nothing is recorded.
 
+    .PARAMETER RenameMap
+    The run-scoped rename map Invoke-OERStructure creates once per document and passes to this handler,
+    to Sync-OERStructureAdministrativeUnit (its -EnsureOnly pre-pass call included) and to the catalog
+    and access package handlers. This handler only reads it, through Get-OERStructureRenameTarget, for
+    the administrativeUnit of a group it creates: see the BL-128 paragraph above. Optional: without it,
+    or when it does not hold the unit, the unit is passed to New-OERGroup as the document names it.
+
     .EXAMPLE
     Sync-OERStructureGroup -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
     Reconciles one group entry from the document, pruning undeclared members. -TenantAlias is accepted
@@ -408,7 +428,8 @@ function Sync-OERStructureGroup {
         [Parameter(Mandatory)][System.Management.Automation.PSCmdlet]$Caller,
         [switch]$Prune,
         [string]$TenantAlias,
-        [System.Collections.Generic.List[object]]$CreatedUnitMembership
+        [System.Collections.Generic.List[object]]$CreatedUnitMembership,
+        [System.Collections.Generic.Dictionary[string, object]]$RenameMap
     )
     process {
         # -- Resolve the display name (template or literal) ---------------------------------
@@ -560,6 +581,22 @@ function Sync-OERStructureGroup {
         # -- Create or update the group object ------------------------------------------
         if (-not $Gid) {
             # Group does not exist -- create it.
+            # BL-128 (A5): an administrative unit the document renames in this run is found under its
+            # previous name, and Graph's name lookup cannot find its new name yet; the engine's pre-pass
+            # registered it in the run's rename map, so the group is created into it by id. A unit whose
+            # rename was refused cannot be identified: the group is not created, under -WhatIf too.
+            $UnitRef = $null
+            if (Test-OERDeclaredProperty -Node $Item -Name 'administrativeUnit') {
+                $UnitRef = $Item.administrativeUnit
+                $UnitTarget = Get-OERStructureRenameTarget -Section 'administrativeUnits' -Name ([string]$Item.administrativeUnit) -RenameMap $RenameMap
+                if ($UnitTarget -and $UnitTarget.Refused) {
+                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                        -Detail "group not created: administrative unit '$($Item.administrativeUnit)' was not reconciled in this run -- its rename from '$($UnitTarget.PreviousName)' was refused ($($UnitTarget.ErrorId)), so the unit the group is to be created into cannot be identified"
+                    return
+                }
+                if ($UnitTarget) { $UnitRef = $UnitTarget.Id }
+            }
+
             if (-not $Caller.ShouldProcess($Name, 'Create group')) {
                 # Under -WhatIf: emit Skipped for the group and all children, then return.
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail "would create group $Name"
@@ -609,7 +646,8 @@ function Sync-OERStructureGroup {
             }
             if (Test-OERDeclaredProperty -Node $Item -Name 'description') { $NewParams.Description = $Item.description }
             if (Test-OERDeclaredProperty -Node $Item -Name 'mailNickname') { $NewParams.MailNickname = $Item.mailNickname }
-            if (Test-OERDeclaredProperty -Node $Item -Name 'administrativeUnit') { $NewParams.AdministrativeUnit = $Item.administrativeUnit }
+            # The unit as the document names it, or its id when the rename map registered it (above).
+            if ($null -ne $UnitRef) { $NewParams.AdministrativeUnit = $UnitRef }
 
             $Created = $null
             try {

@@ -27,7 +27,13 @@ function Invoke-OERStructure {
     not declare at all still fails when the groups section runs -- correctly, since there is nothing
     the pre-pass could create. The administrativeUnits section below still reconciles that unit's own
     members, scoped roles and other properties in full; the pre-pass only guarantees the object exists
-    early enough for the group creation to succeed.
+    early enough for the group creation to succeed. An administrativeUnits entry that declares
+    previousDisplayName is never created by the pre-pass, which only resolves both of its names and
+    records the outcome in the run's rename map (one per document) and reports nothing. When its
+    previous name finds the unit, a group created into the unit's new name is created into that unit,
+    by its id, and the administrativeUnits pass then renames the unit. When the rename is refused --
+    both names find different units, or neither finds one -- a group to be created into the unit is
+    not created and is reported Failed, and the administrativeUnits pass reports the refusal.
 
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
@@ -499,6 +505,13 @@ function Invoke-OERStructure {
         # catalog lookup. A real run never fills it, so it applies exactly as before.
         $PlannedCatalog = [System.Collections.Generic.List[string]]::new()
 
+        # BL-128 (A5): the run's rename map. Resolve-OERStructureRename registers each administrative
+        # unit and catalog the document renames (found under previousDisplayName alone) and each one whose
+        # rename it refused; Get-OERStructureRenameTarget reads it for a reference to the new name in the
+        # same run -- a group created into a unit, an access package in a catalog -- which Graph's name
+        # lookup cannot find yet. One map per document, passed to the pre-pass and to the four handlers.
+        $RenameMap = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
         # -- Before the first write: omitted collection keys that -Prune still reconciles ------------
         # Five collections are reconciled against an empty declared set when their key is omitted, so
         # -Prune removes every live entry in them. Get-OEROmittedPruneCollection owns which keys those
@@ -519,6 +532,9 @@ function Invoke-OERStructure {
         # apply that leaves the AU missing when the group is created, which fails the whole group entry
         # -- members, eligibility and pimPolicy included. Ensure just the AU OBJECTS a group names exist
         # first; their members and scoped roles still reconcile in the administrativeUnits pass below.
+        # BL-128 (A5): an entry that declares previousDisplayName is only resolved and registered in the
+        # rename map here -- never created, never reported -- so the groups section creates a group into
+        # the unit it renames by the unit's id, and refuses one into a unit whose rename was refused.
         $AuNamesNeeded = [System.Collections.Generic.List[string]]::new()
         if ($Include -contains 'Groups' -and $Include -contains 'AdministrativeUnits' -and
             ($Document.PSObject.Properties.Name -contains 'groups') -and
@@ -533,7 +549,7 @@ function Invoke-OERStructure {
             foreach ($AuItem in @($Document.administrativeUnits)) {
                 if (@($AuNamesNeeded) -notcontains [string]$AuItem.displayName) { continue }
                 try {
-                    $Records = Sync-OERStructureAdministrativeUnit -Item $AuItem -Caller $PSCmdlet -EnsureOnly -TenantAlias $TenantAlias
+                    $Records = Sync-OERStructureAdministrativeUnit -Item $AuItem -Caller $PSCmdlet -EnsureOnly -TenantAlias $TenantAlias -RenameMap $RenameMap
                     foreach ($Rec in @($Records)) { $Results.Add($Rec) }
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
@@ -638,6 +654,12 @@ function Invoke-OERStructure {
                 # Catalogs record the catalogs a -WhatIf plan would create; AccessPackages read them.
                 if ($Section.IncludeName -eq 'Catalogs' -or $Section.IncludeName -eq 'AccessPackages') {
                     $ExtraParams.PlannedCatalog = $PlannedCatalog
+                }
+                # BL-128 (A5): administrativeUnits and catalogs register their renames in the run's map;
+                # groups read it for the unit a group is created into, accessPackages for the catalog.
+                # accessReviews does not read it in this step (R3).
+                if ($Section.IncludeName -in @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages')) {
+                    $ExtraParams.RenameMap = $RenameMap
                 }
                 try {
                     $Records = & $Section.Handler -Item $It -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias @ExtraParams

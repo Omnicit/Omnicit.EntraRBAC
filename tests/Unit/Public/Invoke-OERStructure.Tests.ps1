@@ -306,6 +306,57 @@ Describe 'Invoke-OERStructure' {
                 (@($AuRecords.Detail) | Select-Object -Unique).Count | Should -Be 2
             }
         }
+
+        It 'hands the pre-pass and the groups, administrativeUnits, catalogs and accessPackages handlers one rename map per document (BL-128, A5)' {
+            # The map is how a reference to a name the same run gives an object reaches that object, so
+            # every handler that fills or reads it must see the SAME map, and a second piped document
+            # must start from an empty one. The accessReviews handler takes no map (R3): its mock keeps
+            # the real signature, so passing the map to it would fail that entry's binding, and
+            # -ErrorAction Stop would end the run.
+            InModuleScope $script:moduleName {
+                $script:SeenMap = [System.Collections.Generic.List[object]]::new()
+                Mock Initialize-OERAuth { }
+                Mock Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Findings = @() } }
+                Mock Sync-OERStructureAdministrativeUnit {
+                    param($Item, $Caller, $Prune, $TenantAlias, $EnsureOnly, $CreatedUnitMembership, $RenameMap)
+                    $Call = if ($EnsureOnly) { "au-ensure $($Item.displayName)" } else { "au-full $($Item.displayName)" }
+                    $script:SeenMap.Add([PSCustomObject]@{ Call = $Call; Map = $RenameMap })
+                }
+                Mock Sync-OERStructureGroup {
+                    param($Item, $Caller, $Prune, $TenantAlias, $CreatedUnitMembership, $RenameMap)
+                    $script:SeenMap.Add([PSCustomObject]@{ Call = "group $($Item.displayName)"; Map = $RenameMap })
+                }
+                Mock Sync-OERStructureCatalog {
+                    param($Item, $Caller, $Prune, $TenantAlias, $PlannedCatalog, $RenameMap)
+                    $script:SeenMap.Add([PSCustomObject]@{ Call = "catalog $($Item.displayName)"; Map = $RenameMap })
+                }
+                Mock Sync-OERStructureAccessPackage {
+                    param($Item, $Caller, $Prune, $TenantAlias, $PlannedCatalog, $RenameMap)
+                    $script:SeenMap.Add([PSCustomObject]@{ Call = "package $($Item.displayName)"; Map = $RenameMap })
+                }
+                $Doc1 = ('{ "version": "1.0", ' +
+                    '"groups": [ { "displayName": "G1", "administrativeUnit": "AU-1" } ], ' +
+                    '"administrativeUnits": [ { "displayName": "AU-1" } ], ' +
+                    '"catalogs": [ { "displayName": "CAT-1" } ], ' +
+                    '"accessPackages": [ { "displayName": "AP-1", "catalog": "CAT-1" } ], ' +
+                    '"accessReviews": [ { "displayName": "AR-1" } ] }') | ConvertFrom-Json
+                $Doc2 = '{ "version": "1.0", "catalogs": [ { "displayName": "CAT-2" } ] }' | ConvertFrom-Json
+                $null = @($Doc1, $Doc2 | Invoke-OERStructure -Confirm:$false -ErrorAction Stop)
+
+                $Calls = @($script:SeenMap)
+                @($Calls | ForEach-Object { $_.Call }) | Should -Be @('au-ensure AU-1', 'group G1', 'au-full AU-1', 'catalog CAT-1', 'package AP-1', 'catalog CAT-2')
+                Should -Invoke Sync-OERStructureAccessReview -Times 1 -Exactly
+                $First = $Calls[0].Map
+                ($null -ne $First) | Should -BeTrue -Because 'the pre-pass must receive a map'
+                ($First -is [System.Collections.Generic.Dictionary[string, object]]) | Should -BeTrue
+                $First.Comparer.Equals('administrativeunits|AU-1', 'administrativeUnits|au-1') | Should -BeTrue -Because 'the keys are compared without regard to letter case'
+                for ($Index = 1; $Index -le 4; $Index++) {
+                    [object]::ReferenceEquals($Calls[$Index].Map, $First) | Should -BeTrue -Because "$($Calls[$Index].Call) must get the map the pre-pass got"
+                }
+                ($null -ne $Calls[5].Map) | Should -BeTrue -Because 'the second document must receive a map'
+                [object]::ReferenceEquals($Calls[5].Map, $First) | Should -BeFalse -Because 'each document gets a map of its own'
+            }
+        }
     }
 }
 
@@ -2545,5 +2596,323 @@ Describe 'Invoke-OERStructure -WhatIf plans a package in a catalog the document 
         # The catalog-scoped lookup ran: a real run never takes the planned shortcut.
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-new' }
         Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 1 -Exactly
+    }
+}
+
+Describe 'Invoke-OERStructure renames an administrative unit, a catalog and an access package in one run (BL-128, A5)' {
+    # The real engine and the real handlers run, so the rename map is the one the engine creates for the
+    # document, filled by the handlers and read by the groups and access packages handlers; only the
+    # sign-in, the lookups and the cmdlets the handlers call are mocked. The lookups behave as Graph's
+    # do in the run that renames an object: its new name is not found by name yet, so a reference to it
+    # reaches the object only through the map. No id below is version-4 shaped.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        $script:RnUnitId = 'aaaaaaaa-0000-0000-0000-000000000001'
+        $script:RnAuDoc = ('{ "version": "1.0", ' +
+            '"groups": [ { "displayName": "G1", "administrativeUnit": "AU-New", "members": [] } ], ' +
+            '"administrativeUnits": [ { "displayName": "AU-New", "previousDisplayName": "AU-Old", "members": [] } ] }')
+        $script:RnCatDoc = ('{ "version": "1.0", ' +
+            '"catalogs": [ { "displayName": "CAT-New", "previousDisplayName": "CAT-Old", "resources": [] } ], ' +
+            '"accessPackages": [ { "displayName": "AP-New", "previousDisplayName": "AP-Old", "catalog": "CAT-New", "resourceRoles": [] } ] }')
+        $script:RnCatConflictDoc = ('{ "version": "1.0", ' +
+            '"catalogs": [ { "displayName": "CAT-New", "previousDisplayName": "CAT-Old", "resources": [] } ], ' +
+            '"accessPackages": [ { "displayName": "AP-1", "catalog": "CAT-New", "resourceRoles": [] } ] }')
+        function ConvertTo-RnRowLine {
+            param([object[]]$Row)
+            @($Row | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.Section, $_.Item, $_.Action, $_.Detail })
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected Graph request: $Uri" }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { param($Reference) $Reference }
+        Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+        # Nothing the document renames may be created.
+        Mock -ModuleName $script:moduleName New-OERAdministrativeUnit { [PSCustomObject]@{ Id = 'au-created'; DisplayName = $DisplayName } }
+        Mock -ModuleName $script:moduleName New-OERCatalog { [PSCustomObject]@{ Id = 'cat-created'; DisplayName = $DisplayName } }
+        Mock -ModuleName $script:moduleName New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-created'; DisplayName = $DisplayName } }
+    }
+
+    Context 'an administrative unit a group is created into' {
+        BeforeEach {
+            # Graph's name lookup finds the unit under its previous name only -- or, with OldFound
+            # false, under neither name. LiveMembers is the unit's live member list.
+            $script:RnAuState = @{ OldFound = $true; LiveMembers = @() }
+            Mock -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId {
+                if ($DisplayName -eq 'AU-Old' -and $script:RnAuState.OldFound) { $script:RnUnitId }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                [PSCustomObject]@{
+                    Id = $script:RnUnitId; DisplayName = 'AU-Old'; Description = $null; MembershipType = 'Assigned'
+                    Visibility = $null; IsMemberManagementRestricted = $false; Members = @($script:RnAuState.LiveMembers); ScopedRoles = @()
+                }
+            }
+            Mock -ModuleName $script:moduleName Set-OERAdministrativeUnit { }
+            Mock -ModuleName $script:moduleName Remove-OERAdministrativeUnitMember { }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId { $null }
+            Mock -ModuleName $script:moduleName New-OERGroup { [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = $DisplayName } }
+        }
+
+        It 'creates no unit, creates the group into the unit found under its previous name, by its id, and renames the unit once' {
+            $Rows = @(Invoke-OERStructure -Json $script:RnAuDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+
+            # Positive proof first: the group was created, into the unit's id, and the unit was renamed.
+            Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 1 -Exactly -ParameterFilter { $AdministrativeUnit -eq $script:RnUnitId }
+            Should -Invoke -ModuleName $script:moduleName Set-OERAdministrativeUnit -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Set-OERAdministrativeUnit -Times 1 -Exactly -ParameterFilter {
+                $AdministrativeUnit -eq $script:RnUnitId -and $NewDisplayName -eq 'AU-New'
+            }
+            Should -Invoke -ModuleName $script:moduleName New-OERAdministrativeUnit -Times 0
+            # The pre-pass and the administrativeUnits pass together report the unit once: the rename.
+            @(ConvertTo-RnRowLine -Row $Rows) | Should -Be @(
+                'groups|G1|Created|created group G1 (88888888-8888-8888-8888-888888888888)'
+                "administrativeUnits|AU-New|Updated|renamed administrative unit 'AU-Old' to 'AU-New'"
+            )
+        }
+
+        It 'plans the group create and the unit rename under -WhatIf, with no unit to create and no Failed row' {
+            $Rows = @(Invoke-OERStructure -Json $script:RnAuDoc -WhatIf -ErrorAction Stop -WarningAction SilentlyContinue)
+
+            @(ConvertTo-RnRowLine -Row $Rows) | Should -Be @(
+                'groups|G1|Skipped|would create group G1'
+                "administrativeUnits|AU-New|Skipped|would rename administrative unit 'AU-Old' to 'AU-New'"
+            )
+            Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAdministrativeUnit -Times 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERAdministrativeUnit -Times 0
+        }
+
+        It 'creates neither the unit nor the group when neither name finds the unit: the group is Failed and the unit Failed with AdministrativeUnitRenameNotFound (<Mode>)' -ForEach @(
+            @{ Mode = 'run' }
+            @{ Mode = 'WhatIf' }
+        ) {
+            $script:RnAuState.OldFound = $false
+            $Errs = $null
+            $Params = @{ Json = $script:RnAuDoc; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Errs'; WarningAction = 'SilentlyContinue' }
+            if ($Mode -eq 'WhatIf') { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+            $Rows = @(Invoke-OERStructure @Params)
+
+            # Positive proof first: both names were looked up, by the pre-pass and by the administrativeUnits pass.
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId -Times 2 -Exactly -ParameterFilter { $DisplayName -eq 'AU-Old' }
+            $Rows.Count | Should -Be 2
+            $Rows[0].Section | Should -BeExactly 'groups'
+            $Rows[0].Item | Should -BeExactly 'G1'
+            $Rows[0].Action | Should -BeExactly 'Failed'
+            $Rows[0].Detail | Should -BeExactly ("group not created: administrative unit 'AU-New' was not reconciled in this run -- its rename from 'AU-Old' " +
+                'was refused (AdministrativeUnitRenameNotFound), so the unit the group is to be created into cannot be identified')
+            $Rows[0].Error | Should -BeNullOrEmpty
+            $Rows[1].Section | Should -BeExactly 'administrativeUnits'
+            $Rows[1].Item | Should -BeExactly 'AU-New'
+            $Rows[1].Action | Should -BeExactly 'Failed'
+            [string]$Rows[1].Error.FullyQualifiedErrorId | Should -BeLike 'AdministrativeUnitRenameNotFound*'
+            # One error record, the unit's: the group's row publishes none of its own (R9), and the
+            # pre-pass reports nothing (R4).
+            @($Errs | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('AdministrativeUnitRenameNotFound,Invoke-OERStructure')
+            Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAdministrativeUnit -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERAdministrativeUnit -Times 0
+        }
+
+        It 'does not remove, under -Prune, the membership of a group the run created into the unit by its new name, while it renames the unit (BL-07)' {
+            # The live unit holds the group this run creates and one member the document does not name.
+            # The group's record carries the unit's id (the map's), which the administrative unit handler
+            # compares as a GUID with the unit it renames.
+            $script:RnAuState.LiveMembers = @(
+                [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = 'G1'; Type = 'group' }
+                [PSCustomObject]@{ Id = 'u-extra'; DisplayName = 'Extra'; Type = 'user' }
+            )
+            $Rows = @(Invoke-OERStructure -Json $script:RnAuDoc -Prune -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+
+            Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 1 -Exactly -ParameterFilter { $AdministrativeUnit -eq $script:RnUnitId }
+            Should -Invoke -ModuleName $script:moduleName Set-OERAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $NewDisplayName -eq 'AU-New' }
+            # Positive control: the member prune ran, and removed the member this run did not create.
+            Should -Invoke -ModuleName $script:moduleName Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'u-extra' }
+            Should -Invoke -ModuleName $script:moduleName Remove-OERAdministrativeUnitMember -Times 1 -Exactly
+            $Withheld = @($Rows | Where-Object { $_.Section -eq 'administrativeUnits' -and $_.Action -eq 'Skipped' })
+            $Withheld.Count | Should -Be 1
+            $Withheld[0].Detail | Should -BeLike "prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'G1', *"
+        }
+    }
+
+    Context 'a catalog and an access package in it' {
+        BeforeEach {
+            # The live state. CatIndexed is the name Graph's name lookup finds the catalog under: it lags
+            # a rename, and a test moves it on between two runs, as Graph's lookup catches up. CatName
+            # and ApName are the names the two objects carry; the Set mocks change them. OtherNew puts
+            # another catalog, holding no package, under the name CAT-New.
+            $script:RnCatState = @{ CatName = 'CAT-Old'; CatIndexed = 'CAT-Old'; ApName = 'AP-Old'; OtherNew = $false }
+            Mock -ModuleName $script:moduleName Resolve-OERCatalogId {
+                if ($DisplayName -eq $script:RnCatState.CatIndexed) { 'cat-old-id' }
+                elseif ($script:RnCatState.OtherNew -and $DisplayName -eq 'CAT-New') { 'cat-other-id' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERCatalog {
+                [PSCustomObject]@{ Id = $Id; DisplayName = $script:RnCatState.CatName; Description = $null; ExternallyVisible = $false }
+            }
+            Mock -ModuleName $script:moduleName Set-OERCatalog { if ($NewDisplayName) { $script:RnCatState.CatName = $NewDisplayName } }
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource { @() }
+            # The catalog's package list, asked for by the catalog's id or by the name the lookup finds it
+            # under. Only filtered mocks: a list asked for under any other catalog name throws.
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+                [PSCustomObject]@{ Id = 'ap-old-id'; DisplayName = $script:RnCatState.ApName }
+            } -ParameterFilter { $Catalog -eq 'cat-old-id' -or ($Catalog -and $Catalog -eq $script:RnCatState.CatIndexed) }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage { } -ParameterFilter {
+                $Catalog -eq 'cat-other-id' -or ($script:RnCatState.OtherNew -and $Catalog -eq 'CAT-New')
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+                [PSCustomObject]@{ Id = 'ap-old-id'; DisplayName = $script:RnCatState.ApName; Description = $null; IsHidden = $false }
+            } -ParameterFilter { $Id -eq 'ap-old-id' }
+            Mock -ModuleName $script:moduleName Set-OERAccessPackage { if ($NewDisplayName) { $script:RnCatState.ApName = $NewDisplayName } }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } } -ParameterFilter { $Uri -like '*/resourceRoleScopes*' }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @() }
+        }
+
+        It 'plans the rename of the catalog and of the package in it under -WhatIf, with no Failed row, reading the package list by the catalog id' {
+            $Rows = @(Invoke-OERStructure -Json $script:RnCatDoc -WhatIf -ErrorAction Stop -WarningAction SilentlyContinue)
+
+            @(ConvertTo-RnRowLine -Row $Rows) | Should -Be @(
+                "catalogs|CAT-New|Skipped|would rename catalog 'CAT-Old' to 'CAT-New'"
+                "accessPackages|AP-New|Skipped|would rename access package 'AP-Old' to 'AP-New'"
+            )
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-old-id' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0 -ParameterFilter { $Catalog -eq 'CAT-New' }
+            Should -Invoke -ModuleName $script:moduleName Set-OERCatalog -Times 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackage -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERCatalog -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+        }
+
+        It 'renames the catalog and the package in it once each in a real run, finding the package in the catalog by the catalog id' {
+            $Rows = @(Invoke-OERStructure -Json $script:RnCatDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+
+            Should -Invoke -ModuleName $script:moduleName Set-OERCatalog -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Set-OERCatalog -Times 1 -Exactly -ParameterFilter { $Id -eq 'cat-old-id' -and $NewDisplayName -eq 'CAT-New' }
+            Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackage -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Id -eq 'ap-old-id' -and $NewDisplayName -eq 'AP-New' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-old-id' }
+            @(ConvertTo-RnRowLine -Row $Rows) | Should -Be @(
+                "catalogs|CAT-New|Updated|renamed catalog 'CAT-Old' to 'CAT-New'"
+                "accessPackages|AP-New|Updated|renamed access package 'AP-Old' to 'AP-New'"
+            )
+            Should -Invoke -ModuleName $script:moduleName New-OERCatalog -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+        }
+
+        It 'converges: the same document applied again, once Graph finds the new names, reports only Unchanged and renames nothing' {
+            $First = @(Invoke-OERStructure -Json $script:RnCatDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+            @($First | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 2 -Because 'the first run renames both objects'
+            $script:RnCatState.CatName | Should -BeExactly 'CAT-New'
+            $script:RnCatState.ApName | Should -BeExactly 'AP-New'
+            # Graph's name lookup catches up with the rename.
+            $script:RnCatState.CatIndexed = $script:RnCatState.CatName
+
+            $Second = @(Invoke-OERStructure -Json $script:RnCatDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+
+            @(ConvertTo-RnRowLine -Row $Second) | Should -Be @(
+                'catalogs|CAT-New|Unchanged|catalog properties match'
+                'accessPackages|AP-New|Unchanged|access package properties match'
+            )
+            # One Set call each, both the first run's: the second run sends none.
+            Should -Invoke -ModuleName $script:moduleName Set-OERCatalog -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackage -Times 1 -Exactly
+            # The second run found the catalog under its new name.
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'CAT-New' }
+            Should -Invoke -ModuleName $script:moduleName New-OERCatalog -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+        }
+
+        It 'creates no package in the other catalog that carries the new name when the catalog rename conflicts: the package is Failed, with nothing read or written (<Mode>)' -ForEach @(
+            @{ Mode = 'run' }
+            @{ Mode = 'WhatIf' }
+        ) {
+            $script:RnCatState.OtherNew = $true
+            $Errs = $null
+            $Params = @{ Json = $script:RnCatConflictDoc; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Errs'; WarningAction = 'SilentlyContinue' }
+            if ($Mode -eq 'WhatIf') { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+            $Rows = @(Invoke-OERStructure @Params)
+
+            # Positive proof first: the catalog's two names were looked up, and found on two catalogs.
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERCatalogId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'CAT-New' }
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERCatalogId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'CAT-Old' }
+            $Rows.Count | Should -Be 2
+            $Rows[0].Section | Should -BeExactly 'catalogs'
+            $Rows[0].Action | Should -BeExactly 'Failed'
+            [string]$Rows[0].Error.FullyQualifiedErrorId | Should -BeLike 'CatalogRenameConflict*'
+            $Rows[1].Section | Should -BeExactly 'accessPackages'
+            $Rows[1].Item | Should -BeExactly 'AP-1'
+            $Rows[1].Action | Should -BeExactly 'Failed'
+            $Rows[1].Detail | Should -BeExactly ("catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (CatalogRenameConflict), " +
+                'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
+            $Rows[1].Error | Should -BeNullOrEmpty
+            @($Errs | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('CatalogRenameConflict,Invoke-OERStructure')
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERCatalog -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERCatalog -Times 0
+        }
+    }
+
+    Context 'in a script with no try above it' {
+        It 'reaches the end of the script and creates, reads and writes nothing for a unit, a catalog and a package none of whose names is found' {
+            # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands
+            # anywhere above it, as at a prompt. The script installs its own fakes in ITS copy of the
+            # module scope and logs every call with AppendAllText: a lookup as 'LOOKUP <kind> <name>',
+            # any other call as 'CALL <command>'. A group is created into the unit, so the pre-pass and
+            # the group's create path take part too.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Json = ('{ "version": "1.0", ' +
+                '"groups": [ { "displayName": "G1", "administrativeUnit": "AU-New", "members": [] } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-New", "previousDisplayName": "AU-Old", "members": [] } ], ' +
+                '"catalogs": [ { "displayName": "CAT-New", "previousDisplayName": "CAT-Old", "resources": [] } ], ' +
+                '"accessPackages": [ { "displayName": "AP-New", "previousDisplayName": "AP-Old", "catalog": "CAT-New", "resourceRoles": [] } ] }')
+            $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { param([string]$DisplayName) [System.IO.File]::AppendAllText('#LOG#', "LOOKUP group $DisplayName`n") }
+    Set-Item -Path function:script:Resolve-OERAdministrativeUnitId -Value { param([string]$DisplayName) [System.IO.File]::AppendAllText('#LOG#', "LOOKUP unit $DisplayName`n") }
+    Set-Item -Path function:script:Resolve-OERCatalogId -Value { param([string]$DisplayName) [System.IO.File]::AppendAllText('#LOG#', "LOOKUP catalog $DisplayName`n") }
+    Set-Item -Path function:script:New-OERGroup -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL New-OERGroup`n") }
+    Set-Item -Path function:script:New-OERAdministrativeUnit -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL New-OERAdministrativeUnit`n") }
+    Set-Item -Path function:script:New-OERCatalog -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL New-OERCatalog`n") }
+    Set-Item -Path function:script:New-OERAccessPackage -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL New-OERAccessPackage`n") }
+    Set-Item -Path function:script:Set-OERAdministrativeUnit -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL Set-OERAdministrativeUnit`n") }
+    Set-Item -Path function:script:Set-OERCatalog -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL Set-OERCatalog`n") }
+    Set-Item -Path function:script:Set-OERAccessPackage -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL Set-OERAccessPackage`n") }
+    Set-Item -Path function:script:Get-OERAdministrativeUnit -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL Get-OERAdministrativeUnit`n") }
+    Set-Item -Path function:script:Get-OERCatalog -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL Get-OERCatalog`n") }
+    Set-Item -Path function:script:Get-OERAccessPackage -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL Get-OERAccessPackage`n") }
+    Set-Item -Path function:script:Get-OERCatalogResource -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL Get-OERCatalogResource`n") }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "CALL Invoke-OERGraphRequest`n") }
+}
+$Json = '#JSON#'
+Invoke-OERStructure -Json $Json -Confirm:$false | ForEach-Object { "ROW:$($_.Section):$($_.Item):$($_.Action)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#JSON#', $Json.Replace("'", "''")))
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            # Every lookup was made -- the pre-pass and each handler ran -- and nothing else was called:
+            # no unit, group, catalog or package was created, read or written. A failure prints the calls.
+            $Logged = if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log | Where-Object { $_ }) } else { @() }
+            @($Logged) | Should -Be @(
+                'LOOKUP unit AU-New', 'LOOKUP unit AU-Old', 'LOOKUP group G1', 'LOOKUP unit AU-New', 'LOOKUP unit AU-Old',
+                'LOOKUP catalog CAT-New', 'LOOKUP catalog CAT-Old'
+            )
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+                'ROW:groups:G1:Failed'
+                'ROW:administrativeUnits:AU-New:Failed'
+                'ROW:catalogs:CAT-New:Failed'
+                'ROW:accessPackages:AP-New:Failed'
+            )
+            # Two refusals are published, the unit's and the catalog's; the two references publish none.
+            @($Run.Errors).Count | Should -Be 2
+            @($Run.Prompts).Count | Should -Be 0
+        }
     }
 }
