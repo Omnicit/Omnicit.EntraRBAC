@@ -2733,6 +2733,17 @@ Describe 'Get-OERInventory' {
                     MembershipType = 'Assigned'; Visibility = $null; Members = @(); ScopedRoles = @()
                 }
             }
+            # An assignment policy as Get-OERAccessPackageAssignmentPolicy returns one, complete enough
+            # for the projection to run on and valid once written.
+            function script:New-DupPolicy {
+                param([string]$Name, [string]$Id)
+                [PSCustomObject]@{
+                    Id = $Id; DisplayName = $Name; Description = $null; RequestorScope = $null; RequestorSettings = $null
+                    RequireApproval = $false; RequireRequestorJustification = $false; RequireApprovalForUpdate = $false
+                    ApprovalStages = @(); DurationInDays = 30; DurationInHours = $null; ExpirationDateTime = $null
+                    NotificationsDisabled = $false
+                }
+            }
             function script:New-DupRoleAssignment {
                 param(
                     [string]$PrincipalId, [string]$PrincipalType, [string]$PrincipalName,
@@ -2777,6 +2788,7 @@ Describe 'Get-OERInventory' {
             $script:DupAdministrativeUnits = @()
             $script:DupCatalogs = @()
             $script:DupAccessPackages = @{}
+            $script:DupAssignmentPolicies = @{}
             $script:DupRoleAssignments = @()
             $script:DupNames = @{}
             $script:DupPolicies = @()
@@ -2790,7 +2802,11 @@ Describe 'Get-OERInventory' {
                 $script:DupAccessPackages[[string]$Catalog]
             }
             Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole { @() }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @() }
+            # The policies of a package by the package id; a package with none answers nothing.
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy {
+                param($AccessPackage)
+                if ($script:DupAssignmentPolicies.ContainsKey([string]$AccessPackage)) { $script:DupAssignmentPolicies[[string]$AccessPackage] }
+            }
             Mock -ModuleName $script:moduleName Get-OERRoleAssignment { $script:DupRoleAssignments }
             Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy { $script:DupPolicies }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
@@ -2956,6 +2972,174 @@ Describe 'Get-OERInventory' {
             @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @('A/B|C', 'A|B/C')
             (Get-DupPartial -Record @($InvErr)).Count | Should -Be 0
             Assert-DupDocumentValid -Inventory $Inv
+        }
+
+        # BL-131 (Sprint 11 step 5): two assignment policies of ONE access package that carry one name,
+        # without regard to letter case, are two entries the validator now refuses and the apply engine
+        # cannot tell apart, so neither is written and the name is reported once, with its count. A package
+        # with one catalog and one package is all the cases below need.
+        Context 'assignment policies of one access package that share a name (BL-131)' {
+            BeforeEach {
+                $script:DupCatalogs = @([PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'Core'; Description = 'one' })
+                $script:DupAccessPackages = @{
+                    'cat-1' = @(
+                        [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'Sales'; Description = $null }
+                        [PSCustomObject]@{ Id = 'ap-2'; DisplayName = 'Support'; Description = $null }
+                    )
+                }
+            }
+
+            It 'leaves out both policies of the shared name, reports the name with its count and writes the policy of another name' {
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-1'
+                        New-DupPolicy -Name 'Default' -Id 'pol-2'
+                        New-DupPolicy -Name 'Solo Policy' -Id 'pol-3'
+                    )
+                }
+                $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+                # Reach proof: the policies of the package were read, and the package was written.
+                Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+                $Sales = @($Inv.accessPackages | Where-Object displayName -ceq 'Sales')
+                $Sales.Count | Should -Be 1
+                @($Sales[0].assignmentPolicies | ForEach-Object { $_.displayName }) | Should -Be @('Solo Policy')
+                $Partial = Get-DupPartial -Record @($InvErr)
+                $Partial.Count | Should -Be 1
+                [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/Sales/assignmentPolicies/Default'
+                $Partial[0].Exception.Message | Should -Match 'Unread: accessPackages/Sales/assignmentPolicies/Default\. '
+                $Partial[0].Exception.Message |
+                    Should -BeLike '*Causes: 2 live objects share the name accessPackages/Sales/assignmentPolicies/Default (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.*'
+                $Notice = @($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' })
+                $Notice.Count | Should -Be 1
+                $Names = @($Notice[0].MessageData.Names)
+                $Names.Count | Should -Be 1
+                $Names[0].Section | Should -BeExactly 'assignmentPolicies'
+                $Names[0].Name | Should -BeExactly 'Sales/Default'
+                $Names[0].Count | Should -Be 2
+                Assert-DupDocumentValid -Inventory $Inv
+            }
+
+            It 'treats two policy names that differ only in letter case as shared, reporting the name as first read' {
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-1'
+                        New-DupPolicy -Name 'DEFAULT' -Id 'pol-2'
+                    )
+                }
+                $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+                Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+                $Sales = @($Inv.accessPackages | Where-Object displayName -ceq 'Sales')
+                $Sales.Count | Should -Be 1
+                $null -ne $Sales[0].PSObject.Properties['assignmentPolicies'] | Should -BeTrue
+                @($Sales[0].assignmentPolicies).Count | Should -Be 0 -Because 'both spellings of the shared name are left out'
+                $Partial = Get-DupPartial -Record @($InvErr)
+                $Partial.Count | Should -Be 1
+                [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/Sales/assignmentPolicies/Default'
+                $Names = @((@($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }))[0].MessageData.Names)
+                $Names.Count | Should -Be 1
+                $Names[0].Name | Should -BeExactly 'Sales/Default'
+                $Names[0].Count | Should -Be 2
+                Assert-DupDocumentValid -Inventory $Inv
+            }
+
+            It 'counts three policies of one name once, under the spelling of the first one read' {
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'DEFAULT' -Id 'pol-1'
+                        New-DupPolicy -Name 'Default' -Id 'pol-2'
+                        New-DupPolicy -Name 'default' -Id 'pol-3'
+                    )
+                }
+                $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+                @(@($Inv.accessPackages | Where-Object displayName -ceq 'Sales')[0].assignmentPolicies).Count | Should -Be 0
+                $Partial = Get-DupPartial -Record @($InvErr)
+                $Partial.Count | Should -Be 1
+                [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/Sales/assignmentPolicies/DEFAULT'
+                $Partial[0].Exception.Message | Should -BeLike '*Causes: 3 live objects share the name accessPackages/Sales/assignmentPolicies/DEFAULT *'
+                $Names = @((@($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }))[0].MessageData.Names)
+                $Names.Count | Should -Be 1
+                $Names[0].Name | Should -BeExactly 'Sales/DEFAULT'
+                $Names[0].Count | Should -Be 3
+            }
+
+            It 'writes every policy of a unique name as before and reports nothing' {
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-1'
+                        New-DupPolicy -Name 'Premium' -Id 'pol-2'
+                    )
+                }
+                $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+                Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+                $Sales = @($Inv.accessPackages | Where-Object displayName -ceq 'Sales')
+                @($Sales[0].assignmentPolicies | ForEach-Object { $_.displayName }) | Should -Be @('Default', 'Premium')
+                (Get-DupPartial -Record @($InvErr)).Count | Should -Be 0
+                @($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }).Count | Should -Be 0
+                Assert-DupDocumentValid -Inventory $Inv
+            }
+
+            It 'counts the policies of each package alone: a name two packages carry once each is not shared' {
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-1'
+                        New-DupPolicy -Name 'Extra' -Id 'pol-2'
+                    )
+                    'ap-2' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-3'
+                        New-DupPolicy -Name 'default' -Id 'pol-4'
+                    )
+                }
+                $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+                Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 2 -Exactly
+                $Sales = @($Inv.accessPackages | Where-Object displayName -ceq 'Sales')
+                $Support = @($Inv.accessPackages | Where-Object displayName -ceq 'Support')
+                @($Sales[0].assignmentPolicies | ForEach-Object { $_.displayName }) | Should -Be @('Default', 'Extra')
+                @($Support[0].assignmentPolicies).Count | Should -Be 0
+                $Partial = Get-DupPartial -Record @($InvErr)
+                $Partial.Count | Should -Be 1
+                [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/Support/assignmentPolicies/Default'
+                $Names = @((@($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }))[0].MessageData.Names)
+                $Names.Count | Should -Be 1
+                $Names[0].Name | Should -BeExactly 'Support/Default'
+                Assert-DupDocumentValid -Inventory $Inv
+            }
+
+            It 'states each colliding policy name once on the verbose stream' {
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-1'
+                        New-DupPolicy -Name 'default' -Id 'pol-2'
+                    )
+                }
+                $Err = $null
+                $Stream = @(Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable Err -Verbose 4>&1)
+                $Said = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+                $Cause = 'Get-OERInventory: 2 live objects share the name accessPackages/Sales/assignmentPolicies/Default (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.'
+                @($Said | Where-Object { $_ -ceq $Cause }).Count | Should -Be 1 -Because 'one cause line per colliding name, never one per policy'
+                (Get-DupPartial -Record @($Err)).Count | Should -Be 1 -Because 'the run reached the partial the verbose line belongs to'
+            }
+
+            It 'hands a policy name over in the same information record as a name of another section, the policy first' {
+                $script:DupCatalogs += [PSCustomObject]@{ Id = 'cat-2'; DisplayName = 'core'; Description = 'two' }
+                $script:DupAccessPackages['cat-2'] = @()
+                $script:DupAssignmentPolicies = @{
+                    'ap-1' = @(
+                        New-DupPolicy -Name 'Default' -Id 'pol-1'
+                        New-DupPolicy -Name 'Default' -Id 'pol-2'
+                    )
+                }
+                $Stream = @(Get-OERInventory -Include Catalogs, AccessPackages -ErrorAction SilentlyContinue -InformationAction Continue 6>&1)
+                $Records = @($Stream | Where-Object { $_ -is [System.Management.Automation.InformationRecord] -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' })
+                $Records.Count | Should -Be 1 -Because 'one record carries every name, whatever its section'
+                (@($Records[0].MessageData.Names) | ForEach-Object { "$($_.Section)|$($_.Name)|$($_.Count)" }) -join ';' |
+                    Should -BeExactly 'assignmentPolicies|Sales/Default|2;catalogs|Core|2'
+            }
+
+            It 'names assignment policies of one access package in the help' {
+                $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
+                $Help | Should -Match ([regex]::Escape('access packages of one catalog, or assignment policies of one access package whose names match, without regard to letter case, are left out of the document -- all of them -- and each such name is reported through the InventoryPartial error'))
+                $Help | Should -Match ([regex]::Escape('leaving an assignment policy out removes nothing either, because the apply engine never removes an assignment policy.'))
+            }
         }
 
         It 'leaves out two access reviews that share a name without regard to letter case' {

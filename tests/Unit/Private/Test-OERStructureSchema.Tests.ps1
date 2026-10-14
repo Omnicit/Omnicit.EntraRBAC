@@ -4220,8 +4220,10 @@ Describe 'Test-OERStructureSchema renames of assignment policies (BL-128, Sprint
     # Sprint 11 step 4b: the assignment policies of an access package are renamed through the document like
     # the other kinds -- the object found under previousDisplayName is renamed, with the groups' rules. The
     # step 3 Error ("not supported yet") is gone. A policy is matched by name inside its package, so the
-    # duplicate check runs per package (Ruling P4): a collision between two claims of one package is an Error
-    # only when at least one of the two is a previousDisplayName, and two equal displayNames stay unreported.
+    # duplicate check runs per package (Ruling P4): a collision between two claims of one package is an Error.
+    # Step 5 (BL-131) dropped the step 4b exception that left two equal displayNames unreported, so two
+    # policies of one name are an Error whatever kind the two claims are, and the same name in two packages
+    # is not.
     # Rule 14 has a policy half: a review naming the policy by the previous name of a rename is warned.
     BeforeDiscovery {
         $script:PolicyInvalidCase = @(
@@ -4380,31 +4382,68 @@ Describe 'Test-OERStructureSchema renames of assignment policies (BL-128, Sprint
             $Errs[0].Message | Should -Match ([regex]::Escape(" as accessPackages[1].assignmentPolicies[0] ("))
         }
 
-        It 'does not report two policies that declare the same displayName' {
+        It 'refuses two policies that declare the same displayName: <Label> (BL-131)' -ForEach @(
+            @{ Label = 'in the same letter case'; Second = 'Same'; Written = 'Same' }
+            @{ Label = 'in another letter case'; Second = 'SAME'; Written = 'SAME' }
+        ) {
             $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
                     (New-PolicyItem -Name 'Same')
+                    (New-PolicyItem -Name $Second)
+                ))
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Section | Should -BeExactly 'accessPackages'
+            $Errs[0].Item | Should -BeExactly 'ap-x'
+            # The Error stands at the LATER entry and names the earlier one by its position in the package.
+            $Errs[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[1]'
+            $Errs[0].Message | Should -BeExactly ("accessPackages[0].assignmentPolicies[1] declares the same display name '$Written' as accessPackages[0].assignmentPolicies[0] (compared without regard to letter case). " +
+                "$script:Consequence Keep one entry.")
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'names the first of three policies of one displayName at each later one, and nothing else' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
+                    (New-PolicyItem -Name 'Same')
+                    (New-PolicyItem -Name 'Other')
+                    (New-PolicyItem -Name 'same')
                     (New-PolicyItem -Name 'SAME')
+                ))
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 2
+            $Errs[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[2]'
+            $Errs[1].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[3]'
+            foreach ($Err in $Errs) { $Err.Message | Should -Match ([regex]::Escape(" as accessPackages[0].assignmentPolicies[0] (")) }
+        }
+
+        It 'accepts policies of distinct displayNames in one package' {
+            $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
+                    (New-PolicyItem -Name 'Alpha')
+                    (New-PolicyItem -Name 'Beta')
+                    (New-PolicyItem -Name 'Gamma')
                 ))
             @($V.Errors) | Should -BeNullOrEmpty
             $V.Valid | Should -BeTrue
         }
 
         It 'reports a previousDisplayName that meets two equal displayNames against the first of them' {
-            # The positive control of the test above: the same pair, plus a claim that is a previousDisplayName.
+            # Both equal displayNames are an Error of their own now; the previousDisplayName claim that meets
+            # them is a third, reported against the first claim of the name.
             $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
                     (New-PolicyItem -Name 'Same')
                     (New-PolicyItem -Name 'SAME')
                     (New-PolicyItem -Name 'Other' -PrevJson '"same"')
                 ))
             $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
-            $Errs.Count | Should -Be 1
-            $Errs[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[2].previousDisplayName'
-            $Errs[0].Message | Should -Match ([regex]::Escape(" as accessPackages[0].assignmentPolicies[0] ("))
+            $Errs.Count | Should -Be 2
+            $Errs[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[1]'
+            $Errs[1].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[2].previousDisplayName'
+            $Errs[1].Message | Should -Match ([regex]::Escape(" as accessPackages[0].assignmentPolicies[0] ("))
         }
 
         It 'reports a displayName that meets a previousDisplayName even when another displayName claimed the name first' {
             # Policy 1 claims 'a' as a previous name, behind policy 0's displayName 'A' (the first claim of the
-            # name). Policy 2's displayName 'A' then meets that previous name, whatever the first claim was.
+            # name). Policy 2's displayName 'A' then meets the first claim, as a repeated name always does;
+            # both Errors name policy 0.
             $V = Invoke-PolicyValidation -Doc (New-PolicyDoc -PolicyJson @(
                     (New-PolicyItem -Name 'A')
                     (New-PolicyItem -Name 'B' -PrevJson '"a"')
@@ -4452,15 +4491,21 @@ Describe 'Test-OERStructureSchema renames of assignment policies (BL-128, Sprint
             $V.Valid | Should -BeTrue
         }
 
-        It 'does not let a previous name claimed in one package make two equal displayNames of another package an Error' {
-            # Package ap-a claims 'Same' as a previous name; package ap-b merely declares 'Same' twice, which
-            # is not reported (Ruling P4) -- ap-a's claim is another package's business.
+        It 'does not let a previous name or a displayName claimed in one package reach another package' {
+            # Package ap-a claims 'Same' as a previous name and package ap-c declares 'Same' once; package ap-b
+            # declares 'Same' twice, which is its own Error. ap-a's and ap-c's claims are other packages'
+            # business: the one Error is ap-b's, and it names ap-b's first policy.
             $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ ' +
                 '{ "displayName": "ap-a", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Same" } ] }, ' +
-                '{ "displayName": "ap-b", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "Same" }, { "displayName": "SAME" } ] } ] }'
+                '{ "displayName": "ap-b", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "Same" }, { "displayName": "SAME" } ] }, ' +
+                '{ "displayName": "ap-c", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "same" } ] } ] }'
             $V = Invoke-PolicyValidation -Doc ($Doc | ConvertFrom-Json)
-            @($V.Errors) | Should -BeNullOrEmpty
-            $V.Valid | Should -BeTrue
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Item | Should -BeExactly 'ap-b'
+            $Errs[0].Path | Should -BeExactly 'accessPackages[1].assignmentPolicies[1]'
+            $Errs[0].Message | Should -Match ([regex]::Escape(" as accessPackages[1].assignmentPolicies[0] ("))
+            $V.Valid | Should -BeFalse
         }
     }
 

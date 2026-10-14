@@ -208,12 +208,14 @@ function Test-OERStructureSchema {
     catalog together with displayName, and catalog together with a
     declared previousDisplayName (the same previous name in another catalog is another package, and a
     package that declares no catalog claims nothing); for the assignmentPolicies of one access package
-    (Sprint 11 step 4b, Ruling P4), displayName together with a declared previousDisplayName, compared
-    among the policies of that package only and the same way, except that two policies declaring the same
-    displayName are not reported: a collision is an Error through the same helper, at the later claim's
-    path (accessPackages[i].assignmentPolicies[k], or its previousDisplayName) naming the earlier policy
-    as accessPackages[i].assignmentPolicies[n], only when at least one of the two claims is a
-    previousDisplayName; for roleAssignments, scope, role and principal; for
+    (Sprint 11 step 4b, Ruling P4; Sprint 11 step 5), displayName together with a declared
+    previousDisplayName, compared among the policies of that package only and the same way, so two
+    policies declaring the same displayName are reported too: a collision is an Error through the same
+    helper, at the later claim's path (accessPackages[i].assignmentPolicies[k], or its
+    previousDisplayName) naming the earlier policy as accessPackages[i].assignmentPolicies[n], whether
+    the two claims are two displayNames, a displayName and a previousDisplayName or two
+    previousDisplayNames (the same name in two packages is two policies, and is not reported); for
+    roleAssignments, scope, role and principal; for
     roleManagementPolicies, scope and role; for directoryRoleManagementPolicies, role. A scope is
     compared in the canonical form ConvertTo-OERCanonicalScope owns, a pure helper that the apply
     engine shares, so sub: and subscription: with an id, and mg:, are spellings of the scope's path;
@@ -1149,14 +1151,14 @@ function Test-OERStructureSchema {
                         $Pols = @($PolsVal)
                         # Sprint 11 step 4b: the policies of one package are matched by name within it, and a
                         # policy renamed through the document is found under its previousDisplayName too, so
-                        # both names are claims of the package. Two claims that collide are an Error only
-                        # when one of them is a previousDisplayName (Ruling P4): two equal displayNames
-                        # stay unreported, as they always were. $PolSeen holds the first claim of a name;
-                        # $PolPrevClaimed every name that some previousDisplayName claimed, whether or not
-                        # it was the first, so a displayName that collides with a LATER-recorded previous
-                        # name is still caught.
+                        # both names are claims of the package. Two claims of one name that collide are an
+                        # Error through the same helper as the other sections (Ruling P4). Sprint 11 step 5
+                        # (BL-131) dropped the exception of step 4b that left two equal displayNames
+                        # unreported: the apply engine refuses an ambiguous policy name, and the export no
+                        # longer writes two policies of one name. $PolSeen holds the first claim of a name,
+                        # displayName or previousDisplayName alike, so a claim that meets a LATER-recorded
+                        # one is caught at the later claim.
                         $PolSeen = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                        $PolPrevClaimed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                         $PolConsequence = 'Both entries reconcile one assignment policy of the access package, so each would undo the ' +
                             'other''s settings.'
                         for ($J = 0; $J -lt $Pols.Count; $J++) {
@@ -1168,22 +1170,16 @@ function Test-OERStructureSchema {
                                     -Message "'displayName' is required at $PolPath."
                             } else {
                                 $PolName = [string]$Pol.displayName
-                                # A displayName that meets another displayName alone is left unreported
-                                # (widening that is out of scope), and the first claim stays recorded.
-                                $PolNamesCollideAlone = $PolSeen.ContainsKey($PolName) -and -not $PolPrevClaimed.Contains($PolName)
-                                if (-not $PolNamesCollideAlone) {
-                                    Add-DuplicateEntryFinding -Seen $PolSeen -Key $PolName -Index $J `
-                                        -Section 'accessPackages' -Item $APItem -Path $PolPath `
-                                        -What "display name '$PolName'" `
-                                        -Consequence $PolConsequence -EarlierCollection "$APPath.assignmentPolicies"
-                                }
+                                Add-DuplicateEntryFinding -Seen $PolSeen -Key $PolName -Index $J `
+                                    -Section 'accessPackages' -Item $APItem -Path $PolPath `
+                                    -What "display name '$PolName'" `
+                                    -Consequence $PolConsequence -EarlierCollection "$APPath.assignmentPolicies"
                             }
                             $PolPrev = Test-SupportedRename -Node $Pol -Section 'accessPackages' -Item $APItem -Path $PolPath `
                                 -SetCommand 'Set-OERAccessPackageAssignmentPolicy' -NameParameter '-DisplayName' `
                                 -NameQualifier ' together with another property' `
                                 -CaseOnlyClause 'a case-only rename is applied only together with another changed field of the policy -- or use'
                             if ($PolPrev) {
-                                $null = $PolPrevClaimed.Add($PolPrev)
                                 Add-DuplicateEntryFinding -Seen $PolSeen -Key $PolPrev -Index $J `
                                     -Section 'accessPackages' -Item $APItem -Path "$PolPath.previousDisplayName" `
                                     -What "display name '$PolPrev'" `

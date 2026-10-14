@@ -202,19 +202,23 @@ function Get-OERInventory {
     reported as partial.
     The export never writes two entries that the validator would refuse as duplicates, so a document
     it emits is not refused by Invoke-OERStructure for that reason. Live groups, administrative
-    units, catalogs, access reviews, or access packages of one catalog whose names match, without
-    regard to letter case, are left out of the document -- all of them -- and each such name is
-    reported through the InventoryPartial error, since the apply engine refuses an ambiguous name and
-    neither entry could be applied; leaving a top-level entry out removes nothing, because -Prune acts
-    on child collections only. A group's name is counted among every group in the tenant -- one extra
-    paged listing of every group's id and display name, made once when the Groups section read at
-    least one group -- so a security group that shares its name with a Microsoft 365 group or a
-    distribution group, which the default filter never reads, is left out too; the reported cause
-    names how many live objects carry the name. When that listing fails, groupNames is reported
-    unread through the InventoryPartial error, with its cause, and the names are counted among the
-    groups read. Each name left out is also handed over in one information record tagged
-    Omnicit.EntraRBAC.SharedName, whose Names list carries the Section, Name and Count of each; under
-    the default $InformationPreference the record is not displayed. Role assignments whose scope
+    units, catalogs, access reviews, access packages of one catalog, or assignment policies of one
+    access package whose names match, without regard to letter case, are left out of the document --
+    all of them -- and each such name is reported through the InventoryPartial error, since the apply
+    engine refuses an ambiguous name and neither entry could be applied; leaving a top-level entry out
+    removes nothing, because -Prune acts on child collections only, and leaving an assignment policy
+    out removes nothing either, because the apply engine never removes an assignment policy. A
+    policy name is reported as accessPackages/ followed by the package name, /assignmentPolicies/ and
+    the policy name, and the policies of two different packages never count against each other. A
+    group's name is counted among every group in the tenant -- one extra paged listing of every
+    group's id and display name, made once when the Groups section read at least one group -- so a
+    security group that shares its name with a Microsoft 365 group or a distribution group, which the
+    default filter never reads, is left out too; the reported cause names how many live objects carry
+    the name. When that listing fails, groupNames is reported unread through the InventoryPartial
+    error, with its cause, and the names are counted among the groups read. Each name left out is
+    also handed over in one information record tagged Omnicit.EntraRBAC.SharedName, whose Names list
+    carries the Section, Name and Count of each; under the default $InformationPreference the record
+    is not displayed. Role assignments whose scope
     (compared in its canonical form), role and principal collide are written with the principal's
     object id and, when the principal is already an id, with the role's full definition id;
     principalType is then written for a user, group or service principal. A role management policy
@@ -426,10 +430,16 @@ function Get-OERInventory {
         # so a group whose name only a group outside the listing shares is left out too. The other
         # sections pass nothing and are counted over their entries alone.
         #
+        # -UnreadOf (BL-131), when given, builds the unread entry of a name left out from the first entry
+        # that carries it, where the default '<section>/<reported name>' is not the path an operator
+        # reads: the assignment policies of one access package are named
+        # 'accessPackages/<package>/assignmentPolicies/<policy>' (the section of the record and the
+        # README stays 'assignmentPolicies', the reported name '<package>/<policy>').
+        #
         # Each name left out is also recorded, with its section and count, in $SharedNameList, which
         # the information record tagged Omnicit.EntraRBAC.SharedName hands over below.
         function Select-UniqueNamedEntry {
-            param([object[]]$Entry, [string]$Section, [scriptblock]$KeyOf, [scriptblock]$NameOf, [System.Collections.IDictionary]$ExternalIds)
+            param([object[]]$Entry, [string]$Section, [scriptblock]$KeyOf, [scriptblock]$NameOf, [scriptblock]$UnreadOf, [System.Collections.IDictionary]$ExternalIds)
             $Count = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($E in $Entry) {
                 $K = [string](& $KeyOf $E)
@@ -449,7 +459,7 @@ function Get-OERInventory {
                 if ($Count[$K] -gt 1) {
                     if ($Reported.Add($K)) {
                         $ReportedName = if ($NameOf) { [string](& $NameOf $E) } else { $K }
-                        $Unread = "$Section/$ReportedName"
+                        $Unread = if ($UnreadOf) { [string](& $UnreadOf $E) } else { "$Section/$ReportedName" }
                         $UnreadCollections.Add($Unread)
                         $NameCause = Get-OERSharedNameCause -Path $Unread -Count $Count[$K]
                         # Every cause is written to the verbose stream as it is seen, like at every other
@@ -1006,7 +1016,17 @@ function Get-OERInventory {
                         $UnreadCollections.Add("accessPackages/$($Ap.DisplayName)/assignmentPolicies")
                         $ApPolicies = @()
                     }
-                    $Proj.assignmentPolicies = @(foreach ($P in $ApPolicies) {
+                    # BL-131: the policies of ONE package are matched by name inside it, and the validator
+                    # refuses two entries of one name (Sprint 11 step 5), so a name that two policies of
+                    # the package carry, without regard to letter case, is written for none of them and
+                    # reported once, with its count, as accessPackages/<package>/assignmentPolicies/<policy>.
+                    # Leaving a policy out deletes nothing: Sync-OERStructureAccessPackage never removes an
+                    # assignment policy. The policies of ANOTHER package never count (the call is per package).
+                    $ApUniquePolicies = @(Select-UniqueNamedEntry -Entry $ApPolicies -Section 'assignmentPolicies' `
+                            -KeyOf { param($E) $E.DisplayName } `
+                            -NameOf { param($E) "$($Ap.DisplayName)/$($E.DisplayName)" } `
+                            -UnreadOf { param($E) "accessPackages/$($Ap.DisplayName)/assignmentPolicies/$($E.DisplayName)" })
+                    $Proj.assignmentPolicies = @(foreach ($P in $ApUniquePolicies) {
                         $PolProj = [ordered]@{ displayName = $P.DisplayName }
                         if ($P.Description) { $PolProj.description = $P.Description }
                         # requestorScope: always emit scope; emit users/groups only when non-empty.

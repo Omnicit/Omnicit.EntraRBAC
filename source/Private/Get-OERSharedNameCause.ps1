@@ -9,12 +9,14 @@ function Get-OERSharedNameCause {
     refuses as a duplicate, and the apply engine refuses an ambiguous name anyway, so none of them
     could be applied. The sentence names how many live objects carry the name. Get-OERInventory
     reports it through its Select-UniqueNamedEntry, for the groups, administrative units, catalogs,
-    access packages and access reviews it writes, and Get-OERInventoryGroup reports it for the groups
-    under -ExcludeSharedName, which Export-OERInventory uses.
+    access packages, the assignment policies of one access package and access reviews it writes, and
+    Get-OERInventoryGroup reports it for the groups under -ExcludeSharedName, which
+    Export-OERInventory uses.
 
     .PARAMETER Path
     The unread entry the text names, as the partial signal spells it: the section and the name
-    ('groups/Admins'), or for an access package the catalog and the name.
+    ('groups/Admins'), for an access package the catalog and the name, or for an assignment policy
+    the package and the policy ('accessPackages/Sales/assignmentPolicies/Default').
 
     .PARAMETER Count
     How many live objects carry the name, as the caller counted them. For a group that is the larger
