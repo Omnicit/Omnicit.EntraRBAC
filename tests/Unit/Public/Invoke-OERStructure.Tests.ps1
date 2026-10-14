@@ -3484,6 +3484,70 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0
     }
 
+    # The access package handler's own undecided marks (R12, D4): its entry stops before it decides a
+    # rename, so the review that names the new name is refused with the handler's reason, and nothing is
+    # read or written for it. A review that names the package by its OBJECT ID reads the policy's mark
+    # under the package id, which the handler registers as soon as it has found the package (Sprint 11
+    # step 4b, Fix B); before that it looked the policy's new name up by name within the package.
+    It 'refuses the review of <Case> when the access package entry stops before it decides the rename (<Mode>)' -ForEach @(
+        foreach ($Mode in @('a real run', 'a plan under -WhatIf')) {
+            @{ Case = 'a package by its new name'; Mode = $Mode; Doc = 'package'
+                Expected = @(
+                    "accessPackages|AP-New|Failed|failed to look up access packages in catalog 'CAT-1': transient Graph failure; the access package was NOT created"
+                    ("accessReviews|Q3 AP review|Failed|access package 'AP-New' was not reconciled in this run: its rename from 'AP-Old' was refused " +
+                        "(the accessPackages entry did not reach a decision in this run; see that entry's rows), so the access package this access " +
+                        'review reviews cannot be identified; nothing was created, read or written for it')
+                )
+            }
+            @{ Case = 'a policy by its new name, the package named by its object id'; Mode = $Mode; Doc = 'policy'
+                Expected = @(
+                    'accessPackages|AP-1|Unchanged|access package properties match'
+                    "accessPackages|AP-1|Failed|failed to read the current assignment policies of access package 'AP-1': transient policies failure; no assignmentPolicy was created or updated"
+                    ("accessReviews|Q3 AP review|Failed|assignment policy 'POL-New' of access package 'aaaa1111-0000-0000-0000-000000000031' was not " +
+                        "reconciled in this run: its rename from 'POL-Old' was refused (the accessPackages entry did not reach a decision in this run; " +
+                        "see that entry's rows), so the assignment policy this access review reviews cannot be identified; nothing was created, read or " +
+                        'written for it')
+                )
+            }
+        }
+    ) {
+        if ($Doc -eq 'package') {
+            # The catalog's package list cannot be read: the entry stops before either name is matched.
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage { throw 'transient Graph failure' } -ParameterFilter { $Catalog }
+            $Json = $script:RvPkgDoc
+        } else {
+            # The package is found by its name; its policy list cannot be read, so the policy's rename is
+            # never decided. The review names the package by its object id.
+            $script:RvState.Packages = @([PSCustomObject]@{ Id = $script:RvPkgId; DisplayName = 'AP-1' })
+            $script:RvState.Policies = @(New-RvPolicy -Id $script:RvPolOldId -DisplayName 'POL-Old')
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { throw 'transient policies failure' } -ParameterFilter {
+                $AccessPackage -eq 'aaaa1111-0000-0000-0000-000000000031'
+            }
+            $Json = New-RvPolDoc -ReviewPackage $script:RvPkgId
+        }
+        $Errs = $null
+        $Params = @{ Json = $Json; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Errs'; WarningAction = 'SilentlyContinue' }
+        if ($Mode -eq 'a plan under -WhatIf') { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+        $Rows = @(Invoke-OERStructure @Params)
+
+        @(ConvertTo-RvRowLine -Row $Rows) | Should -Be $Expected
+        # The review's row publishes no record of its own; the one record the engine published is the
+        # package entry's failed read (-ErrorVariable also holds the inner layers of the mock's throw).
+        $Rows[-1].Error | Should -BeNullOrEmpty
+        $Own = @($Errs | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId.EndsWith(',Invoke-OERStructure') })
+        $Own.Count | Should -Be 1
+        $Own[0].Exception.Message | Should -BeExactly $Rows[-2].Error.Exception.Message
+        # Nothing was read or written for the review: no definition read, no name lookup of its package or
+        # policy (the policy's new name would find another policy here), no write.
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackage -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy -Times 0
+    }
+
     It 'still updates a review by name when -Include leaves AccessPackages out and nothing it names is renamed (control)' {
         $Doc = ('{ "version": "1.0", ' +
             '"accessPackages": [ { "displayName": "AP-1", "catalog": "CAT-1", "resourceRoles": [], "assignmentPolicies": [ { "displayName": "Standard" } ] } ], ' +
