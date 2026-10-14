@@ -1287,6 +1287,15 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
                 $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
             }
+            # BL-142: a name read is written only when the apply engine's own lookup of it finds this
+            # object and no other, so the two lookups are answered too: one access package in the
+            # tenant carries 'AP-Sales', and one policy of ap-1 carries 'Default'.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'ap-1'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'pol-1'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'ap-1'"
+            }
         }
 
         It 'projects a round-trippable access review (names, reviewers, recurrence)' {
@@ -1807,6 +1816,13 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
                 $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
             }
+            # BL-142: the apply engine's own lookups of the two names, each finding this object alone.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'ap-1'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'pol-1'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'ap-1'"
+            }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
                 @{
                     '00000000-0000-0000-0000-000000000049' = 'anna@contoso.com'
@@ -1972,6 +1988,15 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Get-OERAccessPackage { }
             Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+            # BL-142: a name read is written only when the apply engine's own lookup of it finds this
+            # object and no other. Answered here as that: one access package carries 'AP-Sales', and one
+            # policy of the package carries 'Default'. The Context below tests the lookups themselves.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq '11111111-1111-1111-1111-111111111111'"
+            }
         }
 
         It 'writes the names the by-id reads return, each read declaring its own not-found codes' {
@@ -2114,6 +2139,228 @@ Describe 'Get-OERInventory' {
             $Causes = ($Partial[0].Exception.Message -split 'Causes: ')[1]
             @([regex]::Matches($Causes, "Could not read an access review's access package name")).Count | Should -Be 1
             @([regex]::Matches($Causes, "Could not read an access review's assignment policy name")).Count | Should -Be 1
+        }
+
+        It 'sends no uniqueness lookup for a reference already written by id' {
+            # Only a NAME is checked: the id of a deleted package or policy is written as it is.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { & $script:NewArMarker 'AccessPackageNotFound' } -ParameterFilter { $Uri -eq $script:ArApUri }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { & $script:NewArMarker 'PolicyNotFound' } -ParameterFilter { $Uri -eq $script:ArPolUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews)[0].accessPackage | Should -Be $script:ArApId
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*$filter=*' }
+            @($InvErr).Count | Should -Be 0
+        }
+    }
+
+    Context 'access review references are written by id when the apply engine could not resolve the name (BL-142)' {
+        # The apply engine resolves a review's accessPackage name in the whole tenant
+        # (Resolve-OERAccessPackageId) and its assignmentPolicy name among the policies of the package
+        # (Resolve-OERAssignmentPolicyId), and refuses a name either finds more than once. The export
+        # repeats those two lookups, with the same URIs, and keeps a name only when the lookup finds this
+        # object and no other; otherwise it writes the id, which the engine takes as the object itself.
+        # No id below is version-4 shaped.
+        BeforeAll {
+            $script:UqApId = 'aaaa1111-0000-0000-0000-000000000041'
+            $script:UqPolId = 'bbbb2222-0000-0000-0000-000000000041'
+            $script:UqOtherApId = 'aaaa1111-0000-0000-0000-000000000042'
+            $script:UqOtherPolId = 'bbbb2222-0000-0000-0000-000000000042'
+            # The engine's lookups: the access package name tenant-wide, the policies of the package.
+            $script:UqApLookupUri = "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            $script:UqPolLookupUri = "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'aaaa1111-0000-0000-0000-000000000041'"
+            function script:New-UqReview {
+                param([string]$Name, [string]$AccessPackageId = $script:UqApId, [string]$AssignmentPolicyId = $script:UqPolId)
+                [PSCustomObject]@{
+                    Id = "ar-$Name"; DisplayName = $Name; AccessPackageId = $AccessPackageId; AssignmentPolicyId = $AssignmentPolicyId
+                    Reviewers = @(); Recurrence = $null; DurationInDays = 14
+                }
+            }
+            function script:Get-UqPartial {
+                param([object[]]$Record)
+                @($Record | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            }
+        }
+
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { New-UqReview -Name 'Q3 AP review' }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+            # The by-id name reads: the review's package is AP-Sales and its policy Default.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000041?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'bbbb2222-0000-0000-0000-000000000041'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/bbbb2222-0000-0000-0000-000000000041?$expand=accessPackage'
+            }
+            # The lookups as a tenant where each name is unique answers them.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq $script:UqApLookupUri
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'bbbb2222-0000-0000-0000-000000000041'; displayName = 'Default' }, @{ id = 'bbbb2222-0000-0000-0000-000000000043'; displayName = 'Premium' }) }
+            } -ParameterFilter { $Uri -eq $script:UqPolLookupUri }
+        }
+
+        It 'writes the access package by id when another access package in the tenant carries its name, and keeps the policy name' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' }, @{ id = 'aaaa1111-0000-0000-0000-000000000042'; displayName = 'ap-sales' }) }
+            } -ParameterFilter { $Uri -eq $script:UqApLookupUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -BeExactly $script:UqApId
+            $Ar.assignmentPolicy | Should -BeExactly 'Default'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:UqApLookupUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:UqPolLookupUri }
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0 -Because 'a shared name written by id is applicable, so nothing is reported for it'
+        }
+
+        It 'writes the assignment policy by id when another policy of the package carries its name in another letter case, and keeps the package name' {
+            # The resolver compares with -eq, which ignores letter case, so 'DEFAULT' is the same name.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'bbbb2222-0000-0000-0000-000000000041'; displayName = 'Default' }, @{ id = 'bbbb2222-0000-0000-0000-000000000042'; displayName = 'DEFAULT' }) }
+            } -ParameterFilter { $Uri -eq $script:UqPolLookupUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -BeExactly 'AP-Sales'
+            $Ar.assignmentPolicy | Should -BeExactly $script:UqPolId
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:UqPolLookupUri }
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'writes the id when the lookup finds one object of the name and it is another one' {
+            # The lookup is what the engine would resolve the name to: here another package and another
+            # policy, so the name would not reach the review's own target.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000042'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq $script:UqApLookupUri
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'bbbb2222-0000-0000-0000-000000000042'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq $script:UqPolLookupUri
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -BeExactly $script:UqApId
+            $Ar.assignmentPolicy | Should -BeExactly $script:UqPolId
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'keeps both names when each lookup finds this object alone, comparing the id without regard to letter case' {
+            # The policy listing also holds a policy of another name, which the name filter leaves out.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'AAAA1111-0000-0000-0000-000000000041'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq $script:UqApLookupUri
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -BeExactly 'AP-Sales'
+            $Ar.assignmentPolicy | Should -BeExactly 'Default'
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'looks each name up once per invocation: one package lookup per name and one policy listing per package' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                New-UqReview -Name 'Q3 AP review'
+                New-UqReview -Name 'Q4 AP review'
+                New-UqReview -Name 'Other review' -AccessPackageId 'aaaa1111-0000-0000-0000-000000000042' -AssignmentPolicyId 'bbbb2222-0000-0000-0000-000000000042'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'aaaa1111-0000-0000-0000-000000000042'; displayName = 'AP-Other' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000042?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'bbbb2222-0000-0000-0000-000000000042'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/bbbb2222-0000-0000-0000-000000000042?$expand=accessPackage'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000042'; displayName = 'AP-Other' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Other'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'bbbb2222-0000-0000-0000-000000000042'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'aaaa1111-0000-0000-0000-000000000042'"
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews | ForEach-Object { "$($_.displayName)|$($_.accessPackage)|$($_.assignmentPolicy)" }) | Should -Be @(
+                'Q3 AP review|AP-Sales|Default'
+                'Q4 AP review|AP-Sales|Default'
+                'Other review|AP-Other|Default'
+            )
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:UqApLookupUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:UqPolLookupUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Other'&`$select=id,displayName"
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'aaaa1111-0000-0000-0000-000000000042'"
+            }
+            # The positive control: each review's names were read by id, once per review.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000041?$expand=catalog'
+            }
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'escapes the access package name in the lookup as the resolver does' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = "Lee's AP & Co" } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000041?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'aaaa1111-0000-0000-0000-000000000041'; displayName = "Lee's AP & Co" }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'Lee%27%27s%20AP%20%26%20Co'&`$select=id,displayName"
+            }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews)[0].accessPackage | Should -BeExactly "Lee's AP & Co"
+            @(Get-UqPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'writes the id of every review of the package and reports the check unread once looked up, when the access package lookup fails' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                New-UqReview -Name 'Q3 AP review'
+                New-UqReview -Name 'Q4 AP review'
+            }
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Too many requests (package lookup).'), 'TooManyRequests',
+                    [System.Management.Automation.ErrorCategory]::LimitsExceeded, $null)
+            } -ParameterFilter { $Uri -eq $script:UqApLookupUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews | ForEach-Object { "$($_.displayName)|$($_.accessPackage)|$($_.assignmentPolicy)" }) | Should -Be @(
+                "Q3 AP review|$($script:UqApId)|Default"
+                "Q4 AP review|$($script:UqApId)|Default"
+            )
+            # One failed lookup serves both reviews.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:UqApLookupUri }
+            $Partial = @(Get-UqPartial -Record @($InvErr))
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'accessReviews/Q3 AP review/accessPackage, accessReviews/Q4 AP review/accessPackage'
+            $Causes = ($Partial[0].Exception.Message -split 'Causes: ')[1]
+            @([regex]::Matches($Causes, [regex]::Escape("Could not check whether an access review's access package name is unique: Too many requests (package lookup).")) ).Count |
+                Should -Be 1 -Because 'one cause, stated once for the two reviews it left unread'
+            # The catch was reached (the partial above) and the record it caught was scrubbed.
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'Too many requests (package lookup).'
+            }
+        }
+
+        It 'writes the policy id and reports the check unread when the assignment policy listing fails' {
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Insufficient privileges to complete the operation (policy listing).'), 'Authorization_RequestDenied',
+                    [System.Management.Automation.ErrorCategory]::NotSpecified, $null)
+            } -ParameterFilter { $Uri -eq $script:UqPolLookupUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -BeExactly 'AP-Sales'
+            $Ar.assignmentPolicy | Should -BeExactly $script:UqPolId
+            $Partial = @(Get-UqPartial -Record @($InvErr))
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'accessReviews/Q3 AP review/assignmentPolicy'
+            $Partial[0].Exception.Message | Should -BeLike "*Causes: Could not check whether an access review's assignment policy name is unique: Insufficient privileges to complete the operation (policy listing).*"
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'Insufficient privileges to complete the operation (policy listing).'
+            }
+        }
+
+        It 'states the rule in the help' {
+            $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
+            $Help | Should -Match ([regex]::Escape('So the projection writes a name only when that same lookup finds this access package or assignment policy and no other'))
+            $Help | Should -Match ([regex]::Escape('a name whose uniqueness could not be checked, because the lookup above failed'))
+            $Help | Should -Not -Match ([regex]::Escape('until the entry names it by id'))
         }
     }
 
@@ -2826,6 +3073,13 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
                 $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
             }
+            # BL-142: the apply engine's own lookups of the two names, each finding this object alone.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'ap-1'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'pol-1'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'ap-1'"
+            }
         }
 
         It 'leaves out two groups whose names differ only in letter case, names them in InventoryPartial, and the document validates' {
@@ -2972,6 +3226,58 @@ Describe 'Get-OERInventory' {
             @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @('A/B|C', 'A|B/C')
             (Get-DupPartial -Record @($InvErr)).Count | Should -Be 0
             Assert-DupDocumentValid -Inventory $Inv
+        }
+
+        # BL-39 (Sprint 11 step 5): a catalog whose name another catalog carries is left out, and the apply
+        # engine refuses its name as ambiguous, so a package in it is written with the catalog's object
+        # id, which the engine takes as the catalog itself. The ids are the GUIDs Graph gives a catalog.
+        It 'writes a package in a catalog whose name another catalog carries with the catalog''s id, and a package in a unique catalog with its name (BL-39)' {
+            $script:DupCatalogs = @(
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000001'; DisplayName = 'Core'; Description = 'one' }
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000002'; DisplayName = 'core'; Description = 'two' }
+                [PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000003'; DisplayName = 'Solo Catalog'; Description = 'three' }
+            )
+            # A package of one name in each of the two catalogs that share a name: two packages, two keys.
+            $script:DupAccessPackages = @{
+                'eeee5555-0000-0000-0000-000000000001' = @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'Sales'; Description = $null })
+                'eeee5555-0000-0000-0000-000000000002' = @([PSCustomObject]@{ Id = 'ap-2'; DisplayName = 'Sales'; Description = $null })
+                'eeee5555-0000-0000-0000-000000000003' = @([PSCustomObject]@{ Id = 'ap-3'; DisplayName = 'Edge'; Description = $null })
+            }
+            $Inv = Get-OERInventory -Include Catalogs, AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr -InformationVariable Info
+
+            @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @(
+                'eeee5555-0000-0000-0000-000000000001|Sales'
+                'eeee5555-0000-0000-0000-000000000002|Sales'
+                'Solo Catalog|Edge'
+            )
+            @($Inv.catalogs | ForEach-Object { $_.displayName }) | Should -Be @('Solo Catalog')
+            # The catalogs are the only names left out: the two packages named Sales do not collide.
+            $Partial = Get-DupPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'catalogs/Core'
+            $Names = @((@($Info | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.SharedName' }))[0].MessageData.Names)
+            @($Names | ForEach-Object { "$($_.Section)|$($_.Name)|$($_.Count)" }) | Should -Be @('catalogs|Core|2')
+            # The validator warns that the catalog id is not declared in the document, and refuses nothing.
+            $Validation = Get-DupValidation -Inventory $Inv
+            Get-DupValidationError -Validation $Validation | Should -BeNullOrEmpty
+            $Validation.Valid | Should -BeTrue
+            @($Validation.Errors | Where-Object { $_.Severity -eq 'Warning' } | ForEach-Object { $_.Message }) | Should -Be @(
+                "Catalog 'eeee5555-0000-0000-0000-000000000001' is not declared in this document. It may already exist in the tenant."
+                "Catalog 'eeee5555-0000-0000-0000-000000000002' is not declared in this document. It may already exist in the tenant."
+            )
+        }
+
+        It 'counts catalog names over the catalogs read, so with -Catalog a package keeps its catalog''s name (BL-39, documented limit)' {
+            # -Catalog reads one catalog, so the export cannot see a catalog elsewhere in the tenant that
+            # carries the same name.
+            $script:DupCatalogs = @([PSCustomObject]@{ Id = 'eeee5555-0000-0000-0000-000000000001'; DisplayName = 'Core'; Description = 'one' })
+            $script:DupAccessPackages = @{
+                'eeee5555-0000-0000-0000-000000000001' = @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'Sales'; Description = $null })
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -Catalog 'eeee5555-0000-0000-0000-000000000001' -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly -ParameterFilter { $Id -eq 'eeee5555-0000-0000-0000-000000000001' }
+            @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @('Core|Sales')
+            (Get-DupPartial -Record @($InvErr)).Count | Should -Be 0
         }
 
         # BL-131 (Sprint 11 step 5): two assignment policies of ONE access package that carry one name,
@@ -3748,6 +4054,13 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
                 $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
             }
+            # BL-142: the apply engine's own lookups of the two names, each finding this object alone.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'ap-1'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'pol-1'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'ap-1'"
+            }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $Inv = Get-OERInventory -Include AccessReviews
             $Doc = $Inv | ConvertTo-Json -Depth 12 | ConvertFrom-Json
@@ -3781,6 +4094,13 @@ Describe 'Get-OERInventory' {
             }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
                 $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
+            }
+            # BL-142: the apply engine's own lookups of the two names, each finding this object alone.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'ap-1'; displayName = 'AP-Sales' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq 'AP-Sales'&`$select=id,displayName"
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @(@{ id = 'pol-1'; displayName = 'Default' }) } } -ParameterFilter {
+                $Uri -eq "v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq 'ap-1'"
             }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $Inv = Get-OERInventory -Include AccessReviews

@@ -121,11 +121,15 @@ function Get-OERInventory {
     review is matched by displayName and created when it does not exist; when it does, it is
     reconciled field by field only if it reviews the accessPackage and assignmentPolicy the entry
     declares, and is otherwise refused, since the scope of a review cannot be changed -- see the
-    Invoke-OERStructure help). The projection writes accessPackage and assignmentPolicy as names, and
-    the apply engine resolves a name as creation resolves it, so when the access package name is not
-    unique in the tenant, or the assignment policy name is not unique in its access package,
-    re-applying the entry is refused with the lookup's AmbiguousName error, and nothing is written,
-    until the entry names it by id. A multi-stage review (StageCount greater than zero) is skipped
+    Invoke-OERStructure help). The apply engine resolves an accessPackage or assignmentPolicy name as
+    creation resolves it -- the access package name in the whole tenant, the assignment policy name
+    among the policies of its access package -- and refuses a name that lookup finds more than once
+    with the lookup's AmbiguousName error. So the projection writes a name only when that same lookup
+    finds this access package or assignment policy and no other; an access package name another
+    access package in the tenant carries, or an assignment policy name another policy of the same
+    access package carries, is written by id instead, so the entry applies. The check costs one
+    request per access package name and one per access package, however many reviews share them.
+    A multi-stage review (StageCount greater than zero) is skipped
     with a warning instead of being exported, because its reviewers live in stageSettings -- which
     the apply schema does not model -- and the top-level reviewers collection Graph returns for it is
     empty by construction, which would otherwise be misreported as a configured self review. A
@@ -142,12 +146,15 @@ function Get-OERInventory {
     sentinel; a positive value above 365 is dropped with a warning, because that is real
     configuration the schema cannot carry.
     A review's accessPackage and assignmentPolicy are written under their display names, read by
-    id. A package or policy that no longer exists is written by its id: that is a fact about the
-    review, so nothing is reported for it. A name that could not be read -- a refused, throttled
-    or failed read -- is written by id too, and is reported as an unread collection (accessReviews,
-    the review's display name, then accessPackage or assignmentPolicy) in the InventoryPartial
-    error, so a document written by id for that reason is never mistaken for one whose target was
-    deleted.
+    id, and by their id in four cases. A package or policy that no longer exists is written by its
+    id: that is a fact about the review, so nothing is reported for it. A name the lookup above
+    would not resolve to this object alone -- another object carries it, or the lookup does not
+    find this one -- is written by id too, and nothing is reported for it either, since the id
+    applies. A name that could not be read -- a refused, throttled or failed read -- and a
+    name whose uniqueness could not be checked, because the lookup above failed, are written by id
+    as well, and each is reported as an unread collection (accessReviews, the review's display name,
+    then accessPackage or assignmentPolicy) in the InventoryPartial error, so a document written by
+    id for either reason is never mistaken for one whose target was deleted.
     The AccessPackages projection
     carries the hidden flag so a hidden package stays
     hidden across a round-trip. The RoleAssignments projection carries the ABAC condition,
@@ -209,12 +216,18 @@ function Get-OERInventory {
     removes nothing, because -Prune acts on child collections only, and leaving an assignment policy
     out removes nothing either, because the apply engine never removes an assignment policy. A
     policy name is reported as accessPackages/ followed by the package name, /assignmentPolicies/ and
-    the policy name, and the policies of two different packages never count against each other. A
-    group's name is counted among every group in the tenant -- one extra paged listing of every
-    group's id and display name, made once when the Groups section read at least one group -- so a
-    security group that shares its name with a Microsoft 365 group or a distribution group, which the
-    default filter never reads, is left out too; the reported cause names how many live objects carry
-    the name. When that listing fails, groupNames is reported unread through the InventoryPartial
+    the policy name, and the policies of two different packages never count against each other. An
+    access package in a catalog whose name another catalog carries is written with that catalog's
+    object id as its catalog, which the apply engine takes as the catalog itself, so access packages
+    of one name in two such catalogs are two entries and not a collision; the catalogs themselves are
+    left out as described. Catalog names are counted among the catalogs read, so with -Catalog, which
+    reads one catalog, a package keeps its catalog's name even when another catalog in the tenant
+    carries it. A group's name is counted among every group in the tenant -- one extra paged
+    listing of every group's id and display name, made once when the Groups section read at least
+    one group -- so a security group that shares its name with a Microsoft 365 group or a
+    distribution group, which the default filter never reads, is left out too; the reported cause
+    names how many live objects carry the name. When that listing fails, groupNames is reported
+    unread through the InventoryPartial
     error, with its cause, and the names are counted among the groups read. Each name left out is
     also handed over in one information record tagged Omnicit.EntraRBAC.SharedName, whose Names list
     carries the Section, Name and Count of each; under the default $InformationPreference the record
@@ -553,6 +566,54 @@ function Get-OERInventory {
             return $Name
         }
 
+        # BL-142: the apply engine resolves a review's accessPackage and assignmentPolicy NAME as creation
+        # resolves it -- the access package by Resolve-OERAccessPackageId, in the whole tenant, and the
+        # assignment policy by Resolve-OERAssignmentPolicyId, among the policies of the access package --
+        # and refuses a name that lookup finds more than once (AmbiguousName), so an entry written with a
+        # shared name could never be applied. A name Get-AccessReviewReferenceName returned is therefore
+        # kept only when the engine's own lookup, sent here with the same URI, answers with this object
+        # and no other; otherwise the id is written, which the engine takes as the object itself.
+        #
+        # -MatchOf picks the candidates the lookup's answer holds for the name, exactly as the resolver
+        # does. Each answer is cached for the invocation under -CacheKey in -Cache, so the reviews of one
+        # access package cost one lookup of each kind however many there are. A lookup that fails is
+        # cached too, and every review that needed it writes the id and is reported like a failed name
+        # read (the cause, and the unread collection under the review): an id there otherwise reads as a
+        # deleted target.
+        function Get-AccessReviewUniqueReference {
+            param(
+                [string]$Name,
+                [string]$Id,
+                [string]$Uri,
+                [string]$CacheKey,
+                [hashtable]$Cache,
+                [scriptblock]$MatchOf,
+                [string]$ReviewName,
+                [string]$Part,
+                [string]$Label
+            )
+            if (-not $Cache.ContainsKey($CacheKey)) {
+                try {
+                    $Answer = Invoke-OERGraphRequest -Uri $Uri
+                    $Cache[$CacheKey] = [PSCustomObject]@{ Answer = $Answer; Failure = $null }
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $Cache[$CacheKey] = [PSCustomObject]@{ Answer = $null; Failure = [string]$PSItem.Exception.Message }
+                }
+            }
+            $Lookup = $Cache[$CacheKey]
+            if ($null -ne $Lookup.Failure) {
+                $UniqueCause = "Could not check whether an access review's $Label name is unique: $($Lookup.Failure)"
+                Write-Verbose "Get-OERInventory: $UniqueCause"
+                Add-UnreadCause -Cause $UniqueCause -Target $Id
+                $UnreadCollections.Add("accessReviews/$ReviewName/$Part")
+                return $Id
+            }
+            $Found = @(& $MatchOf $Lookup.Answer $Name)
+            if ($Found.Count -eq 1 -and [string]$Found[0].id -ieq $Id) { return $Name }
+            return $Id
+        }
+
         # The ids by name the groups are counted against as well (BL-131): set below only when the
         # index of every group in the tenant was read.
         $GroupExternalIds = $null
@@ -865,7 +926,25 @@ function Get-OERInventory {
             # -Catalog and the schema's catalogs[].displayName cross-reference both take the name).
             # $ResolvedCatalogList is hoisted above (shared with the Catalogs section) so an unqualified
             # Get-OERInventory does not resolve the -Catalog filter twice.
+            #
+            # BL-39: a catalog whose name another listed catalog carries, without regard to letter case,
+            # is left out of the catalogs section (Select-UniqueNamedEntry), and the apply engine refuses
+            # its name as ambiguous (Resolve-OERCatalogId), so a package in it could never be applied by
+            # that name. Such a package is written with the catalog's OBJECT ID instead, which the engine
+            # takes as the catalog itself (Resolve-OERCatalogId returns a GUID as it is). Since the
+            # package key is '<catalog>|<name>', packages of one name in two such catalogs are then two
+            # keys, not a collision. The names are counted over the catalogs listed here, so with
+            # -Catalog the list holds one catalog and a package in it keeps the catalog's name: a known
+            # limit, documented in the help.
+            $ApCatalogNameCount = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($CountCat in @($ResolvedCatalogList)) {
+                $CountName = [string]$CountCat.DisplayName
+                $ApCatalogNameCount[$CountName] = 1 + $(if ($ApCatalogNameCount.ContainsKey($CountName)) { $ApCatalogNameCount[$CountName] } else { 0 })
+            }
             foreach ($ApCat in $ResolvedCatalogList) {
+                # The catalog reference every package of this catalog is written with: its name, or its
+                # object id when another listed catalog carries the name (see above).
+                $ApCatalogRef = if ($ApCatalogNameCount[[string]$ApCat.DisplayName] -gt 1) { [string]$ApCat.Id } else { $ApCat.DisplayName }
                 # Build an OriginId -> resource display-name map ONCE per catalog. A resource role
                 # binding's scope carries the resource OriginId plus a scope LABEL (commonly 'Root'
                 # for the whole-resource scope) -- not the resource name. The apply engine resolves
@@ -926,7 +1005,7 @@ function Get-OERInventory {
                 foreach ($Ap in $ApList) {
                     $Proj = [ordered]@{
                         displayName = $Ap.DisplayName
-                        catalog     = $ApCat.DisplayName
+                        catalog     = $ApCatalogRef
                         description = $Ap.Description
                         # Cheap boolean -- always emitted so a hidden package stays hidden across a
                         # round-trip and a visible one is never silently re-hidden.
@@ -1312,6 +1391,10 @@ function Get-OERInventory {
                     Add-UnreadSection -Key 'accessReviews' -Cause "Could not read access reviews: $($PSItem.Exception.Message)"
                 }
             }
+            # BL-142: the engine's two name lookups, cached for the invocation (Get-AccessReviewUniqueReference):
+            # the access package lookup by the lower-cased name, the assignment policy listing by package id.
+            $ArPackageNameLookup = @{}
+            $ArPolicyListLookup = @{}
             foreach ($Ar in $ArItems) {
                 # Only access-package-scoped reviews round-trip: the apply schema requires both
                 # accessPackage and assignmentPolicy, and Invoke-OERStructure models access-package
@@ -1348,11 +1431,32 @@ function Get-OERInventory {
                     -NotFoundCode 'AccessPackageNotFound', 'NotFound' `
                     -Id ([string]$Ar.AccessPackageId) -ReviewName ([string]$Ar.DisplayName) `
                     -Part 'accessPackage' -Label 'access package'
+                # BL-142: a NAME (not the id) stays only when the engine's tenant-wide lookup of it
+                # (Resolve-OERAccessPackageId, same URI, the name escaped the same way) finds exactly this
+                # access package.
+                if ([string]$Proj.accessPackage -ne [string]$Ar.AccessPackageId) {
+                    $ApLookupName = [string]$Proj.accessPackage
+                    $Proj.accessPackage = Get-AccessReviewUniqueReference -Name $ApLookupName -Id ([string]$Ar.AccessPackageId) `
+                        -Uri ("v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=displayName eq '{0}'&`$select=id,displayName" -f (ConvertTo-OERODataFilterValue -Value $ApLookupName)) `
+                        -CacheKey $ApLookupName.ToLowerInvariant() -Cache $ArPackageNameLookup `
+                        -MatchOf { param($Answer) @($Answer.value | Where-Object { $null -ne $_ }) } `
+                        -ReviewName ([string]$Ar.DisplayName) -Part 'accessPackage' -Label 'access package'
+                }
                 $Proj.assignmentPolicy = Get-AccessReviewReferenceName `
                     -Uri ('v1.0/identityGovernance/entitlementManagement/assignmentPolicies/{0}?$expand=accessPackage' -f $Ar.AssignmentPolicyId) `
                     -NotFoundCode 'PolicyNotFound', 'NotFound' `
                     -Id ([string]$Ar.AssignmentPolicyId) -ReviewName ([string]$Ar.DisplayName) `
                     -Part 'assignmentPolicy' -Label 'assignment policy'
+                # BL-142: a NAME (not the id) stays only when exactly one policy of the review's access
+                # package carries it, compared as Resolve-OERAssignmentPolicyId compares (-eq), and that
+                # policy is this one. The listing is the resolver's, by the review's access package id.
+                if ([string]$Proj.assignmentPolicy -ne [string]$Ar.AssignmentPolicyId) {
+                    $Proj.assignmentPolicy = Get-AccessReviewUniqueReference -Name ([string]$Proj.assignmentPolicy) -Id ([string]$Ar.AssignmentPolicyId) `
+                        -Uri ("v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq '{0}'" -f $Ar.AccessPackageId) `
+                        -CacheKey ([string]$Ar.AccessPackageId).ToLowerInvariant() -Cache $ArPolicyListLookup `
+                        -MatchOf { param($Answer, $ForName) @(@($Answer.value) | Where-Object { $_.displayName -eq $ForName }) } `
+                        -ReviewName ([string]$Ar.DisplayName) -Part 'assignmentPolicy' -Label 'assignment policy'
+                }
 
                 # reviewers -> friendly tokens (manager / self / resolved name). Every query is parsed
                 # through Resolve-OERReviewerScopeQuery, the module's single owner of that grammar. It

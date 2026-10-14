@@ -3628,3 +3628,159 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
     }
 }
+
+Describe 'Invoke-OERStructure applies what an export writes by id: a package''s catalog and a review''s access package and assignment policy (BL-39, BL-142)' {
+    # Get-OERInventory writes an access package's catalog as the catalog's object id when another catalog
+    # carries its name, and an access review's accessPackage and assignmentPolicy as their ids when the
+    # engine's own name lookup would not find that object alone. These prove such entries apply: the real
+    # engine, the real handlers, the real cmdlets they call and the real lookups run (Resolve-OERCatalogId,
+    # Resolve-OERAccessPackageId, Resolve-OERAssignmentPolicyId, Get-OERAccessReviewTargetMismatch,
+    # Resolve-OERAccessReviewChange); only the sign-in and the transport are faked, by a tenant that keeps
+    # what the first run creates. Each document is applied twice: created, then Unchanged. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        $script:IdCatId = 'eeee5555-0000-0000-0000-000000000051'
+        $script:IdNewPkgId = 'aaaa1111-0000-0000-0000-000000000052'
+        $script:IdPkgId = 'aaaa1111-0000-0000-0000-000000000051'
+        $script:IdPolId = 'bbbb2222-0000-0000-0000-000000000051'
+        # The entry as the export writes it, the catalog by its id.
+        $script:IdPackageDoc = ('{ "version": "1.0", "accessPackages": [ { "displayName": "AP-ById", ' +
+            '"catalog": "eeee5555-0000-0000-0000-000000000051", "hidden": false, "resourceRoles": [], "assignmentPolicies": [] } ] }')
+        $script:IdReviewDoc = ('{ "version": "1.0", "accessReviews": [ { "displayName": "Q3 by id", ' +
+            '"accessPackage": "aaaa1111-0000-0000-0000-000000000051", "assignmentPolicy": "bbbb2222-0000-0000-0000-000000000051", ' +
+            '"reviewers": [], "durationInDays": 14 } ] }')
+        function script:ConvertTo-IdRowLine {
+            param([object[]]$Row)
+            @($Row | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.Section, $_.Item, $_.Action, $_.Detail })
+        }
+        # The requests of one run, as '<METHOD> <uri>', taken from the fake tenant's log.
+        function script:Get-IdRequest {
+            param([int]$From)
+            @($script:IdTenant.Requests | Select-Object -Skip $From)
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        # The tenant: the access package a review is made for (in another catalog), and nothing else.
+        $script:IdTenant = @{
+            Packages = [System.Collections.Generic.List[object]]::new()
+            Reviews  = [System.Collections.Generic.List[object]]::new()
+            Requests = [System.Collections.Generic.List[string]]::new()
+            Posts    = [System.Collections.Generic.List[object]]::new()
+        }
+        $script:IdTenant.Packages.Add(@{
+                id = 'aaaa1111-0000-0000-0000-000000000051'; displayName = 'AP-Review'; description = $null; isHidden = $false
+                catalog = @{ id = 'eeee5555-0000-0000-0000-000000000052' }
+            })
+        # The transport, answering every request these entries make as Microsoft Graph does, and refusing
+        # any other. Single-quoted prefixes keep '$filter' and '$expand' literal.
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            $Verb = if ($Method) { ([string]$Method).ToUpperInvariant() } else { 'GET' }
+            $script:IdTenant.Requests.Add("$Verb $Uri")
+            $ApBase = 'v1.0/identityGovernance/entitlementManagement/accessPackages'
+            $ArBase = 'v1.0/identityGovernance/accessReviews/definitions'
+            if ($Verb -eq 'POST' -and $Uri -eq $ApBase) {
+                $script:IdTenant.Posts.Add($Body)
+                $Created = @{
+                    id = 'aaaa1111-0000-0000-0000-000000000052'; displayName = $Body.displayName; description = $Body.description
+                    isHidden = [bool]$Body.isHidden; catalog = @{ id = $Body.catalog.id }
+                }
+                $script:IdTenant.Packages.Add($Created)
+                # Graph answers the create with the entity, which carries no catalog.
+                return @{ id = $Created.id; displayName = $Created.displayName; description = $Created.description; isHidden = $Created.isHidden }
+            }
+            if ($Verb -eq 'POST' -and $Uri -eq $ArBase) {
+                $script:IdTenant.Posts.Add($Body)
+                $Created = @{ id = 'cccc3333-0000-0000-0000-000000000051'; status = 'InProgress' }
+                foreach ($Key in $Body.Keys) { $Created[$Key] = $Body[$Key] }
+                $script:IdTenant.Reviews.Add($Created)
+                return $Created
+            }
+            if ($Verb -ne 'GET') { throw "unexpected Graph request: $Verb $Uri" }
+            $ByCatalog = $ApBase + '?$filter=catalog/id eq '''
+            if ($Uri.StartsWith($ByCatalog)) {
+                $CatalogId = $Uri.Substring($ByCatalog.Length).Split("'")[0]
+                return @{ value = @($script:IdTenant.Packages | Where-Object { $_.catalog.id -eq $CatalogId }) }
+            }
+            $ByName = $ApBase + '?$filter=displayName eq '''
+            if ($Uri.StartsWith($ByName)) {
+                $Name = [uri]::UnescapeDataString($Uri.Substring($ByName.Length).Split("'")[0]).Replace("''", "'")
+                return @{ value = @($script:IdTenant.Packages | Where-Object { $_.displayName -eq $Name } | ForEach-Object { @{ id = $_.id; displayName = $_.displayName } }) }
+            }
+            if ($Uri.StartsWith($ApBase + '/')) {
+                $Rest = $Uri.Substring($ApBase.Length + 1)
+                $PackageId = ($Rest -split '[/?]')[0]
+                if ($Rest -like '*/resourceRoleScopes*') { return @{ value = @() } }
+                $Package = @($script:IdTenant.Packages | Where-Object { $_.id -eq $PackageId })
+                if ($Package.Count -eq 1) { return $Package[0] }
+                throw "unexpected Graph request for a package the tenant does not hold: $Verb $Uri"
+            }
+            if ($Uri.StartsWith('v1.0/identityGovernance/entitlementManagement/assignmentPolicies?$filter=accessPackage/id eq ')) {
+                return @{ value = @() }
+            }
+            $ReviewByFilter = $ArBase + '?$filter='
+            if ($Uri.StartsWith($ReviewByFilter)) {
+                $Filter = [uri]::UnescapeDataString($Uri.Substring($ReviewByFilter.Length))
+                $ReviewName = if ($Filter -match "^displayName eq '(.*)'$") { $Matches[1].Replace("''", "'") } else { throw "unexpected review filter: $Filter" }
+                return @{ value = @($script:IdTenant.Reviews | Where-Object { $_.displayName -eq $ReviewName }) }
+            }
+            throw "unexpected Graph request: $Verb $Uri"
+        }
+    }
+
+    It 'creates an access package in the catalog its catalog id names, and reaches Unchanged on a second run (BL-39)' {
+        # The validator warns that the catalog is not declared in the document, and refuses nothing.
+        $Validation = Test-OERStructure -Json $script:IdPackageDoc
+        $Validation.Valid | Should -BeTrue
+        @($Validation.Errors | ForEach-Object { "$($_.Severity)|$($_.Message)" }) | Should -Be @(
+            "Warning|Catalog 'eeee5555-0000-0000-0000-000000000051' is not declared in this document. It may already exist in the tenant."
+        )
+
+        $First = @(Invoke-OERStructure -Json $script:IdPackageDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-IdRowLine -Row $First) | Should -Be @("accessPackages|AP-ById|Created|created access package AP-ById ($($script:IdNewPkgId))")
+        # Created in the catalog the id names, which was read and written by that id: no catalog name lookup.
+        @($script:IdTenant.Posts).Count | Should -Be 1
+        $script:IdTenant.Posts[0].displayName | Should -BeExactly 'AP-ById'
+        $script:IdTenant.Posts[0].catalog.id | Should -BeExactly $script:IdCatId
+        $script:IdTenant.Requests | Should -Contain ("GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=catalog/id eq '$($script:IdCatId)'&`$expand=catalog")
+        @($script:IdTenant.Requests | Where-Object { $_ -like '*/catalogs*' }) | Should -BeNullOrEmpty
+        $FirstCount = $script:IdTenant.Requests.Count
+
+        $Second = @(Invoke-OERStructure -Json $script:IdPackageDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-IdRowLine -Row $Second) | Should -Be @('accessPackages|AP-ById|Unchanged|access package properties match')
+        $SecondRequests = @(Get-IdRequest -From $FirstCount)
+        # The positive control: the second run found the package in the catalog by the id, and wrote nothing.
+        $SecondRequests | Should -Contain ("GET v1.0/identityGovernance/entitlementManagement/accessPackages?`$filter=catalog/id eq '$($script:IdCatId)'&`$expand=catalog")
+        @($SecondRequests | Where-Object { $_ -notlike 'GET *' }) | Should -BeNullOrEmpty
+        @($script:IdTenant.Packages).Count | Should -Be 2
+    }
+
+    It 'creates an access review on its access package and assignment policy ids, and on a second run matches it and reaches Unchanged (BL-142)' {
+        $Validation = Test-OERStructure -Json $script:IdReviewDoc
+        $Validation.Valid | Should -BeTrue
+        @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' }) | Should -BeNullOrEmpty
+
+        $First = @(Invoke-OERStructure -Json $script:IdReviewDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @(ConvertTo-IdRowLine -Row $First) | Should -Be @("accessReviews|Q3 by id|Created|created access review 'Q3 by id' (recurrence: OneTime)")
+        # Created on the two ids: the package id confirmed by one existence read, the policy id taken as it
+        # is, and neither looked up by name.
+        @($script:IdTenant.Posts).Count | Should -Be 1
+        $script:IdTenant.Posts[0].scope.query | Should -BeExactly ("/identityGovernance/entitlementManagement/assignments?`$filter=accessPackage/id eq " +
+            "'$($script:IdPkgId)' and assignmentPolicy/id eq '$($script:IdPolId)'")
+        $script:IdTenant.Requests | Should -Contain ("GET v1.0/identityGovernance/entitlementManagement/accessPackages/$($script:IdPkgId)?`$select=id")
+        @($script:IdTenant.Requests | Where-Object { $_ -like '*accessPackages?$filter=displayName*' -or $_ -like '*assignmentPolicies*' }) | Should -BeNullOrEmpty
+        $FirstCount = $script:IdTenant.Requests.Count
+
+        $Second = @(Invoke-OERStructure -Json $script:IdReviewDoc -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        # Matched by display name, its target check passed on the two ids (a review of another target is
+        # refused, Failed), and nothing differs.
+        @(ConvertTo-IdRowLine -Row $Second) | Should -Be @("accessReviews|Q3 by id|Unchanged|access review 'Q3 by id' already matches")
+        $SecondRequests = @(Get-IdRequest -From $FirstCount)
+        $SecondRequests | Should -Contain ('GET v1.0/identityGovernance/accessReviews/definitions?$filter=' + [uri]::EscapeDataString("displayName eq 'Q3 by id'"))
+        @($SecondRequests | Where-Object { $_ -notlike 'GET *' }) | Should -BeNullOrEmpty
+        @($SecondRequests | Where-Object { $_ -like '*accessPackages*' -or $_ -like '*assignmentPolicies*' }) | Should -BeNullOrEmpty
+        @($script:IdTenant.Reviews).Count | Should -Be 1
+    }
+}
