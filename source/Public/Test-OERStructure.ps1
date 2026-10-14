@@ -29,12 +29,28 @@ function Test-OERStructure {
     Invoke-OERStructure reports such an entry Skipped and never prunes the root scope. A
     roleManagementPolicies scope '/' is not reported.
 
-    A previousDisplayName is read only on a groups entry, where Invoke-OERStructure renames the group
-    it names. On an administrativeUnits, catalogs or accessPackages entry, on an assignmentPolicies
-    entry of an access package, or on an accessReviews entry it is an Error: Invoke-OERStructure does
-    not read previousDisplayName there, so it would create a new object under the new displayName
-    beside the existing one instead of renaming it. Remove the key and rename the
+    A previousDisplayName is read on a groups, administrativeUnits, catalogs or accessPackages entry,
+    where Invoke-OERStructure renames the object it names in place, an access package within its
+    catalog. It must be a non-empty string (an Error otherwise); one equal to displayName, ignoring
+    case, is a Warning, since both names then find one object and a case-only rename is not possible
+    through the document. A second entry of a section that claims a name an earlier entry already
+    claims, as its displayName or as its previousDisplayName, is an Error. On an assignmentPolicies
+    entry of an access package, or on an accessReviews entry, previousDisplayName is an Error:
+    Invoke-OERStructure does not read it there, so it would create a new object under the new
+    displayName beside the existing one instead of renaming it. Remove the key and rename the
     existing object outside the document first. An explicit null counts as not declared.
+
+    A reference that still names a renamed object by its previous name is a Warning at the reference:
+    a groups entry's administrativeUnit, an accessPackages entry's catalog, or an accessReviews
+    entry's accessPackage that equals, ignoring case, the previousDisplayName of an entry that renames
+    the object. Once the rename is applied no object carries the previous name, so the Warning says to
+    name the object by its new name. A previousDisplayName that is an object id raises none, since a
+    reference by id stays valid after a rename. When the same document renames the unit or catalog,
+    Invoke-OERStructure finds the renamed unit or catalog by its object id in the same run, for a
+    group created into the unit, and for a package declared in the catalog, when the reference uses the
+    new name, and refuses both when that rename is refused or the run cannot decide it. An access review's accessPackage is not translated
+    that way, so in the run and the -WhatIf plan that rename the package it can fail with
+    AccessPackageNotFound until Microsoft Graph's name lookup finds the new name.
 
     A top-level tenantId, when present, must be a string holding a canonical GUID (an explicit null, a
     value that is not a string, such as an array, or any other value is an Error; a document without

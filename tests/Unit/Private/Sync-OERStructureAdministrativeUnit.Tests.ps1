@@ -2443,4 +2443,803 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
             }
         }
     }
+
+    Context 'previousDisplayName (BL-128)' {
+        # A rename through the document (decision A5): displayName is the name the unit is to carry and
+        # previousDisplayName the one it carries now, or its object id. Both names are resolved before
+        # anything is read or written, on every run; Resolve-OERStructureRename owns the decision, the
+        # error ids and the texts. The unit found under the previous name takes the existing-unit path and
+        # the rename travels in the SAME Set-OERAdministrativeUnit call as every other changed property.
+        # Resolve-OERAdministrativeUnitId gets one FILTERED mock per name that resolves; every other name
+        # falls to the unfiltered mock, which finds nothing. The only Graph request the handler sends
+        # itself is the probe of a previous name that is an object id: any other reach is refused.
+        BeforeAll {
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncAuRenameViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param(
+                        [PSCustomObject]$Item,
+                        [switch]$Prune,
+                        [switch]$EnsureOnly,
+                        [System.Collections.Generic.Dictionary[string, object]]$RenameMap,
+                        [System.Collections.Generic.List[object]]$Created
+                    )
+                    $Extra = @{}
+                    if ($PSBoundParameters.ContainsKey('RenameMap')) { $Extra.RenameMap = $RenameMap }
+                    if ($PSBoundParameters.ContainsKey('Created')) { $Extra.CreatedUnitMembership = $Created }
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune -EnsureOnly:$EnsureOnly @Extra
+                }
+            }
+        }
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAdministrativeUnitId { $null }
+                Mock Invoke-OERGraphRequest { throw "unexpected Graph call: $Uri" }
+                Mock Get-OERAdministrativeUnit {
+                    param($AdministrativeUnit)
+                    [PSCustomObject]@{
+                        Id = $AdministrativeUnit; DisplayName = 'AU-Old'; Description = 'old desc'; MembershipType = 'Assigned'
+                        Visibility = $null; IsMemberManagementRestricted = $false; Members = @(); ScopedRoles = @()
+                    }
+                }
+                Mock Set-OERAdministrativeUnit { }
+                Mock New-OERAdministrativeUnit { [PSCustomObject]@{ Id = 'au-created'; DisplayName = 'AU-New' } }
+                Mock Add-OERAdministrativeUnitMember { }
+                Mock Remove-OERAdministrativeUnitMember { }
+                Mock Add-OERAdministrativeUnitScopedRole { }
+                Mock Remove-OERAdministrativeUnitScopedRole { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+            }
+        }
+
+        It 'renames the unit found only under its previous name in the same Set-OERAdministrativeUnit call as a changed property, and reconciles its children against that unit' {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                $Item = [PSCustomObject]@{
+                    displayName         = 'AU-New'
+                    previousDisplayName = 'AU-Old'
+                    description         = 'new desc'
+                    members             = @('person9@example.com')
+                    scopedRoles         = @([PSCustomObject]@{ role = 'User Administrator'; principal = 'person9@example.com' })
+                }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                Should -Invoke Set-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter {
+                    $Id -eq 'au-old-id' -and $NewDisplayName -eq 'AU-New' -and $Description -eq 'new desc'
+                }
+                Should -Invoke Set-OERAdministrativeUnit -Exactly -Times 1
+                Should -Invoke New-OERAdministrativeUnit -Times 0
+                # Both names were resolved, once each, and the unit found under the PREVIOUS name was read.
+                Should -Invoke Resolve-OERAdministrativeUnitId -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'AU-New' }
+                Should -Invoke Resolve-OERAdministrativeUnitId -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                Should -Invoke Get-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter { $Id -eq 'au-old-id' }
+                Should -Invoke Get-OERAdministrativeUnit -Exactly -Times 1
+                # The children are reconciled against the same unit.
+                Should -Invoke Add-OERAdministrativeUnitMember -Exactly -Times 1 -ParameterFilter {
+                    $Id -eq 'au-old-id' -and $MemberId -eq 'id-person9@example.com'
+                }
+                Should -Invoke Add-OERAdministrativeUnitScopedRole -Exactly -Times 1 -ParameterFilter {
+                    $Id -eq 'au-old-id' -and $RoleName -eq 'User Administrator'
+                }
+                @($Err).Count | Should -Be 0
+                # The rename, the member and the scoped role: three rows, one of them the rename.
+                @($r).Count | Should -Be 3
+                $Rename = @($r | Where-Object { $_.Detail -like 'renamed*' })
+                $Rename.Count | Should -Be 1
+                $Rename[0].Section | Should -BeExactly 'administrativeUnits'
+                $Rename[0].Item | Should -BeExactly 'AU-New'
+                $Rename[0].Action | Should -BeExactly 'Updated'
+                $Rename[0].Detail | Should -BeExactly "renamed administrative unit 'AU-Old' to 'AU-New'; updated administrative unit properties (Description)"
+                @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "added member 'person9@example.com'" }).Count | Should -Be 1
+            }
+        }
+
+        It 'reports a rename with no other change as one Updated row and no properties-match row' {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; description = 'old desc' }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                Should -Invoke Set-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter { $Id -eq 'au-old-id' -and $NewDisplayName -eq 'AU-New' -and -not $Description }
+                Should -Invoke Set-OERAdministrativeUnit -Exactly -Times 1
+                @($Err).Count | Should -Be 0
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Updated'
+                $r[0].Detail | Should -BeExactly "renamed administrative unit 'AU-Old' to 'AU-New'"
+                @($r | Where-Object { $_.Detail -eq 'administrative unit properties match' }).Count | Should -Be 0
+            }
+        }
+
+        It 'reports Unchanged and sends no rename on the run after the rename, with previousDisplayName still declared' {
+            InModuleScope $script:moduleName {
+                # After the rename only the new name resolves; the old one finds nothing.
+                Mock Resolve-OERAdministrativeUnitId { 'au-id' } -ParameterFilter { $DisplayName -eq 'AU-New' }
+                $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; description = 'old desc' }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                Should -Invoke Resolve-OERAdministrativeUnitId -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                Should -Invoke Get-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter { $Id -eq 'au-id' }
+                Should -Invoke Set-OERAdministrativeUnit -Times 0
+                Should -Invoke New-OERAdministrativeUnit -Times 0
+                @($Err).Count | Should -Be 0
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Unchanged'
+                $r[0].Detail | Should -BeExactly 'administrative unit properties match'
+            }
+        }
+
+        It 'takes the normal path, with no rename and no failure, when both names resolve to the same unit (a case-only rename)' {
+            InModuleScope $script:moduleName {
+                # Graph matches displayName case-insensitively, so a previous name that differs from the
+                # new one only in case finds the very unit the new name finds.
+                Mock Resolve-OERAdministrativeUnitId { 'au-1' }
+                $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'au-new'; description = 'old desc' }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                Should -Invoke Set-OERAdministrativeUnit -Times 0
+                Should -Invoke New-OERAdministrativeUnit -Times 0
+                @($Err).Count | Should -Be 0
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Unchanged'
+                $r[0].Detail | Should -BeExactly 'administrative unit properties match'
+            }
+        }
+
+        It 'fails the item with one row and an AdministrativeUnitRenameConflict error, reading and writing nothing, when both names exist as different units' {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERAdministrativeUnitId { 'au-a' } -ParameterFilter { $DisplayName -eq 'AU-New' }
+                Mock Resolve-OERAdministrativeUnitId { 'au-b' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                # Every collection and a changed property are declared, so a missing guard has something
+                # to read, reconcile and write.
+                $Item = [PSCustomObject]@{
+                    displayName         = 'AU-New'
+                    previousDisplayName = 'AU-Old'
+                    description         = 'new desc'
+                    members             = @('person9@example.com')
+                    scopedRoles         = @([PSCustomObject]@{ role = 'User Administrator'; principal = 'person9@example.com' })
+                }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -Prune -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                # The ONLY row the item emits.
+                @($r).Count | Should -Be 1
+                $r[0].Section | Should -BeExactly 'administrativeUnits'
+                $r[0].Item | Should -BeExactly 'AU-New'
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "both 'AU-New' and its previousDisplayName 'AU-Old' exist as different administrative units; the document never merges two administrative units, so nothing was changed -- rename or delete one of them, or remove previousDisplayName"
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^AdministrativeUnitRenameConflict'
+
+                Should -Invoke Get-OERAdministrativeUnit -Times 0
+                Should -Invoke Set-OERAdministrativeUnit -Times 0
+                Should -Invoke New-OERAdministrativeUnit -Times 0
+                Should -Invoke Add-OERAdministrativeUnitMember -Times 0
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 0
+                Should -Invoke Add-OERAdministrativeUnitScopedRole -Times 0
+                Should -Invoke Remove-OERAdministrativeUnitScopedRole -Times 0
+
+                # The row carries the record either way; only the caller's -ErrorVariable proves it was
+                # published through $Caller.WriteError.
+                @($Err).Count | Should -Be 1
+                $Conflict = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'AdministrativeUnitRenameConflict,*' })
+                $Conflict.Count | Should -Be 1
+                $Conflict[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ResourceExists)
+                $Conflict[0].TargetObject | Should -BeExactly 'AU-New'
+            }
+        }
+
+        It 'fails with AdministrativeUnitRenameNotFound, creating nothing, when neither name resolves' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{
+                    displayName         = 'AU-New'
+                    previousDisplayName = 'AU-Old'
+                    members             = @('person9@example.com')
+                }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Item | Should -BeExactly 'AU-New'
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "neither 'AU-New' nor its previousDisplayName 'AU-Old' matches an administrative unit, so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new administrative unit, remove previousDisplayName"
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^AdministrativeUnitRenameNotFound'
+                Should -Invoke New-OERAdministrativeUnit -Times 0
+                Should -Invoke Get-OERAdministrativeUnit -Times 0
+                Should -Invoke Set-OERAdministrativeUnit -Times 0
+                Should -Invoke Add-OERAdministrativeUnitMember -Times 0
+                $NotFound = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'AdministrativeUnitRenameNotFound,*' })
+                @($Err).Count | Should -Be 1
+                $NotFound.Count | Should -Be 1
+                $NotFound[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+                $NotFound[0].TargetObject | Should -BeExactly 'AU-New'
+            }
+        }
+
+        It 'under -WhatIf reports the same single Failed row and no would-create row when neither name resolves' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; members = @('person9@example.com') }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^AdministrativeUnitRenameNotFound'
+                @($r | Where-Object { [string]$_.Detail -like 'would create*' }).Count | Should -Be 0
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'AdministrativeUnitRenameNotFound,*' }).Count | Should -Be 1
+                Should -Invoke New-OERAdministrativeUnit -Times 0
+            }
+        }
+
+        # previousDisplayName may be the unit's object id. Resolve-OERAdministrativeUnitId would look an id
+        # up as a display name, so the handler verifies the id with one read of its own: an id that names
+        # no unit must count as not matching, never as a second unit.
+        It 'looks a previous name that is an object id up by one probe, declared to the transport, and never as a display name' {
+            InModuleScope $script:moduleName {
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ id = '11111111-1111-1111-1111-111111111111' } } -ParameterFilter {
+                    $Uri -eq 'v1.0/directory/administrativeUnits/11111111-1111-1111-1111-111111111111?$select=id'
+                }
+                $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = '11111111-1111-1111-1111-111111111111'; description = 'new desc' }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                # ONE existence read, declaring the not-found answers to the transport.
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter {
+                    $Uri -eq 'v1.0/directory/administrativeUnits/11111111-1111-1111-1111-111111111111?$select=id' -and
+                    @($ExpectedErrorCode) -contains 'Request_ResourceNotFound' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1
+                Should -Invoke Resolve-OERAdministrativeUnitId -Times 0 -ParameterFilter { $DisplayName -eq '11111111-1111-1111-1111-111111111111' }
+                Should -Invoke Resolve-OERAdministrativeUnitId -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'AU-New' }
+                Should -Invoke Set-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter {
+                    $Id -eq '11111111-1111-1111-1111-111111111111' -and $NewDisplayName -eq 'AU-New' -and $Description -eq 'new desc'
+                }
+                Should -Invoke Set-OERAdministrativeUnit -Exactly -Times 1
+                Should -Invoke New-OERAdministrativeUnit -Times 0
+                @($Err).Count | Should -Be 0
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Updated'
+                $r[0].Detail | Should -BeExactly "renamed administrative unit '11111111-1111-1111-1111-111111111111' to 'AU-New'; updated administrative unit properties (Description)"
+            }
+        }
+
+        It 'treats an object id that names no unit as not matching: displayName absent is AdministrativeUnitRenameNotFound, creating nothing' {
+            InModuleScope $script:moduleName {
+                # What Invoke-OERGraphRequest returns for a declared not-found answer.
+                Mock Invoke-OERGraphRequest {
+                    $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'Request_ResourceNotFound'; StatusCode = 404; Message = 'Resource does not exist.'; Uri = $Uri }
+                    $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                    $Marker
+                } -ParameterFilter { $Uri -eq 'v1.0/directory/administrativeUnits/11111111-1111-1111-1111-111111111111?$select=id' }
+                # A stale id of a deleted unit: reading it as the unit to rename would fail here.
+                Mock Get-OERAdministrativeUnit { throw "Resource '11111111-1111-1111-1111-111111111111' does not exist." }
+                $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = '11111111-1111-1111-1111-111111111111' }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                # The id WAS checked -- one existence read -- and found to name no unit.
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/directory/administrativeUnits/11111111-1111-1111-1111-111111111111?$select=id' }
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "neither 'AU-New' nor its previousDisplayName '11111111-1111-1111-1111-111111111111' matches an administrative unit, so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new administrative unit, remove previousDisplayName"
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^AdministrativeUnitRenameNotFound'
+                Should -Invoke New-OERAdministrativeUnit -Times 0
+                Should -Invoke Get-OERAdministrativeUnit -Times 0
+                Should -Invoke Set-OERAdministrativeUnit -Times 0
+            }
+        }
+
+        It 'treats an object id that names no unit as not matching: displayName present is a normal update, with no conflict and no rename' {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERAdministrativeUnitId { 'au-id' } -ParameterFilter { $DisplayName -eq 'AU-New' }
+                Mock Invoke-OERGraphRequest {
+                    $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'ResourceNotFound'; StatusCode = 404; Message = 'Resource does not exist.'; Uri = $Uri }
+                    $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                    $Marker
+                } -ParameterFilter { $Uri -eq 'v1.0/directory/administrativeUnits/11111111-1111-1111-1111-111111111111?$select=id' }
+                $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = '11111111-1111-1111-1111-111111111111'; description = 'new desc' }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter { $Id -eq 'au-id' -and -not $NewDisplayName -and $Description -eq 'new desc' }
+                Should -Invoke Set-OERAdministrativeUnit -Exactly -Times 1
+                Should -Invoke New-OERAdministrativeUnit -Times 0
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Updated'
+                $r[0].Detail | Should -BeExactly 'updated administrative unit properties (Description)'
+            }
+        }
+
+        It 'throws, creating and writing nothing, when the probe of an object id fails with anything but not-found' {
+            InModuleScope $script:moduleName {
+                # A 403 is no evidence that the unit does not exist: the transport throws it, the handler
+                # does not catch it, and the engine reports the item Failed ("handler error").
+                Mock Invoke-OERGraphRequest { throw 'graph 403' } -ParameterFilter {
+                    $Uri -eq 'v1.0/directory/administrativeUnits/11111111-1111-1111-1111-111111111111?$select=id'
+                }
+                $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = '11111111-1111-1111-1111-111111111111'; description = 'new desc' }
+
+                { Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue } | Should -Throw -ExpectedMessage '*graph 403*'
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1
+                Should -Invoke New-OERAdministrativeUnit -Times 0
+                Should -Invoke Get-OERAdministrativeUnit -Times 0
+                Should -Invoke Set-OERAdministrativeUnit -Times 0
+                Should -Invoke Add-OERAdministrativeUnitMember -Times 0
+            }
+        }
+
+        It 'throws, creating and renaming nothing, when the previous name matches several units' {
+            InModuleScope $script:moduleName {
+                # The record Resolve-OERAdministrativeUnitId itself throws for a name matching several units.
+                Mock Resolve-OERAdministrativeUnitId {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Administrative unit display name 'AU-Old' matches 2 units (au-a, au-b). Entra does not enforce unique administrative unit display names, so this name cannot identify a single unit. Re-run with the object id instead of the display name."),
+                        'AmbiguousName',
+                        [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                        'AU-Old')
+                } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; description = 'new desc' }
+
+                # Thrown out of the handler, as an ambiguous displayName is: the engine turns it into the
+                # item's one Failed ("handler error") row.
+                { Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue } | Should -Throw -ErrorId 'AmbiguousName'
+                Should -Invoke New-OERAdministrativeUnit -Times 0
+                Should -Invoke Set-OERAdministrativeUnit -Times 0
+                Should -Invoke Get-OERAdministrativeUnit -Times 0
+            }
+        }
+
+        It 'under -WhatIf reports would rename, writes nothing, and plans the children against the unit found under its previous name' {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                $Item = [PSCustomObject]@{
+                    displayName         = 'AU-New'
+                    previousDisplayName = 'AU-Old'
+                    description         = 'old desc'
+                    members             = @('person9@example.com')
+                }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -WhatIf)
+
+                Should -Invoke Set-OERAdministrativeUnit -Times 0
+                Should -Invoke New-OERAdministrativeUnit -Times 0
+                Should -Invoke Add-OERAdministrativeUnitMember -Times 0
+                # Reads run under -WhatIf: the unit found under its previous name was read.
+                Should -Invoke Get-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter { $Id -eq 'au-old-id' }
+                @($r).Count | Should -Be 2
+                $Rename = @($r | Where-Object { $_.Detail -like 'would rename*' })
+                $Rename.Count | Should -Be 1
+                $Rename[0].Action | Should -BeExactly 'Skipped'
+                $Rename[0].Item | Should -BeExactly 'AU-New'
+                $Rename[0].Detail | Should -BeExactly "would rename administrative unit 'AU-Old' to 'AU-New'"
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would add member 'person9@example.com'" }).Count | Should -Be 1
+            }
+        }
+
+        It 'under -WhatIf names a changed property after the rename in one would-rename row' {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; description = 'new desc' }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -WhatIf)
+
+                Should -Invoke Set-OERAdministrativeUnit -Times 0
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Skipped'
+                $r[0].Detail | Should -BeExactly "would rename administrative unit 'AU-Old' to 'AU-New'; would update administrative unit properties (Description)"
+            }
+        }
+
+        It 'reports Failed as the last row and reconciles no child of a unit whose rename failed' {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                Mock Set-OERAdministrativeUnit {
+                    [CmdletBinding()] param($AdministrativeUnit, $NewDisplayName, $Description, $Visibility, $MembershipRule, $MembershipRuleProcessingState, $TenantId, $MembershipType, $Confirm)
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('graph 400'), 'GraphBadRequest', [System.Management.Automation.ErrorCategory]::InvalidOperation, $AdministrativeUnit))
+                }
+                $Item = [PSCustomObject]@{
+                    displayName         = 'AU-New'
+                    previousDisplayName = 'AU-Old'
+                    members             = @('person9@example.com')
+                    scopedRoles         = @([PSCustomObject]@{ role = 'User Administrator'; principal = 'person9@example.com' })
+                }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue)
+
+                Should -Invoke Set-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter { $Id -eq 'au-old-id' -and $NewDisplayName -eq 'AU-New' }
+                # The unit still carries its previous name, so none of its children is reconciled under
+                # the new name: the Failed row is the item's last (here its only) row.
+                @($r).Count | Should -Be 1
+                $r[-1].Action | Should -BeExactly 'Failed'
+                $r[-1].Detail | Should -Match '^administrative unit update failed: graph 400'
+                Should -Invoke Resolve-OERStructurePrincipal -Times 0
+                Should -Invoke Add-OERAdministrativeUnitMember -Times 0
+                Should -Invoke Add-OERAdministrativeUnitScopedRole -Times 0
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 0
+                Should -Invoke Remove-OERAdministrativeUnitScopedRole -Times 0
+            }
+        }
+
+        It 'still reconciles the members of a unit whose property update failed when no rename is involved' {
+            InModuleScope $script:moduleName {
+                # The control for the test above: the early return belongs to a failed RENAME alone.
+                Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                Mock Set-OERAdministrativeUnit {
+                    [CmdletBinding()] param($AdministrativeUnit, $NewDisplayName, $Description, $Visibility, $MembershipRule, $MembershipRuleProcessingState, $TenantId, $MembershipType, $Confirm)
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('graph 400'), 'GraphBadRequest', [System.Management.Automation.ErrorCategory]::InvalidOperation, $AdministrativeUnit))
+                }
+                $Item = [PSCustomObject]@{ displayName = 'AU-Old'; description = 'new desc'; members = @('person9@example.com') }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue)
+
+                Should -Invoke Set-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter { $Id -eq 'au-old-id' -and -not $NewDisplayName -and $Description -eq 'new desc' }
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match '^administrative unit update failed: graph 400' }).Count | Should -Be 1
+                Should -Invoke Add-OERAdministrativeUnitMember -Exactly -Times 1 -ParameterFilter { $Id -eq 'au-old-id' }
+                @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "added member 'person9@example.com'" }).Count | Should -Be 1
+            }
+        }
+
+        Context '-EnsureOnly' {
+            It 'follows the previous name: a rename creates nothing, reports nothing, writes nothing and registers the old id in the map' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; description = 'new desc'; members = @('person9@example.com') }
+                    $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -EnsureOnly -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    @($r).Count | Should -Be 0
+                    @($Err).Count | Should -Be 0
+                    Should -Invoke New-OERAdministrativeUnit -Times 0
+                    Should -Invoke Set-OERAdministrativeUnit -Times 0
+                    Should -Invoke Get-OERAdministrativeUnit -Times 0
+                    Should -Invoke Add-OERAdministrativeUnitMember -Times 0
+                    $Map.Count | Should -Be 1
+                    $Map.ContainsKey('administrativeunits|au-new') | Should -BeTrue
+                    $Map['administrativeunits|au-new'].Id | Should -BeExactly 'au-old-id'
+                    $Map['administrativeunits|au-new'].Refused | Should -BeFalse
+                }
+            }
+
+            It 'creates nothing and registers a refused entry when neither name resolves' {
+                InModuleScope $script:moduleName {
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old' }
+                    $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -EnsureOnly -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    # No record and no error: the administrativeUnits pass reports the not-found.
+                    @($r).Count | Should -Be 0
+                    @($Err).Count | Should -Be 0
+                    Should -Invoke New-OERAdministrativeUnit -Times 0
+                    Should -Invoke Set-OERAdministrativeUnit -Times 0
+                    $Map.Count | Should -Be 1
+                    $Map['administrativeunits|au-new'].Refused | Should -BeTrue
+                    $Map['administrativeunits|au-new'].Id | Should -BeNullOrEmpty
+                    $Map['administrativeunits|au-new'].ErrorId | Should -BeExactly 'AdministrativeUnitRenameNotFound'
+                }
+            }
+
+            It 'writes nothing and registers a refused entry when both names resolve to different units' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-a' } -ParameterFilter { $DisplayName -eq 'AU-New' }
+                    Mock Resolve-OERAdministrativeUnitId { 'au-b' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old' }
+                    $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -EnsureOnly -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    @($r).Count | Should -Be 0
+                    @($Err).Count | Should -Be 0
+                    Should -Invoke New-OERAdministrativeUnit -Times 0
+                    Should -Invoke Set-OERAdministrativeUnit -Times 0
+                    Should -Invoke Get-OERAdministrativeUnit -Times 0
+                    $Map.Count | Should -Be 1
+                    $Map['administrativeunits|au-new'].Refused | Should -BeTrue
+                    $Map['administrativeunits|au-new'].ErrorId | Should -BeExactly 'AdministrativeUnitRenameConflict'
+                }
+            }
+
+            It 'emits nothing and registers nothing for an entry whose new name already resolves' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-id' } -ParameterFilter { $DisplayName -eq 'AU-New' }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old' }
+                    $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -EnsureOnly -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    @($r).Count | Should -Be 0
+                    @($Err).Count | Should -Be 0
+                    Should -Invoke New-OERAdministrativeUnit -Times 0
+                    Should -Invoke Get-OERAdministrativeUnit -Times 0
+                    $Map.Count | Should -Be 0
+                }
+            }
+
+            It 'still creates a missing unit that declares no previousDisplayName, and registers nothing' {
+                InModuleScope $script:moduleName {
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; members = @('person9@example.com') }
+                    $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -EnsureOnly -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    Should -Invoke New-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'AU-New' }
+                    Should -Invoke Add-OERAdministrativeUnitMember -Times 0
+                    @($Err).Count | Should -Be 0
+                    @($r).Count | Should -Be 1
+                    $r[0].Action | Should -BeExactly 'Created'
+                    $Map.Count | Should -Be 0
+                }
+            }
+        }
+
+        Context 'the run-scoped rename map in the main pass' {
+            It 'registers the old id for a rename, under the lower-cased section and new name' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; description = 'old desc' }
+                    $null = @(Invoke-SyncAuRenameViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue)
+
+                    $Map.Count | Should -Be 1
+                    $Map['administrativeunits|au-new'].Id | Should -BeExactly 'au-old-id'
+                    $Map['administrativeunits|au-new'].Refused | Should -BeFalse
+                }
+            }
+
+            It 'registers a refused entry for a conflict and for a not-found' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-a' } -ParameterFilter { $DisplayName -eq 'AU-Conflict' }
+                    Mock Resolve-OERAdministrativeUnitId { 'au-b' } -ParameterFilter { $DisplayName -eq 'AU-Conflict-Old' }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $null = @(Invoke-SyncAuRenameViaCaller -Item ([PSCustomObject]@{ displayName = 'AU-Conflict'; previousDisplayName = 'AU-Conflict-Old' }) -RenameMap $Map -ErrorAction SilentlyContinue)
+                    $null = @(Invoke-SyncAuRenameViaCaller -Item ([PSCustomObject]@{ displayName = 'AU-Missing'; previousDisplayName = 'AU-Missing-Old' }) -RenameMap $Map -ErrorAction SilentlyContinue)
+
+                    $Map.Count | Should -Be 2
+                    $Map['administrativeunits|au-conflict'].Refused | Should -BeTrue
+                    $Map['administrativeunits|au-conflict'].ErrorId | Should -BeExactly 'AdministrativeUnitRenameConflict'
+                    $Map['administrativeunits|au-missing'].Refused | Should -BeTrue
+                    $Map['administrativeunits|au-missing'].ErrorId | Should -BeExactly 'AdministrativeUnitRenameNotFound'
+                }
+            }
+
+            It 'registers the entry under -WhatIf too, before any rename is sent' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old' }
+                    $null = @(Invoke-SyncAuRenameViaCaller -Item $Item -RenameMap $Map -WhatIf)
+
+                    Should -Invoke Set-OERAdministrativeUnit -Times 0
+                    $Map['administrativeunits|au-new'].Id | Should -BeExactly 'au-old-id'
+                }
+            }
+        }
+
+        # R12: the entry is marked undecided in the map BEFORE either of its names is looked up. A lookup
+        # that throws -- of the new name too, a transient failure included -- leaves that mark, so a group
+        # the run creates into the unit's new name is refused instead of being created into whatever unit
+        # a later name lookup finds; a decision replaces it.
+        Context 'a rename this run cannot decide (R12)' {
+            It 'leaves a refused entry, with the reason that one of its names could not be looked up, when <Case>, and still throws with nothing written' -ForEach @(
+                @{ Case = 'the previous name matches several units'; Prev = 'AU-Old'; EnsureOnly = $false; NewThrows = $false }
+                @{ Case = 'the previous name matches several units in the pre-pass (-EnsureOnly)'; Prev = 'AU-Old'; EnsureOnly = $true; NewThrows = $false }
+                @{ Case = 'the probe of a previous object id fails with anything but not-found'; Prev = '11111111-1111-1111-1111-111111111111'; EnsureOnly = $false; NewThrows = $false }
+                @{ Case = 'the lookup of the new name fails (a transient failure)'; Prev = 'AU-Old'; EnsureOnly = $false; NewThrows = $true }
+                @{ Case = 'the lookup of the new name fails in the pre-pass (-EnsureOnly)'; Prev = 'AU-Old'; EnsureOnly = $true; NewThrows = $true }
+            ) {
+                InModuleScope $script:moduleName -Parameters @{ Prev = $Prev; EnsureOnly = $EnsureOnly; NewThrows = $NewThrows } {
+                    param($Prev, $EnsureOnly, $NewThrows)
+                    Mock Resolve-OERAdministrativeUnitId {
+                        throw [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Administrative unit display name 'AU-Old' matches 2 units (au-a, au-b)."),
+                            'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'AU-Old')
+                    } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    if ($NewThrows) {
+                        Mock Resolve-OERAdministrativeUnitId { throw 'transient 502' } -ParameterFilter { $DisplayName -eq 'AU-New' }
+                    }
+                    Mock Invoke-OERGraphRequest { throw 'graph 403' } -ParameterFilter {
+                        $Uri -eq 'v1.0/directory/administrativeUnits/11111111-1111-1111-1111-111111111111?$select=id'
+                    }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = $Prev; description = 'new desc'; members = @('person9@example.com') }
+
+                    { Invoke-SyncAuRenameViaCaller -Item $Item -EnsureOnly:$EnsureOnly -RenameMap $Map -ErrorAction SilentlyContinue } | Should -Throw
+                    if ($NewThrows) {
+                        # The new name's lookup threw first: the previous name was never looked up.
+                        Should -Invoke Resolve-OERAdministrativeUnitId -Times 0 -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    }
+                    Should -Invoke New-OERAdministrativeUnit -Times 0
+                    Should -Invoke Get-OERAdministrativeUnit -Times 0
+                    Should -Invoke Set-OERAdministrativeUnit -Times 0
+                    Should -Invoke Add-OERAdministrativeUnitMember -Times 0
+                    $Map.Count | Should -Be 1
+                    $Entry = $Map['administrativeunits|au-new']
+                    $Entry.Refused | Should -BeTrue
+                    $Entry.Id | Should -BeNullOrEmpty
+                    $Entry.ErrorId | Should -BeNullOrEmpty
+                    $Entry.Reason | Should -BeExactly 'one of its names could not be looked up'
+                    $Entry.PreviousName | Should -BeExactly $Prev
+                }
+            }
+
+            It 'carries the unit id as the probe answers it, not as previousDisplayName types it (an id in upper case)' {
+                InModuleScope $script:moduleName {
+                    Mock Invoke-OERGraphRequest { [PSCustomObject]@{ id = 'aaaaaaaa-0000-0000-0000-0000000000b1' } } -ParameterFilter {
+                        $Uri -eq 'v1.0/directory/administrativeUnits/AAAAAAAA-0000-0000-0000-0000000000B1?$select=id'
+                    }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AAAAAAAA-0000-0000-0000-0000000000B1' }
+                    $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    # Positive proof first: the id was probed, once, as typed.
+                    Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
+                    @($Err).Count | Should -Be 0
+                    $Map['administrativeunits|au-new'].Id | Should -BeExactly 'aaaaaaaa-0000-0000-0000-0000000000b1'
+                    $Map['administrativeunits|au-new'].Refused | Should -BeFalse
+                    Should -Invoke Get-OERAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $AdministrativeUnit -ceq 'aaaaaaaa-0000-0000-0000-0000000000b1' }
+                    Should -Invoke Set-OERAdministrativeUnit -Times 1 -Exactly -ParameterFilter {
+                        $AdministrativeUnit -ceq 'aaaaaaaa-0000-0000-0000-0000000000b1' -and $NewDisplayName -eq 'AU-New'
+                    }
+                    @($r | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
+                }
+            }
+
+            It 'removes an earlier undecided mark when the decision is Current (the new name already finds the unit)' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-id' } -ParameterFilter { $DisplayName -eq 'AU-New' }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name 'AU-New' -PreviousName 'AU-Old' -Undecided -Reason 'an earlier mark' -RenameMap $Map
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; description = 'old desc' }
+                    $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    @($Err).Count | Should -Be 0
+                    $r.Count | Should -Be 1
+                    $r[0].Action | Should -BeExactly 'Unchanged'
+                    $Map.Count | Should -Be 0
+                }
+            }
+
+            It 'replaces an earlier undecided mark with the unit id when the decision is a Rename' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $null = Resolve-OERStructureRename -Section 'administrativeUnits' -Name 'AU-New' -PreviousName 'AU-Old' -Undecided -Reason 'an earlier mark' -RenameMap $Map
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old' }
+                    $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -EnsureOnly -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                    @($Err).Count | Should -Be 0
+                    $r.Count | Should -Be 0
+                    $Map.Count | Should -Be 1
+                    $Map['administrativeunits|au-new'].Id | Should -BeExactly 'au-old-id'
+                    $Map['administrativeunits|au-new'].Refused | Should -BeFalse
+                    $Map['administrativeunits|au-new'].Reason | Should -BeNullOrEmpty
+                }
+            }
+        }
+
+        # BL-07 with a rename: the groups section runs before this pass, so a group declared into the unit
+        # by the unit's PREVIOUS name is created, and recorded, while the unit still carries that name;
+        # this pass then renames the unit. The member prune pass must still recognise the record, or a
+        # -Prune run removes the membership the same run created. Only the previous name of THIS rename
+        # counts. The unit holds the recorded group and one member nobody recorded or declared.
+        Context 'a group created into the unit by its previous name in the same run (BL-07)' {
+            BeforeEach {
+                InModuleScope $script:moduleName {
+                    Mock Get-OERAdministrativeUnit {
+                        param($AdministrativeUnit)
+                        $GroupMember = [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = 'grp-new'; Type = 'group' }
+                        $UserMember = [PSCustomObject]@{ Id = 'u-extra'; DisplayName = 'Extra'; Type = 'user' }
+                        [PSCustomObject]@{ Id = $AdministrativeUnit; DisplayName = 'AU-Old'; Description = $null; Members = @($GroupMember, $UserMember); ScopedRoles = @() }
+                    }
+                }
+            }
+
+            It 'keeps the membership under -Prune, prunes the unrecorded member, and renames, for a record naming the unit <Label>' -ForEach @(
+                @{ Label = 'by the previous name'; Unit = 'AU-Old' }
+                @{ Label = 'by the previous name in another letter case'; Unit = 'au-old' }
+                @{ Label = 'by the new name'; Unit = 'AU-New' }
+            ) {
+                InModuleScope $script:moduleName -Parameters @{ Unit = $Unit } {
+                    param($Unit)
+                    Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    $Created = [System.Collections.Generic.List[object]]::new()
+                    $Created.Add([PSCustomObject]@{ AdministrativeUnit = $Unit; GroupId = '88888888-8888-8888-8888-888888888888'; Label = 'grp-new' })
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; members = @(); scopedRoles = $null }
+                    $Records = @(Invoke-SyncAuRenameViaCaller -Item $Item -Prune -Created $Created -ErrorAction Stop -WarningAction SilentlyContinue)
+
+                    # The pass reached the removal path and removed the unrecorded member, from the unit
+                    # found under the previous name; the recorded group's membership was not removed.
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $AdministrativeUnit -eq 'au-old-id' -and $MemberId -eq 'u-extra' }
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 0 -ParameterFilter { $MemberId -eq '88888888-8888-8888-8888-888888888888' }
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly
+                    $Withheld = @($Records | Where-Object { $_.Action -eq 'Skipped' })
+                    $Withheld.Count | Should -Be 1
+                    $Withheld[0].Item | Should -BeExactly 'AU-New'
+                    $Withheld[0].Detail | Should -BeLike "prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'grp-new'*"
+                    @($Records | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared member 'u-extra'" }).Count | Should -Be 1
+                    @($Records | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "renamed administrative unit 'AU-Old' to 'AU-New'" }).Count | Should -Be 1
+                    Should -Invoke Set-OERAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $AdministrativeUnit -eq 'au-old-id' -and $NewDisplayName -eq 'AU-New' }
+                }
+            }
+
+            It 'reports the membership Extra without -Prune, removing nothing, for a record naming the unit by the previous name' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    $Created = [System.Collections.Generic.List[object]]::new()
+                    $Created.Add([PSCustomObject]@{ AdministrativeUnit = 'AU-Old'; GroupId = '88888888-8888-8888-8888-888888888888'; Label = 'grp-new' })
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; members = @(); scopedRoles = $null }
+                    $Records = @(Invoke-SyncAuRenameViaCaller -Item $Item -Created $Created -ErrorAction Stop)
+
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 0
+                    @($Records | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 0
+                    @($Records | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -eq "undeclared member '88888888-8888-8888-8888-888888888888' (use -Prune to remove)" }).Count | Should -Be 1
+                    @($Records | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -eq "undeclared member 'u-extra' (use -Prune to remove)" }).Count | Should -Be 1
+                }
+            }
+
+            It 'still prunes the membership under -Prune when the entry renames nothing and the record names a name that is not the unit''s own' {
+                InModuleScope $script:moduleName {
+                    # No previousDisplayName: the unit is found under its own name, 'AU-Old' is no name of
+                    # this unit, so a record naming it is another unit's and only the previous name of a
+                    # rename THIS entry declares counts.
+                    Mock Resolve-OERAdministrativeUnitId { 'au-new-id' } -ParameterFilter { $DisplayName -eq 'AU-New' }
+                    $Created = [System.Collections.Generic.List[object]]::new()
+                    $Created.Add([PSCustomObject]@{ AdministrativeUnit = 'AU-Old'; GroupId = '88888888-8888-8888-8888-888888888888'; Label = 'grp-new' })
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; members = @(); scopedRoles = $null }
+                    $Records = @(Invoke-SyncAuRenameViaCaller -Item $Item -Prune -Created $Created -ErrorAction Stop -WarningAction SilentlyContinue)
+
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq '88888888-8888-8888-8888-888888888888' }
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'u-extra' }
+                    @($Records | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 0
+                    @($Records | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 2
+                }
+            }
+
+            It 'still prunes the membership under -Prune when the record names a unit that is not the one renamed' {
+                InModuleScope $script:moduleName {
+                    Mock Resolve-OERAdministrativeUnitId { 'au-old-id' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                    $Created = [System.Collections.Generic.List[object]]::new()
+                    $Created.Add([PSCustomObject]@{ AdministrativeUnit = 'AU-Other'; GroupId = '88888888-8888-8888-8888-888888888888'; Label = 'grp-new' })
+                    $Item = [PSCustomObject]@{ displayName = 'AU-New'; previousDisplayName = 'AU-Old'; members = @(); scopedRoles = $null }
+                    $Records = @(Invoke-SyncAuRenameViaCaller -Item $Item -Prune -Created $Created -ErrorAction Stop -WarningAction SilentlyContinue)
+
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq '88888888-8888-8888-8888-888888888888' }
+                    Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'u-extra' }
+                    @($Records | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 0
+                }
+            }
+        }
+
+        It 'leaves an entry with no previousDisplayName as it was: one lookup, no probe, a create when the unit is missing' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{ displayName = 'AU-New'; members = @('person9@example.com') }
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                Should -Invoke Resolve-OERAdministrativeUnitId -Exactly -Times 1
+                Should -Invoke Resolve-OERAdministrativeUnitId -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'AU-New' }
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+                Should -Invoke New-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'AU-New' }
+                Should -Invoke Set-OERAdministrativeUnit -Times 0
+                @($Err).Count | Should -Be 0
+                @($r | Where-Object { $_.Action -eq 'Created' }).Count | Should -Be 1
+            }
+        }
+
+        It 'treats an explicit null previousDisplayName as undeclared, like every other key' {
+            InModuleScope $script:moduleName {
+                $Item = '{ "displayName": "AU-New", "previousDisplayName": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                Should -Invoke Resolve-OERAdministrativeUnitId -Exactly -Times 1
+                Should -Invoke New-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'AU-New' }
+                @($Err).Count | Should -Be 0
+                @($r | Where-Object { $_.Action -eq 'Created' }).Count | Should -Be 1
+            }
+        }
+
+        It 'keeps the update wording of a unit with no rename as it has always been' {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERAdministrativeUnitId { 'au-1' } -ParameterFilter { $DisplayName -eq 'AU-Old' }
+                $Item = [PSCustomObject]@{ displayName = 'AU-Old'; description = 'new desc' }
+                $Run = @(Invoke-SyncAuRenameViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                $Plan = @(Invoke-SyncAuRenameViaCaller -Item $Item -WhatIf)
+
+                Should -Invoke Set-OERAdministrativeUnit -Exactly -Times 1 -ParameterFilter { $Id -eq 'au-1' -and -not $NewDisplayName -and $Description -eq 'new desc' }
+                $Run.Count | Should -Be 1
+                $Run[0].Detail | Should -BeExactly 'updated administrative unit properties (Description)'
+                $Plan.Count | Should -Be 1
+                $Plan[0].Detail | Should -BeExactly 'would update administrative unit properties (Description)'
+            }
+        }
+    }
 }

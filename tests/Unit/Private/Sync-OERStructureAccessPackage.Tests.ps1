@@ -5346,3 +5346,960 @@ Describe 'Sync-OERStructureAccessPackage -PlannedCatalog' {
         }
     }
 }
+
+Describe 'Sync-OERStructureAccessPackage -previousDisplayName and the rename map (BL-128, A5)' {
+    # previousDisplayName renames a package in place, within its declared catalog: both names are
+    # matched in the catalog's own package list (an object id by the Id of a package in that list,
+    # never by a probe), and Resolve-OERStructureRename decides. A catalog the same run renames is
+    # addressed through the run's rename map (Get-OERStructureRenameTarget): by the id the catalogs
+    # handler registered for it, or not at all when that rename was refused.
+
+    Context 'renaming an access package in place, within its declared catalog' {
+
+        It 'renames the package found under its previous name in one Set-OERAccessPackage call and reconciles its children by that id (description <Desc>)' -ForEach @(
+            @{ Desc = 'same'; Expected = "renamed access package 'AP-Old' to 'AP-New'"; SendsDescription = $false }
+            @{ Desc = 'new desc'; Expected = "renamed access package 'AP-Old' to 'AP-New'; updated access package properties (Description)"; SendsDescription = $true }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Desc = $Desc; Expected = $Expected; SendsDescription = $SendsDescription } {
+                param($Desc, $Expected, $SendsDescription)
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old'; Description = 'same'; IsHidden = $false } } -ParameterFilter { $Id -eq 'ap-old' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = 'AP-Old'; catalog = 'CAT'; description = $Desc }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Section | Should -BeExactly 'accessPackages'
+                $r[0].Item | Should -BeExactly 'AP-New'
+                $r[0].Action | Should -BeExactly 'Updated'
+                $r[0].Detail | Should -BeExactly $Expected
+                @($Err).Count | Should -Be 0
+
+                # One call carries the rename and every other changed property, by the id found under
+                # the previous name; nothing is created.
+                Should -Invoke Set-OERAccessPackage -Times 1 -Exactly
+                Should -Invoke Set-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Id -eq 'ap-old' -and $NewDisplayName -eq 'AP-New' }
+                if ($SendsDescription) {
+                    Should -Invoke Set-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Description -eq 'new desc' }
+                } else {
+                    Should -Invoke Set-OERAccessPackage -Times 0 -ParameterFilter { -not [string]::IsNullOrEmpty($Description) }
+                }
+                Should -Invoke New-OERAccessPackage -Times 0
+
+                # The children are read by the renamed package's id.
+                Should -Invoke Get-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Id -eq 'ap-old' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*/accessPackages/ap-old/resourceRoleScopes*' }
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-old' }
+            }
+        }
+
+        It 'reports Unchanged and renames nothing when the package already carries the new name (the second run)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-New' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-New'; Description = 'same'; IsHidden = $false } } -ParameterFilter { $Id -eq 'ap-old' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = 'AP-Old'; catalog = 'CAT'; description = 'same' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Unchanged'
+                $r[0].Detail | Should -BeExactly 'access package properties match'
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-old' }
+            }
+        }
+
+        It 'fails the item with one row and an AccessPackageRenameConflict error, reading and writing nothing further, when both names are different packages of the catalog' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage {
+                    @(
+                        [PSCustomObject]@{ Id = 'ap-new'; DisplayName = 'AP-New' }
+                        [PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old' }
+                    )
+                } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = $Id; DisplayName = 'AP-New'; Description = 'old'; IsHidden = $false } } -ParameterFilter { -not [string]::IsNullOrEmpty($Id) }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Get-OERCatalogResource { [PSCustomObject]@{ DisplayName = 'role_sec_x'; OriginId = 'grp-1'; Id = 'res-1' } }
+                Mock Resolve-OERGroupId { 'grp-1' }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                # A changed property and both collections are declared, so a missing guard has
+                # something to read, reconcile and write.
+                $Item = [PSCustomObject]@{
+                    displayName         = 'AP-New'
+                    previousDisplayName = 'AP-Old'
+                    catalog             = 'CAT'
+                    description         = 'new'
+                    resourceRoles       = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' })
+                    assignmentPolicies  = @([PSCustomObject]@{ displayName = 'Default' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Section | Should -BeExactly 'accessPackages'
+                $r[0].Item | Should -BeExactly 'AP-New'
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "both 'AP-New' and its previousDisplayName 'AP-Old' exist in catalog 'CAT' as different access packages; the document never merges two access packages, so nothing was changed -- rename or delete one of them, or remove previousDisplayName"
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^AccessPackageRenameConflict'
+
+                @($Err).Count | Should -Be 1
+                $Conflict = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'AccessPackageRenameConflict*' })
+                $Conflict.Count | Should -Be 1
+                $Conflict[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ResourceExists)
+                $Conflict[0].TargetObject | Should -BeExactly 'AP-New'
+                $Conflict[0].Exception.Message | Should -Match "in catalog 'CAT'"
+
+                # Only the catalog's package list was read.
+                Should -Invoke Get-OERAccessPackage -Times 1 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke Get-OERCatalogResource -Times 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+            }
+        }
+
+        It 'fails with AccessPackageRenameNotFound and creates nothing when neither name is in the catalog (WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ UseWhatIf = $false }
+            @{ UseWhatIf = $true }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ UseWhatIf = $UseWhatIf } {
+                param($UseWhatIf)
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'ap-other'; DisplayName = 'Other' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-created'; DisplayName = 'AP-New' } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{
+                    displayName         = 'AP-New'
+                    previousDisplayName = 'AP-Old'
+                    catalog             = 'CAT'
+                    assignmentPolicies  = @([PSCustomObject]@{ displayName = 'Default' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WhatIf:$UseWhatIf -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "neither 'AP-New' nor its previousDisplayName 'AP-Old' matches an access package in catalog 'CAT', so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new access package, remove previousDisplayName"
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^AccessPackageRenameNotFound'
+                @($r | Where-Object { $_.Detail -match 'would create' }).Count | Should -Be 0
+
+                @($Err).Count | Should -Be 1
+                $NotFound = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'AccessPackageRenameNotFound*' })
+                $NotFound.Count | Should -Be 1
+                $NotFound[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+                $NotFound[0].TargetObject | Should -BeExactly 'AP-New'
+
+                Should -Invoke New-OERAccessPackage -Times 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke Get-OERAccessPackage -Times 1 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 0
+            }
+        }
+
+        It 'renames the package whose Id in the catalog list is the object id previousDisplayName names, with no request of its own' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'AP-Old' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'AP-Old'; Description = $null; IsHidden = $false } } -ParameterFilter { $Id -eq '11111111-1111-1111-1111-111111111111' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = '11111111-1111-1111-1111-111111111111'; catalog = 'CAT' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Updated'
+                $r[0].Detail | Should -BeExactly "renamed access package '11111111-1111-1111-1111-111111111111' to 'AP-New'"
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Id -eq '11111111-1111-1111-1111-111111111111' -and $NewDisplayName -eq 'AP-New' }
+                Should -Invoke New-OERAccessPackage -Times 0
+                # R5: the id is matched in the list already read, never probed or resolved tenant-wide.
+                Should -Invoke Resolve-OERAccessPackageId -Times 0
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*/accessPackages/11111111-1111-1111-1111-111111111111/resourceRoleScopes*' }
+            }
+        }
+
+        It 'matches an object id in previousDisplayName without regard to letter case and acts on the id the list carries' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'aaaaaaaa-0000-0000-0000-000000000001'; DisplayName = 'AP-Old' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'aaaaaaaa-0000-0000-0000-000000000001'; DisplayName = 'AP-Old'; Description = $null; IsHidden = $false } } -ParameterFilter { $Id -ceq 'aaaaaaaa-0000-0000-0000-000000000001' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = 'AAAAAAAA-0000-0000-0000-000000000001'; catalog = 'CAT' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Updated'
+                $r[0].Detail | Should -BeExactly "renamed access package 'AAAAAAAA-0000-0000-0000-000000000001' to 'AP-New'"
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Id -ceq 'aaaaaaaa-0000-0000-0000-000000000001' -and $NewDisplayName -eq 'AP-New' }
+                Should -Invoke Resolve-OERAccessPackageId -Times 0
+            }
+        }
+
+        It 'fails with AccessPackageRenameNotFound when the object id previousDisplayName names is not a package of the declared catalog (R5)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                # A package of another catalog, or a deleted one: the id is not in this catalog's list.
+                Mock Resolve-OERAccessPackageId { '11111111-1111-1111-1111-111111111111' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'ap-x'; DisplayName = 'AP-X' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'AP-Old' } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = '11111111-1111-1111-1111-111111111111'; catalog = 'CAT' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^AccessPackageRenameNotFound'
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'AccessPackageRenameNotFound*' }).Count | Should -Be 1
+                Should -Invoke Resolve-OERAccessPackageId -Times 0
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+            }
+        }
+
+        It 'applies the entry normally, with no conflict and no rename, when a stale object id in previousDisplayName is not in the list and displayName is' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                # A deleted package, or one of another catalog: the stale id must never be resolved
+                # or probed into a second package and read as a conflict.
+                Mock Resolve-OERAccessPackageId { '11111111-1111-1111-1111-111111111111' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'ap-new'; DisplayName = 'AP-New' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-new'; DisplayName = 'AP-New'; Description = 'same'; IsHidden = $false } } -ParameterFilter { $Id -eq 'ap-new' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = '11111111-1111-1111-1111-111111111111'; catalog = 'CAT'; description = 'same' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Unchanged'
+                $r[0].Detail | Should -BeExactly 'access package properties match'
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+                Should -Invoke Resolve-OERAccessPackageId -Times 0
+                # The children are reconciled by the package found under displayName.
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-new' }
+            }
+        }
+
+        It 'applies the entry normally when the object id previousDisplayName names is the package that carries displayName' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'AP-New' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'AP-New'; Description = $null; IsHidden = $false } } -ParameterFilter { $Id -eq '11111111-1111-1111-1111-111111111111' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = '11111111-1111-1111-1111-111111111111'; catalog = 'CAT' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Unchanged'
+                $r[0].Detail | Should -BeExactly 'access package properties match'
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+            }
+        }
+
+        It 'refuses a previous name several packages of the catalog carry, naming every id and writing nothing' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage {
+                    @(
+                        [PSCustomObject]@{ Id = 'ap-old-1'; DisplayName = 'AP-Old' }
+                        [PSCustomObject]@{ Id = 'ap-old-2'; DisplayName = 'ap-old' }
+                    )
+                } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = $Id; DisplayName = 'AP-Old'; Description = $null; IsHidden = $false } } -ParameterFilter { -not [string]::IsNullOrEmpty($Id) }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = 'AP-Old'; catalog = 'CAT'; description = 'new' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "catalog 'CAT' holds 2 access packages named 'AP-Old' (ap-old-1, ap-old-2), the previousDisplayName of this entry; the name cannot identify one -- declare previousDisplayName as the object id of the package to rename"
+                # The same shape as an ambiguous displayName: a row, no new published id.
+                @($Err).Count | Should -Be 0
+                Should -Invoke Get-OERAccessPackage -Times 1 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+            }
+        }
+
+        It 'keeps the displayName duplicate row exactly as it is when the entry also declares previousDisplayName' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage {
+                    @(
+                        [PSCustomObject]@{ Id = 'ap-new-1'; DisplayName = 'AP-New' }
+                        [PSCustomObject]@{ Id = 'ap-new-2'; DisplayName = 'AP-New' }
+                        [PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old' }
+                    )
+                } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = 'AP-Old'; catalog = 'CAT' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "catalog 'CAT' holds 2 access packages named 'AP-New' (ap-new-1, ap-new-2); the display name cannot identify one"
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+            }
+        }
+
+        It 'plans the rename under -WhatIf and plans the children against the package found under its previous name (description <Desc>)' -ForEach @(
+            @{ Desc = 'same'; Expected = "would rename access package 'AP-Old' to 'AP-New'" }
+            @{ Desc = 'new desc'; Expected = "would rename access package 'AP-Old' to 'AP-New'; would update access package properties (Description)" }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Desc = $Desc; Expected = $Expected } {
+                param($Desc, $Expected)
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old'; Description = 'same'; IsHidden = $false } } -ParameterFilter { $Id -eq 'ap-old' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Get-OERCatalogResource { [PSCustomObject]@{ DisplayName = 'role_sec_x'; OriginId = 'grp-1'; Id = 'res-1' } }
+                Mock Resolve-OERGroupId { 'grp-1' }
+                Mock Add-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName         = 'AP-New'
+                    previousDisplayName = 'AP-Old'
+                    catalog             = 'CAT'
+                    description         = $Desc
+                    resourceRoles       = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 2
+                $r[0].Action | Should -BeExactly 'Skipped'
+                $r[0].Detail | Should -BeExactly $Expected
+                $r[1].Action | Should -BeExactly 'Skipped'
+                $r[1].Detail | Should -BeExactly "would add resourceRole 'Member' on 'role_sec_x'"
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*/accessPackages/ap-old/resourceRoleScopes*' }
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-old' }
+            }
+        }
+
+        It 'stops the item at a failed rename: the Failed row is the last one and no child is read or written (R8)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old'; Description = 'same'; IsHidden = $false } } -ParameterFilter { $Id -eq 'ap-old' }
+                Mock Set-OERAccessPackage { throw 'Graph rejected the update' }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Get-OERCatalogResource { [PSCustomObject]@{ DisplayName = 'role_sec_x'; OriginId = 'grp-1'; Id = 'res-1' } }
+                Mock Resolve-OERGroupId { 'grp-1' }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                $Item = [PSCustomObject]@{
+                    displayName         = 'AP-New'
+                    previousDisplayName = 'AP-Old'
+                    catalog             = 'CAT'
+                    resourceRoles       = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' })
+                    assignmentPolicies  = @([PSCustomObject]@{ displayName = 'Default' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[-1].Action | Should -BeExactly 'Failed'
+                $r[-1].Detail | Should -BeExactly 'access package update failed: Graph rejected the update'
+                Should -Invoke Set-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Id -eq 'ap-old' -and $NewDisplayName -eq 'AP-New' }
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke Get-OERCatalogResource -Times 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+            }
+        }
+
+        It 'treats a previous name that differs from displayName only in letter case as the same package: no rename and no failure' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'ap-new' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'ap-new'; Description = $null; IsHidden = $false } } -ParameterFilter { $Id -eq 'ap-1' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = 'ap-new'; catalog = 'CAT' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Unchanged'
+                $r[0].Detail | Should -BeExactly 'access package properties match'
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+            }
+        }
+
+        It 'resolves previousDisplayName tenant-wide beside displayName when the entry declares no catalog (the private entry point)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { $null } -ParameterFilter { $DisplayName -eq 'AP-New' }
+                Mock Resolve-OERAccessPackageId { 'ap-old' } -ParameterFilter { $DisplayName -eq 'AP-Old' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old'; Description = $null; IsHidden = $false } } -ParameterFilter { $Id -eq 'ap-old' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = 'AP-Old' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Updated'
+                $r[0].Detail | Should -BeExactly "renamed access package 'AP-Old' to 'AP-New'"
+                @($Err).Count | Should -Be 0
+                Should -Invoke Resolve-OERAccessPackageId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'AP-Old' }
+                Should -Invoke Set-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Id -eq 'ap-old' -and $NewDisplayName -eq 'AP-New' }
+                Should -Invoke New-OERAccessPackage -Times 0
+            }
+        }
+
+        It 'fails the item with nothing created or renamed when the tenant-wide lookup of previousDisplayName throws (no catalog declared)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { $null } -ParameterFilter { $DisplayName -eq 'AP-New' }
+                Mock Resolve-OERAccessPackageId { throw 'no access package has the id 11111111-1111-1111-1111-111111111111' } -ParameterFilter { $DisplayName -eq '11111111-1111-1111-1111-111111111111' }
+                Mock Get-OERAccessPackage { }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = '11111111-1111-1111-1111-111111111111' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "failed to resolve access package 'AP-New': no access package has the id 11111111-1111-1111-1111-111111111111; the access package was NOT created"
+                Should -Invoke New-OERAccessPackage -Times 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke Get-OERAccessPackage -Times 0
+            }
+        }
+
+        It 'still reconciles the children after a failed property update that renames nothing (control)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP' }) } -ParameterFilter { $Catalog -eq 'CAT' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP'; Description = 'old'; IsHidden = $false } } -ParameterFilter { $Id -eq 'ap-1' }
+                Mock Set-OERAccessPackage { throw 'Graph rejected the update' }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Item = [PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT'; description = 'new' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly 'access package update failed: Graph rejected the update'
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*/accessPackages/ap-1/resourceRoleScopes*' }
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+            }
+        }
+    }
+
+    Context 'a catalog the same run renames, read through the rename map' {
+
+        It 'addresses the catalog by the id the map holds in every call that names it, and creates the package there' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.Dictionary[string, object]]$RenameMap)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -RenameMap $RenameMap
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @() }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP' } }
+                Mock Get-OERCatalogResource { [PSCustomObject]@{ DisplayName = 'role_sec_x'; OriginId = 'grp-1'; Id = 'res-1' } }
+                Mock Resolve-OERGroupId { 'grp-1' }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Id $null -PreviousId 'cat-old-id' -RenameMap $Map
+                $Item = [PSCustomObject]@{
+                    displayName   = 'AP'
+                    catalog       = 'CAT-New'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 2
+                $r[0].Action | Should -BeExactly 'Created'
+                $r[0].Detail | Should -BeExactly 'created access package AP (ap-1)'
+                $r[1].Action | Should -BeExactly 'Created'
+                $r[1].Detail | Should -BeExactly "added resourceRole 'Member' on 'role_sec_x'"
+                @($Err).Count | Should -Be 0
+
+                Should -Invoke Get-OERAccessPackage -Times 1 -Exactly
+                Should -Invoke Get-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-old-id' }
+                Should -Invoke Get-OERAccessPackage -Times 0 -ParameterFilter { $Catalog -eq 'CAT-New' }
+                Should -Invoke New-OERAccessPackage -Times 1 -Exactly
+                Should -Invoke New-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-old-id' -and $DisplayName -eq 'AP' }
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-old-id' }
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 1 -Exactly
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-old-id' -and $AccessPackage -eq 'ap-1' -and $ResourceOriginId -eq 'grp-1' }
+            }
+        }
+
+        It 'names the catalog as the document does in a row about a failed package list read' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.Dictionary[string, object]]$RenameMap)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -RenameMap $RenameMap
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Get-OERAccessPackage { throw 'transient Graph failure' }
+                Mock New-OERAccessPackage { }
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Id $null -PreviousId 'cat-old-id' -RenameMap $Map
+                $Item = [PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT-New' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "failed to look up access packages in catalog 'CAT-New': transient Graph failure; the access package was NOT created"
+                Should -Invoke Get-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-old-id' }
+                Should -Invoke New-OERAccessPackage -Times 0
+            }
+        }
+
+        It 'names the catalog as the document does in a row about a resource the renamed catalog does not hold' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.Dictionary[string, object]]$RenameMap)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -RenameMap $RenameMap
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP' }) } -ParameterFilter { $Catalog -eq 'cat-old-id' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP'; Description = $null; IsHidden = $false } } -ParameterFilter { $Id -eq 'ap-1' }
+                Mock Get-OERCatalogResource { @() }
+                Mock Resolve-OERGroupId { $null }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Id $null -PreviousId 'cat-old-id' -RenameMap $Map
+                $Item = [PSCustomObject]@{
+                    displayName   = 'AP'
+                    catalog       = 'CAT-New'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'nope'; role = 'Member' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue)
+
+                @($r).Count | Should -Be 2
+                $r[0].Action | Should -BeExactly 'Unchanged'
+                $r[1].Action | Should -BeExactly 'Failed'
+                $r[1].Detail | Should -BeExactly "could not resolve resource 'nope' to an origin id in catalog 'CAT-New'"
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-old-id' }
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+            }
+        }
+
+        It 'plans a rename of the package inside a catalog the same -WhatIf plan renames, with no Failed row' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.Dictionary[string, object]]$RenameMap)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -RenameMap $RenameMap
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @([PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old' }) } -ParameterFilter { $Catalog -eq 'cat-old-id' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old'; Description = $null; IsHidden = $false } } -ParameterFilter { $Id -eq 'ap-old' }
+                Mock Set-OERAccessPackage { }
+                Mock New-OERAccessPackage { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Id $null -PreviousId 'cat-old-id' -RenameMap $Map
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = 'AP-Old'; catalog = 'CAT-New' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -RenameMap $Map -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Skipped'
+                $r[0].Detail | Should -BeExactly "would rename access package 'AP-Old' to 'AP-New'"
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+            }
+        }
+
+        It 'fails a package in a catalog whose rename was refused (<ErrorId>, WhatIf: <UseWhatIf>, previousDisplayName: <WithPrev>), reading and writing nothing for it' -ForEach @(
+            @{ ErrorId = 'CatalogRenameConflict'; UseWhatIf = $false; WithPrev = $false }
+            @{ ErrorId = 'CatalogRenameConflict'; UseWhatIf = $true; WithPrev = $false }
+            @{ ErrorId = 'CatalogRenameNotFound'; UseWhatIf = $false; WithPrev = $false }
+            @{ ErrorId = 'CatalogRenameNotFound'; UseWhatIf = $true; WithPrev = $true }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ ErrorId = $ErrorId; UseWhatIf = $UseWhatIf; WithPrev = $WithPrev } {
+                param($ErrorId, $UseWhatIf, $WithPrev)
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.Dictionary[string, object]]$RenameMap)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -RenameMap $RenameMap
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { 'ap-elsewhere' }
+                # Another catalog now carries the new name: the package must not land there.
+                Mock Get-OERAccessPackage { @() }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP' } }
+                Mock Set-OERAccessPackage { }
+                Mock Get-OERCatalogResource { @() }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                if ($ErrorId -eq 'CatalogRenameConflict') {
+                    $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Id 'cat-new-id' -PreviousId 'cat-old-id' -RenameMap $Map
+                } else {
+                    $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Id $null -PreviousId $null -RenameMap $Map
+                }
+                $Item = [PSCustomObject]@{
+                    displayName   = 'AP'
+                    catalog       = 'CAT-New'
+                    description   = 'new'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' })
+                }
+                if ($WithPrev) { $Item | Add-Member -NotePropertyName previousDisplayName -NotePropertyValue 'AP-Old' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -RenameMap $Map -WhatIf:$UseWhatIf -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Section | Should -BeExactly 'accessPackages'
+                $r[0].Item | Should -BeExactly 'AP'
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused ($ErrorId), so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it"
+                # R9: the catalog's own row carries the refusal; this row publishes no record.
+                $r[0].Error | Should -BeNullOrEmpty
+                @($Err).Count | Should -Be 0
+                Should -Invoke Get-OERAccessPackage -Times 0
+                Should -Invoke Resolve-OERAccessPackageId -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+                Should -Invoke Set-OERAccessPackage -Times 0
+                Should -Invoke Get-OERCatalogResource -Times 0
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+            }
+        }
+
+        It 'fails a package in a catalog whose rename this run could not decide, naming why, reading and writing nothing for it (R12, WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ UseWhatIf = $false }
+            @{ UseWhatIf = $true }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ UseWhatIf = $UseWhatIf } {
+                param($UseWhatIf)
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.Dictionary[string, object]]$RenameMap)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -RenameMap $RenameMap
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { 'ap-elsewhere' }
+                # Another catalog may carry the new name: the package must not land there.
+                Mock Get-OERAccessPackage { @() }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP' } }
+                Mock Get-OERCatalogResource { @() }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Undecided `
+                    -Reason 'its previous name could not be looked up' -RenameMap $Map
+                $Item = [PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT-New'; resourceRoles = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' }) }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -RenameMap $Map -WhatIf:$UseWhatIf -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly ("catalog 'CAT-New' was not reconciled in this run: its rename from 'CAT-Old' was refused (its previous name could not be looked up), " +
+                    'so the catalog this access package belongs to cannot be identified; nothing was created, read or written for it')
+                $r[0].Error | Should -BeNullOrEmpty
+                @($Err).Count | Should -Be 0
+                Should -Invoke Get-OERAccessPackage -Times 0
+                Should -Invoke Resolve-OERAccessPackageId -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+                Should -Invoke Get-OERCatalogResource -Times 0
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+            }
+        }
+
+        It 'fails a package that declares previousDisplayName in a catalog the same plan creates with AccessPackageRenameNotFound, planning no create' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[string]]$PlannedCatalog)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -PlannedCatalog $PlannedCatalog
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { $null }
+                Mock Get-OERAccessPackage { @() }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-New' } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $PlannedList = [System.Collections.Generic.List[string]]::new()
+                $PlannedList.Add('cat-new')
+                $Item = [PSCustomObject]@{
+                    displayName         = 'AP-New'
+                    previousDisplayName = 'AP-Old'
+                    catalog             = 'cat-new'
+                    resourceRoles       = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' })
+                    assignmentPolicies  = @([PSCustomObject]@{ displayName = 'Default' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -PlannedCatalog $PlannedList -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "neither 'AP-New' nor its previousDisplayName 'AP-Old' matches an access package in catalog 'cat-new', so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new access package, remove previousDisplayName"
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^AccessPackageRenameNotFound'
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'AccessPackageRenameNotFound*' }).Count | Should -Be 1
+                @($r | Where-Object { $_.Detail -match 'would create' }).Count | Should -Be 0
+                Should -Invoke Get-OERAccessPackage -Times 0
+                Should -Invoke Resolve-OERAccessPackageId -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+            }
+        }
+
+        It 'still plans a package without previousDisplayName in a catalog the same plan creates as created (control)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[string]]$PlannedCatalog)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -PlannedCatalog $PlannedCatalog
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { $null }
+                Mock Get-OERAccessPackage { @() }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-New' } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                $PlannedList = [System.Collections.Generic.List[string]]::new()
+                $PlannedList.Add('cat-new')
+                $Item = [PSCustomObject]@{ displayName = 'AP-New'; catalog = 'cat-new' }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -PlannedCatalog $PlannedList -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Skipped'
+                $r[0].Detail | Should -BeExactly 'would create access package AP-New'
+                @($Err).Count | Should -Be 0
+                Should -Invoke Get-OERAccessPackage -Times 0
+                Should -Invoke New-OERAccessPackage -Times 0
+            }
+        }
+
+        It 'makes exactly the calls it always made for a package without previousDisplayName whose catalog the map does not hold (map: <MapCase>)' -ForEach @(
+            @{ MapCase = 'not passed' }
+            @{ MapCase = 'holding another catalog' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ MapCase = $MapCase } {
+                param($MapCase)
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.Dictionary[string, object]]$RenameMap)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -RenameMap $RenameMap
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERAccessPackageId { throw 'tenant-wide resolve must not be used when a catalog is declared' }
+                Mock Get-OERAccessPackage { @() }
+                Mock New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP' } }
+                Mock Get-OERCatalogResource { [PSCustomObject]@{ DisplayName = 'role_sec_x'; OriginId = 'grp-1'; Id = 'res-1' } }
+                Mock Resolve-OERGroupId { 'grp-1' }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                $Map = $null
+                if ($MapCase -ne 'not passed') {
+                    $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-Other' -PreviousName 'CAT-Older' -Id $null -PreviousId 'cat-other-id' -RenameMap $Map
+                }
+                $Item = [PSCustomObject]@{
+                    displayName   = 'AP'
+                    catalog       = 'CAT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -RenameMap $Map -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 2
+                $r[0].Detail | Should -BeExactly 'created access package AP (ap-1)'
+                $r[1].Detail | Should -BeExactly "added resourceRole 'Member' on 'role_sec_x'"
+                @($Err).Count | Should -Be 0
+                Should -Invoke Get-OERAccessPackage -Times 1 -Exactly
+                Should -Invoke Get-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'CAT' }
+                Should -Invoke New-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'CAT' }
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'CAT' }
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'CAT' -and $AccessPackage -eq 'ap-1' }
+            }
+        }
+    }
+}

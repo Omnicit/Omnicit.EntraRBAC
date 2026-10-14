@@ -3754,36 +3754,14 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
         }
     }
 
-    Context 'previousDisplayName outside groups (BL-128, A5)' {
-        # Only groups[] can be renamed through the document. The other five places match an entry by
-        # displayName alone, so a previousDisplayName there would be ignored and the engine would
-        # create a second object beside the one the document means to rename. Refused as an Error.
+    Context 'previousDisplayName on assignment policies and access reviews (BL-128, A5)' {
+        # Of the places outside groups that match an entry by displayName, administrativeUnits, catalogs and
+        # accessPackages rename the object found under previousDisplayName (Sprint 11 step 4, the Describe
+        # below). A policy within its package and a review still match by displayName alone, so a
+        # previousDisplayName there would be ignored and the engine would create a second object beside
+        # the one the document means to rename. Refused as an Error until step 4b.
         BeforeDiscovery {
             $script:OutsideGroupCase = @(
-                @{
-                    Where   = 'an administrative unit'
-                    Kind    = 'administrative unit'
-                    Article = 'an'
-                    At      = 'administrativeUnits[0]'
-                    Path    = 'administrativeUnits[0].previousDisplayName'
-                    Json    = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "au-new", "previousDisplayName": "au-old" } ] }'
-                }
-                @{
-                    Where   = 'a catalog'
-                    Kind    = 'catalog'
-                    Article = 'a'
-                    At      = 'catalogs[0]'
-                    Path    = 'catalogs[0].previousDisplayName'
-                    Json    = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-new", "previousDisplayName": "cat-old" } ] }'
-                }
-                @{
-                    Where   = 'an access package'
-                    Kind    = 'access package'
-                    Article = 'an'
-                    At      = 'accessPackages[0]'
-                    Path    = 'accessPackages[0].previousDisplayName'
-                    Json    = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap-new", "catalog": "cat-x", "previousDisplayName": "ap-old" } ] }'
-                }
                 @{
                     Where   = 'an assignment policy'
                     Kind    = 'assignment policy'
@@ -3814,6 +3792,11 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
                 $Hit[0].Severity | Should -BeExactly 'Error'
                 $Hit[0].Message | Should -Match 'not supported'
                 $Hit[0].Message | Should -Match ('would create a new ' + [regex]::Escape($Kind))
+                # The message names the three kinds that CAN be renamed now, and no longer says that only
+                # groups can: that sentence was step 3's, before administrative units, catalogs and access
+                # packages joined them.
+                $Hit[0].Message | Should -Match 'only groups, administrative units, catalogs and access packages can be renamed through the document'
+                $Hit[0].Message | Should -Not -Match 'only groups can be renamed'
                 # The message no longer says the engine matches by displayName "alone": a package is matched
                 # within its catalog and a policy within its package, so that was inexact.
                 $Hit[0].Message | Should -Not -Match 'alone'
@@ -3828,8 +3811,8 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
                 param($Doc, $Kind, $Article, $At, $Path)
                 $Hit = @((Test-OERStructureSchema -Document $Doc).Errors | Where-Object { $_.Path -eq $Path })
                 $Hit.Count | Should -Be 1
-                $Hit[0].Message | Should -BeExactly ("'previousDisplayName' at $At is not supported for $Article $Kind yet: only groups can be renamed " +
-                    "through the document. Invoke-OERStructure does not read previousDisplayName for $Article $Kind, so it would " +
+                $Hit[0].Message | Should -BeExactly ("'previousDisplayName' at $At is not supported for $Article $Kind yet: only groups, administrative units, catalogs and access packages " +
+                    "can be renamed through the document. Invoke-OERStructure does not read previousDisplayName for $Article $Kind, so it would " +
                     "create a new $Kind named by displayName beside the existing one instead of renaming it. " +
                     'Remove previousDisplayName, and rename the existing object outside the document first.')
             }
@@ -3884,6 +3867,431 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
             $V = Test-OERStructureSchema -Document $Doc
             @($V.Errors | Where-Object Severity -eq 'Error') | Should -BeNullOrEmpty
             $V.Valid | Should -BeTrue
+        }
+    }
+}
+
+Describe 'Test-OERStructureSchema renames of administrative units, catalogs and access packages (BL-128, A5)' {
+    # Sprint 11 step 4: administrativeUnits, catalogs and accessPackages rename the object found under
+    # previousDisplayName, with the groups' rules. A non-string or empty value names nothing (Error); one
+    # equal to displayName ignoring case finds the same object, so nothing is renamed (Warning naming the
+    # Set command); the previous name is a claimed key of the section's duplicate check, a package's within
+    # its catalog. A reference that still uses the previous name is a Warning (Rule 14), and replaces Rule
+    # 11's "not declared" Warning for a package's catalog (R11).
+    BeforeDiscovery {
+        $script:RenameKind = @(
+            @{
+                Kind        = 'an administrative unit'
+                Section     = 'administrativeUnits'
+                SetCommand  = 'Set-OERAdministrativeUnit'
+                Prefix      = ''
+                Tail        = ', "members": null, "scopedRoles": null'
+                What        = "display name '{0}'"
+                Consequence = 'Both entries reconcile one administrative unit, so each would undo the other''s settings and, under -Prune, remove the members and scoped roles the other declares.'
+            }
+            @{
+                Kind        = 'a catalog'
+                Section     = 'catalogs'
+                SetCommand  = 'Set-OERCatalog'
+                Prefix      = ''
+                Tail        = ', "resources": null'
+                What        = "display name '{0}'"
+                Consequence = 'Both entries reconcile one catalog, so each would undo the other''s settings and, under -Prune, remove the resources the other declares.'
+            }
+            @{
+                Kind        = 'an access package'
+                Section     = 'accessPackages'
+                SetCommand  = 'Set-OERAccessPackage'
+                Prefix      = '"catalogs": [ { "displayName": "cat-x", "resources": null }, { "displayName": "cat-y", "resources": null } ], '
+                Tail        = ', "catalog": "cat-x", "resourceRoles": null'
+                What        = "catalog 'cat-x' and display name '{0}'"
+                Consequence = 'Both entries reconcile one access package, so each would undo the other''s settings and, under -Prune, remove the resource role bindings the other declares.'
+            }
+        )
+        $script:RenameInvalidCase = foreach ($Kind in $script:RenameKind) {
+            foreach ($Value in @(
+                    @{ Label = 'an empty string'; Json = '""' }
+                    @{ Label = 'a number'; Json = '5' }
+                    @{ Label = 'an empty array'; Json = '[]' }
+                    @{ Label = 'a boolean'; Json = 'true' }
+                )) {
+                @{
+                    Section = $Kind.Section
+                    Prefix  = $Kind.Prefix
+                    Tail    = $Kind.Tail
+                    Label   = $Value.Label
+                    Json    = $Value.Json
+                }
+            }
+        }
+
+        # One document per reference, with the placeholders %DN% (the renamed entry's displayName), %PREV%
+        # (its previousDisplayName) and %REF% (what the referring entry names). The group, the package and
+        # the review are otherwise complete, so the one finding a case provokes is the one it is about.
+        $script:RenameRefCase = @(
+            @{
+                Where      = 'a group naming an administrative unit'
+                Section    = 'administrativeUnits'
+                RefPath    = 'groups[0].administrativeUnit'
+                Doc        = '{ "version": "1.0", "groups": [ { "displayName": "grp_one", "administrativeUnit": "%REF%", "members": null } ], "administrativeUnits": [ { "displayName": "%DN%", "previousDisplayName": "%PREV%", "members": [ "grp_one" ], "scopedRoles": null } ] }'
+                Message    = "Group 'grp_one' at groups[0] declares administrativeUnit '{0}', the previousDisplayName of administrativeUnits[0], which renames that unit to '{1}'. Name the unit by its new name '{1}' or its object id: once the rename is applied no unit carries '{0}'."
+                RefSection = 'groups'
+                RefItem    = 'grp_one'
+            }
+            @{
+                Where      = 'an access package naming a catalog'
+                Section    = 'catalogs'
+                RefPath    = 'accessPackages[0].catalog'
+                Doc        = '{ "version": "1.0", "catalogs": [ { "displayName": "%DN%", "previousDisplayName": "%PREV%", "resources": null } ], "accessPackages": [ { "displayName": "pkg_one", "catalog": "%REF%", "resourceRoles": null } ] }'
+                Message    = "Access package 'pkg_one' at accessPackages[0] declares catalog '{0}', the previousDisplayName of catalogs[0], which renames that catalog to '{1}'. Name the catalog by its new name '{1}': once the rename is applied no catalog carries '{0}', and the package is neither found nor created in it."
+                RefSection = 'accessPackages'
+                RefItem    = 'pkg_one'
+            }
+            @{
+                Where      = 'an access review naming an access package'
+                Section    = 'accessPackages'
+                RefPath    = 'accessReviews[0].accessPackage'
+                Doc        = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ { "displayName": "%DN%", "previousDisplayName": "%PREV%", "catalog": "cat-x", "resourceRoles": null } ], "accessReviews": [ { "displayName": "rev_one", "accessPackage": "%REF%", "assignmentPolicy": "pol_one", "reviewers": [ "self" ] } ] }'
+                Message    = "Access review 'rev_one' at accessReviews[0] declares accessPackage '{0}', the previousDisplayName of accessPackages[0], which renames that access package to '{1}'. Name the access package by its new name '{1}' or its object id: once the rename is applied no access package carries '{0}', and the review's target check fails."
+                RefSection = 'accessReviews'
+                RefItem    = 'rev_one'
+            }
+        )
+    }
+
+    BeforeAll {
+        function New-RenameDoc {
+            param([string]$Section, [string[]]$ItemJson, [string]$Prefix = '')
+            ('{ "version": "1.0", ' + $Prefix + '"' + $Section + '": [ ' + ($ItemJson -join ', ') + ' ] }') | ConvertFrom-Json
+        }
+        # The Tail of a kind carries what the entry needs to be otherwise complete (collections declared
+        # null so the omitted-collection Warning stays silent; a package's catalog).
+        function New-RenameItem {
+            param([string]$Tail, [string]$Name, [string]$PrevJson)
+            $Prev = if ($PrevJson) { ', "previousDisplayName": ' + $PrevJson } else { '' }
+            '{ "displayName": "' + $Name + '"' + $Prev + $Tail + ' }'
+        }
+        function Invoke-RenameValidation {
+            param([object]$Doc)
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        function Get-RenameFindingAt {
+            param([object]$Validation, [string]$Path)
+            @($Validation.Errors | Where-Object { $_.Path -eq $Path })
+        }
+        function Get-RenameRefDoc {
+            param([string]$Doc, [string]$DisplayName, [string]$Previous, [string]$Reference)
+            $Doc.Replace('%DN%', $DisplayName).Replace('%PREV%', $Previous).Replace('%REF%', $Reference) | ConvertFrom-Json
+        }
+    }
+
+    Context 'the key itself' {
+        It 'accepts previousDisplayName on <Kind> with no finding at all' -ForEach $script:RenameKind {
+            $Doc = New-RenameDoc -Section $Section -Prefix $Prefix -ItemJson @(New-RenameItem -Tail $Tail -Name 'New' -PrevJson '"Old"')
+            $V = Invoke-RenameValidation -Doc $Doc
+            @(Get-RenameFindingAt -Validation $V -Path "${Section}[0].previousDisplayName") | Should -BeNullOrEmpty
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'accepts an object id as the previousDisplayName of <Kind>' -ForEach $script:RenameKind {
+            $Doc = New-RenameDoc -Section $Section -Prefix $Prefix -ItemJson @(New-RenameItem -Tail $Tail -Name 'New' -PrevJson '"11111111-1111-1111-1111-111111111111"')
+            $V = Invoke-RenameValidation -Doc $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'reports an Error for the previousDisplayName of <Section> that is <Label>' -ForEach $script:RenameInvalidCase {
+            $Doc = New-RenameDoc -Section $Section -Prefix $Prefix -ItemJson @(New-RenameItem -Tail $Tail -Name 'New' -PrevJson $Json)
+            $V = Invoke-RenameValidation -Doc $Doc
+            $Hit = @(Get-RenameFindingAt -Validation $V -Path "${Section}[0].previousDisplayName")
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Section | Should -BeExactly $Section
+            $Hit[0].Item | Should -BeExactly 'New'
+            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at ${Section}[0] must be a non-empty string."
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'treats an explicit null previousDisplayName on <Kind> as undeclared' -ForEach $script:RenameKind {
+            $Item = '{ "displayName": "New", "previousDisplayName": null' + $Tail + ' }'
+            $V = Invoke-RenameValidation -Doc (New-RenameDoc -Section $Section -Prefix $Prefix -ItemJson @($Item))
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'warns, and stays Valid, when the previousDisplayName of <Kind> equals its displayName ignoring case' -ForEach $script:RenameKind {
+            $Doc = New-RenameDoc -Section $Section -Prefix $Prefix -ItemJson @(New-RenameItem -Tail $Tail -Name 'New' -PrevJson '"nEW"')
+            $V = Invoke-RenameValidation -Doc $Doc
+            $Hit = @(Get-RenameFindingAt -Validation $V -Path "${Section}[0].previousDisplayName")
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Item | Should -BeExactly 'New'
+            # Both names find one object, so nothing is renamed and a case-only rename needs the cmdlet.
+            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at ${Section}[0] equals displayName ignoring case; a case-only rename is not possible through the document -- use $SetCommand -NewDisplayName."
+            # The entry is not a duplicate of itself, and nothing else is reported.
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    Context 'duplicate claims (the previous name is claimed beside the display name)' {
+        It 'refuses a later previousDisplayName that equals an earlier displayName in <Section>' -ForEach $script:RenameKind {
+            $Doc = New-RenameDoc -Section $Section -Prefix $Prefix -ItemJson @(
+                (New-RenameItem -Tail $Tail -Name 'X')
+                (New-RenameItem -Tail $Tail -Name 'Y' -PrevJson '"x"')
+            )
+            $V = Invoke-RenameValidation -Doc $Doc
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Section | Should -BeExactly $Section
+            $Errs[0].Item | Should -BeExactly 'Y'
+            $Errs[0].Path | Should -BeExactly "${Section}[1].previousDisplayName"
+            $Errs[0].Message | Should -BeExactly ("${Section}[1].previousDisplayName declares the same $($What -f 'x') as ${Section}[0] (compared without regard to letter case). " +
+                "$Consequence Keep one entry.")
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'refuses a later displayName that equals an earlier previousDisplayName in <Section>' -ForEach $script:RenameKind {
+            $Doc = New-RenameDoc -Section $Section -Prefix $Prefix -ItemJson @(
+                (New-RenameItem -Tail $Tail -Name 'Y' -PrevJson '"X"')
+                (New-RenameItem -Tail $Tail -Name 'x')
+            )
+            $V = Invoke-RenameValidation -Doc $Doc
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Item | Should -BeExactly 'x'
+            $Errs[0].Path | Should -BeExactly "${Section}[1]"
+            $Errs[0].Message | Should -BeExactly ("${Section}[1] declares the same $($What -f 'x') as ${Section}[0] (compared without regard to letter case). " +
+                "$Consequence Keep one entry.")
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'refuses two entries of <Section> that share one previousDisplayName' -ForEach $script:RenameKind {
+            $Doc = New-RenameDoc -Section $Section -Prefix $Prefix -ItemJson @(
+                (New-RenameItem -Tail $Tail -Name 'New_A' -PrevJson '"old"')
+                (New-RenameItem -Tail $Tail -Name 'New_B' -PrevJson '"OLD"')
+            )
+            $V = Invoke-RenameValidation -Doc $Doc
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly "${Section}[1].previousDisplayName"
+            $Errs[0].Message | Should -BeExactly ("${Section}[1].previousDisplayName declares the same $($What -f 'OLD') as ${Section}[0] (compared without regard to letter case). " +
+                "$Consequence Keep one entry.")
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'makes no claim for the previousDisplayName of <Section> that is not a non-empty string' -ForEach $script:RenameKind {
+            $Doc = New-RenameDoc -Section $Section -Prefix $Prefix -ItemJson @(
+                (New-RenameItem -Tail $Tail -Name 'New_A' -PrevJson '5')
+                (New-RenameItem -Tail $Tail -Name 'New_B' -PrevJson '5')
+                (New-RenameItem -Tail $Tail -Name 'New_C' -PrevJson '""')
+                (New-RenameItem -Tail $Tail -Name 'New_D' -PrevJson '""')
+            )
+            $V = Invoke-RenameValidation -Doc $Doc
+            # The four non-empty-string Errors prove every entry was reached; none of them is a duplicate.
+            @($V.Errors | Where-Object { $_.Message -match 'must be a non-empty string' }).Count | Should -Be 4
+            @($V.Errors | Where-Object { $_.Message -match 'declares the same' }) | Should -BeNullOrEmpty
+        }
+
+        It 'makes no claim for a previousDisplayName of <Section> that equals its own displayName ignoring case' -ForEach $script:RenameKind {
+            # Entry 0 claims 'Alpha' once: its previous name 'ALPHA' is its own name, so claiming that too
+            # would collide with the claim just made, at entry 0 itself. Entry 1's previous name 'alpha'
+            # collides with entry 0's claim, and that is the one Error.
+            $Doc = New-RenameDoc -Section $Section -Prefix $Prefix -ItemJson @(
+                (New-RenameItem -Tail $Tail -Name 'Alpha' -PrevJson '"ALPHA"')
+                (New-RenameItem -Tail $Tail -Name 'Beta' -PrevJson '"alpha"')
+            )
+            $V = Invoke-RenameValidation -Doc $Doc
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly "${Section}[1].previousDisplayName"
+            $Errs[0].Message | Should -Match ([regex]::Escape(" as ${Section}[0] ("))
+            # And the case-only Warning of entry 0 is there, so the entry was reached.
+            @(Get-RenameFindingAt -Validation $V -Path "${Section}[0].previousDisplayName")[0].Severity | Should -BeExactly 'Warning'
+        }
+    }
+
+    Context 'duplicate claims of access packages are made within the catalog' {
+        BeforeAll {
+            $script:ApPrefix = '"catalogs": [ { "displayName": "cat-x", "resources": null }, { "displayName": "cat-y", "resources": null } ], '
+        }
+
+        It 'does not count the same previousDisplayName in another catalog as a duplicate' {
+            $Doc = New-RenameDoc -Section 'accessPackages' -Prefix $script:ApPrefix -ItemJson @(
+                '{ "displayName": "Pkg_A", "previousDisplayName": "Old", "catalog": "cat-x", "resourceRoles": null }'
+                '{ "displayName": "Pkg_B", "previousDisplayName": "old", "catalog": "cat-y", "resourceRoles": null }'
+            )
+            $V = Invoke-RenameValidation -Doc $Doc
+            @($V.Errors | Where-Object { $_.Message -match 'declares the same' }) | Should -BeNullOrEmpty
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'refuses the same previousDisplayName in one catalog, named in either case (the positive control of the test above)' {
+            $Doc = New-RenameDoc -Section 'accessPackages' -Prefix $script:ApPrefix -ItemJson @(
+                '{ "displayName": "Pkg_A", "previousDisplayName": "Old", "catalog": "cat-x", "resourceRoles": null }'
+                '{ "displayName": "Pkg_B", "previousDisplayName": "old", "catalog": "CAT-X", "resourceRoles": null }'
+            )
+            $Errs = @((Invoke-RenameValidation -Doc $Doc).Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly 'accessPackages[1].previousDisplayName'
+            $Errs[0].Message | Should -Match ([regex]::Escape(" as accessPackages[0] ("))
+        }
+
+        It 'does not count a previousDisplayName equal to a package name of another catalog as a duplicate' {
+            $Doc = New-RenameDoc -Section 'accessPackages' -Prefix $script:ApPrefix -ItemJson @(
+                '{ "displayName": "Pkg_A", "catalog": "cat-x", "resourceRoles": null }'
+                '{ "displayName": "Pkg_B", "previousDisplayName": "pkg_a", "catalog": "cat-y", "resourceRoles": null }'
+            )
+            $V = Invoke-RenameValidation -Doc $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'makes no claim for packages that declare no catalog' {
+            $Doc = New-RenameDoc -Section 'accessPackages' -ItemJson @(
+                '{ "displayName": "Pkg_A", "previousDisplayName": "Old", "resourceRoles": null }'
+                '{ "displayName": "Pkg_B", "previousDisplayName": "Old", "resourceRoles": null }'
+            )
+            $V = Invoke-RenameValidation -Doc $Doc
+            # The two 'catalog is required' Errors prove both entries were reached.
+            @($V.Errors | Where-Object { $_.Message -match "'catalog' is required" }).Count | Should -Be 2
+            @($V.Errors | Where-Object { $_.Message -match 'declares the same' }) | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'a reference to the previous name (Rule 14, R10, R11)' {
+        It 'warns on <Where> that still uses the previous name, and stays Valid' -ForEach $script:RenameRefCase {
+            $Doc = Get-RenameRefDoc -Doc $Doc -DisplayName 'New' -Previous 'Old' -Reference 'Old'
+            $V = Invoke-RenameValidation -Doc $Doc
+            $Hit = @(Get-RenameFindingAt -Validation $V -Path $RefPath)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Section | Should -BeExactly $RefSection
+            $Hit[0].Item | Should -BeExactly $RefItem
+            $Hit[0].Message | Should -BeExactly ($Message -f 'Old', 'New')
+            # It is the only finding of the document: for a catalog it REPLACES Rule 11's "not declared".
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'does not warn on <Where> that names the renamed object by its new name' -ForEach $script:RenameRefCase {
+            $Doc = Get-RenameRefDoc -Doc $Doc -DisplayName 'New' -Previous 'Old' -Reference 'New'
+            $V = Invoke-RenameValidation -Doc $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'does not warn on <Where> when the previousDisplayName is an object id and the reference uses that id (R10)' -ForEach $script:RenameRefCase {
+            $Id = '11111111-1111-1111-1111-111111111111'
+            $Doc = Get-RenameRefDoc -Doc $Doc -DisplayName 'New' -Previous $Id -Reference $Id
+            $V = Invoke-RenameValidation -Doc $Doc
+            @(Get-RenameFindingAt -Validation $V -Path $RefPath) | Should -BeNullOrEmpty
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'does not warn on <Where> when the previousDisplayName equals the displayName ignoring case (R10)' -ForEach $script:RenameRefCase {
+            $Doc = Get-RenameRefDoc -Doc $Doc -DisplayName 'New' -Previous 'NEW' -Reference 'NEW'
+            $V = Invoke-RenameValidation -Doc $Doc
+            @(Get-RenameFindingAt -Validation $V -Path $RefPath) | Should -BeNullOrEmpty
+            # Only the case-only Warning of the renamed entry itself is left.
+            @($V.Errors).Count | Should -Be 1
+            $V.Errors[0].Path | Should -BeExactly "${Section}[0].previousDisplayName"
+            $V.Errors[0].Severity | Should -BeExactly 'Warning'
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'warns when the reference differs from the previous name only in letter case, naming the reference as written' -ForEach $script:RenameRefCase {
+            $Doc = Get-RenameRefDoc -Doc $Doc -DisplayName 'New' -Previous 'Old' -Reference 'oLD'
+            $V = Invoke-RenameValidation -Doc $Doc
+            $Hit = @(Get-RenameFindingAt -Validation $V -Path $RefPath)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeExactly ($Message -f 'oLD', 'New')
+        }
+
+        It 'replaces Rule 11''s not-declared Warning for a package whose catalog is a renamed catalog''s previous name (R11)' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "New", "previousDisplayName": "Old", "resources": null } ], "accessPackages": [ { "displayName": "pkg_one", "catalog": "Old", "resourceRoles": null } ] }' | ConvertFrom-Json
+            $V = Invoke-RenameValidation -Doc $Doc
+            @($V.Errors | Where-Object { $_.Message -match 'is not declared' }) | Should -BeNullOrEmpty
+            @(Get-RenameFindingAt -Validation $V -Path 'accessPackages[0].catalog').Count | Should -Be 1
+        }
+
+        It 'still warns that a catalog is not declared when it is neither declared nor a renamed catalog''s previous name' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "New", "previousDisplayName": "Old", "resources": null } ], "accessPackages": [ { "displayName": "pkg_one", "catalog": "Elsewhere", "resourceRoles": null } ] }' | ConvertFrom-Json
+            $V = Invoke-RenameValidation -Doc $Doc
+            $Hit = @(Get-RenameFindingAt -Validation $V -Path 'accessPackages[0].catalog')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeExactly "Catalog 'Elsewhere' is not declared in this document. It may already exist in the tenant."
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'still warns that a catalog is not declared when the renamed catalog''s previous name is an object id the package does not use' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "New", "previousDisplayName": "11111111-1111-1111-1111-111111111111", "resources": null } ], "accessPackages": [ { "displayName": "pkg_one", "catalog": "Elsewhere", "resourceRoles": null } ] }' | ConvertFrom-Json
+            $V = Invoke-RenameValidation -Doc $Doc
+            $Hit = @(Get-RenameFindingAt -Validation $V -Path 'accessPackages[0].catalog')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Match 'is not declared in this document'
+        }
+
+        It 'names the first unit that renames from the name a group declares' {
+            $Doc = ('{ "version": "1.0", "groups": [ { "displayName": "grp_one", "administrativeUnit": "Old_B", "members": null } ], ' +
+                '"administrativeUnits": [ ' +
+                '{ "displayName": "New_A", "previousDisplayName": "Old_A", "members": [ "grp_one" ], "scopedRoles": null }, ' +
+                '{ "displayName": "New_B", "previousDisplayName": "Old_B", "members": [ "grp_one" ], "scopedRoles": null } ] }') | ConvertFrom-Json
+            $Hit = @(Get-RenameFindingAt -Validation (Invoke-RenameValidation -Doc $Doc) -Path 'groups[0].administrativeUnit')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Match ([regex]::Escape("the previousDisplayName of administrativeUnits[1], which renames that unit to 'New_B'."))
+        }
+
+        It 'names the first entry when two entries rename from one name (the second is a duplicate Error of its own)' {
+            $Doc = ('{ "version": "1.0", "groups": [ { "displayName": "grp_one", "administrativeUnit": "Old", "members": null } ], ' +
+                '"administrativeUnits": [ ' +
+                '{ "displayName": "New_A", "previousDisplayName": "Old", "members": [ "grp_one" ], "scopedRoles": null }, ' +
+                '{ "displayName": "New_B", "previousDisplayName": "old", "members": [ "grp_one" ], "scopedRoles": null } ] }') | ConvertFrom-Json
+            $V = Invoke-RenameValidation -Doc $Doc
+            @($V.Errors | Where-Object { $_.Severity -eq 'Error' -and $_.Message -match 'declares the same' }).Count | Should -Be 1
+            $Hit = @(Get-RenameFindingAt -Validation $V -Path 'groups[0].administrativeUnit')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Match ([regex]::Escape("the previousDisplayName of administrativeUnits[0], which renames that unit to 'New_A'."))
+        }
+
+        It 'names a template-based group by the name its template computes' {
+            $Doc = ('{ "version": "1.0", "groups": [ { "template": "role_sec_{Area}", "tokens": { "Area": "hr" }, "administrativeUnit": "Old", "members": null } ], ' +
+                '"administrativeUnits": [ { "displayName": "New", "previousDisplayName": "Old", "members": [ "role_sec_hr" ], "scopedRoles": null } ] }') | ConvertFrom-Json
+            $Hit = @(Get-RenameFindingAt -Validation (Invoke-RenameValidation -Doc $Doc) -Path 'groups[0].administrativeUnit')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Item | Should -BeExactly 'role_sec_hr'
+            $Hit[0].Message | Should -Match ([regex]::Escape("Group 'role_sec_hr' at groups[0] declares administrativeUnit 'Old'"))
+        }
+
+        It 'names a group whose name cannot be computed by its path' {
+            $Doc = ('{ "version": "1.0", "groups": [ { "template": "role_sec_{Area}", "tokens": { "Other": "hr" }, "administrativeUnit": "Old", "members": null } ], ' +
+                '"administrativeUnits": [ { "displayName": "New", "previousDisplayName": "Old", "members": null, "scopedRoles": null } ] }') | ConvertFrom-Json
+            $Hit = @(Get-RenameFindingAt -Validation (Invoke-RenameValidation -Doc $Doc) -Path 'groups[0].administrativeUnit')
+            $Hit.Count | Should -Be 1
+            $Hit[0].Item | Should -BeExactly 'groups[0]'
+            $Hit[0].Message | Should -Match ([regex]::Escape("Group 'groups[0]' at groups[0] declares administrativeUnit 'Old'"))
+        }
+
+        It 'ignores a reference that is not a string, and a rename that has no displayName to name' {
+            $Doc = ('{ "version": "1.0", "groups": [ { "displayName": "grp_one", "administrativeUnit": 5, "members": null }, ' +
+                '{ "displayName": "grp_two", "administrativeUnit": "Old", "members": null } ], ' +
+                '"administrativeUnits": [ { "previousDisplayName": "Old", "members": null, "scopedRoles": null } ] }') | ConvertFrom-Json
+            { Invoke-RenameValidation -Doc $Doc } | Should -Not -Throw
+            $V = Invoke-RenameValidation -Doc $Doc
+            # The two Errors that were expected prove both groups and the unit were reached.
+            @($V.Errors | Where-Object { $_.Message -match "'administrativeUnit' at groups\[0\] must be a string" }).Count | Should -Be 1
+            @($V.Errors | Where-Object { $_.Message -match "'displayName' is required at administrativeUnits\[0\]" }).Count | Should -Be 1
+            @($V.Errors | Where-Object { $_.Message -match 'previousDisplayName of' }) | Should -BeNullOrEmpty
         }
     }
 }

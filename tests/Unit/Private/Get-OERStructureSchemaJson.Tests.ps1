@@ -1114,7 +1114,8 @@ Describe 'Get-OERStructureSchemaJson tenantId (BL-88, A14)' {
 }
 
 Describe 'Get-OERStructureSchemaJson renames, mail aliases and scope spelling (BL-128, BL-132, BL-141)' {
-    # Sprint 11 step 3. The offline validator refuses previousDisplayName outside groups, a mailNickname
+    # Sprint 11 step 3. The offline validator refuses previousDisplayName on an assignment policy and an
+    # access review (the other three kinds accept it since step 4, the Describe below), a mailNickname
     # Microsoft Graph refuses, and a scope spelled with a dot segment, a '%', a '\', a '?', a '#' or white
     # space where a resource name cannot hold it (decision A13 as narrowed in round 1); the schema says so
     # in its descriptions and bounds the alias length. It carries no regular-expression
@@ -1146,21 +1147,29 @@ Describe 'Get-OERStructureSchemaJson renames, mail aliases and scope spelling (B
         }
     }
 
-    It 'says in every section that cannot rename that renaming is not supported and previousDisplayName is refused, and not in groups' {
+    It 'says in every section that cannot rename that renaming is not supported and previousDisplayName is refused, and not in the sections that can' {
         InModuleScope $script:moduleName {
             $Props = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties
+            # Since Sprint 11 step 4 only an assignment policy and an access review cannot be renamed
+            # through the document (step 4b takes them).
             $Descriptions = [ordered]@{
-                administrativeUnits = $Props.administrativeUnits.description
-                catalogs            = $Props.catalogs.description
-                accessPackages      = $Props.accessPackages.description
-                assignmentPolicies  = $Props.accessPackages.items.properties.assignmentPolicies.description
-                accessReviews       = $Props.accessReviews.description
+                assignmentPolicies = $Props.accessPackages.items.properties.assignmentPolicies.description
+                accessReviews      = $Props.accessReviews.description
             }
             foreach ($Name in $Descriptions.Keys) {
                 $Descriptions[$Name] | Should -Match ([regex]::Escape('Renaming is not supported yet: Test-OERStructure refuses previousDisplayName on a')) -Because "the $Name description says so"
                 $Descriptions[$Name] | Should -Match 'would create a new .+ beside the old one' -Because "the $Name description names the consequence"
             }
-            $Props.groups.description | Should -Not -Match ([regex]::Escape('Renaming is not supported yet'))
+            $Can = [ordered]@{
+                groups              = $Props.groups.description
+                administrativeUnits = $Props.administrativeUnits.description
+                catalogs            = $Props.catalogs.description
+                accessPackages      = $Props.accessPackages.description
+            }
+            foreach ($Name in $Can.Keys) {
+                $Can[$Name] | Should -Not -Match ([regex]::Escape('Renaming is not supported yet')) -Because "the $Name section can be renamed"
+                $Can[$Name] | Should -Not -Match ([regex]::Escape('Renaming through the document is not possible')) -Because "the $Name section can be renamed"
+            }
         }
     }
 
@@ -1181,6 +1190,85 @@ Describe 'Get-OERStructureSchemaJson renames, mail aliases and scope spelling (B
                 $Scopes[$Name] | Should -Not -Match ([regex]::Escape('white space is refused as a whole')) -Because "the $Name scope no longer refuses every space"
                 $Scopes[$Name] | Should -Not -Match ([regex]::Escape('without white space')) -Because "the $Name scope no longer refuses every space"
             }
+        }
+    }
+}
+
+Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs and access packages (BL-128, A5)' {
+    # Sprint 11 step 4: an administrative unit, a catalog and an access package are renamed through the
+    # document like a group, by declaring the new name as displayName and the current name (or object id)
+    # as previousDisplayName. The item schemas declare the key, the section descriptions say how to
+    # declare a rename, and the property descriptions say what the apply engine does with it. An
+    # assignment policy and an access review still declare nothing (step 4b).
+    BeforeDiscovery {
+        $script:SchemaRenameCase = @(
+            @{
+                Section             = 'administrativeUnits'
+                Good                = '{ "displayName": "AU-New", "previousDisplayName": "AU-Old" }'
+                Empty               = '{ "displayName": "AU-New", "previousDisplayName": "" }'
+                SectionDescription  = 'Administrative units. displayName is the match key: an existing unit is matched and updated by it. To rename a unit, declare its new name as displayName and its current name (or object id) as previousDisplayName.'
+                PropertyDescription = 'The administrative unit''s current display name or object id, when displayName declares a new one. When only this value matches a live administrative unit, that administrative unit is renamed in place; when displayName also matches a different administrative unit, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. An object id is checked with one read. Microsoft Graph''s name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. Not exported by Get-OERInventory.'
+            }
+            @{
+                Section             = 'catalogs'
+                Good                = '{ "displayName": "CAT-New", "previousDisplayName": "CAT-Old" }'
+                Empty               = '{ "displayName": "CAT-New", "previousDisplayName": "" }'
+                SectionDescription  = 'Entitlement Management catalogs. displayName is the match key: an existing catalog is matched and updated by it. To rename a catalog, declare its new name as displayName and its current name (or object id) as previousDisplayName.'
+                PropertyDescription = 'The catalog''s current display name or object id, when displayName declares a new one. When only this value matches a live catalog, that catalog is renamed in place; when displayName also matches a different catalog, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. An object id is checked with one read. Microsoft Graph''s name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. Not exported by Get-OERInventory.'
+            }
+            @{
+                Section             = 'accessPackages'
+                Good                = '{ "displayName": "AP-New", "catalog": "CAT-One", "previousDisplayName": "AP-Old" }'
+                Empty               = '{ "displayName": "AP-New", "catalog": "CAT-One", "previousDisplayName": "" }'
+                SectionDescription  = 'Entitlement Management access packages. displayName is the match key within the declared catalog (names are unique per catalog, not tenant-wide): an existing package is matched and updated by it. To rename a package, declare its new name as displayName and its current name (or object id) as previousDisplayName, within its catalog; a package whose catalog is renamed in the same document names the catalog''s new name. There is no top-level Extra reporting for this section.'
+                PropertyDescription = 'The access package''s current display name or object id, when displayName declares a new one. When only this value matches a live access package in the declared catalog, that access package is renamed in place; when displayName also matches a different access package in the declared catalog, the entry fails and nothing is merged; when neither matches, the entry fails and nothing is created. An object id matches only a package of the declared catalog. Microsoft Graph''s name lookup can follow a rename with a delay: keep this value until the new name resolves, then remove it. Not exported by Get-OERInventory.'
+            }
+        )
+    }
+
+    It 'declares previousDisplayName on the <Section> item as a non-empty string and describes what the engine does with it' -ForEach $script:SchemaRenameCase {
+        InModuleScope $script:moduleName -Parameters @{ Section = $Section; PropertyDescription = $PropertyDescription } {
+            param($Section, $PropertyDescription)
+            $Prev = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.$Section.items.properties.previousDisplayName
+            $Prev | Should -Not -BeNullOrEmpty
+            $Prev.type | Should -BeExactly 'string'
+            $Prev.minLength | Should -Be 1
+            $Prev.description | Should -BeExactly $PropertyDescription
+        }
+    }
+
+    It 'tells in the <Section> description how to declare a rename, and no longer says it is impossible or unsupported' -ForEach $script:SchemaRenameCase {
+        InModuleScope $script:moduleName -Parameters @{ Section = $Section; SectionDescription = $SectionDescription } {
+            param($Section, $SectionDescription)
+            $Description = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.$Section.description
+            $Description | Should -BeExactly $SectionDescription
+            $Description | Should -Not -Match 'Renaming is not supported yet'
+            $Description | Should -Not -Match 'Renaming through the document is not possible'
+        }
+    }
+
+    It 'declares no previousDisplayName on the assignmentPolicies and accessReviews items, and keeps it on the group item' {
+        InModuleScope $script:moduleName {
+            $Props = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties
+            $Props.accessPackages.items.properties.assignmentPolicies.items.properties.PSObject.Properties.Name | Should -Not -Contain 'previousDisplayName'
+            $Props.accessReviews.items.properties.PSObject.Properties.Name | Should -Not -Contain 'previousDisplayName'
+            $Props.groups.items.properties.PSObject.Properties.Name | Should -Contain 'previousDisplayName'
+        }
+    }
+
+    It 'validates an item of <Section> declaring previousDisplayName, and rejects an empty one' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) -ForEach $script:SchemaRenameCase {
+        InModuleScope $script:moduleName -Parameters @{ Section = $Section; Good = $Good; Empty = $Empty } {
+            param($Section, $Good, $Empty)
+            $Schema = Get-OERStructureSchemaJson
+            Test-Json -Json ("{ `"version`": `"1.0`", `"$Section`": [ $Good ] }") -Schema $Schema | Should -BeTrue
+            Test-Json -Json ("{ `"version`": `"1.0`", `"$Section`": [ $Empty ] }") -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+        }
+    }
+
+    It 'validates one document that renames a unit, a catalog and an access package together' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Json = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "AU-New", "previousDisplayName": "AU-Old" } ], "catalogs": [ { "displayName": "CAT-New", "previousDisplayName": "CAT-Old" } ], "accessPackages": [ { "displayName": "AP-New", "catalog": "CAT-New", "previousDisplayName": "AP-Old" } ] }'
+            Test-Json -Json $Json -Schema (Get-OERStructureSchemaJson) | Should -BeTrue
         }
     }
 }
