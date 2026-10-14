@@ -271,17 +271,23 @@ function Sync-OERStructureAccessPackage {
     This handler also fills it for its own entry (R12). First of all, before the catalog is read from
     the map, it marks the package, when the entry declares previousDisplayName, and every assignment
     policy that declares one as undecided: refused with no id, the reason "the accessPackages entry did
-    not reach a decision in this run; see that entry's rows". Each decision replaces its mark through
-    Resolve-OERStructureRename: the package under 'accessPackages|<name>', a policy under
-    'assignmentPolicies|<package>|<policy>' (the package as this entry's displayName names it) and,
-    since the package's id is known when a policy is decided, under the same key with that id as well;
-    a rename registers the object's id, a refusal registers it refused with its error id, and a name
-    that already finds the object removes the mark. The registration is made when the decision is, so
-    under -WhatIf too and before the rename is sent. A mark that no decision replaces -- the entry
-    stopped first: the catalog refused, a failed or ambiguous lookup, a failed package update that
-    renames it, an ambiguous policy name -- stays, so a reference to the new name later in this run,
-    read through Get-OERStructureRenameTarget, is refused instead of being looked up by name. Without
-    the map nothing is registered.
+    not reach a decision in this run; see that entry's rows". A policy's mark is registered under
+    'assignmentPolicies|<package>|<policy>' (the package as this entry's displayName names it); once an
+    existing package has been found, and before anything else is read or written for it, every such
+    policy is marked again under the same key with the package's id as well, so a reference that names
+    the package by object id is refused too while the policy is undecided. Each decision replaces its
+    mark through Resolve-OERStructureRename: the package under 'accessPackages|<name>', a policy under
+    both of its keys; a rename registers the object's id, a refusal registers it refused with its error
+    id, and a name that already finds the object removes the mark. The registration is made when the
+    decision is, so under -WhatIf too and before the rename is sent. A mark that no decision replaces --
+    the entry stopped first: the catalog refused, a failed or ambiguous lookup, a refused package
+    rename, a failed package re-read, a failed package update that renames it, a failed read of its
+    resource role bindings, of the catalog's resources or of its policies, an ambiguous policy name --
+    stays, so a reference to the new name later in this run, read through Get-OERStructureRenameTarget,
+    is refused instead of being looked up by name. A policy of an entry that stopped before its package
+    was found, or whose package rename was refused, is marked under the package's name only, so a
+    reference that names the package by object id then looks the policy up by name within that
+    package, as before this map existed. Without the map nothing is registered.
 
     .EXAMPLE
     Sync-OERStructureAccessPackage -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
@@ -550,6 +556,30 @@ function Sync-OERStructureAccessPackage {
             $CurrentPolicies = @()
 
         } else {
+            # R12 (BL-128): the package exists and its id is known now, before anything else is read or
+            # written for it. A review that names the package by that object id reads a policy's map
+            # entry under the key built with the id, and only the policy's decision in Step 3 registers
+            # it -- so a stop of this entry before then (a failed re-read below, a failed update that
+            # renames the package, a failed read of its resource role bindings, of the catalog's
+            # resources or of its policies, a lookup that throws) would leave that key empty, and the
+            # review would look the policy's new name up by name within the package, where another
+            # policy may carry it. Every policy that declares previousDisplayName is therefore marked
+            # undecided again here, with the same reason and the same skips as the first marks above,
+            # now under the package id as well (Resolve-OERStructureRename owns the keys). Each decision
+            # in Step 3 replaces the mark under both keys. A package this call creates needs no such
+            # mark: no document can name its id, and its policies are decided under both keys after the
+            # create.
+            if ($null -ne $RenameMap -and -not [string]::IsNullOrEmpty([string]$Name) -and
+                (Test-OERDeclaredProperty -Node $Item -Name 'assignmentPolicies')) {
+                foreach ($MarkPol in @($Item.assignmentPolicies)) {
+                    if (-not (Test-OERDeclaredProperty -Node $MarkPol -Name 'previousDisplayName')) { continue }
+                    if ([string]::IsNullOrEmpty([string]$MarkPol.displayName) -or [string]::IsNullOrEmpty([string]$MarkPol.previousDisplayName)) { continue }
+                    $null = Resolve-OERStructureRename -Section 'assignmentPolicies' -AccessPackage ([string]$Name) `
+                        -AccessPackageId ([string]$ApId) -Name ([string]$MarkPol.displayName) `
+                        -PreviousName ([string]$MarkPol.previousDisplayName) -Undecided -Reason $UndecidedReason -RenameMap $RenameMap
+                }
+            }
+
             # Access package exists -- diff mutable properties (description and the hidden flag;
             # catalog is creation-only and is never changed on an existing package). $ApId is already
             # resolved above (either catalog-scoped or tenant-wide), so read by id directly rather than

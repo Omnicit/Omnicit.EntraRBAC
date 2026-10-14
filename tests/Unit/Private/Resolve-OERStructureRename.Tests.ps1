@@ -549,17 +549,115 @@ Describe 'Resolve-OERStructureRename' {
             }
             $Count | Should -Be 2
         }
-        It 'registers an Undecided mark under the name key only, whatever the package id' {
+        # Task 6 fix round 1 (Fix B): an undecided mark honours the package id as a decision does, so a
+        # review that names the package by object id is refused too while the policy is undecided.
+        It 'registers an Undecided mark under the key with the package id as well, as the same entry' {
+            $Result = InModuleScope $script:moduleName -Parameters @{ PackageId = $script:PackageId } {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $Hit = Resolve-OERStructureRename -Section 'assignmentPolicies' -Name 'POL-New' -PreviousName 'POL-Old' -Undecided -Reason 'r' `
+                    -AccessPackage 'AP-Main' -AccessPackageId $PackageId -RenameMap $Map
+                [PSCustomObject]@{
+                    Outcome = $Hit.Outcome
+                    Keys    = @($Map.Keys | Sort-Object)
+                    ByName  = $Map['assignmentpolicies|ap-main|pol-new']
+                    ById    = $Map['assignmentpolicies|bbbbbbbb-0000-0000-0000-00000000000b|pol-new']
+                    Same    = [object]::ReferenceEquals($Map['assignmentpolicies|ap-main|pol-new'], $Map['assignmentpolicies|bbbbbbbb-0000-0000-0000-00000000000b|pol-new'])
+                }
+            }
+            $Result.Outcome | Should -BeExactly 'Undecided'
+            $Result.Keys | Should -HaveCount 2
+            $Result.Keys[0] | Should -BeExactly 'assignmentpolicies|ap-main|pol-new'
+            $Result.Keys[1] | Should -BeExactly $script:PackageIdKey
+            $Result.Same | Should -BeTrue
+            foreach ($Entry in @($Result.ByName, $Result.ById)) {
+                $Entry.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureRenameTarget'
+                $Entry.Section | Should -BeExactly 'assignmentPolicies'
+                $Entry.Name | Should -BeExactly 'POL-New'
+                $Entry.PreviousName | Should -BeExactly 'POL-Old'
+                $Entry.Refused | Should -BeTrue
+                $Entry.Id | Should -BeNullOrEmpty
+                $Entry.ErrorId | Should -BeNullOrEmpty
+                $Entry.Reason | Should -BeExactly 'r'
+            }
+        }
+        It 'registers an Undecided mark under the name key alone when the package id is <Case>' -ForEach @(
+            @{ Case = 'not given'; Bound = @{} }
+            @{ Case = 'empty'; Bound = @{ AccessPackageId = '' } }
+            @{ Case = 'null'; Bound = @{ AccessPackageId = $null } }
+        ) {
+            $Keys = InModuleScope $script:moduleName -Parameters @{ Bound = $Bound } {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'assignmentPolicies' -Name 'POL-New' -PreviousName 'POL-Old' -Undecided -Reason 'r' `
+                    -AccessPackage 'AP-Main' @Bound -RenameMap $Map
+                @($Map.Keys)
+            }
+            @($Keys) | Should -BeExactly @('assignmentpolicies|ap-main|pol-new')
+        }
+        It 'lets a later decision made with the same package id replace the Undecided mark under both keys: <Decision>' -ForEach @(
+            @{ Decision = 'Rename'; Id = $null; PreviousId = 'p'; Refused = $false; WantId = 'p'; WantErrorId = $null }
+            @{ Decision = 'Conflict'; Id = 'aaaaaaaa-0000-0000-0000-000000000001'; PreviousId = 'aaaaaaaa-0000-0000-0000-000000000002'; Refused = $true; WantId = $null; WantErrorId = 'AssignmentPolicyRenameConflict' }
+            @{ Decision = 'NotFound'; Id = $null; PreviousId = $null; Refused = $true; WantId = $null; WantErrorId = 'AssignmentPolicyRenameNotFound' }
+        ) {
+            $Result = InModuleScope $script:moduleName -Parameters @{ PackageId = $script:PackageId; Id = $Id; PreviousId = $PreviousId } {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'assignmentPolicies' -Name 'POL-New' -PreviousName 'POL-Old' -Undecided -Reason 'r' `
+                    -AccessPackage 'AP-Main' -AccessPackageId $PackageId -RenameMap $Map
+                $Marker = $Map['assignmentpolicies|ap-main|pol-new']
+                $null = Resolve-OERStructureRename -Section 'assignmentPolicies' -Name 'POL-New' -PreviousName 'POL-Old' -Id $Id -PreviousId $PreviousId `
+                    -AccessPackage 'AP-Main' -AccessPackageId $PackageId -RenameMap $Map
+                [PSCustomObject]@{
+                    Count     = $Map.Count
+                    ByName    = $Map['assignmentpolicies|ap-main|pol-new']
+                    ById      = $Map['assignmentpolicies|bbbbbbbb-0000-0000-0000-00000000000b|pol-new']
+                    Same      = [object]::ReferenceEquals($Map['assignmentpolicies|ap-main|pol-new'], $Map['assignmentpolicies|bbbbbbbb-0000-0000-0000-00000000000b|pol-new'])
+                    MarkerGone = -not ([object]::ReferenceEquals($Marker, $Map['assignmentpolicies|ap-main|pol-new']) -or
+                        [object]::ReferenceEquals($Marker, $Map['assignmentpolicies|bbbbbbbb-0000-0000-0000-00000000000b|pol-new']))
+                }
+            }
+            $Result.Count | Should -Be 2
+            $Result.Same | Should -BeTrue
+            $Result.MarkerGone | Should -BeTrue
+            foreach ($Entry in @($Result.ByName, $Result.ById)) {
+                $Entry.Refused | Should -Be $Refused
+                if ($WantId) { $Entry.Id | Should -BeExactly $WantId } else { $Entry.Id | Should -BeNullOrEmpty }
+                if ($WantErrorId) {
+                    $Entry.ErrorId | Should -BeExactly $WantErrorId
+                    $Entry.Reason | Should -BeExactly $WantErrorId
+                } else {
+                    $Entry.ErrorId | Should -BeNullOrEmpty
+                    $Entry.Reason | Should -BeNullOrEmpty
+                }
+            }
+        }
+        It 'lets a Current decision made with the same package id remove the Undecided mark under both keys, and only that policy''s' {
             $Result = InModuleScope $script:moduleName -Parameters @{ PackageId = $script:PackageId } {
                 $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 $null = Resolve-OERStructureRename -Section 'assignmentPolicies' -Name 'POL-New' -PreviousName 'POL-Old' -Undecided -Reason 'r' `
                     -AccessPackage 'AP-Main' -AccessPackageId $PackageId -RenameMap $Map
-                [PSCustomObject]@{ Keys = @($Map.Keys); Entry = $Map['assignmentpolicies|ap-main|pol-new'] }
+                $null = Resolve-OERStructureRename -Section 'assignmentPolicies' -Name 'POL-Other' -PreviousName 'POL-Old' -Undecided -Reason 'r' `
+                    -AccessPackage 'AP-Main' -AccessPackageId $PackageId -RenameMap $Map
+                $Before = $Map.Count
+                $Hit = Resolve-OERStructureRename -Section 'assignmentPolicies' -Name 'POL-New' -PreviousName 'POL-Old' -Id 'x' -PreviousId $null `
+                    -AccessPackage 'AP-Main' -AccessPackageId $PackageId -RenameMap $Map
+                [PSCustomObject]@{ Before = $Before; Outcome = $Hit.Outcome; Keys = @($Map.Keys | Sort-Object) }
             }
-            $Result.Keys | Should -HaveCount 1
-            $Result.Keys[0] | Should -BeExactly 'assignmentpolicies|ap-main|pol-new'
-            $Result.Entry.Refused | Should -BeTrue
-            $Result.Entry.Reason | Should -BeExactly 'r'
+            $Result.Before | Should -Be 4
+            $Result.Outcome | Should -BeExactly 'Current'
+            $Result.Keys | Should -BeExactly @('assignmentpolicies|ap-main|pol-other', 'assignmentpolicies|bbbbbbbb-0000-0000-0000-00000000000b|pol-other')
+        }
+        It 'registers an Undecided mark under one key for every section but assignmentPolicies, whatever the package id (<Section>)' -ForEach @(
+            @{ Section = 'administrativeUnits' }
+            @{ Section = 'catalogs' }
+            @{ Section = 'accessPackages' }
+            @{ Section = 'accessReviews' }
+        ) {
+            $Keys = InModuleScope $script:moduleName -Parameters @{ Section = $Section } {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section $Section -Name 'New-Name' -PreviousName 'Old-Name' -Undecided -Reason 'r' `
+                    -AccessPackage 'AP-Main' -AccessPackageId 'bbbbbbbb-0000-0000-0000-00000000000b' -RenameMap $Map
+                @($Map.Keys)
+            }
+            @($Keys) | Should -BeExactly @($Section.ToLowerInvariant() + '|new-name')
         }
         It 'replaces an Undecided mark by the decision, which adds the key with the package id' {
             $Result = InModuleScope $script:moduleName -Parameters @{ PackageId = $script:PackageId } {

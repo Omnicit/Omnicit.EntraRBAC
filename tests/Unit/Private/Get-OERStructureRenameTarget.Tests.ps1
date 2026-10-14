@@ -301,21 +301,31 @@ Describe 'Get-OERStructureRenameTarget' {
                 $Entry.Reason | Should -BeExactly $WantId
             }
         }
-        It 'returns the refused entry an undecided rename registered, by package name only (R12)' {
+        # Task 6 fix round 1 (Fix B): an undecided mark is registered under the package id too when the id
+        # is given, so it is found by the package's name and by its object id alike.
+        It 'returns the refused entry an undecided rename registered, by package name and, when the id was given, by package id (R12)' {
             $Found = InModuleScope $script:moduleName -Parameters @{ PackageId = $script:PackageId } {
                 $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 $null = Resolve-OERStructureRename -Section 'assignmentPolicies' -Name 'POL-New' -PreviousName 'POL-Old' -Undecided `
                     -Reason 'one of its names could not be looked up' -AccessPackage 'AP-Main' -AccessPackageId $PackageId -RenameMap $Map
+                $null = Resolve-OERStructureRename -Section 'assignmentPolicies' -Name 'POL-Next' -PreviousName 'POL-Old' -Undecided `
+                    -Reason 'one of its names could not be looked up' -AccessPackage 'AP-Main' -RenameMap $Map
                 [PSCustomObject]@{
-                    ByName = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'pol-new' -AccessPackage 'AP-Main' -RenameMap $Map
-                    ById   = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'pol-new' -AccessPackage $PackageId -RenameMap $Map
+                    ByName       = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'pol-new' -AccessPackage 'AP-Main' -RenameMap $Map
+                    ById         = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'pol-new' -AccessPackage $PackageId.ToUpperInvariant() -RenameMap $Map
+                    NoIdByName   = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'POL-Next' -AccessPackage 'AP-Main' -RenameMap $Map
+                    NoIdById     = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'POL-Next' -AccessPackage $PackageId -RenameMap $Map
                 }
             }
-            $Found.ByName.Refused | Should -BeTrue
-            $Found.ByName.Id | Should -BeNullOrEmpty
-            $Found.ByName.ErrorId | Should -BeNullOrEmpty
-            $Found.ByName.Reason | Should -BeExactly 'one of its names could not be looked up'
-            $Found.ById | Should -BeNullOrEmpty
+            foreach ($Entry in @($Found.ByName, $Found.ById, $Found.NoIdByName)) {
+                $Entry | Should -Not -BeNullOrEmpty
+                $Entry.Refused | Should -BeTrue
+                $Entry.Id | Should -BeNullOrEmpty
+                $Entry.ErrorId | Should -BeNullOrEmpty
+                $Entry.Reason | Should -BeExactly 'one of its names could not be looked up'
+            }
+            # A mark registered without the package id is found by the package's name only.
+            $Found.NoIdById | Should -BeNullOrEmpty
         }
         It 'does not find a policy entry under the section|name key of another section, or the other way round' {
             InModuleScope $script:moduleName {

@@ -7115,11 +7115,13 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             $Map['assignmentPolicies|AP-New|POL-New'].Reason | Should -BeExactly $script:PolUndecided
         }
 
+        # IdMark: whether the package had been found when the entry stopped, so that the renaming policy is
+        # marked under the package's id as well (Task 6 fix round 1, Fix B).
         It 'leaves the undecided marks of the package and of its renaming policies when the entry stops before they are decided (<Case>)' -ForEach @(
-            @{ Case = 'the catalog rename was refused'; PackageMark = $true }
-            @{ Case = 'the package list read throws'; PackageMark = $true }
-            @{ Case = 'the previous name of the package is ambiguous'; PackageMark = $true }
-            @{ Case = 'the package update that renames it fails'; PackageMark = $false }
+            @{ Case = 'the catalog rename was refused'; PackageMark = $true; IdMark = $false }
+            @{ Case = 'the package list read throws'; PackageMark = $true; IdMark = $false }
+            @{ Case = 'the previous name of the package is ambiguous'; PackageMark = $true; IdMark = $false }
+            @{ Case = 'the package update that renames it fails'; PackageMark = $false; IdMark = $true }
         ) {
             $Map = New-PolMap
             $Packages = @([PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old' })
@@ -7164,7 +7166,13 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             $PolicyMark.ErrorId | Should -BeNullOrEmpty
             $PolicyMark.Reason | Should -BeExactly $script:PolUndecided
             $Map.ContainsKey('assignmentPolicies|AP-New|Plain') | Should -BeFalse
-            $Map.ContainsKey('assignmentPolicies|ap-old|POL-New') | Should -BeFalse
+            $Map.ContainsKey('assignmentPolicies|ap-old|Plain') | Should -BeFalse
+            if ($IdMark) {
+                # The package was found (ap-old) before the update failed: the mark is under its id too.
+                [object]::ReferenceEquals($Map['assignmentPolicies|ap-old|POL-New'], $PolicyMark) | Should -BeTrue
+            } else {
+                $Map.ContainsKey('assignmentPolicies|ap-old|POL-New') | Should -BeFalse
+            }
             if ($PackageMark) {
                 $Map['accessPackages|AP-New'].Refused | Should -BeTrue
                 $Map['accessPackages|AP-New'].ErrorId | Should -BeNullOrEmpty
@@ -7174,6 +7182,160 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
                 $Map['accessPackages|AP-New'].Id | Should -BeExactly 'ap-old'
                 $Map['accessPackages|AP-New'].Refused | Should -BeFalse
             }
+        }
+
+        # Task 6 fix round 1 (Fix B): once an existing package has been found, every policy that declares
+        # previousDisplayName is marked undecided again under the package's id as well, before anything
+        # else is read or written for the package. Each stop after that point leaves the policy refused
+        # under BOTH keys, so a review that names the package by object id is refused too, never looked up
+        # by name within the package. Read back through the real Get-OERStructureRenameTarget.
+        It 'leaves the renaming policy refused under the package''s name and under its id when the entry stops after the package was found (<Case>)' -ForEach @(
+            @{ Case = 'the package re-read fails'; Renames = $false; UseWhatIf = $false; Rows = 1
+                Detail = "failed to re-read access package 'AP' (ap-1): transient re-read failure" }
+            @{ Case = 'the package re-read fails, under -WhatIf'; Renames = $false; UseWhatIf = $true; Rows = 1
+                Detail = "failed to re-read access package 'AP' (ap-1): transient re-read failure" }
+            @{ Case = 'the package update that renames it fails'; Renames = $true; UseWhatIf = $false; Rows = 1
+                Detail = 'access package update failed: Graph rejected the update' }
+            @{ Case = 'the resource role bindings read fails'; Renames = $false; UseWhatIf = $false; Rows = 2
+                Detail = "failed to read the current resource role bindings of access package 'AP': transient bindings failure; no resourceRole or assignmentPolicy was created, updated or removed" }
+            @{ Case = 'the policy list read fails'; Renames = $false; UseWhatIf = $false; Rows = 2
+                Detail = "failed to read the current assignment policies of access package 'AP': transient policies failure; no assignmentPolicy was created or updated" }
+            @{ Case = 'the catalog resources read fails'; Renames = $false; UseWhatIf = $false; Rows = 2
+                Detail = "failed to read the resources of catalog 'CAT': transient resources failure; no resourceRole binding was added, reported Extra or removed" }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Case = $Case } {
+                param($Case)
+                switch -Wildcard ($Case) {
+                    'the package re-read fails*' { Mock Get-OERAccessPackage { throw 'transient re-read failure' } -ParameterFilter { $Id } }
+                    'the package update that renames it fails' { Mock Set-OERAccessPackage { throw 'Graph rejected the update' } }
+                    'the resource role bindings read fails' { Mock Invoke-OERGraphRequest { throw 'transient bindings failure' } -ParameterFilter { $Uri -like '*resourceRoleScopes*' } }
+                    'the policy list read fails' { Mock Get-OERAccessPackageAssignmentPolicy { throw 'transient policies failure' } -ParameterFilter { $AccessPackage -eq 'ap-1' } }
+                    'the catalog resources read fails' { Mock Get-OERCatalogResource { throw 'transient resources failure' } }
+                }
+            }
+            $Map = New-PolMap
+            $Item = [PSCustomObject]@{
+                displayName        = 'AP'
+                catalog            = 'CAT'
+                resourceRoles      = @([PSCustomObject]@{ resource = 'grp_x'; role = 'Member' })
+                assignmentPolicies = @(
+                    [PSCustomObject]@{ displayName = 'POL-New'; previousDisplayName = 'POL-Old' }
+                    [PSCustomObject]@{ displayName = 'Plain' }
+                )
+            }
+            $LivePackage = 'AP'
+            if ($Renames) {
+                $Item | Add-Member -NotePropertyName previousDisplayName -NotePropertyValue 'AP-Old'
+                $LivePackage = 'AP-Old'
+            }
+
+            $Run = Invoke-PolSync -Item $Item -Packages @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = $LivePackage }) `
+                -Live @(New-PolRaw -Id 'pol-old' -DisplayName 'POL-Old') -UseWhatIf $UseWhatIf -RenameMap $Map
+
+            # The entry stopped where the case says, with one Failed row last and no policy decided.
+            @($Run.Rows).Count | Should -Be $Rows
+            $Run.Rows[-1].Action | Should -BeExactly 'Failed'
+            $Run.Rows[-1].Detail | Should -BeExactly $Detail
+            @($Run.Rows | Where-Object { $_.Detail -like "*assignmentPolicy '*" }) | Should -BeNullOrEmpty
+            # -ErrorVariable also holds the inner layers of a mock's throw: count what the handler itself
+            # published through its caller, and prove no mark failed to bind.
+            $Own = @($Run.Published | Where-Object { $_.FullyQualifiedErrorId.EndsWith(',Invoke-SyncApViaCaller') })
+            $Own.Count | Should -Be 1
+            $Own[0].Exception.Message | Should -BeExactly $Run.Rows[-1].Error.Exception.Message
+            @($Run.Published | Where-Object { $_.Exception -is [System.Management.Automation.ParameterBindingException] }) | Should -BeNullOrEmpty
+            $Run.Sent.Count | Should -Be 0
+
+            $Targets = InModuleScope $script:moduleName -Parameters @{ Map = $Map } {
+                param($Map)
+                [PSCustomObject]@{
+                    ByName      = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'POL-New' -AccessPackage 'AP' -RenameMap $Map
+                    ById        = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'pol-new' -AccessPackage 'AP-1' -RenameMap $Map
+                    PlainByName = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'Plain' -AccessPackage 'AP' -RenameMap $Map
+                    PlainById   = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'Plain' -AccessPackage 'ap-1' -RenameMap $Map
+                }
+            }
+            foreach ($Target in @($Targets.ByName, $Targets.ById)) {
+                $Target | Should -Not -BeNullOrEmpty
+                $Target.Section | Should -BeExactly 'assignmentPolicies'
+                $Target.Name | Should -BeExactly 'POL-New'
+                $Target.PreviousName | Should -BeExactly 'POL-Old'
+                $Target.Refused | Should -BeTrue
+                $Target.Id | Should -BeNullOrEmpty
+                $Target.ErrorId | Should -BeNullOrEmpty
+                $Target.Reason | Should -BeExactly $script:PolUndecided
+            }
+            [object]::ReferenceEquals($Targets.ByName, $Targets.ById) | Should -BeTrue
+            # The policy without previousDisplayName is marked under neither key.
+            $Targets.PlainByName | Should -BeNullOrEmpty
+            $Targets.PlainById | Should -BeNullOrEmpty
+            # The two policy keys, and for a renaming package its own decision (a Rename to ap-1).
+            if ($Renames) {
+                $Map.Count | Should -Be 3
+                $Map['accessPackages|AP'].Id | Should -BeExactly 'ap-1'
+            } else {
+                $Map.Count | Should -Be 2
+            }
+        }
+
+        It 'marks again under the package''s id no policy name that is empty after string conversion, and publishes no error for it (<Case>)' -ForEach @(
+            @{ Case = 'a policy''s previousDisplayName'; Policies = @('POL-New=', 'POL-X=POL-Y') }
+            @{ Case = 'a policy''s displayName'; Policies = @('=POL-Old', 'POL-X=POL-Y') }
+        ) {
+            # The package is found and its re-read fails, so the entry stops right after the second marks:
+            # what the map holds then, and what was published, is the work of the two mark blocks.
+            InModuleScope $script:moduleName {
+                Mock Get-OERAccessPackage { throw 'transient re-read failure' } -ParameterFilter { $Id }
+            }
+            $Map = New-PolMap
+            $Item = [PSCustomObject]@{
+                displayName        = 'AP'
+                catalog            = 'CAT'
+                assignmentPolicies = @(foreach ($Pair in $Policies) {
+                        [PSCustomObject]@{ displayName = ($Pair -split '=')[0]; previousDisplayName = ($Pair -split '=')[1] }
+                    })
+            }
+
+            $Run = Invoke-PolSync -Item $Item -RenameMap $Map
+
+            @($Run.Rows).Count | Should -Be 1
+            $Run.Rows[0].Detail | Should -BeExactly "failed to re-read access package 'AP' (ap-1): transient re-read failure"
+            # The re-read failure is the one error the handler published (-ErrorVariable also holds the
+            # inner layers of the mock's throw), and no mark failed to bind.
+            $Own = @($Run.Published | Where-Object { $_.FullyQualifiedErrorId.EndsWith(',Invoke-SyncApViaCaller') })
+            $Own.Count | Should -Be 1
+            $Own[0].Exception.Message | Should -BeExactly 'transient re-read failure'
+            @($Run.Published | Where-Object { $_.Exception -is [System.Management.Automation.ParameterBindingException] }) | Should -BeNullOrEmpty
+            @($Run.Published | Where-Object { $_.Exception.Message -ne 'transient re-read failure' }) | Should -BeNullOrEmpty
+            @($Map.Keys | Sort-Object) | Should -BeExactly @(@('assignmentpolicies|ap|pol-x', 'assignmentpolicies|ap-1|pol-x') | Sort-Object)
+            foreach ($Key in @($Map.Keys)) { $Map[$Key].Reason | Should -BeExactly $script:PolUndecided }
+        }
+
+        It 'marks nothing again for a package whose name is empty: the item ends where it always did, at its first row' {
+            # A catalog list entry whose DisplayName is empty matches an entry whose displayName is empty, so
+            # the package is found; the first marks skipped the entry, and so do the second. The re-read
+            # fails, and its Failed row cannot name an empty -Item (a terminating binding error, measured),
+            # so the item ends there, as it did before this step -- never in a mark block, whose binding of
+            # a missing reason or an empty package would be the first error otherwise.
+            InModuleScope $script:moduleName {
+                Mock Get-OERAccessPackage { throw 'transient re-read failure' } -ParameterFilter { $Id }
+            }
+            $Map = New-PolMap
+            $Item = [PSCustomObject]@{
+                displayName        = ''
+                catalog            = 'CAT'
+                assignmentPolicies = @([PSCustomObject]@{ displayName = 'POL-New'; previousDisplayName = 'POL-Old' })
+            }
+
+            $Thrown = $null
+            try {
+                $null = Invoke-PolSync -Item $Item -Packages @([PSCustomObject]@{ Id = 'ap-e'; DisplayName = '' }) -RenameMap $Map
+            } catch { $Thrown = $PSItem }
+
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.Exception | Should -BeOfType ([System.Management.Automation.ParameterBindingException])
+            $Thrown.Exception.CommandInvocation.MyCommand.Name | Should -BeExactly 'ConvertTo-OERStructureResult'
+            $Thrown.Exception.ParameterName | Should -BeExactly 'Item'
+            $Map.Count | Should -Be 0
         }
 
         It 'registers a policy decision under the package''s declared name and under the package''s id (<Outcome>)' -ForEach @(

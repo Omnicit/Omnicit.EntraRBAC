@@ -50,8 +50,11 @@ function Resolve-OERStructureRename {
     looked up by name, which while another object carries that name would reach that object. The
     handlers register it before they look up either name, so a lookup that throws leaves it and the
     decision after the lookups replaces it; Invoke-OERStructure registers it for every entry of a
-    section -Include leaves out. It is registered under the name key only, -AccessPackageId is ignored.
-    Without -RenameMap it registers nothing.
+    section -Include leaves out. It is registered under the keys a decision uses: for a policy whose
+    -AccessPackageId is given, under the key built with the package id as well (the same entry), so a
+    reference that names the package by object id is refused too. A decision made with the same
+    package id replaces it under both keys, and a Current outcome removes both. Without -RenameMap it
+    registers nothing.
 
     .PARAMETER Section
     The document section of the entry: administrativeUnits, catalogs, accessPackages, assignmentPolicies
@@ -81,8 +84,8 @@ function Resolve-OERStructureRename {
 
     .PARAMETER AccessPackageId
     For assignmentPolicies: the package's object id, when it is known at decision time. With
-    -RenameMap the outcome is also applied under the key built with the id. Ignored for every other
-    section and by -Undecided.
+    -RenameMap the outcome -- or, with -Undecided, the undecided mark -- is also applied under the key
+    built with the id. Ignored for every other section.
 
     .PARAMETER RenameMap
     The run-scoped rename map Invoke-OERStructure creates once per document. Optional.
@@ -142,7 +145,10 @@ function Resolve-OERStructureRename {
 
     # R12: a rename this run cannot decide -- one of its names could not be looked up, or -Include
     # leaves its section out. Registered as refused, so a reference to the new name is refused rather
-    # than looked up by name; a decision for the same key replaces it. Under the name key only.
+    # than looked up by name; a decision for the same key replaces it. Under the keys a decision uses,
+    # as the same entry: for a policy whose package id is known, the key with the id as well, so a
+    # reference that names the package by object id is refused too instead of looking the policy up by
+    # name within the package, where another policy may carry the new name.
     if ($Undecided) {
         if ($null -ne $RenameMap) {
             $Marker = [PSCustomObject]@{
@@ -155,7 +161,7 @@ function Resolve-OERStructureRename {
                 Reason       = $Reason
             }
             $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.StructureRenameTarget')
-            $RenameMap[$Key] = $Marker
+            foreach ($DecisionKey in $DecisionKeys) { $RenameMap[$DecisionKey] = $Marker }
         }
         $Pending = [PSCustomObject]@{
             Outcome     = 'Undecided'
