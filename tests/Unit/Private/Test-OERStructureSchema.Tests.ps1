@@ -4642,6 +4642,81 @@ Describe 'Test-OERStructureSchema renames of assignment policies (BL-128, Sprint
             $Warned.Count | Should -Be 1
             $Warned[0].Path | Should -BeExactly 'accessReviews[5].assignmentPolicy'
         }
+
+        # The outer shape guard of the policy half: a section that is not an array is an Error already
+        # ("must be an array"), and the half must not read a lone object, or a string, as a list of one entry.
+        # The positive control is the object itself: read as one entry it WOULD name the renamed policy.
+        It 'reports <Label> as the one Error that says it must be an array, and reads it as no list (the outer shape guard)' -ForEach @(
+            @{
+                Label   = 'an object-valued accessReviews'
+                Section = 'accessReviews'
+                Json    = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ { "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" } ] } ], "accessReviews": { "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "Old", "reviewers": [ "self" ] } }'
+            }
+            @{
+                Label   = 'a string-valued accessReviews'
+                Section = 'accessReviews'
+                Json    = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ { "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" } ] } ], "accessReviews": "nope" }'
+            }
+            @{
+                Label   = 'an object-valued accessPackages'
+                Section = 'accessPackages'
+                Json    = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": { "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ { "displayName": "New", "previousDisplayName": "Old" } ] }, "accessReviews": [ { "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "Old", "reviewers": [ "self" ] } ] }'
+            }
+            @{
+                Label   = 'a string-valued accessPackages'
+                Section = 'accessPackages'
+                Json    = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": "nope", "accessReviews": [ { "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "Old", "reviewers": [ "self" ] } ] }'
+            }
+        ) {
+            $Parsed = $Json | ConvertFrom-Json
+            { Invoke-PolicyValidation -Doc $Parsed } | Should -Not -Throw
+            $V = Invoke-PolicyValidation -Doc $Parsed
+            @($V.Errors).Count | Should -Be 1
+            $V.Errors[0].Severity | Should -BeExactly 'Error'
+            $V.Errors[0].Section | Should -BeExactly $Section
+            $V.Errors[0].Item | Should -BeExactly $Section
+            $V.Errors[0].Path | Should -BeExactly $Section
+            $V.Errors[0].Message | Should -BeExactly "Section '$Section' must be an array."
+            @($V.Errors | Where-Object { $_.Path -match 'assignmentPolicy$' }) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeFalse
+        }
+
+        # A null element is a malformed entry, not a reason to stop: the duplicate check of the policies and the
+        # policy half read around it, name the entries that follow it by their real positions, and add no
+        # finding of their own for it.
+        It 'survives a null element in assignmentPolicies, accessPackages and accessReviews, and counts its findings' {
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "cat-x", "resources": null } ], "accessPackages": [ null, ' +
+                '{ "displayName": "ap-x", "catalog": "cat-x", "resourceRoles": null, "assignmentPolicies": [ null, ' +
+                '{ "displayName": "New", "previousDisplayName": "Old" }, null, { "displayName": "Other", "previousDisplayName": "old" } ] } ], ' +
+                '"accessReviews": [ null, { "displayName": "rev_one", "accessPackage": "ap-x", "assignmentPolicy": "Old", "reviewers": [ "self" ] }, null ] }'
+            $Parsed = $Doc | ConvertFrom-Json
+            { Invoke-PolicyValidation -Doc $Parsed } | Should -Not -Throw
+            $V = Invoke-PolicyValidation -Doc $Parsed
+
+            # accessPackages[0] is null: displayName and catalog are required. accessReviews[0] and [2] are
+            # null: displayName, accessPackage and assignmentPolicy are required. In ap-x the null policies
+            # [0] and [2] each lack a displayName, and policy [3] repeats policy [1]'s previous name.
+            $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+            $Errs.Count | Should -Be 11
+            @($Errs | Where-Object { $_.Path -match '^accessPackages\[0\]' }).Count | Should -Be 2
+            @($Errs | Where-Object { $_.Path -match '^accessReviews\[(0|2)\]' }).Count | Should -Be 6
+            @($Errs | Where-Object { $_.Path -match '^accessPackages\[1\]\.assignmentPolicies\[(0|2)\]\.displayName$' }).Count | Should -Be 2
+            $Dup = @($Errs | Where-Object { $_.Message -match 'declares the same' })
+            $Dup.Count | Should -Be 1
+            $Dup[0].Path | Should -BeExactly 'accessPackages[1].assignmentPolicies[3].previousDisplayName'
+            $Dup[0].Message | Should -Match ([regex]::Escape(" as accessPackages[1].assignmentPolicies[1] ("))
+
+            # The policy half names the real positions, past the null package and the null policy.
+            $Hit = @($V.Errors | Where-Object { $_.Severity -eq 'Warning' -and $_.Path -match 'assignmentPolicy$' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'accessReviews[1].assignmentPolicy'
+            $Hit[0].Message | Should -Match ([regex]::Escape("the previousDisplayName of accessPackages[1].assignmentPolicies[1], which renames that assignment policy to 'New'."))
+            # The other two Warnings are older ones: a review with no reviewers key defaults to a manager
+            # reviewer and then lacks a fallback, which both null reviews do.
+            $Warns = @($V.Errors | Where-Object Severity -eq 'Warning')
+            $Warns.Count | Should -Be 3
+            @($Warns | Where-Object { $_.Path -match '^accessReviews\[(0|2)\]\.fallbackReviewers$' }).Count | Should -Be 2
+        }
     }
 }
 

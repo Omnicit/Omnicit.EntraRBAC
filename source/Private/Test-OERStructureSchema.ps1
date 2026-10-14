@@ -334,8 +334,9 @@ function Test-OERStructureSchema {
     # rules. A non-string or empty value names nothing (Error); one equal to displayName ignoring case
     # finds the same object, so nothing is renamed and a case-only rename is not possible through the
     # document (Warning naming the cmdlet and parameter that do it). The parameter is -NewDisplayName
-    # unless the caller names another; -NameQualifier is the words that follow it ('together with another
-    # property' for a policy, whose -DisplayName alone is NothingToUpdate when only the case differs).
+    # unless the caller names another; -NameQualifier is the text appended to it as passed, so it carries its
+    # own leading space (' together with another property' for a policy, whose -DisplayName alone is
+    # NothingToUpdate when only the case differs).
     # Returns the previous name to claim in the duplicate check, or $null when there is none to claim.
     function Test-SupportedRename {
         param(
@@ -1473,6 +1474,7 @@ function Test-OERStructureSchema {
             $ValidRecurrence = @(Resolve-OERStructureEnumCasing -EnumName 'accessReviewRecurrence' -List)
             $ARs = @($Document.accessReviews)
             $ARSeen = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $ARConsequence = 'Both entries reconcile one access review, so applying the document would rewrite its settings on every run.'
             for ($I = 0; $I -lt $ARs.Count; $I++) {
                 $AR = $ARs[$I]
                 $ARPath = "accessReviews[$I]"
@@ -1485,7 +1487,6 @@ function Test-OERStructureSchema {
                             -Message "'$Req' is required at $ARPath."
                     }
                 }
-                $ARConsequence = 'Both entries reconcile one access review, so applying the document would rewrite its settings on every run.'
                 if (Test-HasProp -Node $AR -Name 'displayName') {
                     Add-DuplicateEntryFinding -Seen $ARSeen -Key ([string]$AR.displayName) -Index $I `
                         -Section 'accessReviews' -Item $ARItem -Path $ARPath `
