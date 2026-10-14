@@ -40,9 +40,10 @@ access review that names the new name of a package or policy renamed in the same
 updated.
 
 `groupsRoster.json` rows now carry each group's id, type, visibility and creation time. Inventories
-count shared group names tenant-wide, leave out same-named policies of one package
-(`Test-OERStructure` now refuses them) and name a shared catalog, review target or role-assignment
-group by id; the export README lists each name and count.
+count shared group names tenant-wide, leave out same-named policies of one package (now refused in a
+document) and name a shared catalog, review target or role-assignment group by id; the export README
+lists each name and count. `Invoke-OERStructure` fails, writing nothing, when a package it would
+create exists in another catalog.
 
 ## [1.2.0] - 2026-10-11
 

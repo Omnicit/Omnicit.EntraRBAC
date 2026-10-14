@@ -293,8 +293,11 @@ an access review is counted among the ones this export read, an access review's 
 access-package reviews it captured. A reference to such an object elsewhere in the document is
 written as the object's id: the catalog of an access package, the access package and assignment
 policy of an access review, and a group named as the principal of a role assignment or a directory
-role assignment, written with `principalType` `Group`. Leaving them out of the export changes nothing
-in the tenant.
+role assignment, written with `principalType` `Group`. A group named in any other place -- an
+eligibility principal, a reviewer, a catalog resource, a resource role, a member of a group or an
+administrative unit -- still carries its name (or its id where the export always writes ids), and an
+ambiguous name there is refused when applied, with nothing written for it. Leaving them out of the
+export changes nothing in the tenant.
 '@
     $SharedNameSection = if ($SharedBullets.Count -gt 0) {
         $SharedIntro + "`n`n" + ($SharedBullets -join "`n")

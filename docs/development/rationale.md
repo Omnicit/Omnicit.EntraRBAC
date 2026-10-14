@@ -8840,16 +8840,23 @@ column in the view.
 builds the index from the groups it is given (`-Group`, the export's roster, with no request) or
 from ONE paged listing `v1.0/groups?$select=id,displayName&$top=999`, which `Get-OERInventory` makes
 at most once per invocation -- when its Groups section read at least one group, or when a section
-holds a group principal -- and shares between them. It keys a name without regard to letter case,
+holds a group principal whose name was read -- and shares between them. It keys a name without regard to letter case,
 the key the validator refuses a duplicate on, and lists each group's id once, lower-cased. A failed
 listing comes back as `Read` false with its message: never thrown, and never an empty index.
 `Get-OERGroupReference` writes a group's display name only when the index was read and exactly this
 group carries that name, and the object id otherwise -- an index not read, a blank name, a name the
-index lists under another group or under several -- which the apply engine resolves verbatim. One
-listing per invocation was chosen over a lookup per name. Cost if wrong: an export with many Azure
-scopes lists every group once per scope that has a group principal, since `Export-OERInventory` reads
-each scope's role assignments with a `Get-OERInventory` call of its own (ceil(N/999) requests each);
-the alternative is a lookup per name.
+index lists under another group or under several -- which the apply engine resolves verbatim. A
+group principal whose name is blank, or is its id because its name could not be read, is written by
+its id without reading the listing, since the rule returns the id for it whatever the index holds.
+One listing per invocation was chosen over a lookup per name. Cost if wrong, and it multiplies:
+`Export-OERInventory` calls `Get-OERInventory` once per Azure scope it walks, and a scope's role
+assignment read returns the assignments inherited from above it too, so one group assignment at a
+management group makes every scope beneath it list every group once -- ceil(G/999) Graph requests
+per such scope for G groups in the tenant, for example about 9,300 requests for 300 scopes and
+30,000 groups. A listing that fails costs no more than its own requests: the group principals of
+that invocation are written by id (R-3c). A lookup per name was considered and costs the same
+order: k names per scope, an inherited name looked up again at every scope beneath its assignment.
+The controller raises the multiplier to the architect.
 
 **R-3 (the counts reach the export).** `Get-OERInventory` hands every name it left out, with its
 section and count, to its caller in ONE information record tagged `Omnicit.EntraRBAC.SharedName` (a
@@ -8960,17 +8967,26 @@ its id instead of its shared name.
 **Known limits.** (a) `-Catalog` given as an id (R-5) and the positions R-6 leaves out still write a
 shared name, refused when applied. (b) A display name of an access package or an assignment policy
 that is shaped like a GUID is read by the apply engine as an object id, and the export can keep such
-a name in a review, where the engine then reads it as an id and not as the name; very improbable. (c) An older gap in the
-engine, reported as a finding and not fixed here: `New-OERAccessPackage` looks a package up by name in
-the whole tenant, so re-creating a package declared in catalog A while exactly one package of that
-name exists in catalog B returns B's package, and `Sync-OERStructureAccessPackage` then reports it
-`Created` and attempts to write the declared resource roles and assignment policies to it, the
-resource roles through `Add-OERAccessPackageResourceRole` with A's catalog. It existed before this
-step for every catalog named
-uniquely; the catalog id written here lets it reach a package whose catalog name is shared (refused as
-ambiguous before), and only after that package was deleted from its own catalog. (d) A group row at
-the root scope alone makes `Get-OERInventory` read the listing of every group, and the verbose line
-of R-3c says "every group principal" even when only root-scope rows met it. (e) The policies of a
+a name in a review, where the engine then reads it as an id and not as the name; very improbable. (c) Closed in this
+step (the controller's ruling on the final review): `New-OERAccessPackage` looks a package up by name
+in the whole tenant, so re-creating a package declared in catalog A while exactly one package of that
+name exists in catalog B returned B's package, and `Sync-OERStructureAccessPackage` reported it
+`Created` and went on to write the declared resource roles and assignment policies to it. The gap is
+older than this step, for every catalog named uniquely; the catalog id written here let it reach a
+package whose catalog's name is shared (refused as ambiguous before). The handler now compares the
+catalog of the package `New-OERAccessPackage` returns with the declared catalog, as ids without
+regard to letter case -- an id as written, a name looked up once with `Resolve-OERCatalogId` -- and
+when they differ reports the entry as one `Failed` row and returns, with nothing written to that
+package or for the entry; a lookup that fails is scrubbed first and reported `Failed` with its error,
+nothing further written. A package with no catalog in the answer is one the create sent into the
+declared catalog whose confirmation read did not answer, and is reported `Created` as before. No
+ErrorId was added. Residual: none. (d) `Get-OERInventory` reads the listing of every group once per
+invocation that meets a group principal whose name was read, and `Export-OERInventory` makes one
+invocation per Azure scope, whose role assignment read returns inherited assignments too: one group
+assignment at a management group costs ceil(G/999) requests at every scope beneath it (about 9,300
+for 300 scopes and 30,000 groups, R-2), raised to the architect; a lookup per name costs the same
+order. A group row at the root scope alone makes `Get-OERInventory` read the listing, and the
+verbose line of R-3c says "every group principal" even when only root-scope rows met it. (e) The policies of a
 package that is itself left out for a shared name are still reported, and two same-named packages of
 one catalog that each hold a same-named pair of policies report the policy name twice, the same way:
 noise, since neither package is written. (f) Whether `$count` counts a service principal is open
