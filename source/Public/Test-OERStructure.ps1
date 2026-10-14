@@ -34,10 +34,11 @@ function Test-OERStructure {
     Invoke-OERStructure renames the object it names in place: an access package within its catalog, an
     assignment policy within its access package. It must be a non-empty string (an Error otherwise);
     one equal to displayName, ignoring case, is a Warning, since both names then find one object and a
-    case-only rename is not possible through the document. A second entry of a section that claims a
-    name an earlier entry already claims, as its displayName or as its previousDisplayName, is an
-    Error; among the assignment policies of one access package only when at least one of the two
-    claims is a previousDisplayName. An explicit null counts as not declared.
+    case-only rename is not possible through the document (an assignment policy is given the declared
+    letter case only together with another changed field of it). A second entry of a section that
+    claims a name an earlier entry already claims, as its displayName or as its previousDisplayName,
+    is an Error; among the assignment policies of one access package only when at least one of the
+    two claims is a previousDisplayName. An explicit null counts as not declared.
 
     A reference that still names a renamed object by its previous name is a Warning at the reference:
     a groups entry's administrativeUnit, an accessPackages entry's catalog, or an accessReviews
@@ -56,8 +57,8 @@ function Test-OERStructure {
     accessPackages entries declare, as their displayName or as a previousDisplayName that renames,
     while at least one of those entries renames its package, is an Error at the review's
     accessPackage. The same name in two catalogs is two packages, but Invoke-OERStructure keys a
-    renamed package, and the policies within it, by the package's name alone, so the run cannot tell
-    which package the review means. Name the access package by its object id.
+    renamed package, and the policies within it, by the package's name, without its catalog, so the
+    run cannot tell which package the review means. Name the access package by its object id.
 
     A top-level tenantId, when present, must be a string holding a canonical GUID (an explicit null, a
     value that is not a string, such as an array, or any other value is an Error; a document without

@@ -8660,39 +8660,54 @@ means. If wrong: a failed read would again be an empty fact that writes.
 either kind (`Add-UnsupportedRenameFinding` is deleted) and reads it with the groups' rules: a value
 that is not a non-empty string is an Error, and one equal to `displayName` ignoring case is a Warning
 naming what makes such a change (`Set-OERAccessPackageAssignmentPolicy -DisplayName` together with
-another property, or `Set-OERAccessReviewDefinition -DisplayName`). A review's previous name is a claim
-of the accessReviews duplicate check. P4: among the assignment policies of one package, a
-`previousDisplayName` is a claim of a new duplicate check, an Error only when at least one of the two
-colliding claims is a `previousDisplayName`, naming the earlier policy by its position in the package;
-two policies declaring one `displayName` stay unreported, as before this step. If wrong: a stricter
-check is one condition. Rule 14 has a policy half: a review whose `assignmentPolicy` equals, ignoring
-case, the previous name (not an object id) of a policy the document renames in the package the
-review names -- by its `displayName`, or by the name or object id it renames from -- is a Warning,
-since once the rename is applied no policy of the package carries the old name and the review's
-target check fails. The schema declares `previousDisplayName` on both items as a non-empty string.
+another property, or `Set-OERAccessReviewDefinition -DisplayName`); for a policy the Warning also
+says that the document applies such a change only together with another changed field of the policy
+(known limit (e)). A review's previous name is a claim of the accessReviews duplicate check. P4:
+among the assignment policies of one package, a `previousDisplayName` is a claim of a new duplicate
+check, an Error only when at least one of the two colliding claims is a `previousDisplayName`, naming
+the earlier policy by its position in the package; two policies declaring one `displayName` stay
+unreported, as before this step. If wrong: a stricter check is one condition. Rule 14 has a policy
+half: a review whose `assignmentPolicy` equals, ignoring case, the previous name (not an object id)
+of a policy the document renames in the package the review names -- by its `displayName`, or by the
+name or object id it renames from -- is a Warning, since once the rename is applied no policy of the
+package carries the old name and the review's target check fails. The schema declares
+`previousDisplayName` on both items as a non-empty string.
 
 **Rule 15 (a package name two entries declare; the controller's ruling on the review of the first
 version).** The run's rename map keys a package, and the policies within it, by the package's display
-name alone, while a package is identified by its catalog together with its name: two accessPackages
-entries with one display name in two catalogs are two packages that share those keys, so a later
-entry's mark or decision would replace an earlier one's, and a review that names the package by that
-name would reach whichever entry registered last. `Test-OERStructureSchema` therefore refuses, as an
-Error at `accessReviews[i].accessPackage`, a review whose `accessPackage` is a name, not an object id,
-that two or more accessPackages entries declare as their `displayName` or as a `previousDisplayName`
-that renames, while at least one of those entries renames its package; the message names the entries
-and says to name the access package by its object id. `Invoke-OERStructure` refuses a document that
-fails validation before it signs in or writes anything. When none of those entries renames its
-package nothing is reported, and the review's apply-time lookup refuses the ambiguous name
-(`AmbiguousName`) as before. No error id and no schema change. Cost if wrong: a document that was
-unambiguous to its author -- two same-named packages, one of them renamed -- must name the review's
-package by its object id.
+name without its catalog (a policy also by the package's id once the entry knows it), while a package
+is identified by its catalog together with its name: two accessPackages entries with one display name
+in two catalogs are two packages that share the keys built on that name, so a later entry's mark or
+decision would replace an earlier one's, and a review that names the package by that name would reach
+whichever entry registered last. `Test-OERStructureSchema` therefore refuses, as an Error at
+`accessReviews[i].accessPackage`, a review whose `accessPackage` is a name, not an object id, that two
+or more accessPackages entries declare as their `displayName` or as a `previousDisplayName` that
+renames, while at least one of those entries renames its package; the message names the entries and
+says to name the access package by its object id. A match on a renaming `previousDisplayName` counts
+too: the review's name is then one entry's new name and another entry's old name, and the keys built
+on that name are the first entry's, so the review would be read as the first entry's package while it
+may mean the other one, which carries the name in the tenant until its rename is applied.
+`Invoke-OERStructure` refuses a document that fails validation before it signs in or writes anything.
+When none of those entries renames its package nothing is reported, and the review's apply-time
+lookup refuses the ambiguous name as before, as in known limit (b): the target check of a review that
+exists with `AmbiguousName`, and the create of one that does not with `AmbiguousAccessPackageName`
+(`Resolve-OERAccessReviewScopeTarget`), except that a plan for a review that does not exist yet
+reaches no lookup and says it would create it. No error id and no schema change. Cost if wrong: a
+document that was unambiguous to its author -- two same-named packages, one of them renamed -- must
+name the review's package by its object id.
 
 **Known limits.** (a) A map key joins display names with `|`, so a `|` inside a name can make two keys
 collide, and one rename and one review reference are enough to meet it: a package `A|B` whose policy
 is renamed to `C` registers the key that a review naming package `A` and policy `B|C` reads, and that
-review then gets the id of the policy of `A|B`, which its target check compares with the live
-review's policy and refuses when they differ; so can a package whose display name is spelled like
-another package's object id. (b) Two accessPackages entries with one display name in different
+review is then given the id of the policy of `A|B`. A review that exists is checked against that id,
+and its target check refuses it when the live review's policy differs. A review that does not exist
+yet is created with that id (`Resolve-OERAssignmentPolicyId` takes an object id as given, with no
+request), so the create pairs package `A` with a policy of package `A|B`; what Microsoft Graph
+answers to such a scope is not measured. And when the decision under that key is a refusal -- a
+refused rename or an undecided mark -- the review naming `A` and `B|C` is refused with it, although
+it names neither that package nor that policy. A package whose display name is spelled like another
+package's object id meets the same three: a review that names that other package by its id reads
+the first package's policy keys. (b) Two accessPackages entries with one display name in different
 catalogs share the package-name key and the policy keys built on it. Rule 15 refuses offline every
 document in which a review names that name while one of those entries renames its package, so an
 applied document never has a review read a package key two entries share. When neither entry renames
@@ -8706,6 +8721,11 @@ checked against that policy while it still carries its old name; step 4 set that
 packages and catalogs. (d) The not-found codes of the access review probe by id (D6) are declared, not
 measured: a not-found answer under another code makes the entry `Failed` with nothing written, the
 safe direction, and the live run of this step is to measure which code Graph sends. (e) A rename that
-changes the letter case only is not possible through the document for a policy or a review either:
-both names find the one object (for a review, as far as the server's name filter ignores case, which
-is not measured), so nothing is renamed, and the validator warns.
+changes the letter case only is not decided through `previousDisplayName` for a policy or a review
+either: both names find the one object (for a review, as far as the server's name filter ignores
+case, which is not measured), so no rename is decided, and the validator warns. A policy is still
+given the declared letter case whenever another declared field of it differs, since the access
+package handler sends the declared `displayName` on every update of a policy, and the validator's
+warning for a policy says so; a review is given it only by
+`Set-OERAccessReviewDefinition -DisplayName`, since the review handler sends `-DisplayName` only for
+a rename.

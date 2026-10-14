@@ -374,10 +374,10 @@ several access reviews, carry fails it with `AmbiguousName` naming every id. Dec
 `previousDisplayName` as the object id then.
 
 **An access review is checked before it is renamed.** The review found under either name is updated
-or renamed only when it reviews the access package and assignment policy the entry declares; otherwise the
-entry fails with `AccessReviewScopeMismatch`, in a plan and in a run alike, and nothing is written to
-it. The review read back after the update must carry the new name exactly, letter case included, or
-the entry is `Failed`.
+or renamed only when it reviews the access package and assignment policy the entry declares;
+otherwise the entry fails with `AccessReviewScopeMismatch`, in a plan and in a run alike, and nothing
+is written to it. After a rename, the review read back must carry the new name exactly, letter case
+included, or the entry is `Failed`.
 
 **Microsoft Graph's name lookup can follow a rename with a delay.** Keep `previousDisplayName` in the
 document until the new name resolves: a run after that finds the object under `displayName` and
@@ -391,10 +391,10 @@ renamed unit (`administrativeUnit`) is created into it, an access package declar
 catalog (`catalog`) is read, and created or planned, in it, and an access review that names the
 renamed access package (`accessPackage`) or assignment policy (`assignmentPolicy`) is checked, and
 created or planned, against it, also in a `-WhatIf` plan, where the rename is not sent. Microsoft
-Graph's lookup cannot find the new name yet. A review finds a renamed policy under the package as
-the review names it: by the package's new name, or by its object id once the package's entry knows
-that package's id. When the target check refuses such a review, its error names the package or
-policy by that id, and the `Failed` row says which name was read as which id.
+Graph's lookup cannot find the new name yet. A review reaches a renamed policy, or is refused, under
+the package as the review names it: by the package's new name, or by its object id once the
+package's entry knows that package's id. When the target check refuses such a review, its error
+names the package or policy by that id, and the `Failed` row says which name was read as which id.
 
 **A rename the run cannot settle refuses its references.** When the rename is refused (a conflict,
 or neither name found), or the run cannot decide it (one of its names could not be looked up, the
@@ -410,26 +410,30 @@ refused too. A review that names the package by its object id and a renamed poli
 is refused that way once the package's entry knows that package's id. Until then the review looks
 the policy up by name, as before: so it does when the entry stopped before it knew any package id
 (its catalog refused, a failed read of the catalog's packages, or a package rename that found
-neither name), when the entry stopped at a display name several packages of its catalog carry (the
-package under its previous name is not looked up by then), or when `-Include` leaves out the
-`AccessPackages` section.
+neither name), when the entry stopped at a display name several packages of its catalog carry and
+the review names the package that carries the entry's previous name (only the packages that carry
+the display name are marked; the previous name is not looked up by then), or when `-Include` leaves
+out the `AccessPackages` section.
 
 While `-Include` leaves the section out and the entry still declares `previousDisplayName`, that
 refusal reaches every reference by the new name -- for a catalog every package declared in it, for
-a package or a policy every review that names it by that name, existing ones included -- even when
-the rename was done in an earlier run: include the section, or remove `previousDisplayName` once
-the new name resolves. A refusal because `-Include` leaves the section out publishes no error record,
-only the `Failed` row, so `-ErrorAction Stop` and `$?` do not see it: check the rows.
+a package or a policy every review that names it by that name (one that names the package by object
+id looks a policy up by name, as above), existing ones included -- even when the rename was done in
+an earlier run: include the section, or remove `previousDisplayName` once the new name resolves. A
+refusal because `-Include` leaves the section out publishes no error record, only the `Failed` row,
+so `-ErrorAction Stop` and `$?` do not see it: check the rows.
 
 **Two packages with one name.** The same display name in two catalogs is two packages, but the run
-keys a renamed package, and its policies, by the package's name alone. So `Test-OERStructure`
-refuses, as an error, an access review whose `accessPackage` gives by name a package that two or
-more `accessPackages` entries declare, as `displayName` or `previousDisplayName`, while one of them is
-renamed; name the package by its object id in such a review.
+keys a renamed package, and its policies, by the package's name, without its catalog. So
+`Test-OERStructure` refuses, as an error, an access review whose `accessPackage` gives by name a
+package that two or more `accessPackages` entries declare, as `displayName` or
+`previousDisplayName`, while one of them is renamed; name the package by its object id in such a
+review.
 
 `Test-OERStructure` reports an empty or non-string `previousDisplayName` as an error, and one equal
 to `displayName` (ignoring case) as a warning -- a case-only rename is not possible through the
-document; use `Set-OERAdministrativeUnit`, `Set-OERCatalog` or `Set-OERAccessPackage -NewDisplayName`,
+document, except for an assignment policy together with another changed field of the policy; use
+`Set-OERAdministrativeUnit`, `Set-OERCatalog` or `Set-OERAccessPackage -NewDisplayName`,
 `Set-OERAccessPackageAssignmentPolicy -DisplayName` together with another property, or
 `Set-OERAccessReviewDefinition -DisplayName`. Two entries of a section that claim one name, as
 `displayName` or `previousDisplayName`, are an error; for the policies of one package only when at

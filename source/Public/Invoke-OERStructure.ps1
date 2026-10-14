@@ -57,10 +57,9 @@ function Invoke-OERStructure {
     access review id is read once, by id, and a not-found answer under one of the codes that read
     declares (NotFound, ResourceNotFound, Request_ResourceNotFound; not measured live yet), or an
     answer with no object, counts as not matching, while any other failure of the read fails the
-    entry with nothing written. An access
-    review found under either name is updated or renamed only when it passes the AccessReviews target
-    check below, and the definition read back after the update must carry the new name exactly,
-    letter case included, or the entry is reported Failed.
+    entry with nothing written. An access review found under either name is updated or renamed only
+    when it passes the AccessReviews target check below, and after a rename the definition read back
+    must carry the new name exactly, letter case included, or the entry is reported Failed.
 
     Microsoft Graph's name lookup can follow a rename with a delay, so keep previousDisplayName in the
     document until the new name resolves (a run after that reports the object Unchanged; a run inside
@@ -79,16 +78,17 @@ function Invoke-OERStructure {
     previous name). Until then a review that names the package by id looks the policy up by name, as
     before: so it does when the entry stopped before it knew any package id (its catalog refused, a
     failed read of the catalog's packages, a package rename that found neither name), when the entry
-    stopped at a display name several packages of its catalog carry (the package under its previous
-    name is not looked up by then), or when -Include leaves out the AccessPackages section, whose
-    marks name the package by its name alone. When the rename is
-    refused, or the run cannot decide it, the reference is refused instead of being looked up by
-    name, which could land in another object that carries the new name: such a group, every such
-    package and such a review are reported Failed, under -WhatIf too, with nothing created or written
-    for them (a package or a review is not read either), and the row of the entry that renames the
-    object carries the error when its rename was refused. A group that already exists is not
-    affected, since administrativeUnit applies only when a group is created; an access review that
-    already exists is, since its access package and assignment policy are checked on every run.
+    stopped at a display name several packages of its catalog carry and the review names the package
+    that carries the entry's previous name (only the packages that carry the display name are marked;
+    the previous name is not looked up by then), or when -Include leaves out the AccessPackages
+    section, whose marks name the package by its name alone. When the rename is refused, or the run
+    cannot decide it, the reference is refused instead of being looked up by name, which could land
+    in another object that carries the new name: such a group, every such package and such a review
+    are reported Failed, under -WhatIf too, with nothing created or written for them (a package or a
+    review is not read either), and the row of the entry that renames the object carries the error
+    when its rename was refused. A group that already exists is not affected, since
+    administrativeUnit applies only when a group is created; an access review that already exists
+    is, since its access package and assignment policy are checked on every run.
 
     A rename the run cannot decide is the rename of a unit or catalog for which a lookup of one of its
     names threw (the unit's or catalog's own row reports the error), the rename of an access package
@@ -250,10 +250,10 @@ function Invoke-OERStructure {
     review that does not is reported Failed with the error AccessReviewScopeMismatch, and nothing is
     written to it; a review that reviews no access package at all is refused with no access package
     or assignment policy lookup. A name compared as the map's id is named by that id in the error the
-    check publishes, and the Failed row says which declared name was read as which id. A name that matches nothing is reported Failed with
-    AccessPackageNotFound or AssignmentPolicyNotFound, and a lookup that fails (an ambiguous name, a
-    403) with its own error, and nothing is written either. An
-    access package name is not unique in the tenant, nor an assignment policy name in its access
+    check publishes, and the Failed row says which declared name was read as which id. A name that
+    matches nothing is reported Failed with AccessPackageNotFound or AssignmentPolicyNotFound, and a
+    lookup that fails (an ambiguous name, a 403) with its own error, and nothing is written either.
+    An access package name is not unique in the tenant, nor an assignment policy name in its access
     package, and Get-OERInventory exports both by name: when such a name is shared, the entry is
     reported Failed with AmbiguousName until it names the package or the policy by id. The check runs
     before the reviewer lookups and before any ShouldProcess, so -WhatIf and a real run report the
@@ -397,8 +397,9 @@ function Invoke-OERStructure {
     the apply run (for example -Include Groups,Catalogs to skip Azure sections). A section left out
     still matters when its entries declare previousDisplayName: a group created into such a unit, an
     access package in such a catalog, or an access review that names such an access package or such
-    an assignment policy by its new name, is reported Failed with no error record (see References to
-    a renamed object above).
+    an assignment policy by its new name, is reported Failed with no error record (one that names the
+    access package by object id looks such a policy up by name; see References to a renamed object
+    above).
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. Without it

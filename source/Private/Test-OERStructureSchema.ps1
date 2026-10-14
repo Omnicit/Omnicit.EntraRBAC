@@ -122,12 +122,16 @@ function Test-OERStructureSchema {
     An administrativeUnits, catalogs or accessPackages entry's previousDisplayName (Sprint 11 step 4),
     and the previousDisplayName of an accessPackages assignmentPolicies entry or of an accessReviews
     entry (Sprint 11 step 4b), follow the groups' rules: it must be a non-empty string (Error
-    otherwise); one equal to the entry's displayName ignoring case is a Warning naming Set-OERAdministrativeUnit,
-    Set-OERCatalog or Set-OERAccessPackage -NewDisplayName, for a policy Set-OERAccessPackageAssignmentPolicy
-    -DisplayName together with another property (its -DisplayName alone reports NothingToUpdate when only
-    the case differs), and for a review Set-OERAccessReviewDefinition -DisplayName; and an explicit null
-    is not declared. It is a claimed key of the duplicate check (below), and a reference to it is warned
-    about (Rule 14, below).
+    otherwise); one equal to the entry's displayName ignoring case is a Warning naming
+    Set-OERAdministrativeUnit, Set-OERCatalog or Set-OERAccessPackage -NewDisplayName, for a policy
+    Set-OERAccessPackageAssignmentPolicy -DisplayName together with another property (its -DisplayName
+    alone reports NothingToUpdate when only the case differs), and for a review
+    Set-OERAccessReviewDefinition -DisplayName. For those kinds but the policy the Warning says that a
+    case-only rename is not possible through the document; for a policy it says that such a rename is
+    applied only together with another changed field of the policy, since the access package handler
+    sends the declared displayName on every update of a policy. An explicit null is not declared. It
+    is a claimed key of the duplicate check (below), and a reference to it is warned about (Rule 14,
+    below).
     A group's onPremisesSynced, when present, must be a boolean (Error); it is information only.
     A groups[] entry's mailNickname, when present, must be a string (Error) of 1 to 64 characters
     (BL-132): an empty one is an Error, one longer than 64 characters is an Error naming its length, and
@@ -186,10 +190,10 @@ function Test-OERStructureSchema {
     accessPackages[] entries, at least one of which renames its package through previousDisplayName, is
     an Error at accessReviews[i].accessPackage naming those entries (Rule 15, Sprint 11 step 4b): the
     same name in two catalogs is two packages, but the run's rename map keys a package, and the policies
-    within it, by the package's name alone, so the run cannot tell which package the review means; the
-    Error says to name the access package by its object id. When none of those entries declares such a
-    previousDisplayName nothing is reported, and the apply-time lookup refuses the ambiguous name as
-    before. A second top-level entry
+    within it, by the package's name, without its catalog, so the run cannot tell which package the
+    review means; the Error says to name the access package by its object id. When none of those
+    entries declares such a previousDisplayName nothing is reported, and the apply-time lookup refuses
+    the ambiguous name as before. A second top-level entry
     whose key matches an earlier one, compared without regard to letter case, is an Error at the later
     entry's path that names the earlier entry's index, since the two describe one live object and
     applying both makes each undo the other, or through a child collection removes what the other
@@ -341,16 +345,20 @@ function Test-OERStructureSchema {
     # BL-128 (A5): administrativeUnits, catalogs, accessPackages, the assignmentPolicies of an access
     # package and accessReviews rename the object found under previousDisplayName, with the groups'
     # rules. A non-string or empty value names nothing (Error); one equal to displayName ignoring case
-    # finds the same object, so nothing is renamed and a case-only rename is not possible through the
-    # document (Warning naming the cmdlet and parameter that do it). The parameter is -NewDisplayName
-    # unless the caller names another; -NameQualifier is the text appended to it as passed, so it carries its
-    # own leading space (' together with another property' for a policy, whose -DisplayName alone is
-    # NothingToUpdate when only the case differs).
+    # finds the same object, so nothing is renamed (Warning naming the cmdlet and parameter that make a
+    # case-only rename). -CaseOnlyClause is the Warning's text before that cmdlet: by default that a
+    # case-only rename is not possible through the document. A policy passes its own, since the access
+    # package handler sends the declared displayName on every update of a policy, so the declared letter
+    # case is applied whenever another declared field of the policy differs. The parameter is
+    # -NewDisplayName unless the caller names another; -NameQualifier is the text appended to it as
+    # passed, so it carries its own leading space (' together with another property' for a policy,
+    # whose -DisplayName alone is NothingToUpdate when only the case differs).
     # Returns the previous name to claim in the duplicate check, or $null when there is none to claim.
     function Test-SupportedRename {
         param(
             [object]$Node, [string]$Section, [string]$Item, [string]$Path, [string]$SetCommand,
-            [string]$NameParameter = '-NewDisplayName', [string]$NameQualifier = ''
+            [string]$NameParameter = '-NewDisplayName', [string]$NameQualifier = '',
+            [string]$CaseOnlyClause = 'a case-only rename is not possible through the document -- use'
         )
         $Declaration = Get-RenameDeclaration -Node $Node
         switch ($Declaration.State) {
@@ -360,7 +368,7 @@ function Test-OERStructureSchema {
             }
             'CaseOnly' {
                 Add-Finding -Section $Section -Item $Item -Path "$Path.previousDisplayName" -Severity 'Warning' `
-                    -Message "'previousDisplayName' at $Path equals displayName ignoring case; a case-only rename is not possible through the document -- use $SetCommand $NameParameter$NameQualifier."
+                    -Message "'previousDisplayName' at $Path equals displayName ignoring case; $CaseOnlyClause $SetCommand $NameParameter$NameQualifier."
             }
         }
         $Declaration.Previous
@@ -1172,7 +1180,8 @@ function Test-OERStructureSchema {
                             }
                             $PolPrev = Test-SupportedRename -Node $Pol -Section 'accessPackages' -Item $APItem -Path $PolPath `
                                 -SetCommand 'Set-OERAccessPackageAssignmentPolicy' -NameParameter '-DisplayName' `
-                                -NameQualifier ' together with another property'
+                                -NameQualifier ' together with another property' `
+                                -CaseOnlyClause 'a case-only rename is applied only together with another changed field of the policy -- or use'
                             if ($PolPrev) {
                                 $null = $PolPrevClaimed.Add($PolPrev)
                                 Add-DuplicateEntryFinding -Seen $PolSeen -Key $PolPrev -Index $J `
@@ -2462,8 +2471,9 @@ function Test-OERStructureSchema {
     # accessPackages entries declare, while one of them renames its package. A package is identified by its
     # catalog together with its name, so the same name in two catalogs is two packages (the duplicate
     # check above does not refuse it), but Invoke-OERStructure's run-scoped rename map keys a package --
-    # and a policy within it -- by the package's name alone ('accessPackages|<name>',
-    # 'assignmentPolicies|<package name>|<policy>'). A review reads that map for a package name that is not
+    # and a policy within it -- by the package's name, without its catalog ('accessPackages|<name>',
+    # 'assignmentPolicies|<package name>|<policy>'; a policy also under the package's id once the access
+    # package handler knows it). A review reads that map for a package name that is not
     # an object id, so it would reach whichever entry registered the name last, where the tenant-wide
     # lookup the review otherwise makes refuses an ambiguous name; and one entry's mark or decision would
     # overwrite another's refusal. The run cannot tell which package the review means, so the document is

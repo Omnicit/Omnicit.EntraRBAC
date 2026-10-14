@@ -836,7 +836,7 @@ declares `previousDisplayName` in a package the same run creates fails with
 `AssignmentPolicyRenameNotFound`. An access review's two names are looked up in the whole tenant (an
 object id is read by id), and the review found under either name is updated or renamed only when it
 reviews the access package and assignment policy the entry declares; otherwise the entry fails with
-`AccessReviewScopeMismatch` and nothing is written. The review read back after the update must carry
+`AccessReviewScopeMismatch` and nothing is written. After a rename, the review read back must carry
 the new name exactly, letter case included, or the entry is `Failed`. A previous name that several
 policies of the package, or several reviews, carry fails the entry with `AmbiguousName`: declare
 the object id then.
@@ -856,14 +856,16 @@ policy by its new name reaches the policy, or is refused, the same way once the 
 knows that package's id. Until then the review looks the policy up by name, as before: so it does
 when the entry stopped before it knew any package id (its catalog refused, a failed read of the
 catalog's packages, or a package rename that found neither name), when the entry stopped at a
-display name several packages of its catalog carry (the package under its previous name is not
-looked up by then), or when `-Include` leaves out the `AccessPackages` section. While
+display name several packages of its catalog carry and the review names the package that carries
+the entry's previous name (only the packages that carry the display name are marked; the previous
+name is not looked up by then), or when `-Include` leaves out the `AccessPackages` section. While
 `-Include` leaves the section out and the entry still declares `previousDisplayName`, every
 reference by the new name is refused -- for a catalog every package declared in it, for a package
-or a policy every review that names it by that name -- existing ones included, even when the rename
-was done in an earlier run: include the section, or remove `previousDisplayName` once the new name
-resolves. A refusal because `-Include` leaves the section out publishes no error record, only the
-`Failed` row, so `-ErrorAction Stop` and `$?` do not see it: check the rows.
+or a policy every review that names it by that name (one that names the package by object id looks
+a policy up by name, as above) -- existing ones included, even when the rename was done in an
+earlier run: include the section, or remove `previousDisplayName` once the new name resolves. A
+refusal because `-Include` leaves the section out publishes no error record, only the `Failed` row,
+so `-ErrorAction Stop` and `$?` do not see it: check the rows.
 
 `Test-OERStructure` warns on a reference that still names a renamed object by its previous name, an
 access review's `assignmentPolicy` included. It refuses, as an `Error`, an access review whose

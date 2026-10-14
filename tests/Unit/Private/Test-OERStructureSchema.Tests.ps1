@@ -4307,8 +4307,10 @@ Describe 'Test-OERStructureSchema renames of assignment policies (BL-128, Sprint
             $Hit[0].Severity | Should -BeExactly 'Warning'
             $Hit[0].Section | Should -BeExactly 'accessPackages'
             $Hit[0].Item | Should -BeExactly 'ap-x'
-            # A16: -DisplayName alone with only the case changed is NothingToUpdate, so the cmdlet needs a second property.
-            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at accessPackages[0].assignmentPolicies[0] equals displayName ignoring case; a case-only rename is not possible through the document -- use Set-OERAccessPackageAssignmentPolicy -DisplayName together with another property."
+            # The access package handler sends the declared displayName on every update of a policy, so the
+            # document applies the letter case together with another changed field. A16: -DisplayName alone
+            # with only the case changed is NothingToUpdate, so the cmdlet needs a second property.
+            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at accessPackages[0].assignmentPolicies[0] equals displayName ignoring case; a case-only rename is applied only together with another changed field of the policy -- or use Set-OERAccessPackageAssignmentPolicy -DisplayName together with another property."
             @($V.Errors).Count | Should -Be 1
             $V.Valid | Should -BeTrue
         }
@@ -4721,11 +4723,12 @@ Describe 'Test-OERStructureSchema renames of assignment policies (BL-128, Sprint
 }
 
 Describe 'Test-OERStructureSchema refuses a review naming an access package that several entries declare while one renames it (Rule 15, Sprint 11 step 4b)' {
-    # The run's rename map keys a package, and the policies within it, by the package's name alone, while
-    # the same name in two catalogs is two packages. A review that names such a name, not an object id,
-    # while one of the entries declaring it is renamed through previousDisplayName, could reach either
-    # package, so the document is refused offline with an Error at the review's accessPackage. Without a
-    # rename among those entries nothing is reported (the apply-time lookup refuses the ambiguous name).
+    # The run's rename map keys a package, and the policies within it, by the package's name, without its
+    # catalog, while the same name in two catalogs is two packages. A review that names such a name, not
+    # an object id, while one of the entries declaring it is renamed through previousDisplayName, could
+    # reach either package, so the document is refused offline with an Error at the review's
+    # accessPackage. Without a rename among those entries nothing is reported (the apply-time lookup
+    # refuses the ambiguous name).
     BeforeAll {
         function Invoke-AmbValidation {
             param([object]$Doc)
