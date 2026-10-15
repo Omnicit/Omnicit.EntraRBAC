@@ -421,6 +421,23 @@ BeforeAll {
             Read     = '^Directory\.Read(Write)?\.All$'
             Write    = '^Directory\.Read(Write)?\.All$'
         }
+        @{
+            <#
+                directory/deletedItems/{id} (Get-OERDeletedPrincipalStatus, Sprint 11 step 6, BL-133): a
+                READ of one deleted directory object, whose type is not known until the read answers.
+                Microsoft Learn, "Get deleted item (directory object)", asks per type -- User.Read.All for a
+                user, Group.Read.All for a group, Application.Read.All for a service principal -- so the one
+                permission that covers every principal type a role assignment can name, at once, is
+                Directory.Read.All (or Directory.ReadWrite.All). A narrower one would pass for one type and
+                fail the read of another. Measured live on 2026-10-15 as the app-only test identity: an
+                unknown id answers 404 Request_ResourceNotFound, and the user, group and servicePrincipal
+                deleted items collections answer 200. No write is made there, so Write equals Read.
+            #>
+            Endpoint = 'directory/deletedItems'
+            Match    = 'v1.0/directory/deletedItems'
+            Read     = '^Directory\.Read(Write)?\.All$'
+            Write    = '^Directory\.Read(Write)?\.All$'
+        }
     )
 
     <#
@@ -584,6 +601,26 @@ Describe 'Required scope table' -Tags 'helpQuality' {
                     'an eligibility schedule read is not an assignment schedule read, so the assignment permission must not satisfy it; pattern {0}' -f $pattern)
                 'PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup' | Should -Not -Match $pattern -Because (
                     'an eligibility schedule read is not an assignment schedule read, so the assignment permission must not satisfy it; pattern {0}' -f $pattern)
+            }
+        }
+
+        It 'Should hold a deleted items read to Directory.Read.All, the one permission that covers every principal type at once' {
+            # The literal Get-OERDeletedPrincipalStatus sends, as the AST scan reads it.
+            $patterns = @(Get-RequiredScopePattern -Uri 'v1.0/directory/deletedItems/$([uri]::EscapeDataString($Id))' -Write $false)
+
+            $patterns.Count | Should -Be 1 -Because (
+                'a read of directory/deletedItems must map to exactly one permission rule, its own; {0} matched' -f $patterns.Count)
+
+            foreach ($pattern in $patterns)
+            {
+                'Directory.Read.All' | Should -Match $pattern -Because (
+                    'Directory.Read.All reads a deleted user, group or service principal alike; pattern {0}' -f $pattern)
+                'Directory.ReadWrite.All' | Should -Match $pattern
+                foreach ($narrow in 'User.Read.All', 'Group.Read.All', 'Application.Read.All', 'AdministrativeUnit.Read.All')
+                {
+                    $narrow | Should -Not -Match $pattern -Because (
+                        'the type of a deleted principal is not known before the read, so {0}, which covers one type only, must not satisfy it; pattern {1}' -f $narrow, $pattern)
+                }
             }
         }
     }
