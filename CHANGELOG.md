@@ -45,10 +45,11 @@ document) and name a shared catalog, review target or role-assignment group by i
 lists each name and count. `Invoke-OERStructure` fails, writing nothing, when a package it would
 create exists in another catalog.
 
-Inventories write `principalStatus` `Deleted`/`Unresolved` for a role assignment whose principal
-Entra ID does not return (apply never creates it), report a failed lookup as partial and omit one at
-an undeclarable scope. Exports flag PIM groups in restricted units. Reviews reach a declared package
-via its entry; `-Include` without `AccessPackages` fails them (or use the id).
+Inventories set `principalStatus` `Deleted`/`Unresolved` for a role assignment whose principal
+Entra ID does not return (apply never creates it), mark failed lookups as partial and omit one at
+an undeclarable scope. Exports flag PIM groups in restricted units. Reviews reach a declared
+package via its entry, failing if `-Include` lacks `AccessPackages` (or use the id) or `-WhatIf`
+plans it as new.
 
 ## [1.2.0] - 2026-10-11
 
