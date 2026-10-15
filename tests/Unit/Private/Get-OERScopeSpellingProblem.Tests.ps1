@@ -214,4 +214,53 @@ Describe 'Get-OERScopeSpellingProblem is the one rule the validator and the expo
         $Compared | Should -Be $script:AgreeScopes.Count
         $Refused | Should -Be 12
     }
+
+    It 'has Get-OERInventory leave a role assignment out exactly when the owner returns a problem for its scope' {
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERGroupNameIndex {
+            $Index = [PSCustomObject]@{
+                Read      = $true
+                IdsByName = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[string]]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                Message   = $null
+            }
+            $Index.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupNameIndex')
+            $Index
+        }
+        Mock -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus { throw "unexpected deleted items read: $Id" }
+        # One row per scope, each with a principal of its own that the directory returns, so no row
+        # collides with another and every name is read.
+        $script:AgreeRows = @(for ($I = 0; $I -lt $script:AgreeScopes.Count; $I++) {
+                $PrincipalId = 'dddd5555-0000-0000-0000-{0:D12}' -f ($I + 1)
+                [PSCustomObject]@{
+                    Scope = $script:AgreeScopes[$I]; RoleName = 'Reader'
+                    RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/rd-reader'
+                    PrincipalId = $PrincipalId; PrincipalType = 'User'; PrincipalDisplayName = "User $I"
+                    RoleAssignmentId = "/providers/Microsoft.Authorization/roleAssignments/cccc5555-0000-0000-0000-{0:D12}" -f ($I + 1)
+                }
+            })
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment { $script:AgreeRows }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+            foreach ($One in @($Id)) {
+                [PSCustomObject]@{ Id = $One; Read = $true; Found = $true; Name = "$One@example.com"; ObjectType = 'user'; Cause = $null }
+            }
+        }
+        $Info = $null
+        $Inv = Get-OERInventory -Include RoleAssignments -Subscription '11111111-1111-1111-1111-111111111111' -IncludeARM `
+            -WarningAction SilentlyContinue -InformationVariable Info
+        $Kept = @($Inv.roleAssignments | ForEach-Object { [string]$_.scope })
+        $LeftOut = @(@($Info | Where-Object { $_.Tags -contains 'Omnicit.EntraRBAC.UndeclarableScope' }) |
+                ForEach-Object { @($_.MessageData.Assignments) } | ForEach-Object { [string]$_.Scope })
+        $Expected = InModuleScope $script:moduleName -Parameters @{ Scopes = $script:AgreeScopes } {
+            param($Scopes)
+            foreach ($Scope in $Scopes) {
+                [PSCustomObject]@{ Scope = $Scope; Refused = (@(Get-OERScopeSpellingProblem -Scope $Scope -Path 'roleAssignments').Count -gt 0) }
+            }
+        }
+        $Kept | Should -Be @($Expected | Where-Object { -not $_.Refused } | ForEach-Object { $_.Scope })
+        $LeftOut | Should -Be @($Expected | Where-Object { $_.Refused } | ForEach-Object { $_.Scope })
+        # Reach proof: both answers occur, and every row is in exactly one of the two lists.
+        $LeftOut.Count | Should -Be 12
+        ($Kept.Count + $LeftOut.Count) | Should -Be $script:AgreeScopes.Count
+    }
 }

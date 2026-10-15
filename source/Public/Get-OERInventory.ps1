@@ -282,6 +282,22 @@ function Get-OERInventory {
     for among the deleted items, and a failed lookup of it is not reported -- the root list names it
     by its object id.
 
+    A role assignment whose scope breaks a scope spelling rule the validator applies -- a '.' or '..'
+    segment, a '%', a '\', a '?' or a '#', a trailing or doubled '/', or white space at the start or
+    end of the scope or of a segment, white space other than a space, or a control character, as the
+    name of a resource can hold -- is left out of the RoleAssignments section too: no document can
+    declare that scope, so a document that carried it would be refused as a whole. Invoke-OERStructure
+    never creates a role assignment at such a scope, and never removes one, since it prunes only at a
+    scope a document declares. The root scope is decided first, so a role assignment at the root scope
+    whose spelling is refused too is named only as described above. One warning counts such
+    assignments, and an information record tagged Omnicit.EntraRBAC.UndeclarableScope hands the caller
+    the rows (RoleAssignmentId, Scope, Role, Principal, PrincipalType and Reason, which names the rules
+    the scope breaks in words) and the warning's text; under the default $InformationPreference the
+    record is not displayed. Under a Stop warning preference the command stops at that warning, before
+    it returns the inventory. Such a role assignment's principal is looked up like any other, which is
+    how the record names it, but it is not looked for among the deleted items, a failed lookup of it is
+    not reported, and it never changes how another role assignment is named.
+
     The inventory carries a top-level tenantId, directly after its version: the tenant ID the session's
     Microsoft Graph token was issued for, never the tenant as named with -TenantId (a domain, or
     organizations, names no tenant ID). Invoke-OERStructure applies the document only in that tenant
@@ -1446,6 +1462,28 @@ function Get-OERInventory {
                 }
                 $RaProjected = $RaKeptRows
 
+                # A13, A15: a role assignment whose scope breaks a scope spelling rule the validator applies
+                # (Get-OERScopeSpellingProblem owns the rules) is at a scope no document can declare: a
+                # document that carried it would be refused as a whole. Azure Resource Manager returns one
+                # at a resource whose name holds a '#' or a '%', for instance. It is taken out here, AFTER
+                # the root split (a row at the root scope stays in the root list only) and BEFORE the
+                # collision pass and the principalStatus step below, so it never changes how another row is
+                # named and its principal is never looked for among the deleted items. Invoke-OERStructure
+                # never prunes such an assignment: it prunes only at a scope a document declares. The rows
+                # are counted in one warning and handed over in one information record after the section is
+                # built (docs/development/rationale.md#undeclarable-scope).
+                $RaUndeclarableRows = [System.Collections.Generic.List[object]]::new()
+                $RaDeclarableRows = [System.Collections.Generic.List[object]]::new()
+                foreach ($Row in $RaProjected) {
+                    $ScopeProblems = @(Get-OERScopeSpellingProblem -Scope ([string]$Row.Proj.scope) -Path 'roleAssignments')
+                    if ($ScopeProblems.Count -gt 0) {
+                        $RaUndeclarableRows.Add([PSCustomObject]@{ Row = $Row; Problems = $ScopeProblems })
+                    } else {
+                        $RaDeclarableRows.Add($Row)
+                    }
+                }
+                $RaProjected = $RaDeclarableRows
+
                 # Entra does not keep display names unique, a group can carry a user's user principal
                 # name as its display name, and Azure may return one scope in two spellings -- so two
                 # rows can export the same (scope, role, principal), which the validator refuses as a
@@ -1482,9 +1520,10 @@ function Get-OERInventory {
                 } while ($RaMoved)
 
                 # Sprint 11 step 6 (BL-133, A18): a principal the lookup did not return, or could not
-                # look up, decided for the rows the document keeps -- after the root-scope split above (a
-                # root row stays in the root list only, so nothing below is read or reported for it) and
-                # after the collision pass, so the role and principal named here are the ones written.
+                # look up, decided for the rows the document keeps -- after the root-scope split and the
+                # undeclarable scope split above (a root row stays in the root list only, and an undeclarable
+                # row in its own list, so nothing below is read or reported for either) and after the
+                # collision pass, so the role and principal named here are the ones written.
                 #   - A failed lookup: the row keeps its object id and principalType, carries no
                 #     principalStatus, and is named unread as '<...>/principal' with its cause.
                 #   - Not found: the principal is looked for once among the directory's deleted items
@@ -1542,6 +1581,46 @@ function Get-OERInventory {
                     }
                     $RootNotice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.RootScopeAssignmentNotice')
                     Write-Information -MessageData $RootNotice -Tags 'Omnicit.EntraRBAC.RootScopeAssignment'
+                }
+
+                # A13, A15: the rows at a scope no document can declare, taken out above, counted in ONE
+                # warning and handed over in ONE information record (tag Omnicit.EntraRBAC.UndeclarableScope),
+                # the root-scope pattern above, so a caller -- Export-OERInventory among them -- reads the rows
+                # without parsing the text. Role and Principal are the projected names, PrincipalType the
+                # normalised ARM type ('' when unknown), and Reason names the rules the scope breaks in words,
+                # in the order Get-OERScopeSpellingProblem returns them. The words carry no character the
+                # README's Markdown would read as markup.
+                if ($RaUndeclarableRows.Count -gt 0) {
+                    $UndeclarableAssignments = @(foreach ($Undeclarable in $RaUndeclarableRows) {
+                            $Row = $Undeclarable.Row
+                            $RuleWords = @(foreach ($Problem in $Undeclarable.Problems) {
+                                    switch -CaseSensitive ([string]$Problem.Rule) {
+                                        'Slash' { 'a trailing or doubled slash' }
+                                        'DotSegment' { "a dot segment ('.' or '..')" }
+                                        'Escape' { 'a percent sign' }
+                                        'Backslash' { 'a backslash' }
+                                        'QueryOrFragment' { 'a question mark or a number sign' }
+                                        'WhiteSpace' { 'white space at the start or end of the scope or of a segment, white space other than a space, or a control character' }
+                                        default { [string]$Problem.Rule }
+                                    }
+                                })
+                            [PSCustomObject]@{
+                                RoleAssignmentId = [string]$Row.Ra.RoleAssignmentId
+                                Scope            = [string]$Row.Proj.scope
+                                Role             = [string]$Row.Proj.role
+                                Principal        = [string]$Row.Proj.principal
+                                PrincipalType    = [string]$Row.Type
+                                Reason           = 'the scope holds ' + ($RuleWords -join '; ')
+                            }
+                        })
+                    $UndeclarableWarning = "Get-OERInventory: left out $($UndeclarableAssignments.Count) role assignment(s) whose scope no document can declare: the validator refuses the scope's spelling, so a document that carried one would be refused as a whole. Invoke-OERStructure never creates such an assignment, and never removes one, since it prunes only at a scope a document declares. An information record tagged Omnicit.EntraRBAC.UndeclarableScope names each with the rules its scope breaks; review them as a finding."
+                    Write-Warning $UndeclarableWarning
+                    $UndeclarableNotice = [PSCustomObject]@{
+                        Warning     = $UndeclarableWarning
+                        Assignments = $UndeclarableAssignments
+                    }
+                    $UndeclarableNotice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.UndeclarableScopeNotice')
+                    Write-Information -MessageData $UndeclarableNotice -Tags 'Omnicit.EntraRBAC.UndeclarableScope'
                 }
 
                 # Sprint 11 step 6 (BL-133, A18): every row written with principalStatus, counted in ONE

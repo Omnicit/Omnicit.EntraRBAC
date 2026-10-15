@@ -3215,6 +3215,226 @@ Describe 'Get-OERInventory' {
         }
     }
 
+    Context 'a role assignment at a scope no document can declare is left out (A13, A15)' {
+        # Azure Resource Manager can return a role assignment at a scope whose spelling the validator
+        # refuses (Get-OERScopeSpellingProblem owns the rules): a resource whose name holds a '#' or a
+        # '%', for one. A document that carried it would be refused as a whole, so the section leaves it
+        # out, after the root split and before the collision pass, counts the rows in one warning and
+        # hands them over in one information record. Scopes holding '#' or '%' are fixtures only. No id
+        # below is version-4 shaped.
+        BeforeAll {
+            $script:UdSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $script:UdHash = "$($script:UdSub)/resourceGroups/rg-one/providers/Microsoft.Sql/servers/srv1/databases/db#1"
+            $script:UdPercent = "$($script:UdSub)/resourceGroups/rg%2Fone"
+            $script:UdTag = 'Omnicit.EntraRBAC.UndeclarableScope'
+            function script:New-UdRa {
+                param([string]$Scope, [string]$RoleName, [string]$PrincipalId, [string]$PrincipalType)
+                [PSCustomObject]@{
+                    Scope = $Scope; RoleName = $RoleName
+                    RoleDefinitionId = "/providers/Microsoft.Authorization/roleDefinitions/rd-$($RoleName -replace '\s', '')"
+                    PrincipalId = $PrincipalId; PrincipalType = $PrincipalType; PrincipalDisplayName = 'read under another name'
+                    RoleAssignmentId = "/providers/Microsoft.Authorization/roleAssignments/$PrincipalId-$($RoleName -replace '\s', '')"
+                }
+            }
+            # The warning Get-OERInventory writes for <Count> rows left out.
+            function script:Get-UdWarningText {
+                param([int]$Count)
+                "Get-OERInventory: left out $Count role assignment(s) whose scope no document can declare: the validator refuses " +
+                "the scope's spelling, so a document that carried one would be refused as a whole. Invoke-OERStructure never " +
+                'creates such an assignment, and never removes one, since it prunes only at a scope a document declares. An ' +
+                'information record tagged Omnicit.EntraRBAC.UndeclarableScope names each with the rules its scope breaks; review ' +
+                'them as a finding.'
+            }
+            function script:Get-UdNotice {
+                param([object[]]$Information)
+                @($Information | Where-Object { $_.Tags -contains $script:UdTag })
+            }
+            # The InventoryPartial records Get-OERInventory itself published.
+            function script:Get-UdPartial {
+                param([object[]]$Record)
+                @($Record | Where-Object {
+                        $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' -and
+                        $_.FullyQualifiedErrorId -like 'InventoryPartial*'
+                    })
+            }
+        }
+
+        BeforeEach {
+            $script:UdNames = @{
+                'dddd3333-0000-0000-0000-000000000001' = 'person1@example.com'
+                'dddd3333-0000-0000-0000-000000000002' = 'person2@example.com'
+                'dddd3333-0000-0000-0000-000000000003' = 'Automation'
+                'dddd3333-0000-0000-0000-000000000004' = 'Automation'
+            }
+            $script:UdRas = @()
+            Mock -ModuleName $script:moduleName Get-OERRoleAssignment { $script:UdRas }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+                & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent $script:UdNames
+            }
+        }
+
+        It 'leaves a role assignment at a scope holding a ''#'' and one holding a ''%'' out, counts them in one warning and hands them over in one information record' {
+            $script:UdRas = @(
+                New-UdRa -Scope $script:UdSub -RoleName 'Reader' -PrincipalId 'dddd3333-0000-0000-0000-000000000001' -PrincipalType 'User'
+                New-UdRa -Scope $script:UdHash -RoleName 'Contributor' -PrincipalId 'dddd3333-0000-0000-0000-000000000002' -PrincipalType 'User'
+                New-UdRa -Scope $script:UdPercent -RoleName 'Owner' -PrincipalId 'dddd3333-0000-0000-0000-000000000003' -PrincipalType 'ServicePrincipal'
+            )
+            $W = $null; $Info = $null; $InvErr = $null
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM `
+                -WarningVariable W -WarningAction SilentlyContinue -InformationVariable Info -ErrorVariable InvErr -ErrorAction SilentlyContinue
+            # Reach proof: the section was read once.
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly
+            @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)" }) | Should -Be @("$($script:UdSub)|Reader|person1@example.com")
+            @($W).Count | Should -Be 1
+            [string]$W[0].Message | Should -BeExactly (Get-UdWarningText -Count 2)
+            $Records = Get-UdNotice -Information @($Info)
+            $Records.Count | Should -Be 1
+            $Notice = $Records[0].MessageData
+            $Notice.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.UndeclarableScopeNotice'
+            @($Notice.PSObject.Properties.Name) | Should -Be @('Warning', 'Assignments')
+            $Notice.Warning | Should -BeExactly (Get-UdWarningText -Count 2)
+            $Rows = @($Notice.Assignments)
+            $Rows.Count | Should -Be 2
+            @($Rows[0].PSObject.Properties.Name) | Should -Be @('RoleAssignmentId', 'Scope', 'Role', 'Principal', 'PrincipalType', 'Reason')
+            @($Rows | ForEach-Object { "$($_.RoleAssignmentId)|$($_.Scope)|$($_.Role)|$($_.Principal)|$($_.PrincipalType)|$($_.Reason)" }) | Should -Be @(
+                "/providers/Microsoft.Authorization/roleAssignments/dddd3333-0000-0000-0000-000000000002-Contributor|$($script:UdHash)|Contributor|person2@example.com|User|the scope holds a question mark or a number sign"
+                "/providers/Microsoft.Authorization/roleAssignments/dddd3333-0000-0000-0000-000000000003-Owner|$($script:UdPercent)|Owner|Automation|ServicePrincipal|the scope holds a percent sign"
+            )
+            # No other notice and nothing unread: the rows are left out, not unread.
+            @($Info | Where-Object { $_.Tags -contains 'Omnicit.EntraRBAC.RootScopeAssignment' }).Count | Should -Be 0
+            @($Info | Where-Object { $_.Tags -contains 'Omnicit.EntraRBAC.UnresolvedPrincipal' }).Count | Should -Be 0
+            (Get-UdPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'names every rule a scope breaks in words, in the owner''s order (<Case>)' -ForEach @(
+            @{ Case = 'a trailing slash'; Suffix = '/resourceGroups/rg-one/'; Reason = 'the scope holds a trailing or doubled slash' }
+            @{ Case = 'a parent segment'; Suffix = '/resourceGroups/rg-one/../rg-two'; Reason = "the scope holds a dot segment ('.' or '..')" }
+            @{ Case = 'a backslash'; Suffix = '/resourceGroups\rg-one'; Reason = 'the scope holds a backslash' }
+            @{ Case = 'a space at the start of a segment'; Suffix = '/resourceGroups/ rg-one'; Reason = 'the scope holds white space at the start or end of the scope or of a segment, white space other than a space, or a control character' }
+            @{ Case = 'a percent sign and a number sign'; Suffix = '/resourceGroups/rg%25/providers/Microsoft.Web/sites/a#b'; Reason = 'the scope holds a percent sign; a question mark or a number sign' }
+            @{ Case = 'every rule'; Suffix = '/ rg/..\%2e?#/'; Reason = ("the scope holds a trailing or doubled slash; a dot segment ('.' or '..'); a percent sign; a backslash; a question mark " +
+                    'or a number sign; white space at the start or end of the scope or of a segment, white space other than a space, or a control character') }
+        ) {
+            $script:UdRas = @(New-UdRa -Scope "$($script:UdSub)$Suffix" -RoleName 'Reader' -PrincipalId 'dddd3333-0000-0000-0000-000000000001' -PrincipalType 'User')
+            $Info = $null
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM -WarningAction SilentlyContinue -InformationVariable Info
+            @($Inv.roleAssignments).Count | Should -Be 0
+            $Rows = @((Get-UdNotice -Information @($Info))[0].MessageData.Assignments)
+            $Rows.Count | Should -Be 1
+            $Rows[0].Reason | Should -BeExactly $Reason
+        }
+
+        It 'leaves a role assignment at the root scope whose spelling is refused too in the root list only (<Scope>)' -ForEach @(
+            @{ Scope = '//' }
+            @{ Scope = '/%2e' }
+        ) {
+            $script:UdRas = @(
+                New-UdRa -Scope $Scope -RoleName 'User Access Administrator' -PrincipalId 'dddd3333-0000-0000-0000-000000000001' -PrincipalType 'User'
+                New-UdRa -Scope $script:UdSub -RoleName 'Reader' -PrincipalId 'dddd3333-0000-0000-0000-000000000002' -PrincipalType 'User'
+            )
+            $W = $null; $Info = $null
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM `
+                -WarningVariable W -WarningAction SilentlyContinue -InformationVariable Info
+            @($Inv.roleAssignments | ForEach-Object { $_.principal }) | Should -Be @('person2@example.com')
+            # Reach proof: the row reached the root list.
+            @(@($Info | Where-Object { $_.Tags -contains 'Omnicit.EntraRBAC.RootScopeAssignment' })[0].MessageData.Assignments | ForEach-Object { $_.Principal }) |
+                Should -Be @('person1@example.com')
+            (Get-UdNotice -Information @($Info)).Count | Should -Be 0
+            @($W | Where-Object { [string]$_.Message -like '*no document can declare*' }).Count | Should -Be 0
+            @($W).Count | Should -Be 1
+        }
+
+        It 'separates the undeclarable rows before the collision pass, so a row the document keeps keeps its name' {
+            # Two service principals that the name lookup names alike, one at the subscription and one at the
+            # same scope written with a trailing '/', which the canonical form merges with it: kept in the
+            # pass, the refused row would move BOTH principals to their object ids.
+            $script:UdRas = @(
+                New-UdRa -Scope $script:UdSub -RoleName 'Reader' -PrincipalId 'dddd3333-0000-0000-0000-000000000003' -PrincipalType 'ServicePrincipal'
+                New-UdRa -Scope "$($script:UdSub)/" -RoleName 'Reader' -PrincipalId 'dddd3333-0000-0000-0000-000000000004' -PrincipalType 'ServicePrincipal'
+            )
+            $Info = $null
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM -WarningAction SilentlyContinue -InformationVariable Info
+            @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.principal)" }) | Should -Be @("$($script:UdSub)|Automation")
+            @((Get-UdNotice -Information @($Info))[0].MessageData.Assignments | ForEach-Object { "$($_.Scope)|$($_.Principal)" }) |
+                Should -Be @("$($script:UdSub)/|Automation")
+        }
+
+        It 'never looks a principal of an undeclarable row up among the deleted items, and never reports its failed lookup' {
+            $script:UdRas = @(
+                New-UdRa -Scope $script:UdHash -RoleName 'Reader' -PrincipalId 'dddd3333-0000-0000-0000-000000000009' -PrincipalType 'User'
+                New-UdRa -Scope $script:UdPercent -RoleName 'Owner' -PrincipalId 'dddd3333-0000-0000-0000-000000000010' -PrincipalType 'User'
+            )
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+                foreach ($One in @($Id)) {
+                    if ($One -eq 'dddd3333-0000-0000-0000-000000000009') { [PSCustomObject]@{ Id = $One; Read = $true; Found = $false; Name = $null; ObjectType = $null; Cause = $null } }
+                    else { [PSCustomObject]@{ Id = $One; Read = $false; Found = $false; Name = $null; ObjectType = $null; Cause = 'Too many requests (429)' } }
+                }
+            }
+            $W = $null; $Info = $null; $InvErr = $null
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM `
+                -WarningVariable W -WarningAction SilentlyContinue -InformationVariable Info -ErrorVariable InvErr -ErrorAction SilentlyContinue
+            @($Inv.roleAssignments).Count | Should -Be 0
+            # Reach proof: both rows reached the undeclarable list, by their object ids.
+            @((Get-UdNotice -Information @($Info))[0].MessageData.Assignments | ForEach-Object { $_.Principal }) | Should -Be @(
+                'dddd3333-0000-0000-0000-000000000009'
+                'dddd3333-0000-0000-0000-000000000010'
+            )
+            Should -Invoke -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus -Times 0
+            @($Info | Where-Object { $_.Tags -contains 'Omnicit.EntraRBAC.UnresolvedPrincipal' }).Count | Should -Be 0
+            @($W | ForEach-Object { [string]$_.Message }) | Should -Be @(Get-UdWarningText -Count 2)
+            (Get-UdPartial -Record @($InvErr)).Count | Should -Be 0
+        }
+
+        It 'writes no such warning and no such record when every scope can be declared, a space between other characters of a name included' {
+            $script:UdRas = @(
+                New-UdRa -Scope $script:UdSub -RoleName 'Reader' -PrincipalId 'dddd3333-0000-0000-0000-000000000001' -PrincipalType 'User'
+                New-UdRa -Scope "$($script:UdSub)/resourceGroups/rg-one/providers/Microsoft.Sql/servers/srv1/databases/sales data" -RoleName 'Reader' `
+                    -PrincipalId 'dddd3333-0000-0000-0000-000000000002' -PrincipalType 'User'
+            )
+            $W = $null; $Info = $null
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM `
+                -WarningVariable W -WarningAction SilentlyContinue -InformationVariable Info
+            @($Inv.roleAssignments).Count | Should -Be 2
+            @($W).Count | Should -Be 0
+            (Get-UdNotice -Information @($Info)).Count | Should -Be 0
+        }
+
+        It 'exports a document the validator accepts, with the undeclarable rows left out' {
+            $script:UdRas = @(
+                New-UdRa -Scope $script:UdSub -RoleName 'Reader' -PrincipalId 'dddd3333-0000-0000-0000-000000000001' -PrincipalType 'User'
+                New-UdRa -Scope $script:UdHash -RoleName 'Reader' -PrincipalId 'dddd3333-0000-0000-0000-000000000002' -PrincipalType 'User'
+                New-UdRa -Scope $script:UdPercent -RoleName 'Reader' -PrincipalId 'dddd3333-0000-0000-0000-000000000002' -PrincipalType 'User'
+            )
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM -WarningAction SilentlyContinue
+            # Reach proof: the read held two refused rows, and the document holds the third.
+            @($Inv.roleAssignments).Count | Should -Be 1
+            $V = InModuleScope $script:moduleName -Parameters @{ D = $Inv } { param($D) Test-OERStructureSchema -Document $D }
+            @($V.Errors | ForEach-Object { "$($_.Severity): $($_.Path): $($_.Message)" }) | Should -Be @()
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'stops at its warning under -WarningAction Stop, before it returns the inventory' {
+            $script:UdRas = @(New-UdRa -Scope $script:UdHash -RoleName 'Reader' -PrincipalId 'dddd3333-0000-0000-0000-000000000001' -PrincipalType 'User')
+            $script:UdOut = $null
+            $Thrown = { $script:UdOut = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM -WarningAction Stop } |
+                Should -Throw -PassThru
+            $Thrown.Exception.Message | Should -BeLike '*role assignment(s) whose scope no document can declare*'
+            $null -eq $script:UdOut | Should -BeTrue
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly
+        }
+
+        It 'states the rule in the help' {
+            $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
+            $Help | Should -Match ([regex]::Escape('Omnicit.EntraRBAC.UndeclarableScope'))
+            $Help | Should -Match ([regex]::Escape('is left out of the RoleAssignments section too: no document can declare that scope, so a document that carried it would be refused as a whole'))
+            $Help | Should -Match ([regex]::Escape('The root scope is decided first, so a role assignment at the root scope whose spelling is refused too is named only as described above'))
+            $Help | Should -Match ([regex]::Escape('(RoleAssignmentId, Scope, Role, Principal, PrincipalType and Reason, which names the rules the scope breaks in words)'))
+            $Help | Should -Match ([regex]::Escape('it is not looked for among the deleted items, a failed lookup of it is not reported, and it never changes how another role assignment is named'))
+        }
+    }
+
     Context 'the export never writes a duplicate entry' {
         # Entra does not keep display names unique, and Azure returns scopes in whatever spelling it
         # stored. An export that wrote two entries the validator refuses as duplicates would make the
@@ -3865,18 +4085,26 @@ Describe 'Get-OERInventory' {
             Assert-DupDocumentValid -Inventory $Inv
         }
 
-        It 'writes a role assignment at a resource whose name holds a ''#'' as Azure returns it, and the validator refuses it with the way out (A13)' {
+        It 'leaves a role assignment at a resource whose name holds a ''#'' out, so the document validates, while the validator still refuses that scope with the way out (A13, A15)' {
             # The limit of the rule: a few resource types allow '#' in a name, but a '#' ends the path of the
             # request URI, so such a scope is refused and the message says to remove the entry. The export
-            # itself is unchanged.
+            # therefore leaves the assignment out (the Context 'a role assignment at a scope no document can
+            # declare is left out' holds the warning and the record), and the document it writes validates.
             $HashScope = "$($script:DupSub1)/resourceGroups/rg-one/providers/Microsoft.Sql/servers/srv1/databases/db#1"
             $script:DupNames = @{ $script:DupUser1 = 'person1@example.com' }
             $script:DupRoleAssignments = @(
                 New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One' -Scope $HashScope
+                New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One'
             )
-            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
-            @($Inv.roleAssignments)[0].scope | Should -BeExactly $HashScope
-            $Validation = Get-DupValidation -Inventory $Inv
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM -WarningAction SilentlyContinue
+            @($Inv.roleAssignments | ForEach-Object { $_.scope }) | Should -Be @($script:DupSub1)
+            Assert-DupDocumentValid -Inventory $Inv
+            # A document that declares the scope is refused, with the way out.
+            $Declared = [PSCustomObject]@{
+                version         = '1.0'
+                roleAssignments = @([PSCustomObject]@{ scope = $HashScope; role = 'Reader'; principal = 'person1@example.com'; principalType = 'User' })
+            }
+            $Validation = Get-DupValidation -Inventory $Declared
             Get-DupValidationError -Validation $Validation | Should -Be @(
                 ("roleAssignments[0].scope: 'scope' at roleAssignments[0] must be written without a '?' or '#': either ends the path " +
                     "of the request, which would then name another scope than the one written. Got: '$HashScope'. A resource whose " +
