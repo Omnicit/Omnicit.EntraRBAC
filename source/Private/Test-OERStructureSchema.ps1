@@ -1665,20 +1665,25 @@ function Test-OERStructureSchema {
         }
     }
 
-    # Rules 9 and 10 share one scope spelling rule. A scope that ends with '/' (other than the root '/'
-    # itself) or contains '//' anywhere is an Error at the entry's scope path. ConvertTo-OERCanonicalScope
-    # strips every trailing '/', so such a spelling would be merged with the scope written without it:
-    # a scope written ONLY with the stray '/' would start to be pruned, and '//' would become the root
-    # '/'. Before the engine grouped on the canonical scope, neither was ever pruned, and a refusal
-    # removes nothing. Azure Resource Manager never returns a scope carrying either spelling, so an
-    # exported document is not hit. Add-ScopeSegmentFinding, below, is the second spelling rule (A13).
+    # Rules 9 and 10 share two scope spelling rules, and Get-OERScopeSpellingProblem owns both: their
+    # checks, their order and their message texts, which Get-OERInventory applies to every role
+    # assignment it reads too, leaving one at a scope that breaks either rule out of the document
+    # (docs/development/rationale.md#undeclarable-scope). The two functions below add one Error at the
+    # entry's scope path per problem the owner returns for that rule, and never decide a spelling
+    # themselves.
+    # The first rule (A15): a scope that ends with '/' (other than the root '/' itself) or contains '//'
+    # anywhere. ConvertTo-OERCanonicalScope strips every trailing '/', so such a spelling would be merged
+    # with the scope written without it: a scope written ONLY with the stray '/' would start to be
+    # pruned, and '//' would become the root '/'. Before the engine grouped on the canonical scope,
+    # neither was ever pruned, and a refusal removes nothing. Azure Resource Manager never returns a
+    # scope carrying either spelling, so an exported document is not hit. Add-ScopeSegmentFinding,
+    # below, is the second spelling rule (A13).
     function Add-ScopeSlashFinding {
         param([object]$Node, [string]$Section, [string]$Item, [string]$Path)
         if (-not (Test-HasProp -Node $Node -Name 'scope')) { return }
-        $ScopeText = [string]$Node.scope
-        if (($ScopeText.EndsWith('/') -and $ScopeText -cne '/') -or $ScopeText.Contains('//')) {
-            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message "'scope' at $Path must be written without a trailing or doubled '/'. Got: '$ScopeText'."
+        foreach ($Problem in @(Get-OERScopeSpellingProblem -Scope ([string]$Node.scope) -Path $Path)) {
+            if ($Problem.Rule -cne 'Slash') { continue }
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" -Message $Problem.Message
         }
     }
 
@@ -1712,49 +1717,14 @@ function Test-OERStructureSchema {
     # id, name or display name (a display name may contain spaces) and are resolved by a lookup, never
     # sent as written. ConvertTo-OERScopeSplat owns that syntax, so the exemption asks it: only a scope it
     # returns as @{ Scope = ... } is the text that is sent as written, and the prefix pattern is never
-    # repeated here.
+    # repeated here. Get-OERScopeSpellingProblem owns these checks too, in this order: DotSegment,
+    # Escape, Backslash, QueryOrFragment, WhiteSpace.
     function Add-ScopeSegmentFinding {
         param([object]$Node, [string]$Section, [string]$Item, [string]$Path)
         if (-not (Test-HasProp -Node $Node -Name 'scope')) { return }
-        $ScopeText = [string]$Node.scope
-        if (-not (ConvertTo-OERScopeSplat -Scope $ScopeText).ContainsKey('Scope')) { return }
-        $Segments = @($ScopeText -split '[/\\]')
-        if (@($Segments | Where-Object { $_ -ceq '.' -or $_ -ceq '..' }).Count -gt 0) {
-            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message "'scope' at $Path must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '$ScopeText'."
-        }
-        if ($ScopeText.Contains('%')) {
-            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message ("'scope' at $Path must be written without a '%': an escape can let two spellings reach one resource, and the " +
-                    "names of most Azure resource types hold no '%'. Got: '$ScopeText'. A resource whose name holds one cannot be " +
-                    'declared in a document; remove the entry.')
-        }
-        if ($ScopeText.Contains('\')) {
-            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message ("'scope' at $Path must be written without a '\': the request reads it as '/', so the scope would be a second " +
-                    "spelling of the one written with '/'. Got: '$ScopeText'. A resource whose name holds one cannot be declared in a " +
-                    'document; remove the entry.')
-        }
-        if ($ScopeText.Contains('?') -or $ScopeText.Contains('#')) {
-            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message ("'scope' at $Path must be written without a '?' or '#': either ends the path of the request, which would " +
-                    "then name another scope than the one written. Got: '$ScopeText'. A resource whose name holds one cannot be " +
-                    'declared in a document; remove the entry.')
-        }
-        # String.Trim() removes exactly the characters [char]::IsWhiteSpace reports, at both ends.
-        $EdgeWhiteSpace = @($Segments | Where-Object { $_ -cne $_.Trim() }).Count -gt 0
-        $OtherWhiteSpace = @($ScopeText.ToCharArray() | Where-Object {
-                [char]::IsControl($_) -or ([char]::IsWhiteSpace($_) -and [int]$_ -ne 32)
-            } | Select-Object -Unique)
-        if ($EdgeWhiteSpace -or $OtherWhiteSpace.Count -gt 0) {
-            $Named = if ($OtherWhiteSpace.Count -gt 0) {
-                ' It contains ' + (($OtherWhiteSpace | ForEach-Object { 'U+{0:X4}' -f [int]$_ }) -join ', ') + '.'
-            } else { '' }
-            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message ("'scope' at $Path must be written without white space at the start or end of the scope or of a segment, " +
-                    "white space other than a space (U+0020) or a control character; a space between other characters of a segment " +
-                    "is accepted. Got: '$ScopeText'.$Named A resource whose name holds one of these cannot be declared in a " +
-                    'document; remove the entry.')
+        foreach ($Problem in @(Get-OERScopeSpellingProblem -Scope ([string]$Node.scope) -Path $Path)) {
+            if ($Problem.Rule -ceq 'Slash') { continue }
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" -Message $Problem.Message
         }
     }
 
