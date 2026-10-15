@@ -203,6 +203,24 @@ function Show-S116Rows {
     foreach ($R in @($Rows | Where-Object { $null -ne $_ })) { Write-OerLiveStep "Row: $($R.Section) | $($R.Item) | $($R.Action) | $($R.Detail)" }
 }
 
+function Show-S116StepRows {
+    # The rows at the step's two resource groups in full; every other row only counted by its action, so
+    # no principal or scope outside the prefix is ever printed.
+    param([object[]]$Rows)
+    $All = @($Rows | Where-Object { $null -ne $_ })
+    $Mine = @($All | Where-Object { [string]$_.Item -match '/resourceGroups/oer-s116-rg2?$' })
+    foreach ($R in $Mine) { Write-OerLiveStep "Row: $($R.Section) | $($R.Item) | $($R.Action) | $($R.Detail)" }
+    $Other = @($All | Where-Object { [string]$_.Item -notmatch '/resourceGroups/oer-s116-rg2?$' })
+    Write-OerLiveStep "Other rows (not this step's, not printed): $($Other.Count)$(if ($Other.Count) { ' -- ' + ((@($Other | Group-Object -Property Action | Sort-Object Name | ForEach-Object { "$($_.Name) $($_.Count)" })) -join ', ') })"
+}
+
+function Show-S116ErrorCount {
+    # The error ids an -ErrorVariable holds, each with its count.
+    param([object[]]$Errors)
+    $Ids = @($Errors | Where-Object { $null -ne $_ } | ForEach-Object { $Id = ([string]$_.FullyQualifiedErrorId -split ',')[0]; if ($Id) { $Id } else { '(no id)' } })
+    Write-OerLiveStep "Errors: $(if ($Ids.Count) { (@($Ids | Group-Object | Sort-Object Name | ForEach-Object { "$($_.Name) x$($_.Count)" })) -join ', ' } else { 'none' })"
+}
+
 function Show-S116Errors {
     # The error ids an -ErrorVariable holds, by their own id (the part before the first comma).
     param([object[]]$Errors)
@@ -258,7 +276,7 @@ function Get-S116AtScope {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -283,13 +301,35 @@ Write-OerLiveStep "The worktree's build registers an access package entry withou
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main clone; a
 `False` mark -- build the worktree first (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: 2026-10-15 10:35 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree is on this branch at 73f2605 with 0 tracked changes, and its build (built from eb6021f, the last commit under source/; 73f2605 adds only this checklist) carries every mark.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s116] The module loads from a worktree that is not the main clone: True
+[oer-s116] Main clone: branch main; HEAD 491e72e
+[oer-s116] Worktree: branch feat/mark-unresolved-principals; HEAD 73f2605 docs: add the live checklist for unresolved principals and declared packages; tracked changes: 0
+[oer-s116] The worktree's build reads the deleted items: True
+[oer-s116] The worktree's build hands unresolved principals over in an information record: True
+[oer-s116] The worktree's build owns the scope spelling rules once: True
+[oer-s116] The worktree's build hands undeclarable scopes over in an information record: True
+[oer-s116] The worktree's build keeps one run context per export: True
+[oer-s116] The worktree's build registers an access package entry without a rename: True
+RUNNER: check-S.1 exit code 0; started 2026-10-15T10:35:36Z; took 3 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -303,11 +343,35 @@ Disconnect-OerLive
 True`.
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), or `False`.
 
-Result:
+Result: 2026-10-15 10:36 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only, certificate); identity check passed; the module is the worktree's build (1.2.1). (The first run's leak check counted the tenant alias as a word of the module name Omnicit.EntraRBAC, which OerLive keeps on purpose; the runner now discounts the protected module name, and this run counts 0.)
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] The module is the worktree's build: True; version 1.2.1
+RUNNER: check-0.1 exit code 0; started 2026-10-15T10:36:31Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 0.2. The prerequisite objects
 
-- [ ] **0.2** The prerequisite script plans, creates, and on a second run finds the whole set and creates nothing.
+- [x] **0.2** The prerequisite script plans, creates, and on a second run finds the whole set and creates nothing.
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS116Prereq.ps1'
@@ -325,13 +389,173 @@ second run says `The whole set exists` and creates nothing, exit code 0.
 **Failure looks like:** a `Refusing to run` line (read it; nothing was written), a 401/403 (STOP), or an
 `UNAVAILABLE` line (the check it names becomes class B).
 
-Result:
+Result: 2026-10-15 10:38 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The -WhatIf run planned every object and wrote nothing; the first -Unattended run wrote the baseline and created the user, the three groups, the two catalogs, the package, the policy, both resource groups and the four Reader role assignments (12 objects, unavailable: none); the second run found the whole set and created nothing. Exit code 0 each time. oer-live-cc does not hold the optional User.DeleteRestore.All, so the deleted user cannot be purged (T.1 reports it).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.2 ===
+[oer-s116] === Initialize-OerS116Prereq.ps1 -WhatIf ===
+[oer-s116] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s116] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s116] What if: Performing the operation "Start the redacted transcript" on target "raw\s116\prereq-20261015-103649Z.log".
+[oer-s116] [oer-s116] Mode: CREATE. Prefix 'oer-s116-'. Objects (fixed): the user oer-s116-usr (disabled); the security groups oer-s116-grp, oer-s116-keep and oer-s116-req (no member); oer-s116-cat-a (empty); oer-s116-cat-b holding oer-s116-ap with the policy oer-s116-pol; oer-s116-rg (tagged) with Reader for oer-s116-usr, oer-s116-grp and oer-s116-keep; oer-s116-rg2 (tagged) with Reader for oer-s116-keep. OerLive 1.0.3.
+[oer-s116] [oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] [oer-s116] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s116] [oer-s116] oer-live-cc holds Group.ReadWrite.All: True
+[oer-s116] [oer-s116] oer-live-cc holds User.ReadWrite.All: True
+[oer-s116] [oer-s116] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s116] [oer-s116] oer-live-cc holds User.DeleteRestore.All (optional, for purging a deleted user): False
+[oer-s116] [oer-s116] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116-' is left.
+[oer-s116] [oer-s116] Found: user 'oer-s116-usr@example.com': 0 of 1.
+[oer-s116] [oer-s116] Found: group 'oer-s116-grp': 0 of 1.
+[oer-s116] [oer-s116] Found: group 'oer-s116-keep': 0 of 1.
+[oer-s116] [oer-s116] Found: group 'oer-s116-req': 0 of 1.
+[oer-s116] [oer-s116] Found: catalog 'oer-s116-cat-a': 0 of 1.
+[oer-s116] [oer-s116] Found: catalog 'oer-s116-cat-b': 0 of 1.
+[oer-s116] [oer-s116] Found: access package 'oer-s116-ap': 0 of 1.
+[oer-s116] [oer-s116] No baseline yet: it is written now, before the first write to the tenant (users 22, groups 97, catalogs 5, access packages 6; oer-s116-rg exists: False; oer-s116-rg2 exists: False).
+[oer-s116] What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s116\baseline-s116.json".
+[oer-s116] What if: Performing the operation "Create a user with its account disabled and a random password that is never printed or kept (Graph v1.0 POST users)" on target "oer-s116-usr (usr)".
+[oer-s116] What if: Performing the operation "Create a security group with no member (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership, mailNickname 'oer-s116-grp')" on target "oer-s116-grp (grp)".
+[oer-s116] What if: Performing the operation "Create a security group with no member (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership, mailNickname 'oer-s116-keep')" on target "oer-s116-keep (keep)".
+[oer-s116] What if: Performing the operation "Create a security group with no member (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership, mailNickname 'oer-s116-req')" on target "oer-s116-req (req)".
+[oer-s116] What if: Performing the operation "Create a catalog (Graph v1.0 POST entitlementManagement/catalogs: published, not visible to external users, no resource)" on target "oer-s116-cat-a (cat-a)".
+[oer-s116] What if: Performing the operation "Create a catalog (Graph v1.0 POST entitlementManagement/catalogs: published, not visible to external users, no resource)" on target "oer-s116-cat-b (cat-b)".
+[oer-s116] What if: Performing the operation "Create a resource group with no resource, tagged purpose 'Omnicit.EntraRBAC live verification (oer-s116)' (Azure Resource Manager PUT resourceGroups)" on target "oer-s116-rg".
+[oer-s116] What if: Performing the operation "Create a resource group with no resource, tagged purpose 'Omnicit.EntraRBAC live verification (oer-s116)' (Azure Resource Manager PUT resourceGroups)" on target "oer-s116-rg2".
+[oer-s116] [oer-s116] Summary: created 0 object(s) (); unavailable (class B): none; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s116] [oer-s116] WhatIf: nothing was created, removed or written.
+[oer-s116] [oer-s116] Done.
+[oer-s116] exit code: 0
+[oer-s116] === Initialize-OerS116Prereq.ps1 -Unattended ===
+[oer-s116] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s116] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s116] [oer-s116] Transcript (redacted): raw\s116\prereq-20261015-103657Z.log; OerLive 1.0.3.
+[oer-s116] [oer-s116] Mode: CREATE. Prefix 'oer-s116-'. Objects (fixed): the user oer-s116-usr (disabled); the security groups oer-s116-grp, oer-s116-keep and oer-s116-req (no member); oer-s116-cat-a (empty); oer-s116-cat-b holding oer-s116-ap with the policy oer-s116-pol; oer-s116-rg (tagged) with Reader for oer-s116-usr, oer-s116-grp and oer-s116-keep; oer-s116-rg2 (tagged) with Reader for oer-s116-keep. OerLive 1.0.3.
+[oer-s116] [oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] [oer-s116] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s116] [oer-s116] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s116] [oer-s116] oer-live-cc holds Group.ReadWrite.All: True
+[oer-s116] [oer-s116] oer-live-cc holds User.ReadWrite.All: True
+[oer-s116] [oer-s116] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s116] [oer-s116] oer-live-cc holds User.DeleteRestore.All (optional, for purging a deleted user): False
+[oer-s116] [oer-s116] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116-' is left.
+[oer-s116] [oer-s116] Found: user 'oer-s116-usr@example.com': 0 of 1.
+[oer-s116] [oer-s116] Found: group 'oer-s116-grp': 0 of 1.
+[oer-s116] [oer-s116] Found: group 'oer-s116-keep': 0 of 1.
+[oer-s116] [oer-s116] Found: group 'oer-s116-req': 0 of 1.
+[oer-s116] [oer-s116] Found: catalog 'oer-s116-cat-a': 0 of 1.
+[oer-s116] [oer-s116] Found: catalog 'oer-s116-cat-b': 0 of 1.
+[oer-s116] [oer-s116] Found: access package 'oer-s116-ap': 0 of 1.
+[oer-s116] [oer-s116] No baseline yet: it is written now, before the first write to the tenant (users 22, groups 97, catalogs 5, access packages 6; oer-s116-rg exists: False; oer-s116-rg2 exists: False).
+[oer-s116] [oer-s116] Wrote the baseline raw\s116\baseline-s116.json and read it back.
+[oer-s116] [oer-s116] Created user oer-s116-usr (usr): 201.
+[oer-s116] [oer-s116] Recorded the id of usr under raw\s116 (not printed).
+[oer-s116] [oer-s116] oer-s116-usr (usr) is readable by its id: converged after 1 read(s), 0.4 s.
+[oer-s116] [oer-s116] Created group oer-s116-grp (grp): 201.
+[oer-s116] [oer-s116] Recorded the id of grp under raw\s116 (not printed).
+[oer-s116] [oer-s116] oer-s116-grp (grp) is readable by its id: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s116] [oer-s116] oer-s116-grp (grp) is readable by its id: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s116] [oer-s116] oer-s116-grp (grp) is readable by its id: not yet (read 3, 6.3 s, likely replication delay) -- reading again in 8 s.
+[oer-s116] [oer-s116] oer-s116-grp (grp) is readable by its id: converged after 4 read(s), 14.4 s.
+[oer-s116] [oer-s116] Created group oer-s116-keep (keep): 201.
+[oer-s116] [oer-s116] Recorded the id of keep under raw\s116 (not printed).
+[oer-s116] [oer-s116] oer-s116-keep (keep) is readable by its id: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s116] [oer-s116] oer-s116-keep (keep) is readable by its id: converged after 2 read(s), 2.2 s.
+[oer-s116] [oer-s116] Created group oer-s116-req (req): 201.
+[oer-s116] [oer-s116] Recorded the id of req under raw\s116 (not printed).
+[oer-s116] [oer-s116] oer-s116-req (req) is readable by its id: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s116] [oer-s116] oer-s116-req (req) is readable by its id: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s116] [oer-s116] oer-s116-req (req) is readable by its id: not yet (read 3, 6.3 s, likely replication delay) -- reading again in 8 s.
+[oer-s116] [oer-s116] oer-s116-req (req) is readable by its id: converged after 4 read(s), 14.3 s.
+[oer-s116] [oer-s116] Created catalog oer-s116-cat-a (cat-a): 201.
+[oer-s116] [oer-s116] Recorded the id of cat-a under raw\s116 (not printed).
+[oer-s116] [oer-s116] oer-s116-cat-a (cat-a) is readable by its id: converged after 1 read(s), 0.3 s.
+[oer-s116] [oer-s116] Created catalog oer-s116-cat-b (cat-b): 201.
+[oer-s116] [oer-s116] Recorded the id of cat-b under raw\s116 (not printed).
+[oer-s116] [oer-s116] oer-s116-cat-b (cat-b) is readable by its id: converged after 1 read(s), 0.1 s.
+[oer-s116] [oer-s116] Created access package oer-s116-ap (ap): 201 after 1 attempt(s).
+[oer-s116] [oer-s116] Recorded the id of ap under raw\s116 (not printed).
+[oer-s116] [oer-s116] oer-s116-ap (ap) is readable by its id: converged after 1 read(s), 0.1 s.
+[oer-s116] [oer-s116] Created policy oer-s116-pol (pol): 201 after 1 attempt(s).
+[oer-s116] [oer-s116] Recorded the id of pol under raw\s116 (not printed).
+[oer-s116] [oer-s116] Created resource group oer-s116-rg: 200.
+[oer-s116] [oer-s116] Recorded the id of ra-usr under raw\s116 (not printed).
+[oer-s116] [oer-s116] Assigned Reader at oer-s116-rg to oer-s116-usr (user): 200 after 1 attempt(s).
+[oer-s116] [oer-s116] Recorded the id of ra-grp under raw\s116 (not printed).
+[oer-s116] [oer-s116] Assigned Reader at oer-s116-rg to oer-s116-grp (group): 200 after 1 attempt(s).
+[oer-s116] [oer-s116] Recorded the id of ra-keep under raw\s116 (not printed).
+[oer-s116] [oer-s116] Assigned Reader at oer-s116-rg to oer-s116-keep (group): 200 after 1 attempt(s).
+[oer-s116] [oer-s116] Created resource group oer-s116-rg2: 200.
+[oer-s116] [oer-s116] Recorded the id of ra-keep2 under raw\s116 (not printed).
+[oer-s116] [oer-s116] Assigned Reader at oer-s116-rg2 to oer-s116-keep (group): 200 after 1 attempt(s).
+[oer-s116] [oer-s116] Summary: created 12 object(s) (usr, grp, keep, req, cat-a, cat-b, ap, pol, ra-usr, ra-grp, ra-keep, ra-keep2); unavailable (class B): none; written to the tenant: True.
+[oer-s116] [oer-s116] Done.
+[oer-s116] exit code: 0
+[oer-s116] === Initialize-OerS116Prereq.ps1 -Unattended ===
+[oer-s116] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s116] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s116] [oer-s116] Transcript (redacted): raw\s116\prereq-20261015-103808Z.log; OerLive 1.0.3.
+[oer-s116] [oer-s116] Mode: CREATE. Prefix 'oer-s116-'. Objects (fixed): the user oer-s116-usr (disabled); the security groups oer-s116-grp, oer-s116-keep and oer-s116-req (no member); oer-s116-cat-a (empty); oer-s116-cat-b holding oer-s116-ap with the policy oer-s116-pol; oer-s116-rg (tagged) with Reader for oer-s116-usr, oer-s116-grp and oer-s116-keep; oer-s116-rg2 (tagged) with Reader for oer-s116-keep. OerLive 1.0.3.
+[oer-s116] [oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] [oer-s116] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s116] [oer-s116] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s116] [oer-s116] oer-live-cc holds Group.ReadWrite.All: True
+[oer-s116] [oer-s116] oer-live-cc holds User.ReadWrite.All: True
+[oer-s116] [oer-s116] oer-live-cc holds EntitlementManagement.ReadWrite.All: True
+[oer-s116] [oer-s116] oer-live-cc holds User.DeleteRestore.All (optional, for purging a deleted user): False
+[oer-s116] [oer-s116] Found: user 'oer-s116-usr@example.com': 1 of 1.
+[oer-s116] [oer-s116] Found: group 'oer-s116-grp': 1 of 1.
+[oer-s116] [oer-s116] Found: group 'oer-s116-keep': 1 of 1.
+[oer-s116] [oer-s116] Found: group 'oer-s116-req': 1 of 1.
+[oer-s116] [oer-s116] Found: catalog 'oer-s116-cat-a': 1 of 1.
+[oer-s116] [oer-s116] Found: catalog 'oer-s116-cat-b': 1 of 1.
+[oer-s116] [oer-s116] Found: access package 'oer-s116-ap': 1 of 1.
+[oer-s116] [oer-s116] The whole set exists (7 prefixed objects, every one recorded; role assignments recorded: usr True, grp True, keep True, keep at oer-s116-rg2 True); nothing is created.
+[oer-s116] [oer-s116] Done.
+[oer-s116] exit code: 0
+RUNNER: check-0.2 exit code 0; started 2026-10-15T10:36:47Z; took 86 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 1. A principal the directory no longer returns (BL-133, A18)
 
 ### 1.1. The user is deleted, and the group deleted and purged
 
-- [ ] **1.1** `getByIds` no longer returns either principal; the user is among the deleted items and the group is not.
+- [x] **1.1** `getByIds` no longer returns either principal; the user is among the deleted items and the group is not.
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS116Prereq.ps1'
@@ -350,11 +574,100 @@ purged group (by id) and `oer-s116-keep` (by id).
 **Failure looks like:** a 401/403 (STOP); an `UNAVAILABLE` line for the purge (the `Unresolved` half of 1.2
 becomes class B, and the group is reported `Deleted`).
 
-Result:
+Result: 2026-10-15 10:44 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, with one deviation measured live. The user was deleted (204) and stays among the deleted items; the group was deleted (204) and purged (204), and is no longer among them. MEASURED: directoryObjects/getByIds kept returning at least one of the two for more than the script's 300 s budget, so the script stopped at its last wait (exit code 1) after every write had succeeded; a read-only probe about six minutes after the deletion (appended below) shows getByIds returning neither, deletedItems 200 for the user and 404 for the group, and directoryObjects 404 for both -- the state 1.2 needs. Azure Resource Manager still lists the three Reader assignments at oer-s116-rg. The script's wait budget is now 900 s.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s116] === Initialize-OerS116Prereq.ps1 -RemovePrincipals -Unattended ===
+[oer-s116] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s116] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s116] [oer-s116] Transcript (redacted): raw\s116\remove-principals-20261015-103829Z.log; OerLive 1.0.3.
+[oer-s116] [oer-s116] Mode: REMOVE PRINCIPALS. Prefix 'oer-s116-'. Objects (fixed): the user oer-s116-usr (disabled); the security groups oer-s116-grp, oer-s116-keep and oer-s116-req (no member); oer-s116-cat-a (empty); oer-s116-cat-b holding oer-s116-ap with the policy oer-s116-pol; oer-s116-rg (tagged) with Reader for oer-s116-usr, oer-s116-grp and oer-s116-keep; oer-s116-rg2 (tagged) with Reader for oer-s116-keep. OerLive 1.0.3.
+[oer-s116] [oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] [oer-s116] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s116] [oer-s116] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s116] [oer-s116] Deleted user oer-s116-usr (usr): 204.
+[oer-s116] [oer-s116] Deleted group oer-s116-grp (grp): 204.
+[oer-s116] [oer-s116] oer-s116-grp is listed among the deleted items: converged after 1 read(s), 0.1 s.
+[oer-s116] [oer-s116] Purged oer-s116-grp (grp) from the deleted items: 204 after 1 attempt(s).
+[oer-s116] [oer-s116] oer-s116-grp is no longer among the deleted items: converged after 1 read(s), 0.1 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 3, 6.3 s, likely replication delay) -- reading again in 8 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 4, 14.4 s, likely replication delay) -- reading again in 16 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 5, 30.5 s, likely replication delay) -- reading again in 30 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 6, 60.5 s, likely replication delay) -- reading again in 30 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 7, 90.6 s, likely replication delay) -- reading again in 30 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 8, 120.8 s, likely replication delay) -- reading again in 30 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 9, 150.9 s, likely replication delay) -- reading again in 30 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 10, 181 s, likely replication delay) -- reading again in 30 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 11, 211.1 s, likely replication delay) -- reading again in 30 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 12, 241.2 s, likely replication delay) -- reading again in 30 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: not yet (read 13, 271.2 s, likely replication delay) -- reading again in 29 s.
+[oer-s116] [oer-s116] directoryObjects/getByIds returns neither principal: NOT converged after 14 read(s), 300.3 s (budget 300 s).
+[oer-s116] [oer-s116] Stopped after this run had written to the tenant (see the lines above): OerLive: directoryObjects/getByIds returns neither principal -- not converged within budget (300 s, 14 reads).
+[oer-s116] [oer-s116] Stopped at: at Wait-OerLiveConverged, VAULT\OerLive\OerLive.psm1: line 764 <- at Invoke-S116RemovePrincipals, VAULT\Initialize-OerS116Prereq.ps1: line 591 <- at <ScriptBlock>, VAULT\Initialize-OerS116Prereq.ps1: line 723
+[oer-s116] [oer-s116] Setup changes nothing outside the prefix, so nothing is restored here; the test objects are removed by -Teardown.
+[oer-s116] exit code: 1
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] Azure Resource Manager still lists at oer-s116-rg: oer-s116-keep (by id), the deleted user (by id), the purged group (by id)
+RUNNER: check-1.1 exit code 0; started 2026-10-15T10:38:27Z; took 311 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Read-only probe, about six minutes after the deletion ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK probe1 ===
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] getByIds for usr: status 200; returned 0; type ''; displayName ''; carries deletedDateTime: n/a
+[oer-s116] deletedItems for usr: status 200
+[oer-s116] directoryObjects/{id} for usr: status 404
+[oer-s116] getByIds for grp: status 200; returned 0; type ''; displayName ''; carries deletedDateTime: n/a
+[oer-s116] deletedItems for grp: status 404
+[oer-s116] directoryObjects/{id} for grp: status 404
+RUNNER: check-probe1 exit code 0; started 2026-10-15T10:44:00Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.2. The export marks both principals and names them in the README
 
-- [ ] **1.2** An export of `oer-s116-rg` writes `principalStatus` `Deleted` for the user and `Unresolved` for the group, by id with their type, warns once with the count, lists both in the README, and writes nothing.
+- [x] **1.2** An export of `oer-s116-rg` writes `principalStatus` `Deleted` for the user and `Unresolved` for the group, by id with their type, warns once with the count, lists both in the README, and writes nothing.
 
 ```powershell
 Connect-OerLive -Arm
@@ -392,7 +705,80 @@ principalStatus`; the README section lists both with role, scope and the reason 
 **Failure looks like:** a principal written by name or with no `principalStatus`; a second warning; an
 `InventoryPartial`; a write.
 
-Result:
+Result: 2026-10-15 10:45 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The bundle was written with no write to the tenant (6 Microsoft Graph requests, two of them getByIds reads sent as POST; 7 Azure Resource Manager requests; no token request) and no error. The three rows at oer-s116-rg: oer-s116-keep by name (Group, no principalStatus), the deleted user by id (User, principalStatus Deleted) and the purged group by id (Group, principalStatus Unresolved), keys in the order scope, role, principal, principalType, principalStatus. A third row the resource group inherits -- a Reader assignment at the test subscription whose group principal the directory does not return, not this step's object -- is marked Unresolved too, so the count is 3 and there are 3 deleted-items reads, as the Expect allows. No InventoryPartial and no IncompleteReads entry. The README section lists all three with role, scope and reason. The export's warning stream holds exactly ONE warning (the export's, probe below); -WarningVariable also collects Get-OERInventory's suppressed per-scope warning, as PowerShell does for a nested command.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2 ===
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] token requests: 0; Microsoft Graph requests: 6 (getByIds reads sent as POST: 2), writes: 0; Azure Resource Manager requests: 7, writes: 0
+[oer-s116] deletedItems reads: 3
+[oer-s116] Bundle written: True; role assignments 15; IncompleteReads: 
+[oer-s116] Warning: Get-OERInventory: 3 role assignment(s) name a principal the directory did not return, so each is written by the principal's object id with principalStatus: Deleted when the principal was found among the directory's deleted items, Unresolved when it was found neither in the directory nor among its deleted items (deleted beyond the retention period, a principal of another tenant, or not readable) or when its deleted items could not be read. Invoke-OERStructure never creates such an assignment; review them as a finding.
+[oer-s116] Warning: Export-OERInventory: 3 role assignment(s) in inventory.json and roleAssignments.json name a principal the directory did not return, each written by the principal's object id with principalStatus Deleted (found among the directory's deleted items) or Unresolved (found neither in the directory nor among its deleted items, or its deleted items could not be read). README.md names them under 'Role assignments whose principal the directory did not return'; review them as a finding. Invoke-OERStructure never creates such an assignment.
+[oer-s116] Errors: 
+[oer-s116] inventory.json roleAssignments: 15; at oer-s116-rg: 3
+[oer-s116] Row at oer-s116-rg: role Reader; principal the deleted user (by id); keys scope,role,principal,principalType,principalStatus; principalType User; principalStatus Deleted
+[oer-s116] Row at oer-s116-rg: role Reader; principal the purged group (by id); keys scope,role,principal,principalType,principalStatus; principalType Group; principalStatus Unresolved
+[oer-s116] Row at oer-s116-rg: role Reader; principal oer-s116-keep; keys scope,role,principal,principalType; principalType Group; principalStatus 
+[oer-s116] README: ## Role assignments whose principal the directory did not return
+[oer-s116] README: 
+[oer-s116] README: A role assignment can name a principal that Microsoft Entra ID does not return: one that was
+[oer-s116] README: deleted, or one this directory cannot read. Such an assignment stays in `inventory.json` and
+[oer-s116] README: `roleAssignments.json`, with its principal written as the object id and `principalStatus` saying
+[oer-s116] README: why: `Deleted` or `Unresolved`. Where this section lists an assignment, its entry says what its
+[oer-s116] README: status means. `Invoke-OERStructure` never creates such an assignment, and removing its entry from the
+[oer-s116] README: document lets `-Prune` remove it, like any undeclared assignment, at a scope the document still
+[oer-s116] README: declares. A principal whose lookup failed is not listed here: it is written by its object id
+[oer-s116] README: without `principalStatus` and named under "What this export could not read". Where the read of its
+[oer-s116] README: deleted items failed, the principal is listed here as `Unresolved` with the reason not known, and
+[oer-s116] README: that read is named there too.
+[oer-s116] README: 
+[oer-s116] README: This export read 3 such role assignment(s):
+[oer-s116] README: 
+[oer-s116] README: - `Reader` at `/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg` for `00000000-0000-0000-0000-000000000006` (User): `Deleted`, found among the directory's deleted items
+[oer-s116] README: - `Reader` at `/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg` for `00000000-0000-0000-0000-000000000007` (Group): `Unresolved`, found neither in the directory nor among its deleted items (deleted beyond the retention period, a principal of another tenant, for example through Azure Lighthouse, or not readable)
+[oer-s116] README: - `Reader` at `/subscriptions/00000000-0000-0000-0000-000000000003` for `00000000-0000-0000-0000-000000000017` (Group): `Unresolved`, found neither in the directory nor among its deleted items (deleted beyond the retention period, a principal of another tenant, for example through Azure Lighthouse, or not readable)
+[oer-s116] README:
+RUNNER: check-1.2 exit code 0; started 2026-10-15T10:44:38Z; took 10 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Read-only probe: the same export with its warning stream captured (3>&1) ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK probe2 ===
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] Warnings in the warning stream: 1
+[oer-s116] Stream warning starts: Export-OERInventory: 3 role assignment(s) in inventory.json
+RUNNER: check-probe2 exit code 0; started 2026-10-15T10:45:13Z; took 10 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.3. The exported document validates and applies: Unchanged, nothing created (G8)
 
@@ -404,34 +790,36 @@ limited to its rows at `oer-s116-rg`, so nothing outside the prefix is ever a ta
 
 ```powershell
 $Doc = Join-Path (Get-S116Bundle -Name 'export-rg').FullName 'inventory.json'
+Connect-OerLive -Arm
+Start-S116NoPrompt
 $V = Test-OERStructure -Path $Doc
-Write-OerLiveStep "Valid: $($V.Valid); findings: $(@($V.Errors).Count)"
-foreach ($F in @($V.Errors)) { Write-OerLiveStep "Finding: $($F.Severity) $($F.Path): $($F.Message)" }
+Write-OerLiveStep "Valid: $($V.Valid); findings: $(@($V.Errors).Count); Errors: $(@($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count)"
+foreach ($F in @($V.Errors | Where-Object { [string]$_.Path -match '^roleAssignments\[' -and [string]$_.Message -match 'oer-s116-rg' })) { Write-OerLiveStep "Finding at the step's rows: $($F.Severity) $($F.Path): $($F.Message)" }
 $Inv = Get-Content -LiteralPath $Doc -Raw | ConvertFrom-Json
 $Own = [ordered]@{ version = $Inv.version; tenantId = $Inv.tenantId; roleAssignments = @($Inv.roleAssignments | Where-Object { $null -ne $_ -and $_.scope -eq $RgScope }) }
 if (@($Own.roleAssignments | Where-Object { $_.scope -ne $RgScope }).Count -gt 0 -or @($Own.roleAssignments).Count -ne 3) { throw "STOP: the document limited to $Rg does not hold exactly the step's three rows; nothing is applied." }
 $OwnDoc = Save-S116Document -Name 'export-rg-own-rows' -Document $Own
 Write-OerLiveStep "Rows in the whole export: $(@($Inv.roleAssignments).Count); at ${Rg}: $(@($Own.roleAssignments).Count)"
-Connect-OerLive -Arm
-Start-S116NoPrompt
 foreach ($Mode in 'WhatIf (whole export)', 'Real 1', 'Real 2') {
     Start-S116Count
     $E = $null
-    if ($Mode -like 'WhatIf*') { $Rows = Invoke-OERStructure -Path $Doc -Include RoleAssignments -WhatIf -ErrorVariable E -ErrorAction SilentlyContinue }
+    if ($Mode -like 'WhatIf*') { $Rows = Invoke-OERStructure -Path $Doc -Include RoleAssignments -WhatIf -ErrorVariable E -ErrorAction SilentlyContinue 3>$null }
     else { $Rows = Invoke-OERStructure -Path $OwnDoc -Include RoleAssignments -Confirm:$false -ErrorVariable E -ErrorAction SilentlyContinue }
     Write-OerLiveStep "== ${Mode}: $(Get-S116Sent)"
     Stop-S116Count
-    Show-S116Rows -Rows $Rows
-    Show-S116Errors -Errors $E
+    Show-S116StepRows -Rows $Rows
+    Show-S116ErrorCount -Errors $E
 }
 Write-OerLiveStep "Azure Resource Manager lists at ${Rg}: $((Get-S116AtScope -Scope $RgScope | Sort-Object) -join ', ')"
 Disconnect-OerLive
 ```
 
-**Expect:** `Valid: True` with no Error; in the plan the three rows at `oer-s116-rg` are `Unchanged` (every
-other row is a role assignment inherited from the subscription and is `Unchanged` or `Skipped`, never
-`Created`), and in both real runs the three rows are `Unchanged`; `writes: 0` every time; no error; the three
-role assignments still listed.
+**Expect:** `Valid: True` with no Error; in the plan the three rows at `oer-s116-rg` are `Unchanged`, and
+every other row (an assignment the resource group inherits from the subscription or a management group;
+counted, never printed) is `Unchanged`, or `Failed` where this identity may not read a management group's
+role assignments (`AuthorizationFailed`, a read refused, nothing written) -- never `Created`; in both real
+runs the three rows are `Unchanged`; `writes: 0` every time; no error in the real runs; the three role
+assignments still listed.
 **Failure looks like:** a `Created` row or a write; a principal lookup failure for the two ids.
 
 Result:
@@ -458,8 +846,8 @@ foreach ($Mode in 'WhatIf', 'Real 1', 'Real 2') {
     else { $Rows = Invoke-OERStructure -Path $Doc2 -Include RoleAssignments -Prune -Confirm:$false -ErrorVariable E -ErrorAction SilentlyContinue }
     Write-OerLiveStep "== ${Mode}: $(Get-S116Sent)"
     Stop-S116Count
-    Show-S116Rows -Rows $Rows
-    Show-S116Errors -Errors $E
+    Show-S116StepRows -Rows $Rows
+    Show-S116ErrorCount -Errors $E
 }
 Write-OerLiveStep "Azure Resource Manager lists at ${Rg}: $((Get-S116AtScope -Scope $RgScope | Sort-Object) -join ', ')"
 Disconnect-OerLive
@@ -488,8 +876,8 @@ foreach ($Mode in 'WhatIf', 'Real 1', 'Real 2') {
     else { $Rows = Invoke-OERStructure -Path $OwnDoc -Include RoleAssignments -Confirm:$false -ErrorVariable E -ErrorAction SilentlyContinue }
     Write-OerLiveStep "== ${Mode}: $(Get-S116Sent)"
     Stop-S116Count
-    Show-S116Rows -Rows $Rows
-    Show-S116Errors -Errors $E
+    Show-S116StepRows -Rows $Rows
+    Show-S116ErrorCount -Errors $E
 }
 Write-OerLiveStep "Azure Resource Manager lists at ${Rg}: $((Get-S116AtScope -Scope $RgScope | Sort-Object) -join ', ')"
 Disconnect-OerLive
@@ -515,13 +903,20 @@ $Doc = [ordered]@{
     accessPackages = @([ordered]@{ displayName = $Ap; catalog = $CatA }, [ordered]@{ displayName = $Ap; catalog = $CatB })
     accessReviews  = @([ordered]@{ displayName = $Rev; accessPackage = $Ap; assignmentPolicy = $Pol; reviewers = @() })
 }
+# The module loads with the sign-in; the validation itself sends nothing.
+Connect-OerLive -Arm
+Start-S116NoPrompt
+Start-S116Count
 $V = Test-OERStructure -Json ($Doc | ConvertTo-Json -Depth 20)
 Write-OerLiveStep "Valid: $($V.Valid); findings: $(@($V.Errors).Count)"
 foreach ($F in @($V.Errors)) { Write-OerLiveStep "Finding: $($F.Severity) $($F.Path): $($F.Message)" }
+Write-OerLiveStep "Requests during the validation: $(Get-S116Sent)"
+Stop-S116Count
+Disconnect-OerLive
 ```
 
-**Expect:** `Valid: False`; an Error at the review's `accessPackage` that names the two entries; nothing
-signs in.
+**Expect:** `Valid: False`; an Error at the review's `accessPackage` that names the two entries; the
+validation sends no request (the sign-in only loads the module).
 **Failure looks like:** `Valid: True`, or only a Warning.
 
 Result:
