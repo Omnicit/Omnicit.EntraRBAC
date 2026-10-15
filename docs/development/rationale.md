@@ -9073,10 +9073,14 @@ sets it back to `$null` with a plain statement directly after the Azure walk. It
   roster was read, with no request, and otherwise `$null` until the first caller lists every group
   once and stores the index there;
 - `PrincipalStatus`: a dictionary, keyed without regard to letter case, of every answer of the
-  deleted items read that succeeded, so a principal is read once per export
+  deleted items read that succeeded, so a principal whose read succeeds is read once per export; a
+  read that fails is not kept, and the next scope that needs it reads again
   ([#unresolved-principals](#unresolved-principals));
 - `UnreadPrincipal` and `UnreadPrincipalCause`: the role assignment principals that could not be
-  read, and their causes, which the export names in `IncompleteReads` and its own `InventoryPartial`.
+  read, and their causes, index for index, which the export names in `IncompleteReads` and its own
+  `InventoryPartial` -- without the entries of a scope it skipped, and without a failed lookup of an
+  assignment that another scope read (known limits (b) and (e) of
+  [#unresolved-principals](#unresolved-principals)).
 
 A local reference keeps the two lists after the context is cleared. Cost if wrong: one more member for
 each thing an export shares; the alternative, a parameter, would have been a new public parameter.
@@ -9151,7 +9155,8 @@ page for that read asks for a permission per object type (`User.Read.All`, `Grou
 `Application.Read.All`), and the type is not known before the read, so `Directory.Read.All`, which the
 inventory already requires, is the one permission that covers it; `tests/QA/requiredscope.tests.ps1`
 holds a read of the path to `Directory.Read.All` or `Directory.ReadWrite.All`, and a write to
-`Directory.ReadWrite.All`. Cost if wrong: one request per principal not returned, once per export.
+`Directory.ReadWrite.All`. Cost if wrong: one request per principal not returned, once per export
+while the read succeeds; a read that fails is sent again by the next scope that needs it.
 
 **R-3 (what the export writes).**
 
@@ -9224,16 +9229,32 @@ default path: a principal they cannot name is written by its object id, with no 
 items read, and a failed lookup there is still not told apart from a principal that is gone. A known
 limit, raised as a finding.
 
-**Known limits.** (a) The scope above. (b) An assignment inherited by two scopes whose getByIds batches
-answer differently -- one fails, one succeeds -- is written twice, once by object id and once by name,
-since the export's merge key is scope, role and principal (no id without `-IncludeId`). Applying it is
-not destructive: the engine resolves both to one key, reports the later entry `Failed` as a repeat,
-and keeps its key declared ([#role-assignment-key](#role-assignment-key)). (c) The `roleAssignments`
+**Known limits.** (a) The scope above. (b) An assignment several scopes read can be looked up
+differently by each, and the export merges the scopes' rows on scope, role and principal (no id
+without `-IncludeId`). Where one scope's getByIds batch fails and another's succeeds without the
+principal, both rows carry the object id and so share a key; the merge keeps each key's index, and a
+row with `principalStatus` takes the place of a kept row without it, so the assignment is written once
+with its status whichever scope read it first. Its `.../principal` entry, and the cause beside it, is
+then left out of `IncompleteReads` and the `InventoryPartial` clause, since another scope read the
+principal (the whole-branch review of Sprint 11 step 6 found the first-row-wins merge writing the row
+without a status, while the warning and the README named it `Deleted` or `Unresolved`, and the
+never-create guard was lost for it). What remains: where one scope's batch fails and another's FINDS
+the principal, one row is written by object id and one by name, so the keys differ and the
+assignment is written twice, and the failed lookup stays unread. Applying that is not destructive:
+the engine resolves both to one key, reports the later entry `Failed` as a repeat, and keeps its key
+declared ([#role-assignment-key](#role-assignment-key)). (c) The `roleAssignments`
 section no longer shares the principal name cache of the other sections, so a principal named in both
 `roleAssignments` and `directoryRoleAssignments` costs two lookups per call. (d) A root-scope row's
 principal is looked up like any other, which is how the root list names it, but it is not looked for
-among the deleted items, and a failed lookup of it is not reported. (e) The rows and unread entries of
-a per-scope call that later failed, and whose scope was skipped, still count, as the root notices do.
+among the deleted items, and a failed lookup of it is not reported. (e) A scope the export skips after
+its per-scope call -- its role management policy list fails, say -- merges none of its rows, so the
+export takes back what that call handed over: its rows with `principalStatus`, its rows at a scope no
+document can declare ([#undeclarable-scope](#undeclarable-scope)), and its unread principal entries
+with their causes, each list to the count it had before the scope. The warnings, the README and
+`IncompleteReads` therefore name no row that only a skipped scope read, and the skipped scope itself is
+what the bundle reports for it. Two things still outlive the skip: the root notices, since a root row
+is left out of the document whichever scope read it and the warning says just that, and the answers
+of the deleted items read that the call kept in the run context, which are facts read and not rows.
 
 ## undeclarable-scope
 
