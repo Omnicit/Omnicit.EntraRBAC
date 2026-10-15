@@ -1034,7 +1034,9 @@ Behaviour that follows from this design:
   `nextLink`), Entities - List `2020-05-01` (a POST to `/providers/Microsoft.Management/getEntities`
   with `$view=GroupsOnly`, see [#management-group-parents](#management-group-parents)),
   subscriptions `2022-12-01`, roleDefinitions and roleAssignments `2022-04-01`, the whole Azure PIM
-  surface `2020-10-01`, and resources/resourceGroups `2025-04-01`.
+  surface `2020-10-01`, resources/resourceGroups `2025-04-01`, and the Azure Lighthouse reads
+  (Microsoft.ManagedServices registrationAssignments and registrationDefinitions) `2022-10-01`
+  (Sprint 11 step 6b; see [#lighthouse-delegations](#lighthouse-delegations)).
 - `roleDefinitionId` in a role assignment body is always the FULL ARM resource id, never a bare GUID.
 - `ArmResourceUrl` IS configurable, as of Task 6's sprint (issue #81): `Initialize-OERAuth -Environment`
   sets it from `Get-OERCloudEndpoint`'s `ArmResource` field instead of the module hardcoding
@@ -1103,13 +1105,13 @@ Behaviour that follows from this design:
   string as the `else` literal; the literal stays all the same, as the documented fallback and
   gate 7's exemption by shape.
 
-Verified 2026-10-09 by grepping the whole tree (`grep -rno 'api-version=[0-9-]*' source/`, 44 hits):
+Verified 2026-10-15 by grepping the whole tree (`git grep -no 'api-version=[0-9-]*' -- source/`, 48 hits):
 managementGroups 5 real call sites, Entities - List (getEntities) 1, the Azure PIM surface 13,
-roleDefinitions/roleAssignments 10, subscriptions 3, resources/resourceGroups 9 -- 41 real
-request-path sites in total, plus 3 more that appear only inside `Invoke-OERArmRequest`'s own
-comment-based help (`.PARAMETER Path`/`.EXAMPLE` strings, not live call sites). Regenerate this
-table with the same grep whenever a new ARM endpoint is pinned or an existing api-version is
-bumped -- do not hand-edit the counts without re-running it.
+roleDefinitions/roleAssignments 11, subscriptions 3, resources/resourceGroups 10,
+Microsoft.ManagedServices 2 -- 45 real request-path sites in total, plus 3 more that appear only
+inside `Invoke-OERArmRequest`'s own comment-based help (`.PARAMETER Path`/`.EXAMPLE` strings, not
+live call sites). Regenerate this table with the same grep whenever a new ARM endpoint is pinned or
+an existing api-version is bumped -- do not hand-edit the counts without re-running it.
 
 ## management-group-parents
 
