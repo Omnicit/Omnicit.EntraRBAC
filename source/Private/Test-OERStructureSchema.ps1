@@ -96,7 +96,7 @@ function Test-OERStructureSchema {
     being created or updated (issue #70).
     Every closed enum value (accessType, enablement, membershipRuleProcessingState,
     catalogResourceType, approverInfoVisibility, accessReviewRecurrence, accessReviewDefaultDecision,
-    principalType, directoryRoleAssignmentType) is accepted in any casing, but a non-canonically cased
+    principalType, directoryRoleAssignmentType, principalStatus) is accepted in any casing, but a non-canonically cased
     value is reported as a Warning naming the canonical spelling Get-OERStructureSchemaJson declares,
     because draft-07 matches "enum" case-sensitively. An accessReviews item validates
     reviewers/fallbackReviewers as string arrays,
@@ -246,7 +246,16 @@ function Test-OERStructureSchema {
     root, such as '/.' or '/%2e', beside its A13 Error) is a Warning at the entry's scope path (BL-126): a role assignment
     there is elevated access, which Invoke-OERStructure never creates or removes, so the entry is
     reported Skipped and the root scope is never pruned. A roleManagementPolicies scope '/' is not reported,
-    and neither is the '/' of the directory role sections, the Microsoft Entra tenant scope. An OMITTED
+    and neither is the '/' of the directory role sections, the Microsoft Entra tenant scope. A
+    roleAssignments entry's principalStatus (A18), which Get-OERInventory and Export-OERInventory write
+    for a role assignment whose principal the directory did not return, must be the string Deleted or
+    Unresolved (any other value, or a value that is not a string, is an Error at its path; a
+    non-canonical letter case is a Warning, as for principalType), and the entry's principal must then
+    be an object id (Test-OERGuid decides): a principal that is not one is an Error at the principal's
+    path, since Invoke-OERStructure looks no principal up for such an entry and never creates a role
+    assignment for it. An explicit null principalStatus is not declared, so neither rule applies to it.
+    principalStatus is a known key of roleAssignments only: in a directoryRoleAssignments entry it is an
+    unknown key. An OMITTED
     groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
     catalogs[].resources or accessPackages[].resourceRoles key is a Warning naming the collection:
     each of those is still reconciled against an empty declared set when its key is omitted, so
@@ -1760,7 +1769,7 @@ function Test-OERStructureSchema {
                 $RAItem = if (Test-HasProp -Node $RA -Name 'role') { $RA.role } else { "roleAssignments[$I]" }
 
                 Add-UnknownKeyWarning -Node $RA -Section 'roleAssignments' -Item $RAItem -Path $RAPath `
-                    -KnownKey @('scope', 'role', 'principal', 'principalType', 'description',
+                    -KnownKey @('scope', 'role', 'principal', 'principalType', 'principalStatus', 'description',
                         'condition', 'conditionVersion', 'id')
 
                 foreach ($Req in @('scope', 'role', 'principal')) {
@@ -1809,6 +1818,38 @@ function Test-OERStructureSchema {
                     } else {
                         Add-EnumCasingWarning -EnumName 'principalType' -Key 'principalType' -Value $RA.principalType `
                             -Section 'roleAssignments' -Item $RAItem -Path "$RAPath.principalType"
+                    }
+                }
+
+                # A18 (Sprint 11 step 6): principalStatus marks an entry whose principal the directory did not
+                # return when the document was exported (Get-OERInventory and Export-OERInventory write it,
+                # with the principal's object id). Only Deleted and Unresolved, and only as a string: an
+                # array holding one of them is not a status. A non-canonical letter case is a Warning, as
+                # for principalType. The entry names its principal by object id (Test-OERGuid), since
+                # Sync-OERStructureRoleAssignment looks no principal up for it and never creates the
+                # assignment; an explicit null is not declared, so neither rule applies to it.
+                if (Test-HasProp -Node $RA -Name 'principalStatus') {
+                    $ValidPrincipalStatuses = @(Resolve-OERStructureEnumCasing -EnumName 'principalStatus' -List)
+                    if ($RA.principalStatus -isnot [string] -or $ValidPrincipalStatuses -inotcontains $RA.principalStatus) {
+                        Add-Finding -Section 'roleAssignments' -Item $RAItem `
+                            -Path "$RAPath.principalStatus" `
+                            -Message "'principalStatus' at $RAPath must be one of: $($ValidPrincipalStatuses -join ', '). Got: '$($RA.principalStatus)'."
+                    } else {
+                        Add-EnumCasingWarning -EnumName 'principalStatus' -Key 'principalStatus' -Value $RA.principalStatus `
+                            -Section 'roleAssignments' -Item $RAItem -Path "$RAPath.principalStatus"
+                    }
+                    if ((Test-HasProp -Node $RA -Name 'principal') -and
+                        ($RA.principal -isnot [string] -or -not (Test-OERGuid -Value $RA.principal))) {
+                        $PrincipalFound = if ($RA.principal -is [string]) {
+                            "'$($RA.principal)'"
+                        } else {
+                            "a value that is not a string ($($RA.principal.GetType().Name))"
+                        }
+                        Add-Finding -Section 'roleAssignments' -Item $RAItem `
+                            -Path "$RAPath.principal" `
+                            -Message ("'principal' at $RAPath must be an object id (a GUID) when 'principalStatus' is declared: the entry stands for a " +
+                                'principal the directory did not return when the document was exported, so the engine looks no principal up for it. ' +
+                                "Got: $PrincipalFound. Name the principal by its object id, or remove 'principalStatus' to have the principal looked up by name.")
                     }
                 }
 

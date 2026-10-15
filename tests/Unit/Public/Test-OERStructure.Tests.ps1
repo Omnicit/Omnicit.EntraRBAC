@@ -89,6 +89,24 @@ Describe 'Test-OERStructure' {
         $V.Valid | Should -BeTrue
         @($V.Errors | Where-Object { $_.Severity -eq 'Warning' }).Count | Should -Be 0
     }
+    It 'validates a roleAssignments entry as the export writes a principal the directory did not return, and refuses one that names the principal by name (A18)' {
+        $Exported = '{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/x", "role": "Reader", "principal": "dddd9999-0000-0000-0000-000000000001", "principalType": "User", "principalStatus": "Deleted" }, { "scope": "/subscriptions/x", "role": "Owner", "principal": "dddd9999-0000-0000-0000-000000000002", "principalStatus": "Unresolved" } ] }'
+        $V = Test-OERStructure -Json $Exported
+        $V.Valid | Should -BeTrue
+        @($V.Errors).Count | Should -Be 0
+        $Named = '{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/x", "role": "Reader", "principal": "person1@example.com", "principalStatus": "Deleted" } ] }'
+        $Bad = Test-OERStructure -Json $Named
+        $Bad.Valid | Should -BeFalse
+        @($Bad.Errors).Count | Should -Be 1
+        $Bad.Errors[0].Path | Should -BeExactly 'roleAssignments[0].principal'
+        $Bad.Errors[0].Message | Should -BeLike "*must be an object id (a GUID) when 'principalStatus' is declared*"
+        # The document is read as written: a lower-cased status warns, and stays Valid.
+        $Cased = Test-OERStructure -Json $Exported.Replace('"Deleted"', '"deleted"')
+        $Cased.Valid | Should -BeTrue
+        @($Cased.Errors).Count | Should -Be 1
+        $Cased.Errors[0].Severity | Should -BeExactly 'Warning'
+        $Cased.Errors[0].Message | Should -Match "canonical spelling is 'Deleted'"
+    }
     It 'validates a piped FileInfo (Get-ChildItem) reflecting the files real content, not a serialized FileInfo' {
         # Get-ChildItem *.json | Test-OERStructure binds the FileInfo BY VALUE to -InputObject. Before
         # the fix that FileInfo was serialized with ConvertTo-Json and validated as-is -- a bogus result
@@ -186,6 +204,17 @@ Describe 'Test-OERStructure help pointer to the worked example' {
         $Clause = [regex]::Match($Help, 'except\s+(?<List>[\w\s,]+?),\s+which\s+(?:is|are)\s+not\s+in\s+the\s+example\s+yet')
         $Named = @($Clause.Groups['List'].Value -split ',|\band\b' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object)
         ($Named -join ',') | Should -BeExactly ($Missing -join ',')
+    }
+}
+
+Describe 'Test-OERStructure help documents principalStatus (A18)' {
+    It 'says which values and which principal form a roleAssignments entry that declares principalStatus takes' {
+        # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+        $Help = Get-Help Test-OERStructure -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+
+        $Description | Should -Match ([regex]::Escape('A roleAssignments entry that declares principalStatus, which Get-OERInventory and Export-OERInventory write for a role assignment whose principal the directory did not return, must carry Deleted or Unresolved (any other value, or one that is not a string, is an Error; a non-canonical letter case is a Warning) and must name its principal by object id (an Error otherwise).'))
+        $Description | Should -Match ([regex]::Escape('Invoke-OERStructure looks no principal up for such an entry and never creates a role assignment for it: where the entry would create one, it is reported Skipped.'))
     }
 }
 

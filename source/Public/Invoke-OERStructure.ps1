@@ -242,6 +242,19 @@ function Invoke-OERStructure {
     -WhatIf and a real run report the same row. An entry at any other scope in the same document is
     applied and pruned as before. Test-OERStructure reports such an entry as a Warning.
 
+    A roleAssignments entry that declares principalStatus (Deleted or Unresolved), which
+    Get-OERInventory and Export-OERInventory write for a role assignment whose principal the directory
+    did not return, names its principal by object id and is never created: no principal is looked up
+    for it, and where the entry would create the assignment it is reported Skipped, with a Detail
+    starting "principalStatus '<value>':", with no ShouldProcess prompt and nothing written, so -WhatIf
+    and a real run report the same row. The root scope is checked first, and the role is looked up and
+    the scope read as for any entry, so a live assignment of that principal and role is reported
+    Unchanged (Updated when the declared condition, conditionVersion or description differ, and an
+    assignment inherited from an ancestor scope is Skipped as before), and -Prune keeps it while the
+    entry is declared. The same document without the entry lets -Prune remove that assignment like any
+    undeclared one. To apply such an entry, remove it, or name a principal that exists and remove
+    principalStatus. A principalStatus entry whose principal is not an object id fails validation.
+
     An access package that has to be created in the catalog it declares while a package of that name
     exists in another catalog is reported Failed, with nothing written to that package or for the
     entry, since New-OERAccessPackage, which looks the name up in the whole tenant, returns that

@@ -124,6 +124,40 @@ Describe 'Get-OERStructureSchemaJson' {
         }
     }
 
+    It 'declares roleAssignments[].principalStatus as the closed set Deleted and Unresolved, and says what the engine does with it (A18)' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $Prop = $Schema.properties.roleAssignments.items.properties.principalStatus
+            $Prop | Should -Not -BeNullOrEmpty
+            $Prop.type | Should -Be 'string'
+            @($Prop.enum) | Should -Be @('Deleted', 'Unresolved')
+            $Prop.description | Should -Match 'object id'
+            $Prop.description | Should -Match 'never creates'
+            $Prop.description | Should -Match 'Skipped'
+            # The key sits beside principalType, and neither joins the required keys.
+            @($Schema.properties.roleAssignments.items.properties.PSObject.Properties.Name) |
+                Should -Be @('scope', 'role', 'principal', 'principalType', 'principalStatus', 'description', 'condition', 'conditionVersion')
+            @($Schema.properties.roleAssignments.items.required) | Should -Be @('scope', 'role', 'principal')
+            # directoryRoleAssignments takes no principalStatus: the status is the Azure section's alone.
+            $Schema.properties.directoryRoleAssignments.items.properties.PSObject.Properties.Name | Should -Not -Contain 'principalStatus'
+        }
+    }
+
+    It 'accepts principalStatus Deleted and Unresolved and rejects any other value, case-sensitively (A18)' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Row = '{ "version": "1.0", "roleAssignments": [ { "scope": "/s", "role": "Reader", "principal": "11111111-1111-1111-1111-111111111111", "principalStatus": "#V#" } ] }'
+            foreach ($Value in 'Deleted', 'Unresolved') {
+                Test-Json -Json $Row.Replace('#V#', $Value) -Schema $Schema -ErrorAction SilentlyContinue | Should -BeTrue -Because "'$Value' is a canonical principalStatus"
+            }
+            foreach ($Value in 'Gone', 'deleted', 'UNRESOLVED', '') {
+                Test-Json -Json $Row.Replace('#V#', $Value) -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse -Because "'$Value' is not a canonical principalStatus"
+            }
+            Test-Json -Json '{ "version": "1.0", "roleAssignments": [ { "scope": "/s", "role": "Reader", "principal": "p", "principalStatus": 1 } ] }' -Schema $Schema -ErrorAction SilentlyContinue |
+                Should -BeFalse
+        }
+    }
+
     It 'rejects an activationMaxHours outside the 1-24 range' {
         InModuleScope $script:moduleName {
             $Schema = Get-OERStructureSchemaJson
@@ -485,13 +519,13 @@ Describe 'Get-OERStructureSchemaJson' {
                 }
                 $Declared.Add(($Values -join ','))
             }
-            $Declared.Count | Should -Be 14 -Because 'the schema declares 14 enum arrays across 9 distinct enums'
+            $Declared.Count | Should -Be 15 -Because 'the schema declares 15 enum arrays across 10 distinct enums'
             $NullBearing | Should -Be 1 -Because 'accessReviews[].recurrence is the only nullable enum in the schema'
 
             $Owned = @{}
             foreach ($Name in 'accessType', 'enablement', 'membershipRuleProcessingState', 'catalogResourceType',
                 'approverInfoVisibility', 'accessReviewRecurrence', 'accessReviewDefaultDecision', 'principalType',
-                'directoryRoleAssignmentType') {
+                'directoryRoleAssignmentType', 'principalStatus') {
                 $Owned[(@(Resolve-OERStructureEnumCasing -EnumName $Name -List) -join ',')] = $Name
             }
             foreach ($Set in $Declared) {

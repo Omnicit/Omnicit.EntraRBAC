@@ -5235,7 +5235,8 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
                     Causes = @([PSCustomObject]@{ Cause = 'Could not read members for group ''g-1'': Too many requests (429).'; Target = 'g-1' })
                 }
             }
-            # The validator learns principalStatus in a later task; the self-check is not what is tested.
+            # The self-check is not what is tested here; the Context "the export's own apply-schema
+            # self-check" below runs the real validator over a bundle that carries a principalStatus row.
             Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
             Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
             Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
@@ -5322,6 +5323,86 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
             $Run.Partial.Count | Should -Be 1
             $Run.Partial[0].Exception.Message | Should -BeLike 'This inventory bundle is PARTIAL: 1 role assignment principal read(s) failed, so each principal is written by its object id*'
             $Run.Partial[0].Exception.Message | Should -Not -BeLike '*partial Entra ID read entry*'
+        }
+    }
+
+    Context 'the export''s own apply-schema self-check (A18)' {
+        # Test-OERStructureSchema is NOT mocked away here: the mock calls the real validator through and
+        # keeps what it returned, so the test reads the validator's findings and not just the warning the
+        # export writes when the document is invalid (an unknown key is a Warning finding, which leaves the
+        # document Valid and so writes no export warning). The bundle carries one row of each status.
+        BeforeAll {
+            $script:UpxRealValidate = InModuleScope $script:moduleName { Get-Command Test-OERStructureSchema -CommandType Function }
+        }
+
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+            # A list the mock adds to: an assignment inside a mock would not reach the test's scope.
+            $script:UpxSelfChecks = [System.Collections.Generic.List[object]]::new()
+            Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+            Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+            Mock -ModuleName $script:moduleName Get-OERGroup {}
+            Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+            Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+            Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+                [PSCustomObject]@{
+                    Scopes    = @($script:UpxS1)
+                    Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+                }
+            }
+            Mock -ModuleName $script:moduleName Test-OERStructureSchema {
+                $Result = & $script:UpxRealValidate @PesterBoundParameters
+                $script:UpxSelfChecks.Add($Result)
+                $Result
+            }
+            Mock -ModuleName $script:moduleName Get-OERInventory {
+                param($Include, $Scope, $Subscription, $ManagementGroup, $AllRolesAtScope)
+                $Ra = @()
+                if ($Include -contains 'RoleAssignments' -and $Scope) {
+                    $RowA = [PSCustomObject]@{
+                        RoleAssignmentId = $script:UpxIdA; Scope = $script:UpxS1; Role = 'Reader'
+                        Principal = $script:UpxGone; PrincipalType = 'User'; PrincipalStatus = 'Deleted'; StatusRead = $true
+                    }
+                    $RowB = [PSCustomObject]@{
+                        RoleAssignmentId = ''; Scope = $script:UpxS1; Role = 'Owner'
+                        Principal = $script:UpxNowhere; PrincipalType = ''; PrincipalStatus = 'Unresolved'; StatusRead = $true
+                    }
+                    $Notice = [PSCustomObject]@{ Warning = "per-scope unresolved principals at $Scope"; Assignments = @($RowA, $RowB) }
+                    $Notice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.UnresolvedPrincipalNotice')
+                    Write-AsUpxInventory -Warning "per-scope unresolved principals at $Scope" -Notice $Notice
+                    $Ra = @(
+                        [PSCustomObject]@{ scope = $script:UpxS1; role = 'Reader'; principal = $script:UpxGone; principalType = 'User'; principalStatus = 'Deleted' }
+                        [PSCustomObject]@{ scope = $script:UpxS1; role = 'Owner'; principal = $script:UpxNowhere; principalStatus = 'Unresolved' }
+                    )
+                }
+                $Inv = [PSCustomObject]@{
+                    Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                    AccessReviews = @(); RoleAssignments = $Ra; RoleManagementPolicies = @()
+                }
+                $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+                $Inv
+            }
+        }
+
+        AfterEach {
+            InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+        }
+
+        It 'passes the real self-check with no finding at all for a bundle whose inventory.json carries principalStatus rows' {
+            $Run = Invoke-UpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'upx-selfcheck'); Include = 'RoleAssignments' }
+            # Reach proofs: the scope was read, the bundle holds both rows, and the real validator ran over them.
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Test-OERStructureSchema -Times 1 -Exactly
+            $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+            @($Inv.roleAssignments | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalStatus)" }) | Should -Be @(
+                "Reader|$($script:UpxGone)|Deleted"
+                "Owner|$($script:UpxNowhere)|Unresolved"
+            )
+            $script:UpxSelfChecks.Count | Should -Be 1
+            @($script:UpxSelfChecks[0].Errors | ForEach-Object { "$($_.Severity): $($_.Path): $($_.Message)" }) | Should -Be @()
+            $script:UpxSelfChecks[0].Valid | Should -BeTrue
+            @($Run.Warnings | Where-Object { $_ -like '*did not pass apply-schema validation*' }).Count | Should -Be 0
+            @($Run.Warnings | Where-Object { $_ -like '*Could not run the apply-schema self-check*' }).Count | Should -Be 0
         }
     }
 }

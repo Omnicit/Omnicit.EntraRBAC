@@ -6278,3 +6278,163 @@ Describe 'Test-OERStructureSchema tenantId (BL-88, A14)' {
         $Finding[0].Message | Should -BeLike '*Omit the key*'
     }
 }
+
+Describe 'Test-OERStructureSchema roleAssignments principalStatus (A18, Sprint 11 step 6)' {
+    # Get-OERInventory and Export-OERInventory write a role assignment whose principal the directory did
+    # not return by the principal's object id, with principalStatus Deleted or Unresolved. The validator
+    # knows the key: only those two values (any other, or a value that is not a string, is an Error; a
+    # non-canonical letter case is a Warning, as for principalType), and a declared principalStatus
+    # requires the principal to be an object id (Test-OERGuid), since the engine looks no principal up
+    # for such an entry. An explicit null is not declared. No id below is version-4 shaped.
+    BeforeAll {
+        $script:PsGone = 'dddd9999-0000-0000-0000-000000000001'
+        $script:PsSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        function Invoke-PsValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        # One roleAssignments entry. -Principal is the JSON text of the principal value (quotes included),
+        # -Extra the JSON text that follows it inside the entry.
+        function Get-PsDocument {
+            param([string]$Principal = $script:PsGone, [string]$Extra = '')
+            '{ "version": "1.0", "roleAssignments": [ { "scope": "' + $script:PsSub + '", "role": "Reader", "principal": ' + $Principal + $Extra + ' } ] }'
+        }
+    }
+
+    It 'accepts principalStatus <Status> on an entry that names its principal by object id, with no finding at all' -ForEach @(
+        @{ Status = 'Deleted' }
+        @{ Status = 'Unresolved' }
+    ) {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('"' + $script:PsGone + '"') -Extra (', "principalType": "User", "principalStatus": "' + $Status + '"'))
+        @($V.Errors).Count | Should -Be 0 -Because "principalStatus '$Status' and principalType are known keys: $(@($V.Errors | ForEach-Object { $_.Message }) -join ' | ')"
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'accepts principalStatus <Status> without principalType (the export omits the type for an object it cannot map)' -ForEach @(
+        @{ Status = 'Deleted' }
+        @{ Status = 'Unresolved' }
+    ) {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('"' + $script:PsGone + '"') -Extra (', "principalStatus": "' + $Status + '"'))
+        @($V.Errors).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'refuses principalStatus <Shown> as an Error at the key, naming the two values' -ForEach @(
+        @{ Shown = '"Gone"'; Text = 'Gone' }
+        @{ Shown = '"Active"'; Text = 'Active' }
+        @{ Shown = '""'; Text = '' }
+        @{ Shown = '1'; Text = '1' }
+        @{ Shown = 'true'; Text = 'True' }
+        @{ Shown = '["Deleted"]'; Text = 'Deleted' }
+    ) {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('"' + $script:PsGone + '"') -Extra (', "principalStatus": ' + $Shown))
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principalStatus' })
+        $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Section | Should -BeExactly 'roleAssignments'
+        $Hit[0].Item | Should -BeExactly 'Reader'
+        $Hit[0].Message | Should -BeExactly "'principalStatus' at roleAssignments[0] must be one of: Deleted, Unresolved. Got: '$Text'."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'warns, and stays Valid, for principalStatus <Written>: the canonical spelling is <Canonical>' -ForEach @(
+        @{ Written = 'deleted'; Canonical = 'Deleted' }
+        @{ Written = 'UNRESOLVED'; Canonical = 'Unresolved' }
+    ) {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('"' + $script:PsGone + '"') -Extra (', "principalStatus": "' + $Written + '"'))
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principalStatus' })
+        $Hit.Count | Should -Be 1 -Because 'the casing rule must have been reached for the message to be read'
+        $Hit[0].Severity | Should -BeExactly 'Warning'
+        $Hit[0].Message | Should -BeLike "'principalStatus' at roleAssignments[[]0].principalStatus is '$Written'; the canonical spelling is '$Canonical'. *"
+        @($V.Errors).Count | Should -Be 1
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'requires the principal to be an object id when principalStatus is declared: <Case>' -ForEach @(
+        @{ Case = 'a user principal name'; Principal = '"person1@example.com"'; Got = 'person1@example.com' }
+        @{ Case = 'a display name'; Principal = '"Reporting Readers"'; Got = 'Reporting Readers' }
+        @{ Case = 'a braced object id'; Principal = '"{dddd9999-0000-0000-0000-000000000001}"'; Got = '{dddd9999-0000-0000-0000-000000000001}' }
+        @{ Case = 'an object id without hyphens'; Principal = '"dddd9999000000000000000000000001"'; Got = 'dddd9999000000000000000000000001' }
+        @{ Case = 'an empty string'; Principal = '""'; Got = '' }
+    ) {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal $Principal -Extra ', "principalStatus": "Deleted"')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principal' })
+        $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Section | Should -BeExactly 'roleAssignments'
+        $Hit[0].Item | Should -BeExactly 'Reader'
+        $Hit[0].Message | Should -BeExactly ("'principal' at roleAssignments[0] must be an object id (a GUID) when 'principalStatus' is declared: the entry stands for a " +
+            'principal the directory did not return when the document was exported, so the engine looks no principal up for it. ' +
+            "Got: '$Got'. Name the principal by its object id, or remove 'principalStatus' to have the principal looked up by name.")
+        @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principalStatus' }).Count | Should -Be 0
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses a principal that is not a string when principalStatus is declared (an array holding one object id is not an object id)' {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('["' + $script:PsGone + '"]') -Extra ', "principalStatus": "Unresolved"')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principal' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Message | Should -BeLike "*must be an object id (a GUID) when 'principalStatus' is declared*"
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'accepts an upper-case object id as the principal' {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('"' + $script:PsGone.ToUpperInvariant() + '"') -Extra ', "principalStatus": "Deleted"')
+        @($V.Errors).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'reports both findings for an entry with an unknown status and a name for a principal' {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal '"person1@example.com"' -Extra ', "principalStatus": "Gone"')
+        @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principalStatus' }).Count | Should -Be 1
+        @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principal' }).Count | Should -Be 1
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 2
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'applies the object id rule to a declared principalStatus only: an explicit null is not declared' {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal '"person1@example.com"' -Extra ', "principalStatus": null')
+        @($V.Errors).Count | Should -Be 0 -Because 'a null principalStatus is not declared, so the principal may be a name'
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'leaves an entry without principalStatus alone: a name and an object id are both valid principals' {
+        foreach ($Principal in '"person1@example.com"', '"Reporting Readers"', ('"' + $script:PsGone + '"')) {
+            $V = Invoke-PsValidation -Json (Get-PsDocument -Principal $Principal)
+            @($V.Errors).Count | Should -Be 0 -Because "principal $Principal needs no object id without principalStatus"
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'reports only the missing principal, not a second finding about its form, when principalStatus is declared without one' {
+        $V = Invoke-PsValidation -Json ('{ "version": "1.0", "roleAssignments": [ { "scope": "' + $script:PsSub + '", "role": "Reader", "principalStatus": "Deleted" } ] }')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principal' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeExactly "'principal' is required at roleAssignments[0]."
+        @($V.Errors).Count | Should -Be 1
+    }
+
+    It 'still reports principalStatus as an unknown key in a directoryRoleAssignments entry: the status is the Azure section''s alone' {
+        $V = Invoke-PsValidation -Json ('{ "version": "1.0", "directoryRoleAssignments": [ { "role": "Reports Reader", "principal": "' + $script:PsGone + '", "assignmentType": "Eligible", "principalStatus": "Deleted" } ] }')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].principalStatus' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Warning'
+        $Hit[0].Message | Should -BeLike "Unknown key 'principalStatus' at directoryRoleAssignments[[]0]*"
+    }
+
+    It 'compares two entries that differ only in principalStatus as one assignment, since the key stays scope, role and principal' {
+        $Json = '{ "version": "1.0", "roleAssignments": [ ' +
+            '{ "scope": "' + $script:PsSub + '", "role": "Reader", "principal": "' + $script:PsGone + '", "principalStatus": "Deleted" }, ' +
+            '{ "scope": "' + $script:PsSub + '", "role": "Reader", "principal": "' + $script:PsGone + '", "principalStatus": "Unresolved" } ] }'
+        $V = Invoke-PsValidation -Json $Json
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[1]' -and $_.Severity -eq 'Error' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeLike 'roleAssignments[[]1] declares the same scope, role and principal as roleAssignments[[]0]*'
+    }
+}

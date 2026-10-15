@@ -29,6 +29,13 @@ function Test-OERStructure {
     Invoke-OERStructure reports such an entry Skipped and never prunes the root scope. A
     roleManagementPolicies scope '/' is not reported.
 
+    A roleAssignments entry that declares principalStatus, which Get-OERInventory and
+    Export-OERInventory write for a role assignment whose principal the directory did not return, must
+    carry Deleted or Unresolved (any other value, or one that is not a string, is an Error; a
+    non-canonical letter case is a Warning) and must name its principal by object id (an Error
+    otherwise). Invoke-OERStructure looks no principal up for such an entry and never creates a role
+    assignment for it: where the entry would create one, it is reported Skipped.
+
     A previousDisplayName is read on a groups, administrativeUnits, catalogs, accessPackages or
     accessReviews entry, and on an assignmentPolicies entry of an access package, where
     Invoke-OERStructure renames the object it names in place: an access package within its catalog, an

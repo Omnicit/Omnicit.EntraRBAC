@@ -10,7 +10,8 @@ function Get-OERStructureSchemaJson {
     version key, the optional top-level tenantId (a canonical GUID, never null: a document that
     carries no tenant check omits the key), the closed set of top-level keys, the per-section required
     fields, the enforced enums
-    (catalog resource type, access review recurrence, role assignment principal type, directory role
+    (catalog resource type, access review recurrence, role assignment principal type, role assignment
+    principalStatus Deleted/Unresolved, directory role
     assignment assignmentType Eligible/Active and principal type, eligibility accessType member/owner,
     membershipRuleProcessingState On/Paused (shared by administrative units and groups), activeEnablement
     and activationEnablement restricted to Justification/MultiFactorAuthentication/Ticketing) and the
@@ -73,6 +74,11 @@ function Get-OERStructureSchemaJson {
     name matches fails and creates nothing. Get-OERInventory never exports it.
     A groups[] item may carry onPremisesSynced, a boolean the export writes for a group synchronized
     from on-premises; it is information only.
+    A roleAssignments[] item may carry principalStatus (Deleted or Unresolved), which the export writes
+    for a role assignment whose principal the directory did not return, beside the principal's object
+    id: the apply engine looks no principal up for such an entry and never creates the assignment (it
+    is reported Skipped), and the offline validator requires the principal to be an object id, which
+    the schema carries no pattern for (Test-OERGuid is the module's one GUID predicate).
     An administrativeUnits[], catalogs[] or accessPackages[] item may declare previousDisplayName as
     well, a non-empty string naming the object's current display name or object id (an access
     package's within its declared catalog) when displayName declares a new one. The section's
@@ -457,6 +463,7 @@ function Get-OERStructureSchemaJson {
           "role": { "type": "string" },
           "principal": { "type": "string" },
           "principalType": { "type": "string", "enum": [ "User", "Group", "ServicePrincipal" ] },
+          "principalStatus": { "type": "string", "enum": [ "Deleted", "Unresolved" ], "description": "Written by the export for a role assignment whose principal Microsoft Entra ID did not return: Deleted when the principal was found among the directory's deleted items, Unresolved when it was found neither in the directory nor among its deleted items (or the read of its deleted items failed). The entry names the principal by its object id, and the offline validator refuses any other form of principal beside principalStatus. Invoke-OERStructure looks no principal up for such an entry and never creates a role assignment for it: where the entry would create one it is reported Skipped and nothing is written. A live assignment of that principal and role is reported Unchanged and kept by -Prune while the entry is declared. To apply the entry, remove it, or name a principal that exists and remove principalStatus. Only the roleAssignments section knows this key." },
           "description": { "type": "string" },
           "condition": { "type": "string" },
           "conditionVersion": { "type": "string" }

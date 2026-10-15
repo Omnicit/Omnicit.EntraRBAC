@@ -3983,3 +3983,264 @@ Describe 'Invoke-OERStructure applies a group principal an export writes by its 
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
     }
 }
+
+Describe 'Invoke-OERStructure never creates a role assignment for a principalStatus entry (A18, Sprint 11 step 6)' {
+    # Get-OERInventory and Export-OERInventory write a role assignment whose principal the directory did
+    # not return by the principal's object id, with principalStatus Deleted or Unresolved. The real engine,
+    # the real validator, the real handler and the real ARM cmdlets run here; only the sign-in, the three
+    # principal lookups and the ARM transport are mocked, and the transport records every request. A
+    # principalStatus entry is validated, then Skipped where it would be created (no principal lookup, no
+    # create, no ShouldProcess, the same row in a plan and a real run); a matching live assignment is
+    # Unchanged and kept by -Prune; the same document without the row lets -Prune remove it. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        $script:PuSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:PuGone = 'dddd9090-0000-0000-0000-000000000001'
+        $script:PuPerson2 = 'dddd9090-0000-0000-0000-000000000002'
+        $script:PuGone3 = 'dddd9090-0000-0000-0000-000000000003'
+        $script:PuGone2 = 'dddd9090-0000-0000-0000-000000000004'
+        $script:PuOther = 'dddd9090-0000-0000-0000-000000000009'
+        $script:PuReaderGuid = 'bbbb9090-0000-0000-0000-000000000001'
+        $script:PuReaderId = "$($script:PuSub)/providers/Microsoft.Authorization/roleDefinitions/$($script:PuReaderGuid)"
+        $script:PuContributorId = "$($script:PuSub)/providers/Microsoft.Authorization/roleDefinitions/bbbb9090-0000-0000-0000-000000000002"
+        $script:PuRaPath = "$($script:PuSub)/providers/Microsoft.Authorization/roleAssignments"
+        function script:New-PuLive {
+            param([string]$PrincipalId, [string]$Suffix)
+            [PSCustomObject]@{ id = "$($script:PuRaPath)/cccc9090-0000-0000-0000-0000000000$Suffix"; name = "cccc9090-0000-0000-0000-0000000000$Suffix"
+                properties = [PSCustomObject]@{ scope = $script:PuSub; principalId = $PrincipalId; principalType = 'User'; roleDefinitionId = $script:PuReaderId } }
+        }
+        # The text of the Skipped Detail of a principalStatus entry that would be created.
+        function script:Get-PuSkippedDetail {
+            param([string]$Status, [string]$Principal)
+            "principalStatus '$Status': the principal '$Principal' could not be looked up when the document was exported, so the apply engine never creates a role assignment for this entry. Nothing was written. Remove the entry, or name a principal that exists and remove principalStatus"
+        }
+        # Four entries: a deleted principal with no live assignment, a user by name whose assignment is live, an
+        # unresolved principal with no live assignment, and a deleted principal whose assignment is live.
+        $script:PuJson = '{ "version": "1.0", "roleAssignments": [ ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "dddd9090-0000-0000-0000-000000000001", "principalType": "User", "principalStatus": "Deleted" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Contributor", "principal": "dddd9090-0000-0000-0000-000000000004", "principalStatus": "Unresolved" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "dddd9090-0000-0000-0000-000000000003", "principalType": "Group", "principalStatus": "Deleted" } ] }'
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:PuArmLog = [System.Collections.Generic.List[string]]::new()
+        $script:PuLive = [System.Collections.Generic.List[object]]::new()
+        $script:PuLive.Add((New-PuLive -PrincipalId $script:PuPerson2 -Suffix '02'))
+        $script:PuLive.Add((New-PuLive -PrincipalId $script:PuGone3 -Suffix '03'))
+        $script:PuLive.Add((New-PuLive -PrincipalId $script:PuOther -Suffix '09'))
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected Graph request: $Uri" }
+        # The principal lookups: person2 is the one name in the document. A lookup for anything else fails
+        # the test; the three objects the document names by object id are never looked up.
+        Mock -ModuleName $script:moduleName Resolve-OERUserId {
+            if ($UserPrincipalName -eq 'person2@example.com') { return 'dddd9090-0000-0000-0000-000000000002' }
+            throw "unexpected user lookup: $UserPrincipalName"
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { throw "unexpected group lookup: $DisplayName" }
+        Mock -ModuleName $script:moduleName Resolve-OERApplicationId { throw "unexpected application lookup: $DisplayName" }
+        # New-OERRoleAssignment looks up the principal it creates for on its own.
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipal {
+            [PSCustomObject]@{ PrincipalId = 'dddd9090-0000-0000-0000-000000000001'; PrincipalType = 'User' }
+        }
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest {
+            $RequestMethod = if ($Method) { $Method } else { 'GET' }
+            $script:PuArmLog.Add("$RequestMethod $Path")
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:PuSub)/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=roleName%20eq%20%27Reader%27") {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:PuReaderId }) }
+            }
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:PuSub)/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=roleName%20eq%20%27Contributor%27") {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:PuContributorId }) }
+            }
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:PuRaPath)?api-version=2022-04-01&`$filter=atScope()") {
+                return [PSCustomObject]@{ value = @($script:PuLive) }
+            }
+            if ($RequestMethod -eq 'PUT' -and $Path -like "$($script:PuRaPath)/*?api-version=2022-04-01") {
+                return [PSCustomObject]@{ id = $Path.Split('?')[0]; name = 'created'; properties = [PSCustomObject]@{
+                        scope = $script:PuSub; principalId = $Body.properties.principalId; roleDefinitionId = $Body.properties.roleDefinitionId } }
+            }
+            if ($RequestMethod -eq 'DELETE') {
+                $Gone = @($script:PuLive | Where-Object { "$($_.id)?api-version=2022-04-01" -eq $Path })
+                if ($Gone.Count -ne 1) { throw "unexpected ARM delete: $Path" }
+                return $Gone[0]
+            }
+            throw "unexpected ARM call: $RequestMethod $Path"
+        }
+    }
+
+    It 'skips the principalStatus entries, sends no create, looks nobody up by object id, and reconciles the rest as before (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run with -Prune'; Splat = @{ Prune = $true; Confirm = $false }; Undeclared = 'Removed'; Deletes = 1 }
+        @{ Mode = 'a real run without -Prune'; Splat = @{ Confirm = $false }; Undeclared = 'Extra'; Deletes = 0 }
+        @{ Mode = 'a plan with -Prune'; Splat = @{ Prune = $true; WhatIf = $true }; Undeclared = 'Skipped'; Deletes = 0 }
+    ) {
+        $Rows = @(Invoke-OERStructure -Json $script:PuJson -Include RoleAssignments @Splat -WarningAction SilentlyContinue -ErrorAction Stop)
+
+        # Positive proof first: the scope was read once per entry, and the live state reconciled as it says.
+        @($script:PuArmLog | Where-Object { $_ -eq "GET $($script:PuRaPath)?api-version=2022-04-01&`$filter=atScope()" }).Count | Should -Be 4
+        @($Rows | Where-Object { $_.Item -eq "Reader -> person2@example.com @ $($script:PuSub)" }).Action | Should -Be @('Unchanged')
+        @($Rows | Where-Object { $_.Item -eq "$($script:PuReaderGuid) -> $($script:PuOther) @ $($script:PuSub)" }).Action | Should -Be @($Undeclared)
+        @($script:PuArmLog | Where-Object { $_ -like 'DELETE *' }).Count | Should -Be $Deletes
+        if ($Deletes -gt 0) {
+            @($script:PuArmLog | Where-Object { $_ -like 'DELETE *' }) | Should -Be @("DELETE $($script:PuRaPath)/cccc9090-0000-0000-0000-000000000009?api-version=2022-04-01")
+        }
+
+        # The entry with no live assignment: Skipped with the guard's text, in a plan and a real run alike.
+        $Gone = @($Rows | Where-Object { $_.Item -eq "Reader -> $($script:PuGone) @ $($script:PuSub)" })
+        $Gone.Count | Should -Be 1
+        $Gone[0].Action | Should -Be 'Skipped'
+        $Gone[0].Detail | Should -BeExactly (Get-PuSkippedDetail -Status 'Deleted' -Principal $script:PuGone)
+        $Unresolved = @($Rows | Where-Object { $_.Item -eq "Contributor -> $($script:PuGone2) @ $($script:PuSub)" })
+        $Unresolved.Count | Should -Be 1
+        $Unresolved[0].Action | Should -Be 'Skipped'
+        $Unresolved[0].Detail | Should -BeExactly (Get-PuSkippedDetail -Status 'Unresolved' -Principal $script:PuGone2)
+        # The entry whose assignment is live is Unchanged, and -Prune keeps it.
+        @($Rows | Where-Object { $_.Item -eq "Reader -> $($script:PuGone3) @ $($script:PuSub)" }).Action | Should -Be @('Unchanged')
+        $Rows.Count | Should -Be 5
+
+        # Not one create, and not one lookup for an object named by id.
+        @($script:PuArmLog | Where-Object { $_ -like 'PUT *' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERUserId -Times 0 -ParameterFilter { $UserPrincipalName -ne 'person2@example.com' }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERApplicationId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipal -Times 0
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'states the principalStatus rule in the help' {
+        # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+        $Help = Get-Help Invoke-OERStructure -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('A roleAssignments entry that declares principalStatus (Deleted or Unresolved), which Get-OERInventory and Export-OERInventory write for a role assignment whose principal the directory did not return, names its principal by object id and is never created: no principal is looked up for it, and where the entry would create the assignment it is reported Skipped, with a Detail starting "principalStatus ''<value>'':", with no ShouldProcess prompt and nothing written, so -WhatIf and a real run report the same row.'))
+        $Description | Should -Match ([regex]::Escape('The same document without the entry lets -Prune remove that assignment like any undeclared one. To apply such an entry, remove it, or name a principal that exists and remove principalStatus.'))
+    }
+
+    It 'lets -Prune remove the live assignment of the same document without the principalStatus row, like any undeclared assignment' {
+        $Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction Stop)
+        @($Rows | Where-Object { $_.Item -eq "Reader -> person2@example.com @ $($script:PuSub)" }).Action | Should -Be @('Unchanged')
+        # The assignment the first document kept, because its entry declared it, goes with the entry.
+        @($Rows | Where-Object { $_.Item -eq "$($script:PuReaderGuid) -> $($script:PuGone3) @ $($script:PuSub)" }).Action | Should -Be @('Removed')
+        @($Rows | Where-Object { $_.Item -eq "$($script:PuReaderGuid) -> $($script:PuOther) @ $($script:PuSub)" }).Action | Should -Be @('Removed')
+        @($script:PuArmLog | Where-Object { $_ -like 'DELETE *' } | Sort-Object) | Should -Be @(
+            "DELETE $($script:PuRaPath)/cccc9090-0000-0000-0000-000000000003?api-version=2022-04-01"
+            "DELETE $($script:PuRaPath)/cccc9090-0000-0000-0000-000000000009?api-version=2022-04-01"
+        )
+        $Rows.Count | Should -Be 3
+    }
+
+    It 'canonicalizes the casing of principalStatus before it applies the document, and the entry reports the canonical value' {
+        $Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "dddd9090-0000-0000-0000-000000000001", "principalStatus": "deleted" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Confirm:$false -WarningAction SilentlyContinue -ErrorAction Stop)
+        # Reach proof: the scope was read once (the three live assignments there are Extra without -Prune).
+        @($script:PuArmLog | Where-Object { $_ -like 'GET *roleAssignments*' }).Count | Should -Be 1
+        $Entry = @($Rows | Where-Object { $_.Item -eq "Reader -> $($script:PuGone) @ $($script:PuSub)" })
+        $Entry.Count | Should -Be 1
+        $Entry[0].Action | Should -Be 'Skipped'
+        $Entry[0].Detail | Should -BeExactly (Get-PuSkippedDetail -Status 'Deleted' -Principal $script:PuGone)
+        @($script:PuArmLog | Where-Object { $_ -like 'PUT *' }).Count | Should -Be 0
+    }
+
+    It 'refuses a document whose principalStatus entry names its principal by name, before any sign-in or request' {
+        $Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com", "principalStatus": "Deleted" } ] }'
+        $Err = $null
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+        $Rows.Count | Should -Be 0
+        $Refused = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'StructureValidationFailed,*' })
+        $Refused.Count | Should -Be 1
+        $Refused[0].Exception.Message | Should -BeLike "*roleAssignments``[0``].principal: 'principal' at roleAssignments``[0``] must be an object id (a GUID) when 'principalStatus' is declared*"
+        $script:PuArmLog.Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERUserId -Times 0
+    }
+
+    Context 'in a script with no try above it' {
+        # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere
+        # above it, as at a prompt. The script installs its own fakes in ITS copy of the module scope and
+        # logs every ARM request and every lookup with AppendAllText, whose path is substituted into the
+        # text. The first scenario's document holds a principalStatus entry; the control's holds the same
+        # entry without principalStatus, so the create is reachable with the same fakes.
+        BeforeAll {
+            function script:New-PuNoTryScenario {
+                param([string]$Log, [string]$EntryJson)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERUserId -Value { [System.IO.File]::AppendAllText('#LOG#', "LOOKUP user`n"); 'dddd9090-0000-0000-0000-000000000002' }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { [System.IO.File]::AppendAllText('#LOG#', "LOOKUP group`n"); 'dddd9090-0000-0000-0000-000000000002' }
+    Set-Item -Path function:script:Resolve-OERApplicationId -Value { [System.IO.File]::AppendAllText('#LOG#', "LOOKUP application`n"); 'dddd9090-0000-0000-0000-000000000002' }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "LOOKUP principal`n")
+        [pscustomobject]@{ PrincipalId = 'dddd9090-0000-0000-0000-000000000001'; PrincipalType = 'User' }
+    }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Method = 'GET', [string]$Path, [hashtable]$Body, [switch]$All)
+        [System.IO.File]::AppendAllText('#LOG#', "$Method $Path`n")
+        $Sub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $Reader = "$Sub/providers/Microsoft.Authorization/roleDefinitions/bbbb9090-0000-0000-0000-000000000001"
+        if ($Method -eq 'GET' -and $Path -like '*/roleDefinitions?*') { return [pscustomobject]@{ value = @([pscustomobject]@{ id = $Reader }) } }
+        if ($Method -eq 'GET' -and $Path -like '*/roleAssignments?*atScope()') {
+            return [pscustomobject]@{ value = @(
+                [pscustomobject]@{ id = "$Sub/providers/Microsoft.Authorization/roleAssignments/cccc9090-0000-0000-0000-000000000002"; name = 'a'
+                    properties = [pscustomobject]@{ scope = $Sub; principalId = 'dddd9090-0000-0000-0000-000000000002'; roleDefinitionId = $Reader } }
+                [pscustomobject]@{ id = "$Sub/providers/Microsoft.Authorization/roleAssignments/cccc9090-0000-0000-0000-000000000009"; name = 'b'
+                    properties = [pscustomobject]@{ scope = $Sub; principalId = 'dddd9090-0000-0000-0000-000000000009'; roleDefinitionId = $Reader } }
+            ) }
+        }
+        if ($Method -eq 'PUT') {
+            return [pscustomobject]@{ id = $Path.Split('?')[0]; name = 'created'; properties = [pscustomobject]@{
+                    scope = $Sub; principalId = $Body.properties.principalId; roleDefinitionId = $Body.properties.roleDefinitionId } }
+        }
+        if ($Method -eq 'DELETE') { return [pscustomobject]@{ id = $Path.Split('?')[0]; properties = [pscustomobject]@{} } }
+        throw "unexpected $Method $Path"
+    }
+}
+$Json = '{ "version": "1.0", "roleAssignments": [ #ENTRY#, { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" } ] }'
+Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$($_.Action):$($_.Item)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#ENTRY#', $EntryJson))
+            }
+            $script:PuGoneLabel = 'Reader -> dddd9090-0000-0000-0000-000000000001 @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $script:PuPerson2Label = 'Reader -> person2@example.com @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $script:PuOtherLabel = 'bbbb9090-0000-0000-0000-000000000001 -> dddd9090-0000-0000-0000-000000000009 @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        }
+
+        It 'reaches the end, having skipped the entry and sent no create, though it removed the undeclared assignment' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Entry = '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "dddd9090-0000-0000-0000-000000000001", "principalStatus": "Deleted" }'
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PuNoTryScenario -Log $Log -EntryJson $Entry)
+            $Run.Output[-1] | Should -BeExactly 'END'
+            $Logged = @(Get-Content -LiteralPath $Log)
+            # Reached: the undeclared assignment was removed after the entry was skipped.
+            $Logged | Should -Contain 'DELETE /subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleAssignments/cccc9090-0000-0000-0000-000000000009?api-version=2022-04-01'
+            @($Logged | Where-Object { $_ -like 'PUT *' }).Count | Should -Be 0 -Because "the create is never sent; the requests were:`n$($Logged -join "`n")"
+            $Logged | Should -Not -Contain 'LOOKUP principal'
+            $Logged | Should -Not -Contain 'LOOKUP group'
+            $Logged | Should -Not -Contain 'LOOKUP application'
+            # The first entry of a scope runs the scope's prune pass right after its own row.
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+                "ROW:Skipped:$($script:PuGoneLabel)"
+                "ROW:Removed:$($script:PuOtherLabel)"
+                "ROW:Unchanged:$($script:PuPerson2Label)"
+            )
+            @($Run.Errors).Count | Should -Be 0
+            @($Run.Prompts).Count | Should -Be 0
+        }
+
+        It 'creates the same entry in the same script when it declares no principalStatus, so the scenario can tell a skip from silence' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Entry = '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "dddd9090-0000-0000-0000-000000000001" }'
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PuNoTryScenario -Log $Log -EntryJson $Entry)
+            $Run.Output[-1] | Should -BeExactly 'END'
+            $Logged = @(Get-Content -LiteralPath $Log)
+            @($Logged | Where-Object { $_ -like 'PUT *' }).Count | Should -Be 1
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+                "ROW:Created:$($script:PuGoneLabel)"
+                "ROW:Removed:$($script:PuOtherLabel)"
+                "ROW:Unchanged:$($script:PuPerson2Label)"
+            )
+        }
+    }
+}
