@@ -6438,3 +6438,249 @@ Describe 'Test-OERStructureSchema roleAssignments principalStatus (A18, Sprint 1
         $Hit[0].Message | Should -BeLike 'roleAssignments[[]1] declares the same scope, role and principal as roleAssignments[[]0]*'
     }
 }
+
+Describe 'Test-OERStructureSchema warns about PIM for Groups in a restricted management unit (Rule 16, Sprint 11 step 6, BL-134)' {
+    # Microsoft Entra ID limits who can change an object in a restricted management unit, so a group that
+    # uses PIM for Groups (a non-empty eligibility, or a pimPolicy) and sits in one may be out of reach for
+    # the identity that applies the document. The validator warns, never refuses, in two shapes: at
+    # groups[i].administrativeUnit when the group names a restricted unit, and at groups[i] when a restricted
+    # unit's members list the group. A group raises each shape at most once for a unit. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        $script:RuUnitId = 'eeee5555-0000-0000-0000-0000000000a1'
+        $script:RuGroupId = 'eeee5555-0000-0000-0000-0000000000a2'
+        $script:RuEligibility = '"eligibility": [ { "principal": "person1@example.com", "accessType": "Member" } ]'
+        $script:RuRisk = "Microsoft Entra ID limits who can change an object in a restricted management unit, so a tenant-level identity may not be able to manage the group's PIM settings or eligibility there, and Invoke-OERStructure could be refused when it applies them; how Microsoft Graph answers it has not been measured. Review it before applying the document."
+        function Invoke-RuValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        # The findings of this rule, among all a document raises: the ones whose message speaks of a
+        # restricted management unit.
+        function Get-RuFinding {
+            param([object]$Validation)
+            @($Validation.Errors | Where-Object { $_.Message -like '*restricted management unit*' })
+        }
+    }
+
+    Context 'a group that names a restricted unit' {
+        It 'warns once, at the group administrativeUnit path, naming the group, the unit and the risk, and keeps the document Valid' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-R", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-0", "members": null }, { "displayName": "AU-R", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+            $Hit[0].Path | Should -BeExactly 'groups[0].administrativeUnit'
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Section | Should -BeExactly 'groups'
+            $Hit[0].Item | Should -BeExactly 'GroupX'
+            $Hit[0].Message | Should -BeExactly ("Group 'GroupX' at groups[0] declares PIM for Groups settings (an eligibility or a pimPolicy) and administrativeUnit 'AU-R', which names " +
+                "administrativeUnits[1], a restricted management unit. $($script:RuRisk)")
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'counts a pimPolicy as PIM for Groups settings, with no eligibility' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-R", "pimPolicy": { "member": { "activationMaxHours": 8 } } } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'groups[0].administrativeUnit'
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'matches the unit''s displayName ignoring case' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "au-r", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeLike "Group 'GroupX' at groups[[]0] declares PIM for Groups settings (an eligibility or a pimPolicy) and administrativeUnit 'au-r', which names administrativeUnits[[]0], a restricted management unit. *"
+        }
+
+        It 'matches the unit by the id its entry declares, compared as a GUID, when the group names it <Label>' -ForEach @(
+            @{ Label = 'in upper case'; Style = 'Upper' }
+            @{ Label = 'in braces'; Style = 'Braced' }
+            @{ Label = 'without dashes'; Style = 'Plain' }
+        ) {
+            $Ref = switch ($Style) {
+                'Upper' { $script:RuUnitId.ToUpperInvariant() }
+                'Braced' { '{' + $script:RuUnitId + '}' }
+                'Plain' { $script:RuUnitId.Replace('-', '') }
+            }
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "' + $Ref + '", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "id": "' + $script:RuUnitId + '", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'groups[0].administrativeUnit'
+            $Hit[0].Message | Should -BeLike "Group 'GroupX' at groups[[]0] declares PIM for Groups settings (an eligibility or a pimPolicy) and administrativeUnit '$([System.Management.Automation.WildcardPattern]::Escape($Ref))', which names administrativeUnits[[]0], a restricted management unit. *"
+        }
+        It 'warns once for each restricted unit the reference names' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-R", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "SomeoneElse" ] }, { "displayName": "au-r", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 2
+            $Hit[0].Message | Should -BeLike "*which names administrativeUnits[[]0], a restricted management unit.*"
+            $Hit[1].Message | Should -BeLike "*which names administrativeUnits[[]1], a restricted management unit.*"
+        }
+    }
+
+    Context 'a restricted unit whose members list the group' {
+        It 'warns once, at the group path, naming the group, the unit and the risk, and keeps the document Valid' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-0", "members": [ "GroupX" ] }, { "displayName": "AU-R", "restricted": true, "members": [ "SomeoneElse", "groupx" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+            $Hit[0].Path | Should -BeExactly 'groups[0]'
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Section | Should -BeExactly 'groups'
+            $Hit[0].Item | Should -BeExactly 'GroupX'
+            $Hit[0].Message | Should -BeExactly ("Group 'GroupX' at groups[0] declares PIM for Groups settings (an eligibility or a pimPolicy), and administrativeUnits[1] ('AU-R'), " +
+                "a restricted management unit, lists the group in its members as 'groupx'. $($script:RuRisk)")
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'matches the member by the id the group declares, ignoring case, and counts a pimPolicy' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "id": "' + $script:RuGroupId + '", "pimPolicy": { "member": { "activationMaxHours": 8 } } } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "' + $script:RuGroupId.ToUpperInvariant() + '" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'groups[0]'
+            $Hit[0].Message | Should -BeLike "*lists the group in its members as '$($script:RuGroupId.ToUpperInvariant())'. *"
+        }
+
+        It 'names the group by the name its template computes' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "template": "grp-{Region}", "tokens": { "Region": "EU" }, ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "GRP-eu" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Item | Should -BeExactly 'grp-EU'
+            $Hit[0].Message | Should -BeLike "Group 'grp-EU' at groups[[]0] declares PIM for Groups settings*"
+        }
+
+        It 'still finds a group whose template name cannot be computed by the id it declares, and names it by its path' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "template": "grp-{Unknown}", "tokens": { "Region": "EU" }, "id": "' + $script:RuGroupId + '", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "' + $script:RuGroupId + '" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Item | Should -BeExactly 'groups[0]'
+            $Hit[0].Message | Should -BeLike "Group at groups[[]0] declares PIM for Groups settings*"
+        }
+
+        It 'warns once for a unit that lists the group twice, by name and by id' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "id": "' + $script:RuGroupId + '", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "GroupX", "' + $script:RuGroupId + '" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            # The first member that lists the group is the one the message names.
+            $Hit[0].Message | Should -BeLike "*lists the group in its members as 'GroupX'. *"
+        }
+
+        It 'warns once for each restricted unit that lists the group' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "GroupX" ] }, { "displayName": "AU-S", "restricted": true, "members": [ "GroupX" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 2
+            $Hit[0].Message | Should -BeLike "*administrativeUnits[[]0] ('AU-R'), a restricted management unit, lists the group*"
+            $Hit[1].Message | Should -BeLike "*administrativeUnits[[]1] ('AU-S'), a restricted management unit, lists the group*"
+        }
+    }
+
+    Context 'both shapes for one group and one unit' {
+        It 'raises each shape once, at its own path' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-R", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "GroupX" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 2
+            @($Hit | ForEach-Object { $_.Path }) | Should -Be @('groups[0].administrativeUnit', 'groups[0]')
+            @($Hit | ForEach-Object { $_.Severity } | Select-Object -Unique) | Should -Be @('Warning')
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    Context 'where it raises nothing' {
+        It 'raises nothing for a unit that is not restricted (<Label>), in either shape' -ForEach @(
+            @{ Label = 'restricted false'; Unit = '"restricted": false' }
+            @{ Label = 'no restricted key'; Unit = '"description": "x"' }
+            @{ Label = 'restricted null'; Unit = '"restricted": null' }
+            @{ Label = 'restricted the string true'; Unit = '"restricted": "true"' }
+        ) {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-R", ' + $script:RuEligibility + ' }, { "displayName": "GroupY", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", ' + $Unit + ', "members": [ "GroupX", "GroupY" ] } ] }')
+            # Reach proof: the document was validated, and the unit names group X on both counts.
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-RuFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'raises nothing for a group that uses no PIM for Groups (<Label>), in either shape' -ForEach @(
+            @{ Label = 'no eligibility and no pimPolicy'; Group = '"displayName": "GroupX"' }
+            @{ Label = 'an empty eligibility'; Group = '"displayName": "GroupX", "eligibility": []' }
+            @{ Label = 'a null eligibility'; Group = '"displayName": "GroupX", "eligibility": null' }
+            @{ Label = 'a null pimPolicy'; Group = '"displayName": "GroupX", "pimPolicy": null' }
+            @{ Label = 'an eligibility that is not an array'; Group = '"displayName": "GroupX", "eligibility": "x"' }
+            @{ Label = 'an eligibility that holds only a null'; Group = '"displayName": "GroupX", "eligibility": [ null ]' }
+            @{ Label = 'an eligibility that is a number'; Group = '"displayName": "GroupX", "eligibility": 5' }
+        ) {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { ' + $Group + ', "administrativeUnit": "AU-R" } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "GroupX" ] } ] }')
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-RuFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'raises nothing in the second shape when the restricted unit''s members are an explicit null, omitted or do not list the group' -ForEach @(
+            @{ Label = 'null'; Members = '"members": null' }
+            @{ Label = 'omitted'; Members = '"description": "x"' }
+            @{ Label = 'another name'; Members = '"members": [ "GroupZ", "person1@example.com" ]' }
+            @{ Label = 'empty'; Members = '"members": []' }
+        ) {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, ' + $Members + ' } ] }')
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-RuFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'raises nothing in the first shape for an empty administrativeUnit, although a restricted unit has the empty name' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-RuFinding -Validation $V).Count | Should -Be 0
+        }
+        It 'raises nothing in the first shape when the group names a unit this document does not declare, or a restricted unit by another name' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-Ghost", ' + $script:RuEligibility + ' }, ' +
+                '{ "displayName": "GroupY", "administrativeUnit": "' + $script:RuGroupId + '", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "id": "' + $script:RuUnitId + '", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-RuFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'raises nothing for an exported document: its groups carry no object id and its units list a group member by object id' {
+            # The shape Export-OERInventory writes: no id on a group, no administrativeUnit, and the unit's
+            # members hold the group's object id, which the document does not declare anywhere.
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "' + $script:RuGroupId + '" ] } ] }')
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-RuFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'raises nothing for a document without groups or without administrativeUnits' {
+            foreach ($Json in @(
+                    '{ "version": "1.0", "administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "GroupX" ] } ] }'
+                    ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", ' + $script:RuEligibility + ' } ] }')
+                )) {
+                $V = Invoke-RuValidation -Json $Json
+                $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+                @(Get-RuFinding -Validation $V).Count | Should -Be 0
+            }
+        }
+    }
+
+    It 'states the rule in the help' {
+        $Description = InModuleScope $script:moduleName {
+            ((@((Get-Help Test-OERStructureSchema -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        }
+        $Description | Should -Match ([regex]::Escape('groups[] entry with a non-empty eligibility or a pimPolicy that names, by displayName (ignoring case) or by the id its entry declares, an administrativeUnits[] entry whose restricted is true'))
+        $Description | Should -Match ([regex]::Escape('or that such a unit lists in its members by the group''s name or declared id, is a Warning'))
+        $Description | Should -Match ([regex]::Escape('how Microsoft Graph answers a tenant-level identity has not been measured'))
+    }
+}

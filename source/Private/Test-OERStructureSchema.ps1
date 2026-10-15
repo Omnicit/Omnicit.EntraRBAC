@@ -265,7 +265,21 @@ function Test-OERStructureSchema {
     reported. The exclusion trusts the document's dynamic flag: a group declared dynamic whose live
     group is static (Set-OERGroup cannot convert it), or an administrative unit whose conversion to
     dynamic is not applied in this run (-WhatIf, a declined prompt, a failed update, or no
-    membershipRule available), still has its omitted members pruned, and is not reported. Returns a tagged Omnicit.EntraRBAC.StructureValidation object with a Valid flag and an
+    membershipRule available), still has its omitted members pruned, and is not reported. A
+    groups[] entry with a non-empty eligibility or a pimPolicy that names, by displayName (ignoring case)
+    or by the id its entry declares, an administrativeUnits[] entry whose restricted is true, or that such
+    a unit lists in its members by the group's name or declared id, is a Warning, never an Error (Rule
+    16, Sprint 11 step 6, BL-134): the Warning is raised at groups[i].administrativeUnit for the first
+    shape and at groups[i] for the second, once for each such unit. A group uses PIM for Groups here when
+    it declares a pimPolicy (not null) or an eligibility array with at least one entry. Microsoft Entra ID
+    limits who can change an object in a restricted management administrative unit, so a tenant-level
+    identity may not be able to manage the group's PIM settings or eligibility there, and
+    Invoke-OERStructure could be refused when it applies them; how Microsoft Graph answers a tenant-level
+    identity has not been measured. The unit is matched as the administrativeUnit placement check above
+    matches it; the members name the group when they list its name (a template-based group's computed
+    name included) or its declared id, ignoring case. An exported document raises neither shape, since an
+    exported group carries no object id and no administrativeUnit and its units list a group member by
+    object id: Export-OERInventory names such groups in its own warning and README section. Returns a tagged Omnicit.EntraRBAC.StructureValidation object with a Valid flag and an
     Errors collection of records carrying Section, Item, Path, Message, and Severity. No Graph or ARM
     calls are made and no authentication occurs.
     .PARAMETER Document
@@ -2217,6 +2231,20 @@ function Test-OERStructureSchema {
         return $false
     }
 
+    # Whether an administrativeUnits[] entry is the unit a groups[] administrativeUnit reference names, read
+    # the way New-OERGroup reads it (Rule 12 and Rule 16 share it): a reference that parses as a GUID
+    # (-as [guid], so braced and dash-less forms too) is an object id and matches the entry that declares
+    # that id, compared as a GUID; any other reference is a display name and matches the entry of that
+    # displayName, ignoring case. -ReferenceGuid is the reference parsed, $null when it is not a GUID, so
+    # two values that are not object ids never match as two nulls.
+    function Test-UnitNamedByReference {
+        param([object]$Unit, [string]$Reference, [object]$ReferenceGuid)
+        if ($null -ne $ReferenceGuid) {
+            return (Test-HasProp -Node $Unit -Name 'id') -and (([string]$Unit.id -as [guid]) -eq $ReferenceGuid)
+        }
+        (Test-HasProp -Node $Unit -Name 'displayName') -and ([string]$Unit.displayName -ieq $Reference)
+    }
+
     if ((Test-HasProp -Node $Document -Name 'groups') -and
         ($Document.groups -is [System.Collections.IEnumerable]) -and
         ($Document.groups -isnot [string]) -and
@@ -2253,12 +2281,7 @@ function Test-OERStructureSchema {
             $PMatchedAuIndex = -1
             for ($K = 0; $K -lt $AuPlacementUnits.Count; $K++) {
                 $PUnit = $AuPlacementUnits[$K]
-                $PUnitMatches = if ($null -ne $PAuGuid) {
-                    (Test-HasProp -Node $PUnit -Name 'id') -and (([string]$PUnit.id -as [guid]) -eq $PAuGuid)
-                } else {
-                    (Test-HasProp -Node $PUnit -Name 'displayName') -and ([string]$PUnit.displayName -ieq $PAuName)
-                }
-                if ($PUnitMatches) {
+                if (Test-UnitNamedByReference -Unit $PUnit -Reference $PAuName -ReferenceGuid $PAuGuid) {
                     $PMatchedAuIndex = $K
                     break
                 }
@@ -2522,6 +2545,90 @@ function Test-OERStructureSchema {
                     "accessPackages entries declare as displayName or previousDisplayName ($($AmbPaths -join ', ')) while at least one of " +
                     'them is renamed through previousDisplayName, so the run cannot tell which access package the review means. ' +
                     'Name the access package by its object id.')
+        }
+    }
+
+    # Rule 16 (Sprint 11 step 6, BL-134): a group that uses PIM for Groups in a restricted management unit.
+    # Microsoft Entra ID limits who can change an object in a restricted management administrative unit
+    # (an administrativeUnits[] entry whose restricted is the boolean true), so the identity that applies
+    # the document may not be able to manage the PIM settings or the eligibility of a group inside one.
+    # How Microsoft Graph answers a tenant-level caller is not measured, so this is a risk, a Warning and
+    # never an Error (docs/development/rationale.md#restricted-unit-pim). A group uses PIM for Groups when
+    # it declares a pimPolicy (a present key that is not null) or an eligibility array with at least one
+    # entry. Two shapes, each raised at most once per unit:
+    #   - the group names a restricted unit (its administrativeUnit, read as Rule 12 reads it: an object id
+    #     matches the entry that declares that id, any other value the entry of that displayName, ignoring
+    #     case) -- a Warning at groups[i].administrativeUnit;
+    #   - a restricted unit's members list the group, by its name (ignoring case, the name Rule 12 computes
+    #     for a template-based group) or by the id the group declares -- a Warning at groups[i].
+    # An exported document raises neither: its groups carry no object id and no administrativeUnit, and its
+    # units list a group member by object id, which the document does not declare anywhere. Export-OERInventory
+    # names those groups in its own warning and README section instead.
+    function Test-UnitRestricted {
+        param([object]$Unit)
+        (Test-HasProp -Node $Unit -Name 'restricted') -and ($Unit.restricted -is [bool]) -and $Unit.restricted
+    }
+
+    if ((Test-HasProp -Node $Document -Name 'groups') -and
+        ($Document.groups -is [System.Collections.IEnumerable]) -and
+        ($Document.groups -isnot [string]) -and
+        (Test-HasProp -Node $Document -Name 'administrativeUnits') -and
+        ($Document.administrativeUnits -is [System.Collections.IEnumerable]) -and
+        ($Document.administrativeUnits -isnot [string])) {
+        $RestrictedGroups = @($Document.groups)
+        $RestrictedUnits = @($Document.administrativeUnits)
+        $RestrictedRisk = ("Microsoft Entra ID limits who can change an object in a restricted management unit, so a tenant-level identity may not be able to manage the group's " +
+            'PIM settings or eligibility there, and Invoke-OERStructure could be refused when it applies them; how Microsoft Graph answers it has not been measured. ' +
+            'Review it before applying the document.')
+        for ($I = 0; $I -lt $RestrictedGroups.Count; $I++) {
+            $RestrictedGroup = $RestrictedGroups[$I]
+            $UsesPim = (Test-HasProp -Node $RestrictedGroup -Name 'pimPolicy') -or
+                ((Test-HasProp -Node $RestrictedGroup -Name 'eligibility') -and
+                ($RestrictedGroup.eligibility -is [System.Collections.IEnumerable]) -and
+                ($RestrictedGroup.eligibility -isnot [string]) -and
+                (@($RestrictedGroup.eligibility | Where-Object { $null -ne $_ }).Count -gt 0))
+            if (-not $UsesPim) { continue }
+
+            $RestrictedName = Get-GroupEntryName -Group $RestrictedGroup
+            $RestrictedId = if (Test-HasProp -Node $RestrictedGroup -Name 'id') { [string]$RestrictedGroup.id } else { $null }
+            $RestrictedItem = if ($null -ne $RestrictedName) { $RestrictedName } else { "groups[$I]" }
+            $RestrictedLabel = if ($null -ne $RestrictedName) { "Group '$RestrictedName' at groups[$I]" } else { "Group at groups[$I]" }
+
+            # The group names a restricted unit.
+            if (Test-HasProp -Node $RestrictedGroup -Name 'administrativeUnit') {
+                $RestrictedRef = [string]$RestrictedGroup.administrativeUnit
+                if (-not [string]::IsNullOrEmpty($RestrictedRef)) {
+                    $RestrictedRefGuid = $RestrictedRef -as [guid]
+                    for ($K = 0; $K -lt $RestrictedUnits.Count; $K++) {
+                        if (-not (Test-UnitRestricted -Unit $RestrictedUnits[$K])) { continue }
+                        if (-not (Test-UnitNamedByReference -Unit $RestrictedUnits[$K] -Reference $RestrictedRef -ReferenceGuid $RestrictedRefGuid)) { continue }
+                        Add-Finding -Section 'groups' -Item $RestrictedItem -Path "groups[$I].administrativeUnit" -Severity 'Warning' `
+                            -Message ("$RestrictedLabel declares PIM for Groups settings (an eligibility or a pimPolicy) and administrativeUnit '$RestrictedRef', " +
+                                "which names administrativeUnits[$K], a restricted management unit. $RestrictedRisk")
+                    }
+                }
+            }
+
+            # A restricted unit's members list the group.
+            for ($K = 0; $K -lt $RestrictedUnits.Count; $K++) {
+                $RestrictedUnit = $RestrictedUnits[$K]
+                if (-not (Test-UnitRestricted -Unit $RestrictedUnit)) { continue }
+                # An omitted or null members lists nobody.
+                $ListedAs = $null
+                foreach ($UnitMember in @($RestrictedUnit.members)) {
+                    $MemberText = [string]$UnitMember
+                    if ((-not [string]::IsNullOrEmpty($RestrictedName) -and $MemberText -ieq $RestrictedName) -or
+                        (-not [string]::IsNullOrEmpty($RestrictedId) -and $MemberText -ieq $RestrictedId)) {
+                        $ListedAs = $MemberText
+                        break
+                    }
+                }
+                if ($null -eq $ListedAs) { continue }
+                $RestrictedUnitName = if (Test-HasProp -Node $RestrictedUnit -Name 'displayName') { [string]$RestrictedUnit.displayName } else { "administrativeUnits[$K]" }
+                Add-Finding -Section 'groups' -Item $RestrictedItem -Path "groups[$I]" -Severity 'Warning' `
+                    -Message ("$RestrictedLabel declares PIM for Groups settings (an eligibility or a pimPolicy), and administrativeUnits[$K] ('$RestrictedUnitName'), " +
+                        "a restricted management unit, lists the group in its members as '$ListedAs'. $RestrictedRisk")
+            }
         }
     }
 

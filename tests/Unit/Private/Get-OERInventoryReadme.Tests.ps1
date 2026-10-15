@@ -13,7 +13,7 @@ AfterAll {
 Describe 'Get-OERInventoryReadme' {
     It 'returns markdown that names every bundle file and the next-step cmdlets' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             $Md | Should -BeOfType ([string])
             # Every file Export-OERInventory writes, the two directory role area files included.
             foreach ($File in @('inventory.json', 'groups.json', 'administrativeUnits.json',
@@ -33,7 +33,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'states where the bundle stops covering the tenant' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             # An operator must not read the bundle as a complete picture: all four areas below are
             # absent entirely -- none of them is captured lossily (a multi-stage review used to be
             # fabricated as a lossy single-stage self review; it is skipped instead).
@@ -52,7 +52,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'states eligible Azure PIM assignments are read-only context in azurePimEligibility.json' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             # Regression guard for a stale claim: eligible Azure PIM assignments used to be entirely
             # uncaptured; Export-OERInventory now writes them into azurePimEligibility.json as
             # read-only context, so the README must say so rather than repeat the old blanket claim.
@@ -64,7 +64,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'states a multi-stage review is skipped rather than fabricated as a lossy self review' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             # Regression guard for a stale claim: Get-OERInventory no longer fabricates a
             # single-stage self review out of a multi-stage one (commit 611f241) -- it skips the
             # review entirely with a warning, so the README must not claim otherwise.
@@ -76,7 +76,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'names the access-package-scope carve-out as its own coverage limit' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             # Regression guard: a group/application/directory-role review is excluded regardless
             # of stage count -- a different cause from the multi-stage skip above, so it needs its
             # own bullet rather than being folded into that one.
@@ -86,7 +86,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'says in the file roster that groupsRoster.json carries onPremisesSynced among its flags (A15)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             $Flat = $Md -replace '\s+', ' '
             $Flat | Should -Match ([regex]::Escape('and flags, including `onPremisesSynced`.'))
         }
@@ -94,7 +94,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'says in the file roster that each groupsRoster.json row carries the group''s id and type (BL-131)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             $Bullet = (($Md -split '(?m)^- `groupsRoster\.json` ')[1] -split '(?m)^- ')[0] -replace '\s+', ' '
             $Bullet | Should -Match ([regex]::Escape('-- a lightweight roster of EVERY group in the tenant, of every group type, read unfiltered: one row per group with its `id` and `displayName`, its type (`securityEnabled`, `mailEnabled` and `groupTypes`), `visibility`, `createdDateTime` and flags, including `onPremisesSynced`. The `id` tells apart two groups that share a name.'))
             # The roster used to be described as names and flags alone, which its rows no longer are.
@@ -104,7 +104,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'says in the file roster that memberCount is null for a group the export did not read in full, and why (R3)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             # The groupsRoster.json bullet alone: from its own marker to the next bullet, whitespace
             # collapsed so the assertion does not depend on where the line wraps.
             $Md | Should -Match '(?m)^- `groupsRoster\.json` '
@@ -122,7 +122,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'explains in "Which groups are covered" that a synchronized group is detailed only on request and is never written by the apply (A15)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             $Md | Should -Match '(?m)^## Which groups are covered\r?$'
             $Section = (($Md -split '(?m)^## Which groups are covered\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
             $Section | Should -Match ([regex]::Escape('A group synchronized from on-premises Active Directory (`onPremisesSynced` true in `groupsRoster.json`) is managed there and read-only in the cloud: it cannot be role-assignable or managed in PIM for Groups, so `inventory.json` details it only when the export ran with `-IncludeSyncedGroups` or `-AllGroupsDetailed`, and there it carries `onPremisesSynced: true`. `Invoke-OERStructure` writes nothing to such a group.'))
@@ -133,7 +133,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'explains in "Which groups are covered" how the export chose the groups it detailed, and that -GroupFilter only narrows (A13)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             $Section = (($Md -split '(?m)^## Which groups are covered\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
             # Which groups are detailed, and that a group found not relevant was never read in full.
             $Section | Should -Match ([regex]::Escape('Unless the export ran with `-AllGroupsDetailed`, `inventory.json` details only the RBAC-relevant security groups: role-assignable ones, ones with PIM eligibility, ones found to use PIM for Groups (written with a `pimPolicy` block), and synchronized ones when the export ran with `-IncludeSyncedGroups`.'))
@@ -151,7 +151,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'warns that an unread members, scopedRoles, resources or resourceRoles collection is written as null and must never be changed to []' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             $Md | Should -Match '(?m)^## Unread collections\r?$'
             # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
             $Section = (($Md -split '(?m)^## Unread collections\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
@@ -192,7 +192,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'tells the reader in Next steps that a proposal keeping tenantId is applied only in the tenant the export came from' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
             $Section = ($Md -split '(?m)^## Next steps\r?$')[1] -replace '\s+', ' '
             $Section | Should -Match ([regex]::Escape('A proposal that keeps the `tenantId` of `inventory.json` is applied only in the tenant this export came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in another tenant, change or remove `tenantId` first.'))
@@ -203,7 +203,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'contains only ASCII characters' {
         InModuleScope $script:moduleName {
-            $Bytes = [System.Text.Encoding]::UTF8.GetBytes((Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()))
+            $Bytes = [System.Text.Encoding]::UTF8.GetBytes((Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()))
             ($Bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
         }
     }
@@ -221,7 +221,7 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
             param([string[]]$IncompleteReads = @(), [string[]]$SkippedScopes = @(), [string[]]$SkippedEligibilityScopes = @(), [object[]]$PimLeftOut = @())
             InModuleScope $script:moduleName -Parameters @{ A = $IncompleteReads; B = $SkippedScopes; C = $SkippedEligibilityScopes; D = $PimLeftOut } {
                 param($A, $B, $C, $D)
-                Get-OERInventoryReadme -IncompleteReads $A -SkippedScopes $B -SkippedEligibilityScopes $C -PimLeftOut $D -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+                Get-OERInventoryReadme -IncompleteReads $A -SkippedScopes $B -SkippedEligibilityScopes $C -PimLeftOut $D -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             }
         }
         # The section, heading included, up to the next level 2 heading.
@@ -443,7 +443,7 @@ Describe 'Get-OERInventoryReadme (members and owners left out as PIM for Groups 
             param([object[]]$PimLeftOut = @(), [string[]]$IncompleteReads = @())
             InModuleScope $script:moduleName -Parameters @{ P = $PimLeftOut; I = $IncompleteReads } {
                 param($P, $I)
-                Get-OERInventoryReadme -IncompleteReads $I -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $P -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+                Get-OERInventoryReadme -IncompleteReads $I -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $P -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             }
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -488,12 +488,14 @@ Describe 'Get-OERInventoryReadme (members and owners left out as PIM for Groups 
         $Headings[$Index + 1] | Should -BeExactly $script:PimHeading
         # BL-126: the root scope section follows this one; BL-131: the shared names section follows
         # that; Sprint 11 step 6 (BL-133): the unresolved principals section follows that; A13, A15: the
-        # undeclarable scope section follows that, and ## Files follows it.
+        # undeclarable scope section follows that; BL-134: the restricted management unit section follows
+        # that, and ## Files follows it.
         $Headings[$Index + 2] | Should -BeExactly '## Role assignments at the root scope (elevated access)'
         $Headings[$Index + 3] | Should -BeExactly '## Names two or more objects share'
         $Headings[$Index + 4] | Should -BeExactly '## Role assignments whose principal the directory did not return'
         $Headings[$Index + 5] | Should -BeExactly '## Role assignments at a scope no document can declare'
-        $Headings[$Index + 6] | Should -BeExactly '## Files'
+        $Headings[$Index + 6] | Should -BeExactly '## Groups using PIM for Groups in a restricted management unit'
+        $Headings[$Index + 7] | Should -BeExactly '## Files'
     }
 
     It 'says that none was left out when the list is empty' {
@@ -587,7 +589,7 @@ Describe 'Get-OERInventoryReadme (role assignments at the root scope, BL-126)' {
             param([object[]]$Rows = @())
             InModuleScope $script:moduleName -Parameters @{ R = $Rows } {
                 param($R)
-                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments $R -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments $R -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             }
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -657,12 +659,13 @@ Describe 'Get-OERInventoryReadme (role assignments at the root scope, BL-126)' {
         $Index = [array]::IndexOf($Headings, $script:RootHeading)
         $Headings[$Index - 1] | Should -BeExactly '## Members and owners left out as PIM for Groups access'
         # BL-131: the shared names section comes directly after this one; Sprint 11 step 6 (BL-133): the
-        # unresolved principals section after that; A13, A15: the undeclarable scope section after that,
-        # ahead of ## Files.
+        # unresolved principals section after that; A13, A15: the undeclarable scope section after that;
+        # BL-134: the restricted management unit section after that, ahead of ## Files.
         $Headings[$Index + 1] | Should -BeExactly '## Names two or more objects share'
         $Headings[$Index + 2] | Should -BeExactly '## Role assignments whose principal the directory did not return'
         $Headings[$Index + 3] | Should -BeExactly '## Role assignments at a scope no document can declare'
-        $Headings[$Index + 4] | Should -BeExactly '## Files'
+        $Headings[$Index + 4] | Should -BeExactly '## Groups using PIM for Groups in a restricted management unit'
+        $Headings[$Index + 5] | Should -BeExactly '## Files'
     }
 
     It 'names roles and principals only, never the role assignment id' {
@@ -710,7 +713,7 @@ Describe 'Get-OERInventoryReadme (names two or more objects share, BL-131)' {
             param([object[]]$Names = @())
             InModuleScope $script:moduleName -Parameters @{ S = $Names } {
                 param($S)
-                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames $S -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames $S -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             }
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -806,11 +809,12 @@ Describe 'Get-OERInventoryReadme (names two or more objects share, BL-131)' {
         $Index | Should -BeGreaterThan 0
         $Headings[$Index - 1] | Should -BeExactly '## Role assignments at the root scope (elevated access)'
         # Sprint 11 step 6 (BL-133): the section on role assignment principals that could not be looked
-        # up comes directly after this one; A13, A15: the undeclarable scope section after that, ahead of
-        # ## Files.
+        # up comes directly after this one; A13, A15: the undeclarable scope section after that; BL-134: the
+        # restricted management unit section after that, ahead of ## Files.
         $Headings[$Index + 1] | Should -BeExactly '## Role assignments whose principal the directory did not return'
         $Headings[$Index + 2] | Should -BeExactly '## Role assignments at a scope no document can declare'
-        $Headings[$Index + 3] | Should -BeExactly '## Files'
+        $Headings[$Index + 3] | Should -BeExactly '## Groups using PIM for Groups in a restricted management unit'
+        $Headings[$Index + 4] | Should -BeExactly '## Files'
     }
 
     It 'leaves the other sections exactly as they were' {
@@ -852,7 +856,7 @@ Describe 'Get-OERInventoryReadme (role assignments whose principal the directory
             param([object[]]$Rows = @())
             InModuleScope $script:moduleName -Parameters @{ U = $Rows } {
                 param($U)
-                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments $U -UndeclarableScopeAssignments @()
+                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments $U -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             }
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -1004,7 +1008,7 @@ Describe 'Get-OERInventoryReadme (role assignments at a scope no document can de
             param([object[]]$Rows = @())
             InModuleScope $script:moduleName -Parameters @{ D = $Rows } {
                 param($D)
-                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments $D
+                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments $D -RestrictedUnitPimGroups @()
             }
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -1080,7 +1084,7 @@ Describe 'Get-OERInventoryReadme (role assignments at a scope no document can de
         $Bullets | Should -Be @('- `Reader` at `/subscriptions/x/rg#1` for `dddd6666-0000-0000-0000-000000000008` (User)')
     }
 
-    It 'places the section directly after "Role assignments whose principal the directory did not return" and ahead of ## Files (<State>)' -ForEach @(
+    It 'places the section directly after "Role assignments whose principal the directory did not return" and ahead of "Groups using PIM for Groups in a restricted management unit" (<State>)' -ForEach @(
         @{ State = 'none'; Rows = @() }
         @{ State = 'one row'; Rows = @([PSCustomObject]@{ RoleAssignmentId = ''; Scope = '/subscriptions/x/rg#1'; Role = 'Owner'; Principal = 'dddd6666-0000-0000-0000-000000000004'; PrincipalType = 'Group'; Reason = 'the scope holds a question mark or a number sign' }) }
     ) {
@@ -1090,7 +1094,7 @@ Describe 'Get-OERInventoryReadme (role assignments at a scope no document can de
         $Index = [array]::IndexOf($Headings, $script:UdHeading)
         $Index | Should -BeGreaterThan 0
         $Headings[$Index - 1] | Should -BeExactly '## Role assignments whose principal the directory did not return'
-        $Headings[$Index + 1] | Should -BeExactly '## Files'
+        $Headings[$Index + 1] | Should -BeExactly '## Groups using PIM for Groups in a restricted management unit'
     }
 
     It 'names role, scope, principal, type and reason only, never the role assignment id' {
@@ -1130,12 +1134,140 @@ Describe 'Get-OERInventoryReadme (role assignments at a scope no document can de
     }
 }
 
+Describe 'Get-OERInventoryReadme (groups using PIM for Groups in a restricted management unit, Sprint 11 step 6, BL-134)' {
+    # A group that uses PIM for Groups and sits in a restricted management unit may be out of reach for
+    # the identity that applies the document. inventory.json keeps it; the README names each such group
+    # and its units, in both states: "none" is a claim the reader needs to rely on as much as the list.
+    # Names only, never an id. No id below is version-4 shaped.
+    BeforeAll {
+        $script:RuHeading = '## Groups using PIM for Groups in a restricted management unit'
+        function Get-RuReadme {
+            param([object[]]$Rows = @())
+            InModuleScope $script:moduleName -Parameters @{ R = $Rows } {
+                param($R)
+                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups $R
+            }
+        }
+        # The section, heading included, up to the next level 2 heading; $null when it is missing.
+        function Get-RuSection {
+            param([string]$Readme)
+            $Start = $Readme.IndexOf($script:RuHeading)
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
+        }
+        function Get-RuBullets {
+            param([string]$Section)
+            @($Section -split '\r?\n' | Where-Object { $_ -like '- *' })
+        }
+        # The row shape Export-OERInventory hands over: the group's display name and the display names of
+        # the restricted units it is a member of.
+        function New-RuRow {
+            param([string]$Group, [string[]]$Units)
+            [PSCustomObject]@{ Group = $Group; Units = $Units }
+        }
+        $script:RuProse = 'A group that uses PIM for Groups -- one with PIM eligibility or a `pimPolicy` block -- and is a member of a restricted management administrative unit may be out of reach for the identity that applies a document: Microsoft Entra ID limits who can change an object in a restricted management unit, so a tenant-level identity may not be able to manage the group''s PIM settings or eligibility there, and how Microsoft Graph answers it has not been measured. `inventory.json` keeps such a group, and `Invoke-OERStructure` still sends the PIM settings and eligibility a document declares for it, so an apply may be refused for it. Review each group below as a finding before applying a document that declares it. Only a group `inventory.json` writes is listed, against a unit whose members this export read. Listing a group changes nothing in the tenant and leaves nothing out of the export.'
+        $script:RuNone = 'None. No group that `inventory.json` writes with PIM eligibility or a `pimPolicy` block is a member of a restricted management unit whose members this export read. The check needs both `Groups` and `AdministrativeUnits` in the export, and a unit whose members could not be read is named under "What this export could not read".'
+    }
+
+    It 'says that none was found when the list is empty' {
+        $Section = Get-RuSection -Readme (Get-RuReadme)
+        $Section | Should -Not -BeNullOrEmpty
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape($script:RuProse))
+        $Collapsed | Should -Match ([regex]::Escape($script:RuNone))
+        @(Get-RuBullets -Section $Section).Count | Should -Be 0
+        $Section | Should -Not -Match 'This export found \d+'
+    }
+
+    It 'writes the count line and one bullet per group, in the order given, with its units, and no "None"' {
+        $Section = Get-RuSection -Readme (Get-RuReadme -Rows @(
+                (New-RuRow -Group 'role_sec_admin' -Units @('Restricted AU'))
+                (New-RuRow -Group 'role_sec_pim' -Units @('Restricted AU', 'Second AU'))
+            ))
+        ($Section -replace '\s+', ' ') | Should -Match ([regex]::Escape($script:RuProse))
+        $Section | Should -Match '(?m)^This export found 2 such group\(s\):\r?$'
+        $Expected = @(
+            '- `role_sec_admin` -- member of the restricted management unit(s) `Restricted AU`'
+            '- `role_sec_pim` -- member of the restricted management unit(s) `Restricted AU`, `Second AU`'
+        )
+        ((Get-RuBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
+        # The count line stands between the prose and the bullets (read on the collapsed text, so a line
+        # break inside the prose cannot hide either index).
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed.IndexOf('leaves nothing out of the export.') | Should -BeGreaterThan 0
+        $Collapsed.IndexOf('leaves nothing out of the export.') | Should -BeLessThan $Collapsed.IndexOf('This export found 2')
+        $Collapsed.IndexOf('This export found 2') | Should -BeLessThan $Collapsed.IndexOf('- `role_sec_admin`')
+        $Section | Should -Not -Match 'None\.'
+    }
+
+    It 'writes a name that holds a backtick or an angle bracket as a code span with the fence rule of the other bullets, on one line' {
+        $Section = Get-RuSection -Readme (Get-RuReadme -Rows @(
+                (New-RuRow -Group 'Odd`Group' -Units @("<unit`nnew>", 'Plain AU'))
+            ))
+        # The group holds a backtick, so its fence is two; the first unit holds an angle bracket and a line
+        # break, so it stays inside its code span, on one line.
+        ((Get-RuBullets -Section $Section) -join "`n") | Should -BeExactly '- `` Odd`Group `` -- member of the restricted management unit(s) `<unit new>`, `Plain AU`'
+        # Outside its code spans the bullet holds no angle bracket: Markdown would read it as a tag.
+        ((Get-RuBullets -Section $Section)[0] -replace '`[^`]*`', '') | Should -Not -Match '<'
+    }
+
+    It 'places the section directly after "Role assignments at a scope no document can declare" and ahead of ## Files (<State>)' -ForEach @(
+        @{ State = 'none'; Rows = @() }
+        @{ State = 'one row'; Rows = @([PSCustomObject]@{ Group = 'role_sec_pim'; Units = @('Restricted AU') }) }
+    ) {
+        $Md = Get-RuReadme -Rows $Rows
+        ([regex]::Matches($Md, '(?m)^## Groups using PIM for Groups in a restricted management unit\r?$')).Count | Should -Be 1
+        $Headings = @([regex]::Matches($Md, '(?m)^## .*$') | ForEach-Object { $_.Value.TrimEnd("`r") })
+        $Index = [array]::IndexOf($Headings, $script:RuHeading)
+        $Index | Should -BeGreaterThan 0
+        $Headings[$Index - 1] | Should -BeExactly '## Role assignments at a scope no document can declare'
+        $Headings[$Index + 1] | Should -BeExactly '## Files'
+    }
+
+    It 'names groups and units only, never an id or any other property of a row' {
+        $Row = [PSCustomObject]@{ Group = 'role_sec_pim'; Units = @('Restricted AU'); GroupId = 'eeee5555-0000-0000-0000-000000000001'; UnitIds = @('eeee5555-0000-0000-0000-000000000002') }
+        $Md = Get-RuReadme -Rows @($Row)
+        (Get-RuSection -Readme $Md) | Should -Match ([regex]::Escape('`role_sec_pim`'))
+        $Md | Should -Not -Match 'eeee5555-0000-0000-0000-000000000001'
+        $Md | Should -Not -Match 'eeee5555-0000-0000-0000-000000000002'
+    }
+
+    It 'leaves the other sections exactly as they were' {
+        $Without = Get-RuReadme
+        $With = Get-RuReadme -Rows @((New-RuRow -Group 'role_sec_pim' -Units @('Restricted AU')))
+        $Cut = { param($Md) $S = $Md.IndexOf($script:RuHeading); $Md.Remove($S, $Md.IndexOf("`n## ", $S) - $S) }
+        (& $Cut $With) | Should -BeExactly (& $Cut $Without)
+    }
+
+    It 'declares RestrictedUnitPimGroups Mandatory, so a caller cannot forget it and write a README that claims none was found' {
+        $Parameter = InModuleScope $script:moduleName {
+            $Meta = (Get-Command Get-OERInventoryReadme).Parameters['RestrictedUnitPimGroups']
+            [PSCustomObject]@{
+                Type           = $Meta.ParameterType
+                Mandatory      = @($Meta.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Where-Object { $_.Mandatory }).Count
+                AllowsEmptyArr = @($Meta.Attributes | Where-Object { $_ -is [System.Management.Automation.AllowEmptyCollectionAttribute] }).Count
+            }
+        }
+        $Parameter.Type | Should -Be ([object[]])
+        $Parameter.Mandatory | Should -Be 1
+        $Parameter.AllowsEmptyArr | Should -Be 1
+    }
+
+    It 'contains only ASCII characters with rows' {
+        $Md = Get-RuReadme -Rows @((New-RuRow -Group 'role_sec_pim' -Units @('Restricted AU')))
+        $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Md)
+        ($Bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
+    }
+}
+
 Describe 'Get-OERInventoryReadme apply-document section list' {
     # The coverage paragraph counts and lists the apply-document sections. Tie both to the sections
     # schema.json declares, so a section added to the schema cannot leave the README claiming fewer.
     It 'counts and names every section schema.json declares, and names both directory role sections as captured' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
             $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
                     Where-Object { $_ -notin @('version', 'tenantId', 'tenantAlias') })
             $Word = @{ 7 = 'seven'; 8 = 'eight'; 9 = 'nine'; 10 = 'ten' }[$Sections.Count]

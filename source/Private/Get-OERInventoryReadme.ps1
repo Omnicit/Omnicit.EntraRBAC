@@ -89,6 +89,19 @@ function Get-OERInventoryReadme {
     assignment id. When -UndeclarableScopeAssignments is empty it says that none was read. That
     parameter is mandatory for the same reason as the seven above.
 
+    Directly after it comes the section "Groups using PIM for Groups in a restricted management unit"
+    (Sprint 11 step 6, BL-134). It says that a group with PIM eligibility or a pimPolicy block that is a
+    member of a restricted management administrative unit may be out of reach for the identity that
+    applies a document, since Microsoft Entra ID limits who can change an object in such a unit and how
+    Microsoft Graph answers a tenant-level identity has not been measured, that inventory.json keeps the
+    group and Invoke-OERStructure still sends the PIM settings and eligibility a document declares for it,
+    and that listing a group changes nothing in the tenant. Then it gives the count and one bullet per
+    -RestrictedUnitPimGroups row, in the order given: the group and each of its units as code spans (the
+    same fence rule as the entries above), by display name. It never writes an object id. When
+    -RestrictedUnitPimGroups is empty it says that none was found, and that the check needs both Groups
+    and AdministrativeUnits in the export. That parameter is mandatory for the same reason as the eight
+    above.
+
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
     collections or objects that could not be read, could not be written without an empty name, or
@@ -153,46 +166,59 @@ function Get-OERInventoryReadme {
     Any other property, such as RoleAssignmentId, is not written. Pass an empty array when there are
     none.
 
+    .PARAMETER RestrictedUnitPimGroups
+    The groups inventory.json writes with PIM eligibility or a pimPolicy block that are members of a
+    restricted management administrative unit (Sprint 11 step 6, BL-134), as Export-OERInventory finds
+    them: one object per group with Group (the group's display name) and Units (the display names of
+    the restricted units it is a member of). Any other property, such as an object id, is not written.
+    Pass an empty array when there are none.
+
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
     Returns the README Markdown as a single string. Its "What this export could not read" section
     says that nothing was left unread, its "Members and owners left out as PIM for Groups access"
     section that none was left out, its "Role assignments at the root scope (elevated access)"
     section that none was read, its "Names two or more objects share" section that no two objects
     share a name, its "Role assignments whose principal the directory did not return" section that
-    none was found, and its "Role assignments at a scope no document can declare" section that none
-    was read.
+    none was found, its "Role assignments at a scope no document can declare" section that none was
+    read, and its "Groups using PIM for Groups in a restricted management unit" section that none was
+    found.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
     Returns the README Markdown with one bullet per entry under "What this export could not read".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
     Returns the README Markdown with one bullet per group under "Members and owners left out as PIM
     for Groups access".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @([PSCustomObject]@{ Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' }) -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @([PSCustomObject]@{ Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' }) -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
     Returns the README Markdown with the count and one bullet per role assignment under "Role
     assignments at the root scope (elevated access)".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @('groups/Admins') -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @([PSCustomObject]@{ Section = 'groups'; Name = 'Admins'; Count = 2 }) -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @('groups/Admins') -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @([PSCustomObject]@{ Section = 'groups'; Name = 'Admins'; Count = 2 }) -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
     Returns the README Markdown with one bullet per name under "Names two or more objects share":
     the name, how many objects carry it and its section.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; Role = 'Reader'; Principal = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'User'; PrincipalStatus = 'Deleted'; StatusRead = $true }) -UndeclarableScopeAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; Role = 'Reader'; Principal = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'User'; PrincipalStatus = 'Deleted'; StatusRead = $true }) -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
     Returns the README Markdown with the count and one bullet per role assignment under "Role
     assignments whose principal the directory did not return": the role, the scope, the principal, its
     type and the status with its reason.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg1/providers/Microsoft.Sql/servers/srv1/databases/db#1'; Role = 'Reader'; Principal = 'person1@example.com'; PrincipalType = 'User'; Reason = 'the scope holds a question mark or a number sign' })
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg1/providers/Microsoft.Sql/servers/srv1/databases/db#1'; Role = 'Reader'; Principal = 'person1@example.com'; PrincipalType = 'User'; Reason = 'the scope holds a question mark or a number sign' }) -RestrictedUnitPimGroups @()
     Returns the README Markdown with the count and one bullet per role assignment under "Role
     assignments at a scope no document can declare": the role, the scope, the principal, its type and
     the rules the scope breaks.
+
+    .EXAMPLE
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @([PSCustomObject]@{ Group = 'role_sec_pim'; Units = @('Restricted AU') })
+    Returns the README Markdown with the count and one bullet per group under "Groups using PIM for
+    Groups in a restricted management unit": the group and the restricted units it is a member of.
     #>
     [OutputType([string])]
     [CmdletBinding()]
@@ -204,7 +230,8 @@ function Get-OERInventoryReadme {
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RootScopeAssignments,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$SharedNames,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$UnresolvedPrincipalAssignments,
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$UndeclarableScopeAssignments
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$UndeclarableScopeAssignments,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RestrictedUnitPimGroups
     )
 
     # A text written as a Markdown code span, so '<all Azure scopes: scope enumeration failed>' is
@@ -462,6 +489,34 @@ changes nothing in the tenant.
         $UndeclarableIntro + "`n`n" + "None. No role assignment this export read is at a scope a document cannot declare. Role assignments are`nread only when the export includes ``RoleAssignments``."
     }
 
+    # Sprint 11 step 6 (BL-134): the groups inventory.json writes with PIM eligibility or a pimPolicy block
+    # that are members of a restricted management unit, one bullet per group in the order the export holds
+    # them: the group and each of its units as code spans, by display name -- never an id. The parameter is
+    # mandatory, so binding has already refused a null entry.
+    $RestrictedBullets = [System.Collections.Generic.List[string]]::new()
+    foreach ($Entry in @($RestrictedUnitPimGroups)) {
+        $RestrictedUnitSpans = @(foreach ($RestrictedUnit in @($Entry.Units)) { Format-CodeSpan -Text ([string]$RestrictedUnit) }) -join ', '
+        $RestrictedBullets.Add("- $(Format-CodeSpan -Text ([string]$Entry.Group)) -- member of the restricted management unit(s) $RestrictedUnitSpans")
+    }
+    $RestrictedIntro = @'
+## Groups using PIM for Groups in a restricted management unit
+
+A group that uses PIM for Groups -- one with PIM eligibility or a `pimPolicy` block -- and is a
+member of a restricted management administrative unit may be out of reach for the identity that
+applies a document: Microsoft Entra ID limits who can change an object in a restricted management
+unit, so a tenant-level identity may not be able to manage the group's PIM settings or eligibility
+there, and how Microsoft Graph answers it has not been measured. `inventory.json` keeps such a group,
+and `Invoke-OERStructure` still sends the PIM settings and eligibility a document declares for it, so
+an apply may be refused for it. Review each group below as a finding before applying a document that
+declares it. Only a group `inventory.json` writes is listed, against a unit whose members this export
+read. Listing a group changes nothing in the tenant and leaves nothing out of the export.
+'@
+    $RestrictedUnitSection = if ($RestrictedBullets.Count -gt 0) {
+        $RestrictedIntro + "`n`n" + "This export found $($RestrictedBullets.Count) such group(s):" + "`n`n" + ($RestrictedBullets -join "`n")
+    } else {
+        $RestrictedIntro + "`n`n" + "None. No group that ``inventory.json`` writes with PIM eligibility or a ``pimPolicy`` block is a member of a`nrestricted management unit whose members this export read. The check needs both ``Groups`` and`n``AdministrativeUnits`` in the export, and a unit whose members could not be read is named under`n`"What this export could not read`"."
+    }
+
     $Readme = @'
 # OER RBAC Inventory Bundle
 
@@ -480,6 +535,8 @@ includes a predefined prompt that turns it into appliable improvement proposals.
 @@UNRESOLVED-PRINCIPALS@@
 
 @@UNDECLARABLE-SCOPES@@
+
+@@RESTRICTED-UNIT-PIM@@
 
 ## Files
 
@@ -619,5 +676,5 @@ came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in anothe
 remove `tenantId` first.
 '@
 
-    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection).Replace('@@SHARED-NAMES@@', $SharedNameSection).Replace('@@UNRESOLVED-PRINCIPALS@@', $UnresolvedPrincipalSection).Replace('@@UNDECLARABLE-SCOPES@@', $UndeclarableScopeSection)
+    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection).Replace('@@SHARED-NAMES@@', $SharedNameSection).Replace('@@UNRESOLVED-PRINCIPALS@@', $UnresolvedPrincipalSection).Replace('@@UNDECLARABLE-SCOPES@@', $UndeclarableScopeSection).Replace('@@RESTRICTED-UNIT-PIM@@', $RestrictedUnitSection)
 }

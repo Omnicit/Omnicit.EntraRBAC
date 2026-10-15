@@ -5652,3 +5652,273 @@ Describe 'Export-OERInventory (role assignments at a scope no document can decla
         }
     }
 }
+
+Describe 'Export-OERInventory (groups using PIM for Groups in a restricted management unit, Sprint 11 step 6, BL-134)' {
+    # A group with PIM eligibility or a pimPolicy block that is a member of a restricted management unit may
+    # be out of reach for the identity that applies the document. inventory.json keeps it; the export warns
+    # ONCE before its ShouldProcess with the count, and the README names each group and its units. The
+    # administrative units list a group member by its object id, which the export still holds before the id
+    # strip, so the link is found with no request of its own. The warnings are counted on the warning STREAM
+    # (3>&1), what the caller is shown. No id below is version-4 shaped.
+    BeforeAll {
+        $script:RuxHeading = '## Groups using PIM for Groups in a restricted management unit'
+        $script:RuxElig = 'eeee5555-0000-0000-0000-00000000000a'
+        $script:RuxPolicy = 'eeee5555-0000-0000-0000-00000000000b'
+        $script:RuxPlain = 'eeee5555-0000-0000-0000-00000000000c'
+        $script:RuxOpen = 'eeee5555-0000-0000-0000-00000000000d'
+        $script:RuxUnreadUnit = 'eeee5555-0000-0000-0000-00000000000e'
+        $script:RuxNullPolicy = 'eeee5555-0000-0000-0000-00000000000f'
+        $script:RuxNullElig = 'eeee5555-0000-0000-0000-000000000010'
+        function script:Get-RuxExportWarning {
+            param([int]$Count)
+            "Export-OERInventory: $Count group(s) written to inventory.json use PIM for Groups (PIM eligibility or a pimPolicy block) " +
+            'and are members of a restricted management administrative unit. Microsoft Entra ID limits who can change an object in a ' +
+            "restricted management unit, so a tenant-level identity may not be able to manage these groups' PIM settings or eligibility, " +
+            'and Invoke-OERStructure could be refused when it applies them; how Microsoft Graph answers it has not been measured. ' +
+            "README.md names each group and its units under 'Groups using PIM for Groups in a restricted management unit'; review them " +
+            'as a finding. Nothing is left out of the export.'
+        }
+        # The README section, heading included, up to the next level 2 heading; $null when it is missing.
+        function script:Get-RuxReadmeSection {
+            param([string]$BundlePath)
+            $Readme = Get-Content (Join-Path $BundlePath 'README.md') -Raw
+            $Start = $Readme.IndexOf($script:RuxHeading)
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
+        }
+        # One export, its result, the text of every warning that reached the caller's stream, and its errors.
+        function script:Invoke-RuxExport {
+            param([hashtable]$Splat)
+            $ExErr = $null
+            $All = @(Export-OERInventory @Splat -WarningAction Continue -ErrorAction SilentlyContinue -ErrorVariable ExErr 3>&1)
+            [PSCustomObject]@{
+                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                Partial  = @($ExErr | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+            }
+        }
+        $script:RuxRealValidate = InModuleScope $script:moduleName { Get-Command Test-OERStructureSchema -CommandType Function }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        $script:RuxSelfChecks = [System.Collections.Generic.List[object]]::new()
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        # The group reader: every group is read with its object id (the export asks for -IncludeId). The
+        # first two use PIM for Groups, by eligibility and by a pimPolicy block; the third uses neither.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
+                Groups      = @(
+                    [PSCustomObject]@{ id = $script:RuxElig; displayName = 'role_sec_elig'; roleAssignable = $true; dynamic = $false; members = @(); eligibility = @([PSCustomObject]@{ principal = 'person1@example.com'; principalType = 'User'; accessType = 'Member' }) }
+                    [PSCustomObject]@{ id = $script:RuxPolicy; displayName = 'role_sec_policy'; roleAssignable = $false; dynamic = $false; members = @(); eligibility = @(); pimPolicy = [PSCustomObject]@{ member = [PSCustomObject]@{ activationMaxHours = 8 } } }
+                    [PSCustomObject]@{ id = $script:RuxPlain; displayName = 'role_sec_plain'; roleAssignable = $true; dynamic = $false; members = @(); eligibility = @() }
+                )
+                Unread      = @(); Causes = @(); PimLeftOut = @(); SharedNames = @()
+            }
+        }
+        # The administrative units, as Get-OERInventory projects them: a group member by its object id.
+        # The elig group's id is written in another letter case. 'Open AU' is not restricted; 'Unread
+        # Restricted AU' has its members unread (an explicit null); 'Dynamic Restricted AU' has no members
+        # key at all, as a dynamic unit is projected.
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            param($Include)
+            $Units = @()
+            if ($Include -contains 'AdministrativeUnits') {
+                $Units = @(
+                    [PSCustomObject]@{ displayName = 'Restricted AU'; description = $null; restricted = $true; dynamic = $false; hiddenMembership = $false; members = @($script:RuxElig.ToUpperInvariant(), $script:RuxPolicy, $script:RuxPlain, 'person9@example.com'); scopedRoles = @() }
+                    [PSCustomObject]@{ displayName = 'Second Restricted AU'; description = $null; restricted = $true; dynamic = $false; hiddenMembership = $false; members = @($script:RuxPolicy); scopedRoles = @() }
+                    [PSCustomObject]@{ displayName = 'Open AU'; description = $null; restricted = $false; dynamic = $false; hiddenMembership = $false; members = @($script:RuxOpen); scopedRoles = @() }
+                    [PSCustomObject]@{ displayName = 'Unread Restricted AU'; description = $null; restricted = $true; dynamic = $false; hiddenMembership = $false; members = $null; scopedRoles = @() }
+                    [PSCustomObject]@{ displayName = 'Dynamic Restricted AU'; description = $null; restricted = $true; dynamic = $true; hiddenMembership = $false; membershipRule = '(user.department -eq "x")'; scopedRoles = @() }
+                )
+            }
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = $Units; Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'states the rule in the help' {
+        $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('GROUPS USING PIM FOR GROUPS IN A RESTRICTED MANAGEMENT UNIT.'))
+        $Description | Should -Match ([regex]::Escape('a group with PIM eligibility or a pimPolicy block that is a member of a restricted management administrative unit'))
+        $Description | Should -Match ([regex]::Escape('in a section "Groups using PIM for Groups in a restricted management unit", directly after "Role assignments at a scope no document can declare"'))
+        $Description | Should -Match ([regex]::Escape('how Microsoft Graph answers a tenant-level identity has not been measured'))
+    }
+
+    It 'warns once with the count, names each group and its units in the README, and keeps both groups and every unit in inventory.json' {
+        $Run = Invoke-RuxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'rux-once'); Include = @('Groups', 'AdministrativeUnits') }
+        # Reach proof: the units were read, and the bundle holds every group and every unit.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter { $Include -contains 'AdministrativeUnits' }
+        $Run.Warnings | Should -Be @(Get-RuxExportWarning -Count 2)
+        $Section = Get-RuxReadmeSection -BundlePath $Run.Result.BundlePath
+        $Section | Should -Match '(?m)^This export found 2 such group\(s\):\r?$'
+        @($Section -split '\r?\n' | Where-Object { $_ -like '- *' }) | Should -Be @(
+            '- `role_sec_elig` -- member of the restricted management unit(s) `Restricted AU`'
+            '- `role_sec_policy` -- member of the restricted management unit(s) `Restricted AU`, `Second Restricted AU`'
+        )
+        $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_elig', 'role_sec_policy', 'role_sec_plain')
+        @($Inv.administrativeUnits | ForEach-Object { $_.displayName }) | Should -Be @('Restricted AU', 'Second Restricted AU', 'Open AU', 'Unread Restricted AU', 'Dynamic Restricted AU')
+        # Nothing is left out and nothing is unread: the groups stay, and the bundle is not partial.
+        $Run.Partial.Count | Should -Be 0
+        @($Run.Result.IncompleteReads).Count | Should -Be 0
+        # The id the link was found by stays out of the groups and out of the README: the units list their
+        # group members by object id, as they always did, and the groups carry none.
+        @($Inv.groups | Where-Object { $_.PSObject.Properties.Name -contains 'id' }).Count | Should -Be 0
+        Get-Content (Join-Path $Run.Result.BundlePath 'README.md') -Raw | Should -Not -Match 'eeee5555'
+        @($Run.Warnings | Where-Object { $_ -match 'eeee5555' }).Count | Should -Be 0
+    }
+
+    It 'lists a group once for each restricted unit that holds it, whatever the letter case of the id the unit lists' {
+        $Run = Invoke-RuxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'rux-case'); Include = @('Groups', 'AdministrativeUnits') }
+        # The elig group's id is upper-case in the unit's members and lower-case on the group.
+        $Bullets = @((Get-RuxReadmeSection -BundlePath $Run.Result.BundlePath) -split '\r?\n' | Where-Object { $_ -like '- *' })
+        $Bullets[0] | Should -BeExactly '- `role_sec_elig` -- member of the restricted management unit(s) `Restricted AU`'
+        $Bullets.Count | Should -Be 2
+    }
+
+    It 'names no group that uses no PIM, none that sits in a unit that is not restricted, and none whose unit was not read' {
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
+                Groups      = @(
+                    [PSCustomObject]@{ id = $script:RuxPlain; displayName = 'role_sec_plain'; roleAssignable = $true; dynamic = $false; members = @(); eligibility = @() }
+                    [PSCustomObject]@{ id = $script:RuxOpen; displayName = 'role_sec_open'; roleAssignable = $true; dynamic = $false; members = @(); eligibility = @([PSCustomObject]@{ principal = 'person1@example.com'; principalType = 'User'; accessType = 'Member' }) }
+                    [PSCustomObject]@{ id = $script:RuxUnreadUnit; displayName = 'role_sec_unread'; roleAssignable = $true; dynamic = $false; members = @(); eligibility = @([PSCustomObject]@{ principal = 'person1@example.com'; principalType = 'User'; accessType = 'Member' }) }
+                )
+                Unread      = @(); Causes = @(); PimLeftOut = @(); SharedNames = @()
+            }
+        }
+        $Run = Invoke-RuxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'rux-none'); Include = @('Groups', 'AdministrativeUnits') }
+        # Reach proofs: the units were read, and each group is in the document.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter { $Include -contains 'AdministrativeUnits' }
+        $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_plain', 'role_sec_open', 'role_sec_unread')
+        @($Run.Warnings | Where-Object { $_ -like '*restricted management*' }).Count | Should -Be 0
+        $Section = Get-RuxReadmeSection -BundlePath $Run.Result.BundlePath
+        ($Section -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. No group that `inventory.json` writes with PIM eligibility or a `pimPolicy` block is a member of a restricted management unit whose members this export read.'))
+        @($Section -split '\r?\n' | Where-Object { $_ -like '- *' }).Count | Should -Be 0
+    }
+
+    It 'does not take an explicit null pimPolicy or an eligibility that holds only a null for PIM for Groups' {
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
+                Groups      = @(
+                    [PSCustomObject]@{ id = $script:RuxNullPolicy; displayName = 'role_sec_nullpolicy'; roleAssignable = $true; dynamic = $false; members = @(); eligibility = @(); pimPolicy = $null }
+                    [PSCustomObject]@{ id = $script:RuxNullElig; displayName = 'role_sec_nullelig'; roleAssignable = $true; dynamic = $false; members = @(); eligibility = @($null) }
+                )
+                Unread      = @(); Causes = @(); PimLeftOut = @(); SharedNames = @()
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            param($Include)
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(
+                    [PSCustomObject]@{ displayName = 'Restricted AU'; description = $null; restricted = $true; dynamic = $false; hiddenMembership = $false; members = @($script:RuxNullPolicy, $script:RuxNullElig); scopedRoles = @() }
+                ); Catalogs = @(); AccessPackages = @(); AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+        $Run = Invoke-RuxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'rux-nulls'); Include = @('Groups', 'AdministrativeUnits') }
+        # Reach proofs: both groups are in the document (the keep filter keeps them as role-assignable
+        # groups), and the restricted unit lists both by id.
+        $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_nullpolicy', 'role_sec_nullelig')
+        @($Inv.administrativeUnits[0].members).Count | Should -Be 2
+        @($Run.Warnings | Where-Object { $_ -like '*restricted management*' }).Count | Should -Be 0
+        @((Get-RuxReadmeSection -BundlePath $Run.Result.BundlePath) -split '\r?\n' | Where-Object { $_ -like '- *' }).Count | Should -Be 0
+    }
+
+    It 'never takes a group with no object id for a member a unit lists as nothing' {
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
+                Groups      = @(
+                    [PSCustomObject]@{ displayName = 'role_sec_noid'; roleAssignable = $true; dynamic = $false; members = @(); eligibility = @([PSCustomObject]@{ principal = 'person1@example.com'; principalType = 'User'; accessType = 'Member' }) }
+                )
+                Unread      = @(); Causes = @(); PimLeftOut = @(); SharedNames = @()
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            param($Include)
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(
+                    [PSCustomObject]@{ displayName = 'Blank AU'; description = $null; restricted = $true; dynamic = $false; hiddenMembership = $false; members = @($null, ''); scopedRoles = @() }
+                    [PSCustomObject]@{ displayName = 'Unread Restricted AU'; description = $null; restricted = $true; dynamic = $false; hiddenMembership = $false; members = $null; scopedRoles = @() }
+                ); Catalogs = @(); AccessPackages = @(); AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+        $Run = Invoke-RuxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'rux-noid'); Include = @('Groups', 'AdministrativeUnits') }
+        # Reach proofs: the group is in the document, and both restricted units were read.
+        $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_noid')
+        @($Inv.administrativeUnits).Count | Should -Be 2
+        @($Run.Warnings | Where-Object { $_ -like '*restricted management*' }).Count | Should -Be 0
+        @((Get-RuxReadmeSection -BundlePath $Run.Result.BundlePath) -split '\r?\n' | Where-Object { $_ -like '- *' }).Count | Should -Be 0
+    }
+    It 'names no group when the export includes Groups but not AdministrativeUnits' {
+        $Run = Invoke-RuxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'rux-groups-only'); Include = @('Groups') }
+        # Reach proof: the groups were read and kept, and no unit was.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 1 -Exactly
+        $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.groups).Count | Should -Be 3
+        @($Inv.administrativeUnits).Count | Should -Be 0
+        @($Run.Warnings | Where-Object { $_ -like '*restricted management*' }).Count | Should -Be 0
+        ((Get-RuxReadmeSection -BundlePath $Run.Result.BundlePath) -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. No group that `inventory.json` writes'))
+    }
+
+    It 'writes the warning under -WhatIf too, and no bundle' {
+        $Run = Invoke-RuxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'rux-whatif'); Include = @('Groups', 'AdministrativeUnits'); WhatIf = $true }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter { $Include -contains 'AdministrativeUnits' }
+        $Run.Warnings | Should -Be @(Get-RuxExportWarning -Count 2)
+        Test-Path -LiteralPath $Run.Result.BundlePath | Should -BeFalse
+    }
+
+    It 'stops at its own warning under -WarningAction Stop, before the bundle is written' {
+        $Out = Join-Path $TestDrive 'rux-stop'
+        $Thrown = { Export-OERInventory -OutputPath $Out -Include Groups, AdministrativeUnits -WarningAction Stop } | Should -Throw -PassThru
+        $Thrown.Exception.Message | Should -BeLike '*group(s) written to inventory.json use PIM for Groups*restricted management administrative unit*'
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter { $Include -contains 'AdministrativeUnits' }
+        Test-Path -LiteralPath $Out | Should -BeFalse
+    }
+
+    Context 'the export''s own apply-schema self-check' {
+        # Test-OERStructureSchema is NOT mocked away here: the mock calls the real validator through and
+        # keeps what it returned. Exported groups carry no object id and no administrativeUnit, and the
+        # units list a group member by its object id, so the validator's restricted unit Warning, which
+        # reads a group's declared id, its displayName or its administrativeUnit, cannot see the link in
+        # an exported document: the export's own warning and README section are what name these groups.
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Test-OERStructureSchema {
+                $Result = & $script:RuxRealValidate @PesterBoundParameters
+                $script:RuxSelfChecks.Add($Result)
+                $Result
+            }
+        }
+
+        It 'passes the real self-check with no finding about a restricted unit, although the export names two groups' {
+            $Run = Invoke-RuxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'rux-selfcheck'); Include = @('Groups', 'AdministrativeUnits') }
+            # Reach proofs: the export named both groups, and the real validator ran over the document.
+            $Run.Warnings | Should -Contain (Get-RuxExportWarning -Count 2)
+            Should -Invoke -ModuleName $script:moduleName Test-OERStructureSchema -Times 1 -Exactly
+            $script:RuxSelfChecks.Count | Should -Be 1
+            $script:RuxSelfChecks[0].Valid | Should -BeTrue
+            @($script:RuxSelfChecks[0].Errors | Where-Object { $_.Message -like '*restricted management*' }).Count | Should -Be 0
+            @($Run.Warnings | Where-Object { $_ -like '*did not pass apply-schema validation*' }).Count | Should -Be 0
+        }
+    }
+}
