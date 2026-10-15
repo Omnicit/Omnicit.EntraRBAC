@@ -76,6 +76,19 @@ function Get-OERInventoryReadme {
     role assignment id. When -UnresolvedPrincipalAssignments is empty it says that none was
     found. That parameter is mandatory for the same reason as the six above.
 
+    Directly after it comes the section "Role assignments at a scope no document can declare" (A13,
+    A15). It says which scope spellings the validator refuses, that no document can declare such a
+    scope and a document that carried one would be refused as a whole, so inventory.json and
+    roleAssignments.json leave the assignment out, that Invoke-OERStructure never creates a role
+    assignment at such a scope and never removes one, since it prunes only at a scope a document
+    declares, that a role assignment at the root scope is listed in the root scope section only, and
+    that leaving them out changes nothing in the tenant. Then it gives the count and one bullet per
+    -UndeclarableScopeAssignments row, in the order given: the role, the scope and the principal as code
+    spans (the same fence rule as the entries above), the principal type in parentheses when it is
+    known, and the reason, the rules the scope breaks in words, on one line. It never writes the role
+    assignment id. When -UndeclarableScopeAssignments is empty it says that none was read. That
+    parameter is mandatory for the same reason as the seven above.
+
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
     collections or objects that could not be read, could not be written without an empty name, or
@@ -131,39 +144,55 @@ function Get-OERInventoryReadme {
     behind PrincipalStatus succeeded; a Deleted status is always read). Any other property, such as
     RoleAssignmentId, is not written. Pass an empty array when there are none.
 
+    .PARAMETER UndeclarableScopeAssignments
+    The role assignments at a scope no document can declare (A13, A15), left out of inventory.json and
+    roleAssignments.json, and deduplicated by Export-OERInventory from the information records tagged
+    Omnicit.EntraRBAC.UndeclarableScope that Get-OERInventory writes: one object per assignment with
+    Scope, Role, Principal (the principal name as the export would have written it), PrincipalType (the
+    principal type, or an empty string when unknown) and Reason (the rules the scope breaks, in words).
+    Any other property, such as RoleAssignmentId, is not written. Pass an empty array when there are
+    none.
+
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
     Returns the README Markdown as a single string. Its "What this export could not read" section
     says that nothing was left unread, its "Members and owners left out as PIM for Groups access"
     section that none was left out, its "Role assignments at the root scope (elevated access)"
     section that none was read, its "Names two or more objects share" section that no two objects
-    share a name, and its "Role assignments whose principal the directory did not return" section that
-    none was found.
+    share a name, its "Role assignments whose principal the directory did not return" section that
+    none was found, and its "Role assignments at a scope no document can declare" section that none
+    was read.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
     Returns the README Markdown with one bullet per entry under "What this export could not read".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
     Returns the README Markdown with one bullet per group under "Members and owners left out as PIM
     for Groups access".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @([PSCustomObject]@{ Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' }) -SharedNames @() -UnresolvedPrincipalAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @([PSCustomObject]@{ Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' }) -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
     Returns the README Markdown with the count and one bullet per role assignment under "Role
     assignments at the root scope (elevated access)".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @('groups/Admins') -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @([PSCustomObject]@{ Section = 'groups'; Name = 'Admins'; Count = 2 }) -UnresolvedPrincipalAssignments @()
+    Get-OERInventoryReadme -IncompleteReads @('groups/Admins') -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @([PSCustomObject]@{ Section = 'groups'; Name = 'Admins'; Count = 2 }) -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @()
     Returns the README Markdown with one bullet per name under "Names two or more objects share":
     the name, how many objects carry it and its section.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; Role = 'Reader'; Principal = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'User'; PrincipalStatus = 'Deleted'; StatusRead = $true })
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; Role = 'Reader'; Principal = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'User'; PrincipalStatus = 'Deleted'; StatusRead = $true }) -UndeclarableScopeAssignments @()
     Returns the README Markdown with the count and one bullet per role assignment under "Role
     assignments whose principal the directory did not return": the role, the scope, the principal, its
     type and the status with its reason.
+
+    .EXAMPLE
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg1/providers/Microsoft.Sql/servers/srv1/databases/db#1'; Role = 'Reader'; Principal = 'person1@example.com'; PrincipalType = 'User'; Reason = 'the scope holds a question mark or a number sign' })
+    Returns the README Markdown with the count and one bullet per role assignment under "Role
+    assignments at a scope no document can declare": the role, the scope, the principal, its type and
+    the rules the scope breaks.
     #>
     [OutputType([string])]
     [CmdletBinding()]
@@ -174,7 +203,8 @@ function Get-OERInventoryReadme {
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$PimLeftOut,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RootScopeAssignments,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$SharedNames,
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$UnresolvedPrincipalAssignments
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$UnresolvedPrincipalAssignments,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$UndeclarableScopeAssignments
     )
 
     # A text written as a Markdown code span, so '<all Azure scopes: scope enumeration failed>' is
@@ -401,6 +431,37 @@ principal is listed here as `Unresolved` with the reason not known, and that rea
         $UnresolvedIntro + "`n`n" + "None. No role assignment this export read names a principal that the directory did not return, apart`nfrom any whose lookup failed, which are named under `"What this export could not read`". Role`nassignments are read only when the export includes ``RoleAssignments``."
     }
 
+    # A13, A15: the role assignments at a scope no document can declare, one bullet per row in the order
+    # the export holds them (deduplicated there): the role, the scope and the principal as code spans, the
+    # type in parentheses when it is known, and the reason in words, kept on one line. Never the role
+    # assignment id. The parameter is mandatory, so binding has already refused a null entry.
+    $UndeclarableBullets = [System.Collections.Generic.List[string]]::new()
+    foreach ($Entry in @($UndeclarableScopeAssignments)) {
+        $UndeclarableType = [string]$Entry.PrincipalType
+        $UndeclarableReason = ([string]$Entry.Reason) -replace '\r\n|\r|\n', ' '
+        $UndeclarableBullets.Add("- $(Format-CodeSpan -Text ([string]$Entry.Role)) at $(Format-CodeSpan -Text ([string]$Entry.Scope)) for $(Format-CodeSpan -Text ([string]$Entry.Principal))" +
+            $(if ($UndeclarableType) { " ($UndeclarableType)" } else { '' }) + $(if ($UndeclarableReason) { ": $UndeclarableReason" } else { '' }))
+    }
+    $UndeclarableIntro = @'
+## Role assignments at a scope no document can declare
+
+Azure Resource Manager can return a role assignment at a scope whose spelling the validator
+(`Test-OERStructure`, which `Invoke-OERStructure` runs first) refuses: a scope with a `.` or `..`
+segment, a `%`, a `\`, a `?` or a `#`, a trailing or doubled `/`, or white space at the start or end
+of the scope or of a segment, white space other than a space, or a control character -- the name of
+a resource can hold one of these. No document can declare such a scope, and a document that carried
+one would be refused as a whole, so `inventory.json` and `roleAssignments.json` leave the assignment
+out. `Invoke-OERStructure` never creates a role assignment at such a scope, and never removes one,
+since it prunes only at a scope a document declares. A role assignment at the root scope is listed
+under "Role assignments at the root scope (elevated access)" only. Leaving them out of the export
+changes nothing in the tenant.
+'@
+    $UndeclarableScopeSection = if ($UndeclarableBullets.Count -gt 0) {
+        $UndeclarableIntro + "`n`n" + "This export read $($UndeclarableBullets.Count) such role assignment(s):" + "`n`n" + ($UndeclarableBullets -join "`n")
+    } else {
+        $UndeclarableIntro + "`n`n" + "None. No role assignment this export read is at a scope a document cannot declare. Role assignments are`nread only when the export includes ``RoleAssignments``."
+    }
+
     $Readme = @'
 # OER RBAC Inventory Bundle
 
@@ -417,6 +478,8 @@ includes a predefined prompt that turns it into appliable improvement proposals.
 @@SHARED-NAMES@@
 
 @@UNRESOLVED-PRINCIPALS@@
+
+@@UNDECLARABLE-SCOPES@@
 
 ## Files
 
@@ -556,5 +619,5 @@ came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in anothe
 remove `tenantId` first.
 '@
 
-    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection).Replace('@@SHARED-NAMES@@', $SharedNameSection).Replace('@@UNRESOLVED-PRINCIPALS@@', $UnresolvedPrincipalSection)
+    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection).Replace('@@SHARED-NAMES@@', $SharedNameSection).Replace('@@UNRESOLVED-PRINCIPALS@@', $UnresolvedPrincipalSection).Replace('@@UNDECLARABLE-SCOPES@@', $UndeclarableScopeSection)
 }

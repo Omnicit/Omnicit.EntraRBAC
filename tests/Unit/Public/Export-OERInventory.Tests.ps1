@@ -3548,8 +3548,11 @@ Describe 'Export-OERInventory self-check of a scope at a resource whose name hol
     # The export's own self-check runs the real offline validator over inventory.json. An Azure resource
     # name can hold spaces between other characters, and the validator accepts them since A13 was
     # narrowed, so a role assignment at such a resource passes the self-check; a '#' in a name, which a
-    # few resource types allow, is still refused, and the self-check says so. Test-OERStructureSchema is
-    # NOT mocked. No id below is version-4 shaped.
+    # few resource types allow, is still refused, and the self-check says so when a read hands one over.
+    # The real Get-OERInventory leaves such a row out (A13, A15; the Describe 'role assignments at a scope
+    # no document can declare' holds that), so the mock below stands in for a read that did not, as the
+    # control that the self-check runs. Test-OERStructureSchema is NOT mocked. No id below is version-4
+    # shaped.
     BeforeAll {
         $script:SpaceSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
     }
@@ -5403,6 +5406,249 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
             $script:UpxSelfChecks[0].Valid | Should -BeTrue
             @($Run.Warnings | Where-Object { $_ -like '*did not pass apply-schema validation*' }).Count | Should -Be 0
             @($Run.Warnings | Where-Object { $_ -like '*Could not run the apply-schema self-check*' }).Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'Export-OERInventory (role assignments at a scope no document can declare, A13, A15)' {
+    # A role assignment whose scope breaks a scope spelling rule the validator applies -- a resource whose
+    # name holds a '#' or a '%', for one -- is left out of inventory.json and roleAssignments.json: every
+    # per-scope Get-OERInventory call names such rows in a warning and an information record tagged
+    # Omnicit.EntraRBAC.UndeclarableScope. The export reads the records, suppresses those warnings,
+    # deduplicates the rows (the role assignment id, else scope, role and principal, without regard to
+    # letter case), warns ONCE before its ShouldProcess and lists them in the README. The warnings are
+    # counted on the warning STREAM (3>&1), what the caller is shown. Scopes holding '#' or '%' are
+    # fixtures only. No id below is version-4 shaped.
+    BeforeAll {
+        # Writes what a per-scope Get-OERInventory call writes, from inside the module, so the preferences
+        # of the call it stands in for govern it exactly as they govern the real command.
+        function script:Write-AsUdxInventory {
+            param([string]$Warning, [object]$Notice)
+            & (Get-Module $script:moduleName) {
+                param($Warning, $Notice)
+                if ($Warning) { Microsoft.PowerShell.Utility\Write-Warning $Warning }
+                if ($Notice) { Microsoft.PowerShell.Utility\Write-Information -MessageData $Notice -Tags 'Omnicit.EntraRBAC.UndeclarableScope' }
+            } $Warning $Notice
+        }
+        $script:UdxHeading = '## Role assignments at a scope no document can declare'
+        $script:UdxMg = '/providers/Microsoft.Management/managementGroups/plat'
+        $script:UdxS1 = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:UdxHash = "$($script:UdxS1)/resourceGroups/rg-one/providers/Microsoft.Sql/servers/srv1/databases/db#1"
+        $script:UdxPercent = "$($script:UdxS1)/resourceGroups/rg%2Fone"
+        $script:UdxIdA = "$($script:UdxHash)/providers/Microsoft.Authorization/roleAssignments/cccc8888-0000-0000-0000-000000000001"
+        function script:Get-UdxExportWarning {
+            param([int]$Count)
+            "Export-OERInventory: left out $Count role assignment(s) whose scope no document can declare from inventory.json " +
+            "and roleAssignments.json: the validator refuses the scope's spelling, so a document that carried one would be " +
+            "refused as a whole. README.md names them under 'Role assignments at a scope no document can declare'; review them " +
+            'as a finding. Invoke-OERStructure never creates or removes a role assignment at such a scope.'
+        }
+        # The README section, heading included, up to the next level 2 heading; $null when it is missing.
+        function script:Get-UdxReadmeSection {
+            param([string]$BundlePath)
+            $Readme = Get-Content (Join-Path $BundlePath 'README.md') -Raw
+            $Start = $Readme.IndexOf($script:UdxHeading)
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
+        }
+        # One export, its result, the text of every warning that reached the caller's stream, and its errors.
+        function script:Invoke-UdxExport {
+            param([hashtable]$Splat)
+            $ExErr = $null
+            $All = @(Export-OERInventory @Splat -WarningAction Continue -ErrorAction SilentlyContinue -ErrorVariable ExErr 3>&1)
+            [PSCustomObject]@{
+                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                Partial  = @($ExErr | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+            }
+        }
+    }
+
+    It 'states the rule in the help' {
+        $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('ROLE ASSIGNMENTS AT A SCOPE NO DOCUMENT CAN DECLARE.'))
+        $Description | Should -Match ([regex]::Escape('inventory.json and roleAssignments.json never carry one'))
+        $Description | Should -Match ([regex]::Escape('in a section "Role assignments at a scope no document can declare", directly after "Role assignments whose principal the directory did not return"'))
+        $Description | Should -Match ([regex]::Escape('the warning on role assignments at a scope no document can declare'))
+    }
+
+    Context 'the rows the per-scope calls hand over' {
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+            Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+            Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+            Mock -ModuleName $script:moduleName Get-OERGroup {}
+            Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+            Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+            Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+            Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+                [PSCustomObject]@{
+                    Scopes    = @($script:UdxMg, $script:UdxS1)
+                    Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+                }
+            }
+            # Each scope hands over row A (its id in another letter case at the second scope) and a row B
+            # with no role assignment id (its role and principal in another letter case at the second
+            # scope), with the warning a real call writes, and one row of its own the document keeps.
+            Mock -ModuleName $script:moduleName Get-OERInventory {
+                param($Include, $Scope, $Subscription, $ManagementGroup, $AllRolesAtScope)
+                $Ra = @()
+                if ($Include -contains 'RoleAssignments' -and $Scope) {
+                    $First = $Scope -eq $script:UdxMg
+                    $RowA = [PSCustomObject]@{
+                        RoleAssignmentId = $(if ($First) { $script:UdxIdA } else { $script:UdxIdA.ToUpperInvariant() })
+                        Scope = $script:UdxHash; Role = 'Reader'; Principal = 'person1@example.com'; PrincipalType = 'User'
+                        Reason = 'the scope holds a question mark or a number sign'
+                    }
+                    $RowB = [PSCustomObject]@{
+                        RoleAssignmentId = ''; Scope = $script:UdxPercent; Role = $(if ($First) { 'Owner' } else { 'OWNER' })
+                        Principal = $(if ($First) { 'Automation' } else { 'AUTOMATION' }); PrincipalType = ''; Reason = 'the scope holds a percent sign'
+                    }
+                    $Notice = [PSCustomObject]@{ Warning = "per-scope undeclarable scopes at $Scope"; Assignments = @($RowA, $RowB) }
+                    $Notice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.UndeclarableScopeNotice')
+                    Write-AsUdxInventory -Warning "per-scope undeclarable scopes at $Scope" -Notice $Notice
+                    $Ra = @([PSCustomObject]@{ scope = $script:UdxS1; role = 'Reader'; principal = 'person2@example.com'; principalType = 'User' })
+                }
+                $Inv = [PSCustomObject]@{
+                    Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                    AccessReviews = @(); RoleAssignments = $Ra; RoleManagementPolicies = @()
+                }
+                $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+                $Inv
+            }
+        }
+
+        AfterEach {
+            InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+        }
+
+        It 'names each row once, in its own warning and in the README, and shows none of the per-scope warnings' {
+            $Run = Invoke-UdxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'udx-once'); Include = 'RoleAssignments' }
+            # Reach proof: both scopes were read, and each handed over both rows.
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly
+            $Run.Warnings | Should -Be @(Get-UdxExportWarning -Count 2)
+            $Section = Get-UdxReadmeSection -BundlePath $Run.Result.BundlePath
+            $Section | Should -Match '(?m)^This export read 2 such role assignment\(s\):\r?$'
+            @($Section -split '\r?\n' | Where-Object { $_ -like '- *' }) | Should -Be @(
+                "- ``Reader`` at ``$($script:UdxHash)`` for ``person1@example.com`` (User): the scope holds a question mark or a number sign"
+                "- ``Owner`` at ``$($script:UdxPercent)`` for ``Automation``: the scope holds a percent sign"
+            )
+            # The rows are left out of the document, not unread.
+            $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+            @($Inv.roleAssignments | ForEach-Object { $_.scope }) | Should -Be @($script:UdxS1)
+            $Run.Partial.Count | Should -Be 0
+            @($Run.Result.IncompleteReads).Count | Should -Be 0
+        }
+
+        It 'writes the warning under -WhatIf too, and no bundle' {
+            $Run = Invoke-UdxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'udx-whatif'); Include = 'RoleAssignments'; WhatIf = $true }
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly
+            $Run.Warnings | Should -Be @(Get-UdxExportWarning -Count 2)
+            Test-Path -LiteralPath $Run.Result.BundlePath | Should -BeFalse
+        }
+
+        It 'stops at its own warning under -WarningAction Stop, before the bundle is written' {
+            $Out = Join-Path $TestDrive 'udx-stop'
+            $Thrown = { Export-OERInventory -OutputPath $Out -Include RoleAssignments -WarningAction Stop } | Should -Throw -PassThru
+            $Thrown.Exception.Message | Should -BeLike '*role assignment(s) whose scope no document can declare from inventory.json*'
+            # Both scopes were read: the per-scope warnings are captured, not shown, so neither stopped a scope.
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly
+            Test-Path -LiteralPath $Out | Should -BeFalse
+        }
+
+        It 'says in the README that none was read, and writes no such warning, when no scope handed a row over' {
+            Mock -ModuleName $script:moduleName Get-OERInventory {
+                $Inv = [PSCustomObject]@{
+                    Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                    AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                }
+                $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+                $Inv
+            }
+            $Run = Invoke-UdxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'udx-none'); Include = 'RoleAssignments' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly
+            @($Run.Warnings | Where-Object { $_ -like '*no document can declare*' }).Count | Should -Be 0
+            ((Get-UdxReadmeSection -BundlePath $Run.Result.BundlePath) -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. No role assignment this export read is at a scope a document cannot declare.'))
+        }
+    }
+
+    Context 'end to end, through the real Get-OERInventory and the real self-check' {
+        # The management group read and the subscription read both return the three assignments: one at the
+        # subscription, one at a resource whose name holds a '#' and one at a resource group whose name holds
+        # a '%'. Test-OERStructureSchema is NOT mocked: the export's own self-check runs the real validator.
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+            Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+            Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+            Mock -ModuleName $script:moduleName Get-OERGroup {}
+            Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+            Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+            Mock -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus { throw "unexpected deleted items read: $Id" }
+            Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+                [PSCustomObject]@{
+                    Scopes    = @($script:UdxMg, $script:UdxS1)
+                    Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+                }
+            }
+            Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
+                [PSCustomObject]@{
+                    Scope = $script:UdxS1; RoleName = 'Reader'; RoleDefinitionId = "$($script:UdxS1)/providers/Microsoft.Authorization/roleDefinitions/rd-reader"
+                    PrincipalId = 'dddd8888-0000-0000-0000-000000000001'; PrincipalType = 'User'; PrincipalDisplayName = 'User One'
+                    RoleAssignmentId = "$($script:UdxS1)/providers/Microsoft.Authorization/roleAssignments/cccc8888-0000-0000-0000-000000000011"
+                }
+                [PSCustomObject]@{
+                    Scope = $script:UdxHash; RoleName = 'Reader'; RoleDefinitionId = "$($script:UdxS1)/providers/Microsoft.Authorization/roleDefinitions/rd-reader"
+                    PrincipalId = 'dddd8888-0000-0000-0000-000000000002'; PrincipalType = 'User'; PrincipalDisplayName = 'User Two'
+                    RoleAssignmentId = $script:UdxIdA
+                }
+                [PSCustomObject]@{
+                    Scope = $script:UdxPercent; RoleName = 'Owner'; RoleDefinitionId = "$($script:UdxS1)/providers/Microsoft.Authorization/roleDefinitions/rd-owner"
+                    PrincipalId = 'dddd8888-0000-0000-0000-000000000003'; PrincipalType = 'ServicePrincipal'; PrincipalDisplayName = 'Automation'
+                    RoleAssignmentId = "$($script:UdxPercent)/providers/Microsoft.Authorization/roleAssignments/cccc8888-0000-0000-0000-000000000013"
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+                & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent @{
+                    'dddd8888-0000-0000-0000-000000000001' = 'person1@example.com'
+                    'dddd8888-0000-0000-0000-000000000002' = 'person2@example.com'
+                    'dddd8888-0000-0000-0000-000000000003' = 'Automation'
+                }
+            }
+        }
+
+        AfterEach {
+            InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+        }
+
+        It 'leaves the rows at a scope holding a ''#'' and a ''%'' out of inventory.json and roleAssignments.json, warns once, lists them in the README, and passes its own self-check' {
+            $Run = Invoke-UdxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'udx-e2e'); Include = 'RoleAssignments' }
+            # Reach proof: both scopes were read, each returning all three assignments.
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 2 -Exactly -ParameterFilter { $ResolveNames }
+            $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+            @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)" }) | Should -Be @("$($script:UdxS1)|Reader|person1@example.com")
+            $RaFile = @(Get-Content (Join-Path $Run.Result.BundlePath 'roleAssignments.json') -Raw | ConvertFrom-Json)
+            @($RaFile | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)" }) | Should -Be @("$($script:UdxS1)|Reader|person1@example.com")
+            foreach ($File in @(Get-ChildItem -Path $Run.Result.BundlePath -Filter '*.json')) {
+                Get-Content $File.FullName -Raw | Should -Not -Match ([regex]::Escape('db#1')) -Because "$($File.Name) must not carry the row at a scope holding a '#'"
+                Get-Content $File.FullName -Raw | Should -Not -Match ([regex]::Escape('rg%2Fone')) -Because "$($File.Name) must not carry the row at a scope holding a '%'"
+            }
+            # One warning of the export's own, and none of the per-scope warnings; no self-check warning.
+            @($Run.Warnings | Where-Object { $_ -like '*no document can declare*' }) | Should -Be @(Get-UdxExportWarning -Count 2)
+            @($Run.Warnings | Where-Object { $_ -like 'Get-OERInventory:*' }).Count | Should -Be 0
+            @($Run.Warnings | Where-Object { $_ -like '*did not pass apply-schema validation*' }).Count | Should -Be 0
+            @($Run.Warnings | Where-Object { $_ -like '*Could not run the apply-schema self-check*' }).Count | Should -Be 0
+            @((Get-UdxReadmeSection -BundlePath $Run.Result.BundlePath) -split '\r?\n' | Where-Object { $_ -like '- *' }) | Should -Be @(
+                "- ``Reader`` at ``$($script:UdxHash)`` for ``person2@example.com`` (User): the scope holds a question mark or a number sign"
+                "- ``Owner`` at ``$($script:UdxPercent)`` for ``Automation`` (ServicePrincipal): the scope holds a percent sign"
+            )
+            # Left out, not unread: the bundle is not partial, and no principal was looked for among the deleted items.
+            $Run.Partial.Count | Should -Be 0
+            @($Run.Result.IncompleteReads).Count | Should -Be 0
+            @($Run.Result.SkippedScopes) | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus -Times 0
         }
     }
 }

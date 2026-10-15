@@ -160,10 +160,12 @@ function Export-OERInventory {
     Stop warning preference (-WarningAction Stop, or $WarningPreference set to 'Stop') the export
     stops at that warning, before it writes the bundle. Any other warning of a scope's read is
     written after that read. An operator's -WarningVariable also collects the warnings of the
-    per-scope reads -- Get-OERInventory's root-scope warning, and its warning on role assignments
-    whose principal the directory did not return, once per scope, and any other per-scope warning
-    twice -- while the display shows each other per-scope warning once, and the root-scope assignments
-    and the assignments whose principal the directory did not return only in the export's own warnings.
+    per-scope reads -- Get-OERInventory's root-scope warning, its warning on role assignments whose
+    principal the directory did not return, and the warning on role assignments at a scope no document
+    can declare, once per scope, and any other per-scope warning twice -- while the display shows each
+    other per-scope warning once, and the root-scope assignments, the assignments whose principal the
+    directory did not return and the assignments at a scope no document can declare only in the
+    export's own warnings.
 
     NAMES THAT TWO OR MORE OBJECTS SHARE. Microsoft Entra ID does not keep display names unique, and
     the apply engine refuses a name that more than one live object answers to, so inventory.json and
@@ -204,6 +206,26 @@ function Export-OERInventory {
     A principal whose lookup failed is written by its object id with no principalStatus and is named
     in IncompleteReads (below), and so is one whose deleted items read failed, which is written as
     Unresolved. The Azure scope is never skipped for either.
+
+    ROLE ASSIGNMENTS AT A SCOPE NO DOCUMENT CAN DECLARE. Azure Resource Manager can return a role
+    assignment at a scope whose spelling the validator refuses -- a '.' or '..' segment, a '%', a '\',
+    a '?' or a '#', a trailing or doubled '/', or white space at the start or end of the scope or of a
+    segment, white space other than a space, or a control character, as the name of a resource can
+    hold. No document can declare such a scope, and a document that carried one would be refused as a
+    whole, so inventory.json and roleAssignments.json never carry one: Get-OERInventory leaves it out
+    of every scope's read (the Get-OERInventory help describes the rule). Invoke-OERStructure never
+    creates a role assignment at such a scope, and never removes one, since it prunes only at a scope
+    a document declares. A role assignment at the root scope whose spelling is refused too is named
+    only as a root scope assignment. The export writes ONE warning that gives how many such
+    assignments it read, each counted once however many Azure scopes read it. It writes it after the
+    walk and before the bundle is written, so -WhatIf shows it too, and under a Stop warning preference
+    the export stops at that warning, before it writes the bundle. The generated README.md lists them,
+    with their count, in a section "Role assignments at a scope no document can declare", directly
+    after "Role assignments whose principal the directory did not return": each by role, scope,
+    principal and, when it is known, the principal type, with the rules its scope breaks in words --
+    or the statement that none was read. Such an assignment is left out, not unread: it is not named
+    in IncompleteReads, and it makes no bundle partial. Leaving them out of the export changes nothing
+    in the tenant.
 
     Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
     Groups read when it left anything unread, then one entry per partial report from
@@ -719,6 +741,10 @@ function Export-OERInventory {
         # call's Omnicit.EntraRBAC.UnresolvedPrincipal information record carries them: one list for the
         # whole walk, deduplicated after it.
         $UnresolvedPrincipalRows = [System.Collections.Generic.List[object]]::new()
+        # A13, A15: the role assignments at a scope no document can declare that the per-scope calls left
+        # out, as each call's Omnicit.EntraRBAC.UndeclarableScope information record carries them: one list
+        # for the whole walk, deduplicated after it.
+        $UndeclarableScopeRows = [System.Collections.Generic.List[object]]::new()
 
         if ($AzureSections.Count -gt 0) {
             $TreeParams = @{}
@@ -795,7 +821,9 @@ function Export-OERInventory {
                                 #
                                 # Sprint 11 step 6 (BL-133): the Omnicit.EntraRBAC.UnresolvedPrincipal notices are
                                 # read the same way: their rows join $UnresolvedPrincipalRows, their warning texts
-                                # are not written again, and ONE warning after the walk counts the rows.
+                                # are not written again, and ONE warning after the walk counts the rows. So are the
+                                # Omnicit.EntraRBAC.UndeclarableScope notices (A13, A15): their rows join
+                                # $UndeclarableScopeRows.
                                 $ScopeWarnings = $null
                                 $ScopeInformation = $null
                                 try {
@@ -804,12 +832,16 @@ function Export-OERInventory {
                                 } finally {
                                     $ScopeNotices = @($ScopeInformation | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.RootScopeAssignment' } | ForEach-Object { $_.MessageData })
                                     $ScopePrincipalNotices = @($ScopeInformation | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.UnresolvedPrincipal' } | ForEach-Object { $_.MessageData })
-                                    $ScopeNoticeTexts = @(@($ScopeNotices) + @($ScopePrincipalNotices) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_.Warning })
+                                    $ScopeUndeclarableNotices = @($ScopeInformation | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.UndeclarableScope' } | ForEach-Object { $_.MessageData })
+                                    $ScopeNoticeTexts = @(@($ScopeNotices) + @($ScopePrincipalNotices) + @($ScopeUndeclarableNotices) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_.Warning })
                                     foreach ($ScopeNotice in $ScopeNotices) {
                                         foreach ($RootRow in @($ScopeNotice.Assignments)) { if ($null -ne $RootRow) { $RootScopeRows.Add($RootRow) } }
                                     }
                                     foreach ($ScopePrincipalNotice in $ScopePrincipalNotices) {
                                         foreach ($PrincipalRow in @($ScopePrincipalNotice.Assignments)) { if ($null -ne $PrincipalRow) { $UnresolvedPrincipalRows.Add($PrincipalRow) } }
+                                    }
+                                    foreach ($ScopeUndeclarableNotice in $ScopeUndeclarableNotices) {
+                                        foreach ($UndeclarableRow in @($ScopeUndeclarableNotice.Assignments)) { if ($null -ne $UndeclarableRow) { $UndeclarableScopeRows.Add($UndeclarableRow) } }
                                     }
                                     foreach ($ScopeWarning in @($ScopeWarnings)) {
                                         if ($null -eq $ScopeWarning) { continue }
@@ -930,6 +962,26 @@ function Export-OERInventory {
                     if ($SeenPrincipalRow.Add($PrincipalRowKey)) { $PrincipalRow }
                 })
             Write-Warning "Export-OERInventory: $($UnresolvedPrincipalAssignments.Count) role assignment(s) in inventory.json and roleAssignments.json name a principal the directory did not return, each written by the principal's object id with principalStatus Deleted (found among the directory's deleted items) or Unresolved (found neither in the directory nor among its deleted items, or its deleted items could not be read). README.md names them under 'Role assignments whose principal the directory did not return'; review them as a finding. Invoke-OERStructure never creates such an assignment."
+        }
+
+        # A13, A15: the role assignments at a scope no document can declare that the walk's reads left out,
+        # each once -- an assignment inherited by several scopes is handed over by each read -- deduplicated on
+        # the role assignment id, and on scope, role and principal for a row with none, without regard to
+        # letter case, in the order first handed over. One warning counts them, here after the walk and before
+        # the bundle's ShouldProcess, so -WhatIf shows it too, and the README lists them
+        # (docs/development/rationale.md#undeclarable-scope).
+        $UndeclarableScopeAssignments = @()
+        if ($UndeclarableScopeRows.Count -gt 0) {
+            $SeenUndeclarableRow = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $UndeclarableScopeAssignments = @(foreach ($UndeclarableRow in $UndeclarableScopeRows) {
+                    $UndeclarableRowKey = if (-not [string]::IsNullOrWhiteSpace([string]$UndeclarableRow.RoleAssignmentId)) {
+                        'id|' + [string]$UndeclarableRow.RoleAssignmentId
+                    } else {
+                        'row|{0}|{1}|{2}' -f $UndeclarableRow.Scope, $UndeclarableRow.Role, $UndeclarableRow.Principal
+                    }
+                    if ($SeenUndeclarableRow.Add($UndeclarableRowKey)) { $UndeclarableRow }
+                })
+            Write-Warning "Export-OERInventory: left out $($UndeclarableScopeAssignments.Count) role assignment(s) whose scope no document can declare from inventory.json and roleAssignments.json: the validator refuses the scope's spelling, so a document that carried one would be refused as a whole. README.md names them under 'Role assignments at a scope no document can declare'; review them as a finding. Invoke-OERStructure never creates or removes a role assignment at such a scope."
         }
 
         # Sprint 11 step 6 (BL-133, A18): the role assignment principals the walk's reads could not look up,
@@ -1175,9 +1227,10 @@ function Export-OERInventory {
             # README alone too, per group by name, for the groups inventory.json writes (BL-125), and
             # so do the role assignments at the root scope the walk left out (BL-126), and the names two
             # or more objects share, with their counts (BL-131), and the role assignments written with
-            # principalStatus (BL-133). The role assignment principals that could not be read follow the
+            # principalStatus (BL-133), and the role assignments at a scope no document can declare (A13,
+            # A15). The role assignment principals that could not be read follow the
             # Entra ID entries and precede the role policy selection's, as in the output object.
-            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments -SharedNames $SharedNames -UnresolvedPrincipalAssignments $UnresolvedPrincipalAssignments) |
+            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments -SharedNames $SharedNames -UnresolvedPrincipalAssignments $UnresolvedPrincipalAssignments -UndeclarableScopeAssignments $UndeclarableScopeAssignments) |
                 Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
         }
         $WrittenFiles.Add('README.md')
