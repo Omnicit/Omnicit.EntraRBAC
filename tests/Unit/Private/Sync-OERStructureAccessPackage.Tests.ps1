@@ -7871,6 +7871,26 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             $Target.Reason | Should -BeExactly $script:PkgUnidentified
         }
 
+        It 'leaves the package refused when the create answers a package with no id, and reports the create as it always has' {
+            # A create answer without an id identifies no package: the start refusal stays, so a review that
+            # names it is refused rather than given an empty id. The rows are what the handler reported
+            # before BL-147 for such an answer.
+            Mock -ModuleName $script:moduleName New-OERAccessPackage { [PSCustomObject]@{ Id = ''; DisplayName = 'AP' } }
+            $Map = New-PolMap
+
+            $Run = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT' }) -Packages @() -RenameMap $Map
+
+            @($Run.Rows | ForEach-Object { '{0}|{1}' -f $_.Action, $_.Detail }) | Should -Be @('Created|created access package AP ()')
+            @($Run.Published).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 1 -Exactly
+            $Target = Get-PkgTarget -RenameMap $Map
+            $Target | Should -Not -BeNullOrEmpty
+            $Target.Refused | Should -BeTrue
+            $Target.Id | Should -BeNullOrEmpty
+            $Target.PreviousName | Should -BeNullOrEmpty
+            $Target.Reason | Should -BeExactly $script:PkgUnidentified
+        }
+
         It 'keeps the id after a failure once the package is known (<Case>)' -ForEach @(
             @{ Case = 'the property update fails'; Detail = 'access package update failed: Graph rejected the update' }
             @{ Case = 'the resource role bindings read fails'; Detail = "failed to read the current resource role bindings of access package 'AP':*" }
@@ -7910,9 +7930,10 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             $Target.Refused | Should -BeFalse
         }
 
-        It 'marks no entry whose displayName is empty, and registers nothing without a map' {
+        It 'marks no entry whose displayName is empty, and applies an entry as before when no map is given' {
             $Map = New-PolMap
             Register-PolRefusedCatalog -RenameMap $Map
+            # Without a map the registrations are skipped and the entry is applied as it always was.
             $Run = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT' }) -RenameMap $null
             $Run.Rows[0].Detail | Should -BeExactly 'access package properties match'
             $Thrown = $null

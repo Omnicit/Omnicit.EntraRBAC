@@ -101,7 +101,9 @@ function Invoke-OERStructure {
     package declared in it, and for an access package or assignment policy every access review that
     names it by that name (one that names the package by object id looks a policy up by name, as
     above), existing ones included -- even when the rename was done in an earlier run: include the
-    section, or remove previousDisplayName once the new name resolves. A refusal because -Include
+    section, or remove previousDisplayName once the new name resolves. Leaving out the accessPackages
+    section refuses, besides, every access review that names an access package the document declares
+    by its display name, whether or not that entry renames (see the next paragraph). A refusal because -Include
     leaves the section out publishes no error record, only the Failed row, so -ErrorAction Stop and
     $? do not see it: check the rows. Test-OERStructure warns on a reference that still names a
     renamed object by its previous name, and refuses a document in which an access review names by
@@ -116,10 +118,12 @@ function Invoke-OERStructure {
     id, the review is refused, Failed with nothing created, read or written for it, under -WhatIf too:
     when the entry stops first (its catalog refused, a failed or ambiguous lookup, a failed create, or
     a create that returned another catalog's package), when the -WhatIf plan would create the package
-    (the plan then reports the review Failed although a real run creates the package first and then
-    the review), and when -Include leaves out the AccessPackages section, whether or not the entry
-    renames. A review that names a package the document does not declare, or names it by object id,
-    is resolved as before.
+    or a declined confirmation skipped its create (the plan then reports the review Failed although a
+    real run creates the package first and then the review), and when -Include leaves out the
+    AccessPackages section, whether or not the entry renames. Such a refusal publishes no error record
+    of its own, only the review's Failed row (an entry that stopped on an error carries that error on
+    its own row), so -ErrorAction Stop and $? do not see it: check the rows. A review that names a
+    package the document does not declare, or names it by object id, is resolved as before.
 
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
@@ -432,7 +436,12 @@ function Invoke-OERStructure {
     access package in such a catalog, or an access review that names such an access package or such
     an assignment policy by its new name, is reported Failed with no error record (one that names the
     access package by object id looks such a policy up by name; see References to a renamed object
-    above).
+    above). Leaving out AccessPackages matters for every access review besides (BL-147): a review that
+    names, by its display name, an access package the document declares -- renamed or not -- is
+    reported Failed with no error record, so -ErrorAction Stop and $? do not see it, and nothing is
+    read or written for it; a review that names the package by its object id, or names one the
+    document does not declare, is resolved as before (see An access review and the access package the
+    same document declares, above).
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. Without it
@@ -620,11 +629,14 @@ function Invoke-OERStructure {
 
         # BL-128 (A5): the run's rename map. Resolve-OERStructureRename registers each administrative
         # unit, catalog, access package and assignment policy the document renames (found under
-        # previousDisplayName alone) and each one whose rename it refused or has not decided yet;
+        # previousDisplayName alone) and each one whose rename it refused or has not decided yet, and --
+        # since BL-147 (R-8) -- every other accessPackages entry the document declares: the id of the
+        # package it found in its catalog or created there, or refused until it has one;
         # Get-OERStructureRenameTarget reads it for a reference to the new name in the same run -- a
         # group created into a unit, an access package in a catalog, an access review's access package
-        # and assignment policy -- which Graph's name lookup cannot find yet. One map per document,
-        # passed to the pre-pass and to the five handlers.
+        # and assignment policy -- which Graph's name lookup cannot find yet, or, for a declared access
+        # package, could find in another catalog. One map per document, passed to the pre-pass and to
+        # the five handlers. docs/development/rationale.md#review-package-in-the-same-run
         $RenameMap = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
         # R12: a section -Include leaves out decides none of its renames, so a reference to an entry's new
@@ -640,6 +652,11 @@ function Invoke-OERStructure {
         # (Resolve-OERStructureRename -Unidentified), and a review that names its package by name is refused
         # instead of being looked up in the whole tenant, where a package of that name in another catalog
         # would be found. docs/development/rationale.md#review-package-in-the-same-run
+        # Since then every package of a left-out accessPackages section is refused under its name, and
+        # Sync-OERStructureAccessReview reads the package's entry before the policy's, so a review that
+        # names the package by its name is refused for the package first and never reaches these policy
+        # marks; a review that names it by object id reads only keys built with an id, which these marks
+        # are not. The policy marks are kept: they matter again only if that order or that key ever changes.
         $UndecidedSection = @(
             [PSCustomObject]@{ IncludeName = 'AdministrativeUnits'; DocKey = 'administrativeUnits' }
             [PSCustomObject]@{ IncludeName = 'Catalogs'; DocKey = 'catalogs' }

@@ -96,7 +96,8 @@ function Sync-OERStructureAccessReview {
     catalog or created there: that id replaces the name as above, and a Failed row of the target check
     says "accessPackage '<name>' was read as '<id>', the access package its accessPackages entry
     resolved in this run". Until it has that id -- it stopped first, the -WhatIf plan would create the
-    package, or -Include leaves the accessPackages section out -- the entry is refused instead, with one
+    package, a declined confirmation skipped its create, or -Include leaves the accessPackages section
+    out -- the entry is refused instead, with one
     Failed row "access package '<name>' has no id in this run (<reason>), so the access package this
     access review reviews cannot be identified; nothing was created, read or written for it", and
     nothing else, as for a refused rename. The policy is still looked up within the package, by its id.
@@ -216,7 +217,8 @@ function Sync-OERStructureAccessReview {
     .EXAMPLE
     Sync-OERStructureAccessReview -Item $DocItem -Caller $PSCmdlet -RenameMap $RenameMap
     Reconciles one access review entry, reaching an access package or assignment policy the same
-    document renames by the id the run's rename map holds for its new name.
+    document renames, or an access package it declares, by the id the run's rename map holds for its
+    name.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
         'PSShouldProcess', '',
@@ -264,13 +266,15 @@ function Sync-OERStructureAccessReview {
             $DeclaredItem.recurrence = $MappedRecurrence
         }
 
-        # -- A package or policy the same run renames (BL-128 part 2, D5) -----------------------
+        # -- A package or policy the same run renames or declares (BL-128 part 2, D5; BL-147) ------
         # Read in the run's rename map BEFORE any Graph call for the entry, the definition lookups
         # included. The accessPackages handler registers there every package and assignment policy the
         # document renames (the id of the object found under its previous name, under -WhatIf too and
         # before the rename is sent), every rename it refused, and -- until a decision replaces it --
-        # every rename it has not decided yet (R12); Invoke-OERStructure marks them undecided when
-        # -Include leaves that section out. Get-OERStructureRenameTarget owns the keys: the package by
+        # every rename it has not decided yet (R12); since BL-147 also every other access package the
+        # document declares (the id of the package its entry found or created, refused until then);
+        # Invoke-OERStructure marks them all when -Include leaves that section out.
+        # Get-OERStructureRenameTarget owns the keys: the package by
         # its name -- a GUID is an object id, never a key, so it is not read in the map -- and the
         # policy by its name within the package as this entry names it (the package's declared name,
         # or its object id, which the package handler registers too once it knows the id).
@@ -595,7 +599,9 @@ function Sync-OERStructureAccessReview {
             # that matches nothing, an ambiguous name, a 403), published as itself. See
             # docs/development/rationale.md#access-review-target.
             # $TargetItem carries the id the run's rename map holds for a package or policy this document
-            # renames (see above), which the check uses as written, with no lookup; otherwise it is $Item.
+            # renames, or for an access package any accessPackages entry of this document found or
+            # created (BL-147; see above), which the check uses as written, with no lookup; otherwise it
+            # is $Item.
             $TargetMismatch = Get-OERAccessReviewTargetMismatch -Declared $TargetItem -Current $Existing
             if ($TargetMismatch) {
                 $Caller.WriteError($TargetMismatch)
@@ -882,7 +888,9 @@ function Sync-OERStructureAccessReview {
             }
             # $TargetItem: the id the run's rename map holds for a package or policy this document
             # renames, so the review is created on the object even before Graph's name lookup finds
-            # its new name; otherwise the names as declared.
+            # its new name, or for an access package any accessPackages entry of this document found or
+            # created (BL-147), so the review is created on that package and never on one of that name
+            # in another catalog; otherwise the names as declared.
             AccessPackage           = $TargetItem.accessPackage
             AssignmentPolicy        = $TargetItem.assignmentPolicy
             Recurrence              = $MappedRecurrence
