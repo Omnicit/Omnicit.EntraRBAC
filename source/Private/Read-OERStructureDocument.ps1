@@ -203,6 +203,9 @@ function Read-OERStructureDocument {
         }
         foreach ($Assignment in @($Doc.roleAssignments)) {
             Write-OEREnumValue -Node $Assignment -Key 'principalType' -EnumName 'principalType'
+            # principalStatus (A18) is read by Sync-OERStructureRoleAssignment, whose Skipped Detail names
+            # the value, so it reaches the handler in its canonical spelling like every other enum.
+            Write-OEREnumValue -Node $Assignment -Key 'principalStatus' -EnumName 'principalStatus'
         }
         # assignmentType picks the cmdlet pair Sync-OERStructureDirectoryRoleAssignment calls and is
         # part of every row label it writes, so it must reach the handler in its canonical spelling.

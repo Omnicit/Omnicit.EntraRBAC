@@ -195,6 +195,27 @@ Describe 'Read-OERStructureDocument' {
         }
     }
 
+    It 'canonicalizes the casing of a roleAssignments principalStatus, and leaves it as written under -SkipEnumNormalization (A18)' {
+        InModuleScope $script:moduleName {
+            $Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/s", "role": "Reader", "principal": "11111111-1111-1111-1111-111111111111", "principalStatus": "deleted" }, { "scope": "/s", "role": "Owner", "principal": "22222222-2222-2222-2222-222222222222", "principalStatus": "UNRESOLVED" } ] }'
+            $Doc = Read-OERStructureDocument -Json $Json
+            $Doc.roleAssignments[0].principalStatus | Should -BeExactly 'Deleted'
+            $Doc.roleAssignments[1].principalStatus | Should -BeExactly 'Unresolved'
+            $Raw = Read-OERStructureDocument -Json $Json -SkipEnumNormalization
+            $Raw.roleAssignments[0].principalStatus | Should -BeExactly 'deleted'
+            $Raw.roleAssignments[1].principalStatus | Should -BeExactly 'UNRESOLVED'
+        }
+    }
+
+    It 'leaves a principalStatus that is not a member of the enum untouched so the validator can report it, and an explicit null a null (A18)' {
+        InModuleScope $script:moduleName {
+            $Doc = Read-OERStructureDocument -Json '{ "version": "1.0", "roleAssignments": [ { "scope": "/s", "role": "Reader", "principal": "p", "principalStatus": "Gone" }, { "scope": "/s", "role": "Owner", "principal": "q", "principalStatus": null } ] }'
+            $Doc.roleAssignments[0].principalStatus | Should -BeExactly 'Gone'
+            $Doc.roleAssignments[1].PSObject.Properties.Name | Should -Contain 'principalStatus'
+            $null -eq $Doc.roleAssignments[1].principalStatus | Should -BeTrue
+        }
+    }
+
     Context 'enum normalization reads declared-ness through Test-OERDeclaredProperty' {
         <#
             Write-OEREnumValue's guard was migrated from an inline

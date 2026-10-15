@@ -1729,6 +1729,451 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
             }
         }
     }
+
+    Context 'an entry that declares principalStatus is never created and its principal never looked up (A18, Sprint 11 step 6)' {
+        # Get-OERInventory and Export-OERInventory write a role assignment whose principal the directory
+        # did not return by the principal's object id, with principalStatus Deleted or Unresolved. The
+        # entry takes its principal as the object id with no principal lookup at all (a principal that is
+        # not an object id is Failed, with no lookup). The root scope check stays first; the role lookup,
+        # the duplicate check and the read at the scope run as for any entry, so a matching live
+        # assignment is Unchanged (or Updated on declared drift) and an inherited one Skipped as today.
+        # Where the entry would be CREATED it is Skipped, with no ShouldProcess and no New-OERRoleAssignment,
+        # the same row in a plan and a real run. The prune pass is unchanged: the entry's key is its id.
+        # The three leaf lookups below are the principal lookups; each is mocked to return an id, so a
+        # lookup that is wrongly made would carry on to a create and fail the test twice over.
+        # No id below is version-4 shaped.
+        BeforeAll {
+            . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+            InModuleScope $script:moduleName {
+                $script:PsSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+                $script:PsMg = '/providers/Microsoft.Management/managementGroups/plat'
+                $script:PsRoleGuid = 'bbbb8888-0000-0000-0000-000000000001'
+                $script:PsRoleId = "$($script:PsSub)/providers/Microsoft.Authorization/roleDefinitions/$($script:PsRoleGuid)"
+                $script:PsGone = 'dddd8888-0000-0000-0000-000000000001'
+                $script:PsOther = 'dddd8888-0000-0000-0000-000000000002'
+                $script:PsLiveGoneId = "$($script:PsSub)/providers/Microsoft.Authorization/roleAssignments/cccc8888-0000-0000-0000-000000000001"
+                $script:PsLiveOtherId = "$($script:PsSub)/providers/Microsoft.Authorization/roleAssignments/cccc8888-0000-0000-0000-000000000002"
+                function script:Get-PsLive {
+                    param([string]$PrincipalId, [string]$RoleAssignmentId, [string]$Scope = $script:PsSub, [string]$Description)
+                    $Row = [PSCustomObject]@{
+                        Scope = $Scope; PrincipalId = $PrincipalId; RoleDefinitionId = $script:PsRoleId
+                        RoleAssignmentId = $RoleAssignmentId; Condition = $null; ConditionVersion = $null; Description = $Description
+                    }
+                    $Row
+                }
+                # The Skipped Detail of an entry that would be created, and the Failed Detail of a
+                # principalStatus entry whose principal is not an object id: the texts the handler owns.
+                function script:Get-PsSkippedDetail {
+                    param([string]$Status, [string]$Principal)
+                    "principalStatus '$Status': the principal '$Principal' could not be looked up when the document was exported, so the apply engine never creates a role assignment for this entry. Nothing was written. Remove the entry, or name a principal that exists and remove principalStatus"
+                }
+                function script:Get-PsNotGuidDetail {
+                    param([string]$Status, [string]$Principal)
+                    "principalStatus '$Status' is declared, but principal '$Principal' is not an object id, so no principal lookup was made and nothing was written. Name the principal by its object id, or remove principalStatus"
+                }
+                function script:Invoke-SyncRaPs {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param(
+                        [PSCustomObject]$Item, [string]$ResolvedScope, [switch]$Prune, [switch]$ReconcileScope,
+                        [object[]]$DeclaredAtScope = @(), [int]$ItemIndex = -1, [int[]]$DeclaredAtScopeIndex = @()
+                    )
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune `
+                        -ReconcileScope:$ReconcileScope -DeclaredAtScope $DeclaredAtScope -ItemIndex $ItemIndex -DeclaredAtScopeIndex $DeclaredAtScopeIndex
+                }
+                # One run of the handler: its rows, and the text of every warning that reached the stream.
+                function script:Invoke-SyncRaPsCapture {
+                    param([hashtable]$Splat)
+                    if (-not $Splat.ContainsKey('ErrorAction')) { $Splat['ErrorAction'] = 'Stop' }
+                    $All = @(Invoke-SyncRaPs @Splat -WarningAction Continue 3>&1)
+                    [PSCustomObject]@{
+                        Rows     = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+                        Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                    }
+                }
+            }
+        }
+
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERUserId { 'eeee8888-0000-0000-0000-000000000099' }
+                Mock Resolve-OERGroupId { 'eeee8888-0000-0000-0000-000000000099' }
+                Mock Resolve-OERApplicationId { 'eeee8888-0000-0000-0000-000000000099' }
+                Mock Resolve-OERRoleDefinitionId { $script:PsRoleId }
+                Mock Get-OERRoleAssignment { }
+                Mock New-OERRoleAssignment { [PSCustomObject]@{ RoleAssignmentId = 'ra-new' } }
+                Mock Set-OERRoleAssignment { [PSCustomObject]@{ RoleAssignmentId = 'ra-set' } }
+                Mock Remove-OERRoleAssignment { }
+                Mock Invoke-OERArmRequest { throw 'unexpected ARM request' }
+                Mock Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+            }
+        }
+
+        It 'reports status <Status> Skipped where the entry would be created, and looks up, creates and edits nothing (<Case>)' -ForEach @(
+            @{ Status = 'Deleted'; Case = 'a real run'; Type = ''; Splat = @{ Confirm = $false } }
+            @{ Status = 'Unresolved'; Case = 'a real run'; Type = ''; Splat = @{ Confirm = $false } }
+            @{ Status = 'Deleted'; Case = 'under -WhatIf'; Type = ''; Splat = @{ WhatIf = $true } }
+            @{ Status = 'Unresolved'; Case = 'under -WhatIf'; Type = ''; Splat = @{ WhatIf = $true } }
+            @{ Status = 'Deleted'; Case = 'with -Prune and -ReconcileScope'; Type = ''; Splat = @{ Prune = $true; ReconcileScope = $true; Confirm = $false } }
+            @{ Status = 'Unresolved'; Case = 'with principalType User'; Type = 'User'; Splat = @{ Confirm = $false } }
+            @{ Status = 'Deleted'; Case = 'with principalType Group'; Type = 'Group'; Splat = @{ Confirm = $false } }
+            @{ Status = 'Deleted'; Case = 'with principalType ServicePrincipal'; Type = 'ServicePrincipal'; Splat = @{ Confirm = $false } }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Status = $Status; Type = $Type; Splat = $Splat } {
+                param($Status, $Type, $Splat)
+                $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsGone; principalStatus = $Status }
+                if ($Type) { $Item | Add-Member -NotePropertyName principalType -NotePropertyValue $Type }
+                $Out = Invoke-SyncRaPsCapture -Splat (@{ Item = $Item; ResolvedScope = $script:PsSub; DeclaredAtScope = @($Item); ItemIndex = 0; DeclaredAtScopeIndex = @(0) } + $Splat)
+
+                # Reach proof: the scope was read once, as for any entry, which comes after the role lookup.
+                Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq $script:PsSub -and $AtScope }
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Skipped'
+                $Out.Rows[0].Section | Should -BeExactly 'roleAssignments'
+                $Out.Rows[0].Item | Should -BeExactly "Reader -> $($script:PsGone) @ $($script:PsSub)"
+                $Out.Rows[0].Detail | Should -BeExactly (Get-PsSkippedDetail -Status $Status -Principal $script:PsGone)
+                $Out.Warnings.Count | Should -Be 0
+                # These three cannot fail for an object id, which Resolve-OERStructurePrincipal returns unread; 'reports Failed, with no
+                # lookup, read or write, ...' and 'resolves the key of a principalStatus sibling that is not an object id ...' prove no lookup.
+                Should -Invoke Resolve-OERUserId -Times 0
+                Should -Invoke Resolve-OERGroupId -Times 0
+                Should -Invoke Resolve-OERApplicationId -Times 0
+                Should -Invoke New-OERRoleAssignment -Times 0
+                Should -Invoke Set-OERRoleAssignment -Times 0
+                Should -Invoke Remove-OERRoleAssignment -Times 0
+                Should -Invoke Invoke-OERArmRequest -Times 0
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+            }
+        }
+
+        It 'creates the same entry when it declares no principalStatus, so the Skipped row is the guard and not the fixture' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsGone }
+                $Out = Invoke-SyncRaPsCapture -Splat @{ Item = $Item; ResolvedScope = $script:PsSub; Confirm = $false }
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Created'
+                Should -Invoke New-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Group -eq $script:PsGone -and $Scope -ceq $script:PsSub }
+            }
+        }
+
+        It 'reads an explicit null principalStatus as not declared: the principal is looked up by name and the entry is created' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = 'Reporting Readers'; principalStatus = $null }
+                $Out = Invoke-SyncRaPsCapture -Splat @{ Item = $Item; ResolvedScope = $script:PsSub; Confirm = $false }
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Created'
+                Should -Invoke Resolve-OERGroupId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'Reporting Readers' }
+                Should -Invoke New-OERRoleAssignment -Times 1 -Exactly
+            }
+        }
+
+        It 'reports Failed, with no lookup, read or write, a principalStatus entry whose principal is not an object id (<Principal>)' -ForEach @(
+            @{ Principal = 'person1@example.com' }
+            @{ Principal = 'Reporting Readers' }
+            @{ Principal = '{dddd8888-0000-0000-0000-000000000001}' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Principal = $Principal } {
+                param($Principal)
+                $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $Principal; principalStatus = 'Deleted' }
+                $Out = Invoke-SyncRaPsCapture -Splat @{ Item = $Item; ResolvedScope = $script:PsSub; DeclaredAtScope = @($Item); ItemIndex = 0; DeclaredAtScopeIndex = @(0); Confirm = $false; Prune = $true; ReconcileScope = $true }
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Failed'
+                $Out.Rows[0].Item | Should -BeExactly "Reader -> $Principal @ $($script:PsSub)"
+                $Out.Rows[0].Detail | Should -BeExactly (Get-PsNotGuidDetail -Status 'Deleted' -Principal $Principal)
+                Should -Invoke Resolve-OERUserId -Times 0
+                Should -Invoke Resolve-OERGroupId -Times 0
+                Should -Invoke Resolve-OERApplicationId -Times 0
+                # Failed before the role lookup and the read at the scope, so the prune pass never ran either.
+                Should -Invoke Resolve-OERRoleDefinitionId -Times 0
+                Should -Invoke Get-OERRoleAssignment -Times 0
+                Should -Invoke New-OERRoleAssignment -Times 0
+                Should -Invoke Remove-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'reports a matching live assignment Unchanged (<Case>), and writes nothing' -ForEach @(
+            @{ Case = 'a real run'; Splat = @{ Confirm = $false } }
+            @{ Case = 'under -WhatIf'; Splat = @{ WhatIf = $true } }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Splat = $Splat } {
+                param($Splat)
+                Mock Get-OERRoleAssignment { Get-PsLive -PrincipalId $script:PsGone -RoleAssignmentId $script:PsLiveGoneId }
+                $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsGone; principalType = 'User'; principalStatus = 'Deleted' }
+                $Out = Invoke-SyncRaPsCapture -Splat (@{ Item = $Item; ResolvedScope = $script:PsSub } + $Splat)
+                Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Unchanged'
+                $Out.Rows[0].Detail | Should -BeExactly "role assignment already exists at '$($script:PsSub)'"
+                Should -Invoke Resolve-OERUserId -Times 0
+                Should -Invoke New-OERRoleAssignment -Times 0
+                Should -Invoke Set-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'updates a matching live assignment on declared drift, as for any entry, and the update is still gated by ShouldProcess' {
+            InModuleScope $script:moduleName {
+                Mock Get-OERRoleAssignment { Get-PsLive -PrincipalId $script:PsGone -RoleAssignmentId $script:PsLiveGoneId -Description 'old text' }
+                $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsGone; principalStatus = 'Unresolved'; description = 'new text' }
+                $Real = Invoke-SyncRaPsCapture -Splat @{ Item = $Item; ResolvedScope = $script:PsSub; Confirm = $false }
+                @($Real.Rows).Count | Should -Be 1
+                $Real.Rows[0].Action | Should -Be 'Updated'
+                Should -Invoke Set-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq $script:PsLiveGoneId -and $Description -eq 'new text' }
+                $Plan = Invoke-SyncRaPsCapture -Splat @{ Item = $Item; ResolvedScope = $script:PsSub; WhatIf = $true }
+                @($Plan.Rows).Count | Should -Be 1
+                $Plan.Rows[0].Action | Should -Be 'Skipped'
+                $Plan.Rows[0].Detail | Should -BeLike 'would update role assignment at*'
+                Should -Invoke Set-OERRoleAssignment -Times 1 -Exactly
+                Should -Invoke Resolve-OERUserId -Times 0
+                Should -Invoke New-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'keeps the ancestor Skipped row for an assignment inherited from a management group, not the principalStatus row' {
+            InModuleScope $script:moduleName {
+                Mock Get-OERRoleAssignment {
+                    Get-PsLive -PrincipalId $script:PsGone -RoleAssignmentId "$($script:PsMg)/providers/Microsoft.Authorization/roleAssignments/cccc8888-0000-0000-0000-000000000003" -Scope $script:PsMg
+                }
+                $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsGone; principalStatus = 'Deleted' }
+                $Out = Invoke-SyncRaPsCapture -Splat @{ Item = $Item; ResolvedScope = $script:PsSub; Confirm = $false }
+                Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Skipped'
+                $Out.Rows[0].Detail | Should -BeLike "no role assignment is defined at '$($script:PsSub)': the principal holds this role here through the assignment defined at the ancestor scope*"
+                $Out.Rows[0].Detail | Should -Not -BeLike 'principalStatus*'
+                Should -Invoke New-OERRoleAssignment -Times 0
+                Should -Invoke Set-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'fails the entry when its role does not resolve, as for any entry, and writes no principalStatus row' {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERRoleDefinitionId { throw 'role marker: no such role' }
+                $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'NoSuchRole'; principal = $script:PsGone; principalStatus = 'Deleted' }
+                $Out = Invoke-SyncRaPsCapture -Splat @{ Item = $Item; ResolvedScope = $script:PsSub; Confirm = $false; ErrorAction = 'SilentlyContinue' }
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Failed'
+                $Out.Rows[0].Detail | Should -BeLike "could not resolve role 'NoSuchRole' at scope '$($script:PsSub)': role marker*"
+                Should -Invoke Get-OERRoleAssignment -Times 0
+                Should -Invoke New-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'fails the entry, and does not skip it, when the read at the scope fails: a failed read is never an empty fact' {
+            InModuleScope $script:moduleName {
+                Mock Get-OERRoleAssignment {
+                    [CmdletBinding()] param([string]$Scope, [switch]$AtScope)
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('read marker'), 'AuthorizationFailed',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $Scope))
+                }
+                $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsGone; principalStatus = 'Deleted' }
+                $Out = Invoke-SyncRaPsCapture -Splat @{ Item = $Item; ResolvedScope = $script:PsSub; Confirm = $false; ErrorAction = 'SilentlyContinue' }
+                Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Failed'
+                $Out.Rows[0].Detail | Should -BeLike "could not read role assignments at scope '$($script:PsSub)': read marker*"
+                Should -Invoke New-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'fails the later of two principalStatus entries that name one assignment, as for any entry, and creates nothing' {
+            InModuleScope $script:moduleName {
+                $First = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsGone; principalStatus = 'Deleted' }
+                $Second = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsGone; principalStatus = 'Unresolved' }
+                $Splat = @{ ResolvedScope = $script:PsSub; DeclaredAtScope = @($First, $Second); DeclaredAtScopeIndex = @(0, 1); Confirm = $false }
+                $A = Invoke-SyncRaPsCapture -Splat ($Splat + @{ Item = $First; ItemIndex = 0 })
+                $B = Invoke-SyncRaPsCapture -Splat ($Splat + @{ Item = $Second; ItemIndex = 1 })
+                @($A.Rows).Count | Should -Be 1
+                $A.Rows[0].Action | Should -Be 'Skipped'
+                @($B.Rows).Count | Should -Be 1
+                $B.Rows[0].Action | Should -Be 'Failed'
+                $B.Rows[0].Detail | Should -BeLike "roleAssignments[[]1] resolves to the same assignment as roleAssignments[[]0]*Nothing was written for this entry; keep one of the two entries."
+                Should -Invoke Resolve-OERUserId -Times 0
+                Should -Invoke Resolve-OERGroupId -Times 0
+                Should -Invoke New-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'keeps the root scope check first: a principalStatus entry at the root scope is the root scope row, with no role lookup or read' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{ scope = '/'; role = 'Reader'; principal = $script:PsGone; principalStatus = 'Deleted' }
+                $Out = Invoke-SyncRaPsCapture -Splat @{ Item = $Item; ResolvedScope = '/'; DeclaredAtScope = @($Item); ItemIndex = 0; DeclaredAtScopeIndex = @(0); Confirm = $false; Prune = $true; ReconcileScope = $true }
+                @($Out.Rows).Count | Should -Be 1
+                $Out.Rows[0].Action | Should -Be 'Skipped'
+                $Out.Rows[0].Detail | Should -BeLike "the root scope '/' grants access over every management group and subscription in the tenant*"
+                $Out.Rows[0].Detail | Should -Not -BeLike 'principalStatus*'
+                @($Out.Warnings).Count | Should -Be 1
+                Should -Invoke Resolve-OERRoleDefinitionId -Times 0
+                Should -Invoke Get-OERRoleAssignment -Times 0
+                Should -Invoke Resolve-OERUserId -Times 0
+                Should -Invoke New-OERRoleAssignment -Times 0
+            }
+        }
+
+        Context 'the prune pass' {
+            # The entry's key is '<principal object id>|<role definition GUID>', which is what the live
+            # assignment's key is: a declared entry protects its live counterpart whether or not it
+            # carries principalStatus. Reader is declared at the subscription, and the live state holds
+            # an assignment of the principal the entry names and an undeclared one.
+            It 'keeps the live assignment a declared principalStatus entry names, reports it Unchanged, and removes only the undeclared one (-Prune)' {
+                InModuleScope $script:moduleName {
+                    Mock Get-OERRoleAssignment {
+                        Get-PsLive -PrincipalId $script:PsGone -RoleAssignmentId $script:PsLiveGoneId
+                        Get-PsLive -PrincipalId $script:PsOther -RoleAssignmentId $script:PsLiveOtherId
+                    }
+                    $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsGone; principalStatus = 'Deleted' }
+                    $Out = Invoke-SyncRaPsCapture -Splat @{
+                        Item = $Item; ResolvedScope = $script:PsSub; DeclaredAtScope = @($Item); ItemIndex = 0; DeclaredAtScopeIndex = @(0)
+                        ReconcileScope = $true; Prune = $true; Confirm = $false
+                    }
+                    Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly
+                    @($Out.Rows | ForEach-Object { $_.Action }) | Should -Be @('Unchanged', 'Removed')
+                    $Out.Rows[1].Item | Should -BeExactly "$($script:PsRoleGuid) -> $($script:PsOther) @ $($script:PsSub)"
+                    Should -Invoke Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq $script:PsLiveOtherId }
+                    Should -Invoke Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -eq $script:PsLiveGoneId }
+                    Should -Invoke New-OERRoleAssignment -Times 0
+                }
+            }
+
+            It 'reports the live assignment of a declared principalStatus entry as no Extra row without -Prune, and the undeclared one as Extra' {
+                InModuleScope $script:moduleName {
+                    Mock Get-OERRoleAssignment {
+                        Get-PsLive -PrincipalId $script:PsGone -RoleAssignmentId $script:PsLiveGoneId
+                        Get-PsLive -PrincipalId $script:PsOther -RoleAssignmentId $script:PsLiveOtherId
+                    }
+                    $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsGone; principalStatus = 'Deleted' }
+                    $Out = Invoke-SyncRaPsCapture -Splat @{
+                        Item = $Item; ResolvedScope = $script:PsSub; DeclaredAtScope = @($Item); ItemIndex = 0; DeclaredAtScopeIndex = @(0)
+                        ReconcileScope = $true; Confirm = $false
+                    }
+                    @($Out.Rows | ForEach-Object { $_.Action }) | Should -Be @('Unchanged', 'Extra')
+                    $Out.Rows[1].Item | Should -BeExactly "$($script:PsRoleGuid) -> $($script:PsOther) @ $($script:PsSub)"
+                    Should -Invoke Remove-OERRoleAssignment -Times 0
+                }
+            }
+
+            It 'keeps the declared entry''s key in the declared set when the entry itself is Skipped, so only the undeclared assignment is removed' {
+                InModuleScope $script:moduleName {
+                    # No live assignment for the principal the entry names: the entry is Skipped, not created.
+                    Mock Get-OERRoleAssignment { Get-PsLive -PrincipalId $script:PsOther -RoleAssignmentId $script:PsLiveOtherId }
+                    $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsGone; principalStatus = 'Unresolved' }
+                    $Out = Invoke-SyncRaPsCapture -Splat @{
+                        Item = $Item; ResolvedScope = $script:PsSub; DeclaredAtScope = @($Item); ItemIndex = 0; DeclaredAtScopeIndex = @(0)
+                        ReconcileScope = $true; Prune = $true; Confirm = $false
+                    }
+                    @($Out.Rows | ForEach-Object { $_.Action }) | Should -Be @('Skipped', 'Removed')
+                    $Out.Rows[0].Detail | Should -BeExactly (Get-PsSkippedDetail -Status 'Unresolved' -Principal $script:PsGone)
+                    Should -Invoke Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq $script:PsLiveOtherId }
+                    Should -Invoke New-OERRoleAssignment -Times 0
+                }
+            }
+
+            It 'lets -Prune remove the assignment of the same document without the principalStatus row, like any undeclared assignment' {
+                InModuleScope $script:moduleName {
+                    Mock Get-OERRoleAssignment {
+                        Get-PsLive -PrincipalId $script:PsGone -RoleAssignmentId $script:PsLiveGoneId
+                        Get-PsLive -PrincipalId $script:PsOther -RoleAssignmentId $script:PsLiveOtherId
+                    }
+                    # The document now declares only the other principal, as the first run's document would
+                    # after the principalStatus entry is removed from it.
+                    $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsOther }
+                    $Out = Invoke-SyncRaPsCapture -Splat @{
+                        Item = $Item; ResolvedScope = $script:PsSub; DeclaredAtScope = @($Item); ItemIndex = 0; DeclaredAtScopeIndex = @(0)
+                        ReconcileScope = $true; Prune = $true; Confirm = $false
+                    }
+                    @($Out.Rows | ForEach-Object { $_.Action }) | Should -Be @('Unchanged', 'Removed')
+                    $Out.Rows[1].Item | Should -BeExactly "$($script:PsRoleGuid) -> $($script:PsGone) @ $($script:PsSub)"
+                    Should -Invoke Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq $script:PsLiveGoneId }
+                }
+            }
+
+            It 'resolves the key of a principalStatus sibling that is not an object id to nothing, with no lookup, and withholds the prune of the scope' {
+                InModuleScope $script:moduleName {
+                    Mock Get-OERRoleAssignment { Get-PsLive -PrincipalId $script:PsOther -RoleAssignmentId $script:PsLiveOtherId }
+                    $Item = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = $script:PsGone; principalStatus = 'Deleted' }
+                    $Sibling = [PSCustomObject]@{ scope = $script:PsSub; role = 'Reader'; principal = 'Some Group'; principalStatus = 'Deleted' }
+                    $Out = Invoke-SyncRaPsCapture -Splat @{
+                        Item = $Item; ResolvedScope = $script:PsSub; DeclaredAtScope = @($Item, $Sibling); ItemIndex = 0; DeclaredAtScopeIndex = @(0, 1)
+                        ReconcileScope = $true; Prune = $true; Confirm = $false
+                    }
+                    # Reach proof: the sibling rows were read (the entry itself is Skipped, then the pass ran).
+                    Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly
+                    @($Out.Rows | ForEach-Object { $_.Action }) | Should -Be @('Skipped', 'Skipped')
+                    $Out.Rows[1].Detail | Should -BeLike "prune withheld: declared entry 'Reader -> Some Group @ $($script:PsSub)' could not be resolved*"
+                    Should -Invoke Resolve-OERUserId -Times 0
+                    Should -Invoke Resolve-OERGroupId -Times 0
+                    Should -Invoke Resolve-OERApplicationId -Times 0
+                    Should -Invoke Remove-OERRoleAssignment -Times 0
+                }
+            }
+        }
+
+        Context 'asks no confirmation, in a script with no try above it' {
+            # The handler in a runspace through Invoke-OERWithConfirmAnswer, so its host answers
+            # ShouldProcess itself and no try stands anywhere above the call. The script installs its own
+            # fakes in ITS copy of the module scope and logs every lookup, read and write to a file.
+            BeforeAll {
+                function script:New-PsScenario {
+                    param([string]$Log, [string]$Flag, [string]$Entry)
+                    [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERUserId -Value { [System.IO.File]::AppendAllText('#LOG#', "user`n"); 'eeee8888-0000-0000-0000-000000000099' }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { [System.IO.File]::AppendAllText('#LOG#', "group`n"); 'eeee8888-0000-0000-0000-000000000099' }
+    Set-Item -Path function:script:Resolve-OERApplicationId -Value { [System.IO.File]::AppendAllText('#LOG#', "application`n"); 'eeee8888-0000-0000-0000-000000000099' }
+    Set-Item -Path function:script:Resolve-OERRoleDefinitionId -Value { '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/bbbb8888-0000-0000-0000-000000000001' }
+    Set-Item -Path function:script:Get-OERRoleAssignment -Value { [System.IO.File]::AppendAllText('#LOG#', "read`n") }
+    Set-Item -Path function:script:New-OERRoleAssignment -Value { [System.IO.File]::AppendAllText('#LOG#', "create`n"); [pscustomobject]@{ RoleAssignmentId = 'ra-new' } }
+    Set-Item -Path function:script:Set-OERRoleAssignment -Value { [System.IO.File]::AppendAllText('#LOG#', "set`n") }
+    Set-Item -Path function:script:Remove-OERRoleAssignment -Value { [System.IO.File]::AppendAllText('#LOG#', "remove`n") }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "arm`n") }
+    function script:Invoke-SyncRaPsConfirm {
+        [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Low')]
+        param([PSCustomObject]$Item)
+        Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -Prune -ReconcileScope -DeclaredAtScope @($Item) -ItemIndex 0 -DeclaredAtScopeIndex @(0)
+    }
+    $Item = #ENTRY#
+    Invoke-SyncRaPsConfirm -Item $Item #FLAG# | ForEach-Object { "ROW:$($_.Action):$($_.Item)" }
+}
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#FLAG#', $Flag).Replace('#ENTRY#', $Entry))
+                }
+                $script:PsLabel = 'Reader -> dddd8888-0000-0000-0000-000000000001 @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+                $script:PsStatusEntry = "[pscustomobject]@{ scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; role = 'Reader'; principal = 'dddd8888-0000-0000-0000-000000000001'; principalStatus = 'Deleted' }"
+                $script:PsPlainEntry = "[pscustomobject]@{ scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; role = 'Reader'; principal = 'dddd8888-0000-0000-0000-000000000001' }"
+            }
+
+            It 'raises no prompt and no What if line for a principalStatus entry under <Flag>, and reaches the end having read but not created or looked up' -ForEach @(
+                @{ Flag = '-Confirm' }
+                @{ Flag = '-WhatIf' }
+            ) {
+                $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+                $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PsScenario -Log $Log -Flag $Flag -Entry $script:PsStatusEntry)
+                $Run.Output[-1] | Should -BeExactly 'END'
+                @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Skipped:$($script:PsLabel)")
+                @($Run.Prompts).Count | Should -Be 0
+                @($Run.Events | Where-Object { $_ -like 'Line: What if:*' -or $_ -like 'Prompt:*' }).Count | Should -Be 0
+                @($Run.Errors).Count | Should -Be 0
+                # The read ran (the guard is reached), and nothing else was sent.
+                @(Get-Content -LiteralPath $Log) | Should -Be @('read')
+            }
+
+            It 'prompts, or plans, and creates for the same entry without principalStatus, so the scenario can tell a refusal from silence' {
+                $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+                $Confirmed = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PsScenario -Log $Log -Flag '-Confirm' -Entry $script:PsPlainEntry)
+                $Confirmed.Output[-1] | Should -BeExactly 'END'
+                @($Confirmed.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Created:$($script:PsLabel)")
+                @($Confirmed.Prompts).Count | Should -Be 1
+                @(Get-Content -LiteralPath $Log) | Should -Be @('read', 'create')
+                $PlanLog = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+                $Plan = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PsScenario -Log $PlanLog -Flag '-WhatIf' -Entry $script:PsPlainEntry)
+                @($Plan.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @("ROW:Skipped:$($script:PsLabel)")
+                @($Plan.Events | Where-Object { $_ -like 'Line: What if:*' }).Count | Should -Be 1
+                @(Get-Content -LiteralPath $PlanLog) | Should -Be @('read')
+            }
+        }
+    }
 }
 
 Describe 'Sync-OERStructureRoleAssignment with an ambiguous service principal display name' {

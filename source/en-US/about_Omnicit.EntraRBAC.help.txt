@@ -228,6 +228,60 @@ ROLE ASSIGNMENTS AT THE ROOT SCOPE
     Skipped, with a warning, before it looks up, reads or writes anything for
     it, also under -WhatIf, and never prunes the root scope, also with -Prune.
 
+ROLE ASSIGNMENTS WHOSE PRINCIPAL IS NOT RETURNED
+
+    An Azure role assignment can name a principal that Microsoft Entra ID does
+    not return. Get-OERInventory and Export-OERInventory keep such an
+    assignment in roleAssignments, written by the principal's object id with
+    principalStatus: Deleted when the principal is among the directory's
+    deleted items, Unresolved when it is found neither there nor in the
+    directory (deleted beyond the retention period, a principal of another
+    tenant, or not readable) or when its deleted items could not be read.
+    Each warns once with the count, and the export README lists them under
+    "Role assignments whose principal the directory did not return", as a
+    finding to review. A principal whose lookup failed is written by its
+    object id without principalStatus; Get-OERInventory names it in its
+    InventoryPartial error, and Export-OERInventory in IncompleteReads and its
+    own InventoryPartial, as each does a failed read of the deleted items. The
+    read of the deleted items needs no permission beyond Directory.Read.All,
+    which the inventory already needs. Test-OERStructure refuses a
+    principalStatus that is neither Deleted nor Unresolved in any letter case
+    (another letter case is a Warning, and Invoke-OERStructure reads it in the
+    canonical case), and one beside a principal that is not an object id.
+    Invoke-OERStructure looks no principal up for such an entry and
+    never creates the assignment: where it would, the entry is reported
+    Skipped, also under -WhatIf. A live assignment is matched and kept like
+    any other, and a document without the entry lets -Prune remove it like
+    any undeclared assignment at a scope the document declares. This covers
+    the roleAssignments section only.
+
+ROLE ASSIGNMENTS AT A SCOPE NO DOCUMENT CAN DECLARE
+
+    A role assignment at a scope whose spelling the validator refuses (see
+    RENAMES, MAIL ALIASES AND SCOPE SPELLING below), as the name of a resource
+    of a few types can make it, cannot be declared, so Get-OERInventory and
+    Export-OERInventory leave it out of roleAssignments, each with one warning
+    that counts them, and the export README lists them under "Role
+    assignments at a scope no document can declare", with the rules each
+    scope breaks. Invoke-OERStructure never creates or removes a role
+    assignment at such a scope, since it prunes only at a scope a document
+    declares.
+
+PIM FOR GROUPS IN A RESTRICTED MANAGEMENT UNIT
+
+    Microsoft Learn states that Privileged Identity Management does not
+    support a group in a restricted management administrative unit. With
+    Groups and AdministrativeUnits included, Export-OERInventory warns once
+    with the count of the groups inventory.json writes with PIM eligibility or
+    a pimPolicy that a restricted unit lists among its members, and its README
+    names each such group and its units under "Groups using PIM for Groups in
+    a restricted management unit", as a finding; nothing is left out.
+    Test-OERStructure warns, and never refuses, when a document places a
+    group that declares PIM eligibility or a pimPolicy in a restricted unit
+    it declares. Invoke-OERStructure still sends such a group's PIM settings
+    and eligibility; what Microsoft Graph answers to them has not been
+    measured.
+
 ACCESS REVIEWS ARE MATCHED BY NAME
 
     An existing access review is matched by display name, and display names
@@ -315,13 +369,27 @@ RENAMES, MAIL ALIASES AND SCOPE SPELLING
     record, only the Failed row, so -ErrorAction Stop and $? do not see it:
     check the rows.
 
+    An access review that names, by its display name, an access package the
+    same document declares reaches the package that accessPackages entry
+    found in its catalog or created there, by its object id, whether or not
+    the entry renames: its name is never looked up in the whole tenant, where
+    a package of that name in another catalog would be found. Until the entry
+    has that id, the review is Failed and nothing is read or written for it,
+    under -WhatIf too: when the entry stopped first, when a -WhatIf plan
+    would create the package (a real run creates the package, then the
+    review) or a declined confirmation skipped its create, and when -Include
+    leaves out the AccessPackages section. Such a refusal publishes no error
+    record of its own, only the Failed row. Include AccessPackages, or name
+    the package by its object id. A review that names a package the
+    document does not declare is resolved as before.
+
     Test-OERStructure warns on a reference that still names a renamed object
     by its previous name, an access review's assignmentPolicy included. It
     refuses, as an Error, an access review whose accessPackage gives by name
     a package that two or more accessPackages entries declare, as
-    displayName or previousDisplayName, while one of them is renamed: the run
-    keys a package by its name alone, so it cannot tell which package the
-    review means. Name the package by its object id.
+    displayName or previousDisplayName, whether or not one of them is
+    renamed: the run keys a package by its name alone, so it cannot tell
+    which package the review means. Name the package by its object id.
 
     A group's mail alias does not follow a rename. Declare mailNickname for the
     new name; the validator warns when a renamed group keeps the alias derived
@@ -342,8 +410,10 @@ RENAMES, MAIL ALIASES AND SCOPE SPELLING
     spaces between other characters of a segment are accepted, since an Azure
     resource name can hold them, so an export that holds a role assignment at
     such a resource applies. A resource whose name holds one of the refused
-    characters, which a few resource types allow, cannot be declared: remove
-    its entry.
+    characters, which a few resource types allow, cannot be declared: the
+    export leaves a role assignment there out (see ROLE ASSIGNMENTS AT A
+    SCOPE NO DOCUMENT CAN DECLARE above), and a hand-written entry for one is
+    to be removed.
 
     A -WhatIf plan reports an access package declared in a catalog the same
     document creates as 'would create access package' instead of Failed.

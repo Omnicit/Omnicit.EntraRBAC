@@ -6854,12 +6854,15 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
             $Run.Published[0].FullyQualifiedErrorId | Should -Match '^AssignmentPolicyRenameNotFound'
             $Run.Published[0].TargetObject | Should -BeExactly 'POL-New'
 
-            # The decision replaced the policy's undecided mark: refused, under the package's name.
-            $Map.Count | Should -Be 1
+            # The decision replaced the policy's undecided mark: refused, under the package's name. The
+            # package the plan would create has no id yet, so it is registered refused (BL-147).
+            $Map.Count | Should -Be 2
             $Entry = $Map['assignmentPolicies|AP|POL-New']
             $Entry.Refused | Should -BeTrue
             $Entry.ErrorId | Should -BeExactly 'AssignmentPolicyRenameNotFound'
             $Entry.Id | Should -BeNullOrEmpty
+            $Map['accessPackages|AP'].Refused | Should -BeTrue
+            $Map['accessPackages|AP'].Id | Should -BeNullOrEmpty
             $Run.Sent.Count | Should -Be 0
         }
 
@@ -6888,10 +6891,12 @@ Describe 'Sync-OERStructureAccessPackage -- assignment policies renamed through 
             $Run.Published[0].FullyQualifiedErrorId | Should -Match '^AssignmentPolicyRenameNotFound'
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
             Should -Invoke -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'Plain' -and $AccessPackage -eq 'ap-1' }
-            # Registered under the package's name and under the id of the package just created.
-            $Map.Count | Should -Be 2
+            # Registered under the package's name and under the id of the package just created; the package
+            # itself under that id (BL-147).
+            $Map.Count | Should -Be 3
             $Map['assignmentPolicies|AP|POL-New'].ErrorId | Should -BeExactly 'AssignmentPolicyRenameNotFound'
             $Map['assignmentPolicies|ap-1|POL-New'].ErrorId | Should -BeExactly 'AssignmentPolicyRenameNotFound'
+            $Map['accessPackages|AP'].Id | Should -BeExactly 'ap-1'
         }
 
         It 'renames the policy whose Id in the package''s list is the object id previousDisplayName names, matched without regard to letter case and with no request of its own' {
@@ -7279,6 +7284,8 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             $Entry.Id | Should -BeExactly 'ap-old'
             $Entry.Refused | Should -BeFalse
             $Entry.ErrorId | Should -BeNullOrEmpty
+            # The rename keeps its own registration (BL-147): the previous name it renames from.
+            $Entry.PreviousName | Should -BeExactly 'AP-Old'
         }
 
         It 'registers a refused package rename as refused with its error id, and leaves every renaming policy undecided (<ErrorId>)' -ForEach @(
@@ -7467,12 +7474,15 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             # The policy without previousDisplayName is marked under neither key.
             $Targets.PlainByName | Should -BeNullOrEmpty
             $Targets.PlainById | Should -BeNullOrEmpty
-            # The two policy keys, and for a renaming package its own decision (a Rename to ap-1).
+            # The two policy keys, and the package's own entry: for a renaming package its decision (a Rename
+            # to ap-1), otherwise the id of the package found (BL-147). Neither is taken back by the stop.
+            $Map.Count | Should -Be 3
+            $Map['accessPackages|AP'].Id | Should -BeExactly 'ap-1'
+            $Map['accessPackages|AP'].Refused | Should -BeFalse
             if ($Renames) {
-                $Map.Count | Should -Be 3
-                $Map['accessPackages|AP'].Id | Should -BeExactly 'ap-1'
+                $Map['accessPackages|AP'].PreviousName | Should -BeExactly 'AP-Old'
             } else {
-                $Map.Count | Should -Be 2
+                $Map['accessPackages|AP'].PreviousName | Should -BeNullOrEmpty
             }
         }
 
@@ -7579,8 +7589,10 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             $Own[0].Exception.Message | Should -BeExactly 'transient re-read failure'
             @($Run.Published | Where-Object { $_.Exception -is [System.Management.Automation.ParameterBindingException] }) | Should -BeNullOrEmpty
             @($Run.Published | Where-Object { $_.Exception.Message -ne 'transient re-read failure' }) | Should -BeNullOrEmpty
-            @($Map.Keys | Sort-Object) | Should -BeExactly @(@('assignmentpolicies|ap|pol-x', 'assignmentpolicies|ap-1|pol-x') | Sort-Object)
-            foreach ($Key in @($Map.Keys)) { $Map[$Key].Reason | Should -BeExactly $script:PolUndecided }
+            @($Map.Keys | Sort-Object) | Should -BeExactly @(@('accesspackages|ap', 'assignmentpolicies|ap|pol-x', 'assignmentpolicies|ap-1|pol-x') | Sort-Object)
+            foreach ($Key in @($Map.Keys | Where-Object { $_ -like 'assignmentpolicies|*' })) { $Map[$Key].Reason | Should -BeExactly $script:PolUndecided }
+            # The package was found before the re-read failed: its id stays registered (BL-147).
+            $Map['accessPackages|AP'].Id | Should -BeExactly 'ap-1'
         }
 
         It 'marks nothing again for a package whose name is empty: the item ends where it always did, at its first row' {
@@ -7635,13 +7647,15 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
                     ById   = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name 'POL-New' -AccessPackage 'ap-1' -RenameMap $Map
                 }
             }
+            # The package itself is registered under its id in every case (BL-147).
+            $Map['accessPackages|AP'].Id | Should -BeExactly 'ap-1'
             if ($Outcome -eq 'Current') {
-                # The new name finds the policy: the mark is removed and nothing is registered.
-                $Map.Count | Should -Be 0
+                # The new name finds the policy: the mark is removed and nothing is registered for it.
+                $Map.Count | Should -Be 1
                 $Targets.ByName | Should -BeNullOrEmpty
                 $Targets.ById | Should -BeNullOrEmpty
             } else {
-                $Map.Count | Should -Be 2
+                $Map.Count | Should -Be 3
                 foreach ($Target in @($Targets.ByName, $Targets.ById)) {
                     $Target | Should -Not -BeNullOrEmpty
                     $Target.Refused | Should -Be ($Outcome -ne 'Rename')
@@ -7674,9 +7688,13 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             @($Run.Rows).Count | Should -Be 1
             $Run.Rows[0].Detail | Should -BeLike "catalog 'CAT' was not reconciled in this run*"
             $Run.Published.Count | Should -Be 0
-            # The map's keys are lower case, as Resolve-OERStructureRename builds them.
-            @($Map.Keys | Sort-Object) | Should -BeExactly @(@('catalogs|cat') + @($Marked | ForEach-Object { $_.ToLowerInvariant() }) | Sort-Object)
+            # The map's keys are lower case, as Resolve-OERStructureRename builds them. The package, which
+            # renames nothing here, is marked as an entry that has not found its package (BL-147).
+            @($Map.Keys | Sort-Object) | Should -BeExactly @(@('catalogs|cat', 'accesspackages|ap') + @($Marked | ForEach-Object { $_.ToLowerInvariant() }) | Sort-Object)
             foreach ($Key in $Marked) { $Map[$Key].Reason | Should -BeExactly $script:PolUndecided }
+            $Map['accessPackages|AP'].Refused | Should -BeTrue
+            $Map['accessPackages|AP'].PreviousName | Should -BeNullOrEmpty
+            $Map['accessPackages|AP'].Reason | Should -BeExactly "the accessPackages entry did not find or create it; see that entry's rows"
         }
 
         It 'never fails in the mark block on an empty package name: the item ends where it always did, at its first row' {
@@ -7704,7 +7722,7 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             @($Map.Keys) | Should -BeExactly @('catalogs|cat')
         }
 
-        It 'registers nothing for an entry and policies that declare no previousDisplayName' {
+        It 'registers only the package''s id for an entry and policies that declare no previousDisplayName (BL-147)' {
             $Map = New-PolMap
             $Item = [PSCustomObject]@{
                 displayName        = 'AP'
@@ -7715,7 +7733,214 @@ $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "dis
             $Run = Invoke-PolSync -Item $Item -Live @(New-PolRaw -Id 'pol-plain' -DisplayName 'Plain') -RenameMap $Map
 
             $Run.Rows[1].Detail | Should -BeExactly "assignmentPolicy 'Plain' matches"
-            $Map.Count | Should -Be 0
+            @($Map.Keys) | Should -BeExactly @('accesspackages|ap')
+            $Map['accessPackages|AP'].Id | Should -BeExactly 'ap-1'
+            $Map['accessPackages|AP'].Refused | Should -BeFalse
+            $Map['accessPackages|AP'].PreviousName | Should -BeNullOrEmpty
+        }
+    }
+
+    # R-8 (BL-147): every entry with a displayName registers its package in the run's map, not only a
+    # rename: refused, with a reason and no error id, before anything else is read (as a rename's undecided
+    # mark is); its id once it has found the package in its catalog -- also after a Current rename outcome
+    # -- or created it there; a rename keeps its own registration. A stop before that leaves the refusal,
+    # and under -WhatIf a package the plan would create is refused with the reason that it has no id yet.
+    # A failure after the package is known does not take the id back. Read back through the real reader.
+    # docs/development/rationale.md#review-package-in-the-same-run
+    Context 'every access package entry in the run''s map (BL-147)' {
+
+        BeforeAll {
+            $script:PkgUnidentified = "the accessPackages entry did not find or create it; see that entry's rows"
+            $script:PkgPlanned = 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation'
+            function Get-PkgTarget {
+                param($RenameMap, [string]$Name = 'AP')
+                InModuleScope $script:moduleName -Parameters @{ Map = $RenameMap; Name = $Name } {
+                    param($Map, $Name)
+                    Get-OERStructureRenameTarget -Section 'accessPackages' -Name $Name -RenameMap $Map
+                }
+            }
+        }
+
+        It 'registers the id of the package it found in its catalog, under -WhatIf too (WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ UseWhatIf = $false }
+            @{ UseWhatIf = $true }
+        ) {
+            Mock -ModuleName $script:moduleName Set-OERAccessPackage { }
+            $Map = New-PolMap
+            $Run = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT'; description = 'changed' }) -UseWhatIf $UseWhatIf -RenameMap $Map
+
+            $Run.Rows[0].Detail | Should -BeLike '*update* access package properties (Description)'
+            $Target = Get-PkgTarget -RenameMap $Map
+            $Target.Id | Should -BeExactly 'ap-1'
+            $Target.Refused | Should -BeFalse
+            $Target.PreviousName | Should -BeNullOrEmpty
+            $Target.ErrorId | Should -BeNullOrEmpty
+            $Target.Reason | Should -BeNullOrEmpty
+            @($Map.Keys) | Should -BeExactly @('accesspackages|ap')
+        }
+
+        It 'registers the id of the package after a Current rename outcome, with no previous name' {
+            $Map = New-PolMap
+            $Item = [PSCustomObject]@{ displayName = 'AP'; previousDisplayName = 'AP-Old'; catalog = 'CAT' }
+
+            $Run = Invoke-PolSync -Item $Item -RenameMap $Map
+
+            $Run.Rows[0].Detail | Should -BeExactly 'access package properties match'
+            $Target = Get-PkgTarget -RenameMap $Map
+            $Target.Id | Should -BeExactly 'ap-1'
+            $Target.Refused | Should -BeFalse
+            $Target.PreviousName | Should -BeNullOrEmpty
+        }
+
+        It 'registers the id of the package it created in the declared catalog (<Case>)' -ForEach @(
+            @{ Case = 'the create answered no catalog'; CatalogId = $null }
+            @{ Case = 'the create answered the declared catalog'; CatalogId = 'cat-1' }
+        ) {
+            Mock -ModuleName $script:moduleName New-OERAccessPackage {
+                [PSCustomObject]@{ Id = 'ap-created'; DisplayName = 'AP'; CatalogId = $script:PkgCreatedCatalog }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERCatalogId { 'cat-1' }
+            $script:PkgCreatedCatalog = $CatalogId
+            $Map = New-PolMap
+
+            $Run = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT' }) -Packages @() -RenameMap $Map
+
+            $Run.Rows[0].Detail | Should -BeExactly 'created access package AP (ap-created)'
+            $Target = Get-PkgTarget -RenameMap $Map
+            $Target.Id | Should -BeExactly 'ap-created'
+            $Target.Refused | Should -BeFalse
+            $Target.PreviousName | Should -BeNullOrEmpty
+        }
+
+        It 'registers a package the plan would create as refused, with the reason that it has no id yet' {
+            Mock -ModuleName $script:moduleName New-OERAccessPackage { throw 'unexpected access package create' }
+            $Map = New-PolMap
+
+            $Run = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT' }) -Packages @() -UseWhatIf $true -RenameMap $Map
+
+            $Run.Rows[0].Detail | Should -BeExactly 'would create access package AP'
+            $Target = Get-PkgTarget -RenameMap $Map
+            $Target.Refused | Should -BeTrue
+            $Target.Id | Should -BeNullOrEmpty
+            $Target.ErrorId | Should -BeNullOrEmpty
+            $Target.PreviousName | Should -BeNullOrEmpty
+            $Target.Reason | Should -BeExactly $script:PkgPlanned
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+        }
+
+        It 'leaves the package refused when the entry stops before it has found or created it (<Case>)' -ForEach @(
+            @{ Case = 'the catalog rename was refused'; Detail = "catalog 'CAT' was not reconciled in this run*" }
+            @{ Case = 'the package list read throws'; Detail = "failed to look up access packages in catalog 'CAT': transient Graph failure*" }
+            @{ Case = 'the display name is ambiguous in the catalog'; Detail = "catalog 'CAT' holds 2 access packages named 'AP'*" }
+            @{ Case = 'the create throws'; Detail = 'access package creation failed: create refused' }
+            @{ Case = 'the create returns no object'; Detail = 'New-OERAccessPackage returned no object' }
+            @{ Case = 'the create returns a package of another catalog'; Detail = "access package 'AP' was not created in catalog 'CAT': a package of that name already exists in another catalog (cat-2)*" }
+            @{ Case = 'the catalog of the created package cannot be confirmed'; Detail = "failed to look up catalog 'CAT' to confirm*" }
+        ) {
+            $Map = New-PolMap
+            $Packages = @()
+            $ListError = $null
+            Mock -ModuleName $script:moduleName Resolve-OERCatalogId { 'cat-1' }
+            switch ($Case) {
+                'the catalog rename was refused' { Register-PolRefusedCatalog -RenameMap $Map }
+                'the package list read throws' { $ListError = 'transient Graph failure' }
+                'the display name is ambiguous in the catalog' {
+                    $Packages = @([PSCustomObject]@{ Id = 'ap-a1'; DisplayName = 'AP' }, [PSCustomObject]@{ Id = 'ap-a2'; DisplayName = 'AP' })
+                }
+                'the create throws' { Mock -ModuleName $script:moduleName New-OERAccessPackage { throw 'create refused' } }
+                'the create returns no object' { Mock -ModuleName $script:moduleName New-OERAccessPackage { } }
+                'the create returns a package of another catalog' {
+                    Mock -ModuleName $script:moduleName New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-other'; DisplayName = 'AP'; CatalogId = 'cat-2' } }
+                }
+                'the catalog of the created package cannot be confirmed' {
+                    Mock -ModuleName $script:moduleName New-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-other'; DisplayName = 'AP'; CatalogId = 'cat-2' } }
+                    Mock -ModuleName $script:moduleName Resolve-OERCatalogId { throw 'catalog lookup refused' }
+                }
+            }
+
+            $Run = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT' }) -Packages $Packages -RenameMap $Map -PackageListError $ListError
+
+            $Run.Rows[-1].Action | Should -BeExactly 'Failed'
+            $Run.Rows[-1].Detail | Should -BeLike $Detail
+            $Target = Get-PkgTarget -RenameMap $Map
+            $Target | Should -Not -BeNullOrEmpty
+            $Target.Refused | Should -BeTrue
+            $Target.Id | Should -BeNullOrEmpty
+            $Target.ErrorId | Should -BeNullOrEmpty
+            $Target.PreviousName | Should -BeNullOrEmpty
+            $Target.Reason | Should -BeExactly $script:PkgUnidentified
+        }
+
+        It 'leaves the package refused when the create answers a package with no id, and reports the create as it always has' {
+            # A create answer without an id identifies no package: the start refusal stays, so a review that
+            # names it is refused rather than given an empty id. The rows are what the handler reported
+            # before BL-147 for such an answer.
+            Mock -ModuleName $script:moduleName New-OERAccessPackage { [PSCustomObject]@{ Id = ''; DisplayName = 'AP' } }
+            $Map = New-PolMap
+
+            $Run = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT' }) -Packages @() -RenameMap $Map
+
+            @($Run.Rows | ForEach-Object { '{0}|{1}' -f $_.Action, $_.Detail }) | Should -Be @('Created|created access package AP ()')
+            @($Run.Published).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 1 -Exactly
+            $Target = Get-PkgTarget -RenameMap $Map
+            $Target | Should -Not -BeNullOrEmpty
+            $Target.Refused | Should -BeTrue
+            $Target.Id | Should -BeNullOrEmpty
+            $Target.PreviousName | Should -BeNullOrEmpty
+            $Target.Reason | Should -BeExactly $script:PkgUnidentified
+        }
+
+        It 'keeps the id after a failure once the package is known (<Case>)' -ForEach @(
+            @{ Case = 'the property update fails'; Detail = 'access package update failed: Graph rejected the update' }
+            @{ Case = 'the resource role bindings read fails'; Detail = "failed to read the current resource role bindings of access package 'AP':*" }
+            @{ Case = 'the policy list read fails'; Detail = "failed to read the current assignment policies of access package 'AP':*" }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Case = $Case } {
+                param($Case)
+                switch ($Case) {
+                    'the property update fails' { Mock Set-OERAccessPackage { throw 'Graph rejected the update' } }
+                    'the resource role bindings read fails' { Mock Invoke-OERGraphRequest { throw 'transient bindings failure' } -ParameterFilter { $Uri -like '*resourceRoleScopes*' } }
+                    'the policy list read fails' { Mock Get-OERAccessPackageAssignmentPolicy { throw 'transient policies failure' } -ParameterFilter { $AccessPackage -eq 'ap-1' } }
+                }
+            }
+            $Map = New-PolMap
+            # Only the update case declares a changed property, so no other case sends an update.
+            $Item = [PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT' }
+            if ($Case -eq 'the property update fails') { $Item | Add-Member -NotePropertyName description -NotePropertyValue 'changed' }
+
+            $Run = Invoke-PolSync -Item $Item -RenameMap $Map
+
+            @($Run.Rows | Where-Object { $_.Action -eq 'Failed' })[0].Detail | Should -BeLike $Detail
+            $Target = Get-PkgTarget -RenameMap $Map
+            $Target.Id | Should -BeExactly 'ap-1'
+            $Target.Refused | Should -BeFalse
+        }
+
+        It 'keeps a rename''s own registration, with its previous name, when the package is renamed' {
+            Mock -ModuleName $script:moduleName Set-OERAccessPackage { }
+            $Map = New-PolMap
+
+            $null = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP-New'; previousDisplayName = 'AP-Old'; catalog = 'CAT' }) `
+                -Packages @([PSCustomObject]@{ Id = 'ap-old'; DisplayName = 'AP-Old' }) -RenameMap $Map
+
+            $Target = Get-PkgTarget -RenameMap $Map -Name 'AP-New'
+            $Target.Id | Should -BeExactly 'ap-old'
+            $Target.PreviousName | Should -BeExactly 'AP-Old'
+            $Target.Refused | Should -BeFalse
+        }
+
+        It 'marks no entry whose displayName is empty, and applies an entry as before when no map is given' {
+            $Map = New-PolMap
+            Register-PolRefusedCatalog -RenameMap $Map
+            # Without a map the registrations are skipped and the entry is applied as it always was.
+            $Run = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = 'AP'; catalog = 'CAT' }) -RenameMap $null
+            $Run.Rows[0].Detail | Should -BeExactly 'access package properties match'
+            $Thrown = $null
+            try { $null = Invoke-PolSync -Item ([PSCustomObject]@{ displayName = ''; catalog = 'CAT' }) -RenameMap $Map } catch { $Thrown = $PSItem }
+            # The empty name ends the item at its first row, as it always did, never in the mark.
+            $Thrown.Exception.CommandInvocation.MyCommand.Name | Should -BeExactly 'ConvertTo-OERStructureResult'
+            @($Map.Keys) | Should -BeExactly @('catalogs|cat')
         }
     }
 }

@@ -1,7 +1,8 @@
 function Resolve-OERStructureRename {
     <#
     .SYNOPSIS
-    Decides what a structure entry with previousDisplayName means, given what its two names resolved to.
+    Decides what a structure entry with previousDisplayName means, given what its two names resolved to,
+    and registers an access package entry that renames nothing in the run's rename map.
 
     .DESCRIPTION
     The single owner of the rename decision for the administrativeUnits, catalogs, accessPackages,
@@ -56,6 +57,19 @@ function Resolve-OERStructureRename {
     package id replaces it under both keys, and a Current outcome removes both. Without -RenameMap it
     registers nothing.
 
+    -Identified and -Unidentified register an accessPackages entry that renames nothing (BL-147, R-8;
+    docs/development/rationale.md#review-package-in-the-same-run), under the same key
+    'accessPackages|<name>' a rename uses, so a review that names the package by that name reaches the
+    package the entry means, or is refused, and is never looked up by name in the whole tenant, where a
+    package of that name in another catalog would be found. -Identified -Id registers the package the
+    entry found in its catalog or created there: not refused, with that id. -Unidentified -Reason registers
+    it refused, with no id and no ErrorId, until the entry has the package's id. Neither takes a previous
+    name, and the entry they register carries none (PreviousName $null): that is how a reader tells such
+    an entry from a rename's. They return Outcome Identified (with Id) or Unidentified, every other
+    member $null. Only the accessPackages section is registered this way: any other section, or
+    -Identified with an empty id, is a caller error, thrown as an ArgumentException before anything is
+    registered. Without -RenameMap they register nothing.
+
     .PARAMETER Section
     The document section of the entry: administrativeUnits, catalogs, accessPackages, assignmentPolicies
     or accessReviews.
@@ -65,10 +79,11 @@ function Resolve-OERStructureRename {
 
     .PARAMETER PreviousName
     The entry's previousDisplayName as the document wrote it: the object's current display name or
-    object id.
+    object id. Not taken with -Identified or -Unidentified.
 
     .PARAMETER Id
-    The id the new name resolved to, or $null/empty when it matched nothing.
+    The id the new name resolved to, or $null/empty when it matched nothing. With -Identified, required
+    and not empty: the id of the access package the entry found or created.
 
     .PARAMETER PreviousId
     The id the previous name resolved to, or $null/empty when it matched nothing.
@@ -95,6 +110,15 @@ function Resolve-OERStructureRename {
 
     .PARAMETER Reason
     With -Undecided: why the rename cannot be decided, as a clause the readers print in their Failed row.
+    With -Unidentified: why the entry has no id for its access package yet, the same way.
+
+    .PARAMETER Identified
+    Registers an accessPackages entry that renames nothing as the access package it found or created:
+    the id given by -Id. accessPackages section only.
+
+    .PARAMETER Unidentified
+    Registers an accessPackages entry that renames nothing as refused, with -Reason, until it registers
+    the package's id. accessPackages section only.
 
     .EXAMPLE
     $Rename = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Id $null -PreviousId $OldId -RenameMap $Map
@@ -108,22 +132,47 @@ function Resolve-OERStructureRename {
     .EXAMPLE
     $null = Resolve-OERStructureRename -Section 'catalogs' -Name 'CAT-New' -PreviousName 'CAT-Old' -Undecided -Reason 'one of its names could not be looked up' -RenameMap $Map
     Registers 'catalogs|cat-new' in $Map as refused with that reason, until a decision replaces it.
+
+    .EXAMPLE
+    $null = Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Main' -Identified -Id $PackageId -RenameMap $Map
+    Registers 'accesspackages|ap-main' in $Map as the package an entry without a rename found or created.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding(DefaultParameterSetName = 'Decide')]
     param(
         [Parameter(Mandatory)][ValidateSet('administrativeUnits', 'catalogs', 'accessPackages', 'assignmentPolicies', 'accessReviews')][string]$Section,
         [Parameter(Mandatory)][string]$Name,
-        [Parameter(Mandatory)][string]$PreviousName,
-        [Parameter(ParameterSetName = 'Decide')][AllowNull()][AllowEmptyString()][string]$Id,
+        [Parameter(Mandatory, ParameterSetName = 'Decide')]
+        [Parameter(Mandatory, ParameterSetName = 'Undecided')]
+        [string]$PreviousName,
+        [Parameter(ParameterSetName = 'Decide')]
+        [Parameter(Mandatory, ParameterSetName = 'Identified')]
+        [AllowNull()][AllowEmptyString()][string]$Id,
         [Parameter(ParameterSetName = 'Decide')][AllowNull()][AllowEmptyString()][string]$PreviousId,
         [Parameter(ParameterSetName = 'Decide')][AllowNull()][AllowEmptyString()][string]$Catalog,
         [Parameter(Mandatory, ParameterSetName = 'Undecided')][switch]$Undecided,
-        [Parameter(Mandatory, ParameterSetName = 'Undecided')][string]$Reason,
+        [Parameter(Mandatory, ParameterSetName = 'Undecided')]
+        [Parameter(Mandatory, ParameterSetName = 'Unidentified')]
+        [string]$Reason,
+        [Parameter(Mandatory, ParameterSetName = 'Identified')][switch]$Identified,
+        [Parameter(Mandatory, ParameterSetName = 'Unidentified')][switch]$Unidentified,
         [AllowNull()][AllowEmptyString()][string]$AccessPackage,
         [AllowNull()][AllowEmptyString()][string]$AccessPackageId,
         [System.Collections.Generic.Dictionary[string, object]]$RenameMap
     )
+    # BL-147 (R-8): an accessPackages entry that renames nothing is registered (-Identified,
+    # -Unidentified) for that section only, and an identified package always has an id: anything else is a
+    # private caller error, so it throws before anything is registered.
+    $RegistersEntry = $Identified -or $Unidentified
+    if ($RegistersEntry) {
+        if ($Section -ne 'accessPackages') {
+            throw [System.ArgumentException]::new("An entry that renames nothing (-Identified, -Unidentified) is registered for the accessPackages section only, not for $Section.", 'Section')
+        }
+        if ($Identified -and [string]::IsNullOrEmpty($Id)) {
+            throw [System.ArgumentException]::new('-Identified requires the id of the access package the entry found or created.', 'Id')
+        }
+    }
+
     # A policy is matched within its package: without the package there is no key and no message to
     # build. A private caller error, so it throws (the callers pass the package their entry sits in).
     $IsPolicy = $Section -eq 'assignmentPolicies'
@@ -142,6 +191,34 @@ function Resolve-OERStructureRename {
     }
     $DecisionKeys = @($Key)
     if ($IdKey) { $DecisionKeys += $IdKey }
+
+    # BL-147 (R-8): an accessPackages entry that renames nothing registers its package under the name key
+    # a rename uses -- the package's id once the entry found or created it, refused with a reason until
+    # then -- and no previous name, which is how a reader tells it from a rename.
+    if ($RegistersEntry) {
+        if ($null -ne $RenameMap) {
+            $Entry = [PSCustomObject]@{
+                Section      = $Section
+                Name         = $Name
+                PreviousName = $null
+                Id           = $(if ($Identified) { [string]$Id } else { $null })
+                Refused      = [bool]$Unidentified
+                ErrorId      = $null
+                Reason       = $(if ($Unidentified) { $Reason } else { $null })
+            }
+            $Entry.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.StructureRenameTarget')
+            $RenameMap[$Key] = $Entry
+        }
+        $Registered = [PSCustomObject]@{
+            Outcome     = $(if ($Identified) { 'Identified' } else { 'Unidentified' })
+            Id          = $(if ($Identified) { [string]$Id } else { $null })
+            RenameFrom  = $null
+            ErrorRecord = $null
+            Result      = $null
+        }
+        $Registered.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.StructureRename')
+        return $Registered
+    }
 
     # R12: a rename this run cannot decide -- one of its names could not be looked up, or -Include
     # leaves its section out. Registered as refused, so a reference to the new name is refused rather

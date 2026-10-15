@@ -124,6 +124,46 @@ Describe 'Get-OERStructureSchemaJson' {
         }
     }
 
+    It 'declares roleAssignments[].principalStatus as the closed set Deleted and Unresolved, and says what the engine does with it (A18)' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $Prop = $Schema.properties.roleAssignments.items.properties.principalStatus
+            $Prop | Should -Not -BeNullOrEmpty
+            $Prop.type | Should -Be 'string'
+            @($Prop.enum) | Should -Be @('Deleted', 'Unresolved')
+            $Prop.description | Should -Match 'object id'
+            $Prop.description | Should -Match 'never creates'
+            $Prop.description | Should -Match 'Skipped'
+            # Sprint 11 step 6: a live assignment is matched as for any entry (Updated on declared
+            # drift, Skipped when inherited), and the advice is the engine's Skipped Detail's.
+            $Prop.description | Should -Match ([regex]::Escape('is matched as for any entry -- Unchanged, or Updated when the declared description, condition or conditionVersion differ -- and kept by -Prune while the entry is declared; one inherited from an ancestor scope is reported Skipped'))
+            $Prop.description | Should -Match ([regex]::Escape('Keep such an entry as exported, or remove it; to have the assignment created, name a principal that exists and remove principalStatus'))
+            $Prop.description | Should -Not -Match ([regex]::Escape('is reported Unchanged and kept by -Prune'))
+            $Prop.description | Should -Not -Match ([regex]::Escape('To apply the entry, remove it'))
+            # The key sits beside principalType, and neither joins the required keys.
+            @($Schema.properties.roleAssignments.items.properties.PSObject.Properties.Name) |
+                Should -Be @('scope', 'role', 'principal', 'principalType', 'principalStatus', 'description', 'condition', 'conditionVersion')
+            @($Schema.properties.roleAssignments.items.required) | Should -Be @('scope', 'role', 'principal')
+            # directoryRoleAssignments takes no principalStatus: the status is the Azure section's alone.
+            $Schema.properties.directoryRoleAssignments.items.properties.PSObject.Properties.Name | Should -Not -Contain 'principalStatus'
+        }
+    }
+
+    It 'accepts principalStatus Deleted and Unresolved and rejects any other value, case-sensitively (A18)' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Row = '{ "version": "1.0", "roleAssignments": [ { "scope": "/s", "role": "Reader", "principal": "11111111-1111-1111-1111-111111111111", "principalStatus": "#V#" } ] }'
+            foreach ($Value in 'Deleted', 'Unresolved') {
+                Test-Json -Json $Row.Replace('#V#', $Value) -Schema $Schema -ErrorAction SilentlyContinue | Should -BeTrue -Because "'$Value' is a canonical principalStatus"
+            }
+            foreach ($Value in 'Gone', 'deleted', 'UNRESOLVED', '') {
+                Test-Json -Json $Row.Replace('#V#', $Value) -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse -Because "'$Value' is not a canonical principalStatus"
+            }
+            Test-Json -Json '{ "version": "1.0", "roleAssignments": [ { "scope": "/s", "role": "Reader", "principal": "p", "principalStatus": 1 } ] }' -Schema $Schema -ErrorAction SilentlyContinue |
+                Should -BeFalse
+        }
+    }
+
     It 'rejects an activationMaxHours outside the 1-24 range' {
         InModuleScope $script:moduleName {
             $Schema = Get-OERStructureSchemaJson
@@ -485,13 +525,13 @@ Describe 'Get-OERStructureSchemaJson' {
                 }
                 $Declared.Add(($Values -join ','))
             }
-            $Declared.Count | Should -Be 14 -Because 'the schema declares 14 enum arrays across 9 distinct enums'
+            $Declared.Count | Should -Be 15 -Because 'the schema declares 15 enum arrays across 10 distinct enums'
             $NullBearing | Should -Be 1 -Because 'accessReviews[].recurrence is the only nullable enum in the schema'
 
             $Owned = @{}
             foreach ($Name in 'accessType', 'enablement', 'membershipRuleProcessingState', 'catalogResourceType',
                 'approverInfoVisibility', 'accessReviewRecurrence', 'accessReviewDefaultDecision', 'principalType',
-                'directoryRoleAssignmentType') {
+                'directoryRoleAssignmentType', 'principalStatus') {
                 $Owned[(@(Resolve-OERStructureEnumCasing -EnumName $Name -List) -join ',')] = $Name
             }
             foreach ($Set in $Declared) {
@@ -1268,6 +1308,9 @@ Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs a
             # The section description keeps what it said about the update and the match key, and adds the rename.
             $Reviews.description | Should -Match ([regex]::Escape('displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy; otherwise the entry fails and nothing is written.'))
             $Reviews.description | Should -Match ([regex]::Escape('To rename a review, declare its new name as displayName and its current name (or object id) as previousDisplayName: the name is looked up tenant-wide, as displayName is, and the review found under either name must review the declared accessPackage and assignmentPolicy, or the entry fails and nothing is written. When the same document renames the access package or the policy, name it by its new name (or object id) here.'))
+            # BL-147 (Sprint 11 step 6): a package the same document declares is reached through its entry.
+            $Reviews.description | Should -Match ([regex]::Escape('An accessPackage named by the displayName of an accessPackages entry of the same document is the package that entry found in its catalog or created there, never one of that name in another catalog'))
+            $Reviews.description | Should -Match ([regex]::Escape('When two or more accessPackages entries declare that name, as displayName or previousDisplayName, the offline validator refuses the document: name the access package by its object id.'))
         }
     }
 

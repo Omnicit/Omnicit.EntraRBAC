@@ -1712,7 +1712,10 @@ rejects. Do not migrate those two call sites to `Test-OERGuid`. Since Sprint 9 s
 two more read a group's `administrativeUnit` with the same cast, on purpose, so that they decide
 between an object id and a display name exactly as `New-OERGroup` does: the created-membership match
 in `Sync-OERStructureAdministrativeUnit` and the unit placement check (Rule 12) in
-`Test-OERStructureSchema`. Do not migrate them either.
+`Test-OERStructureSchema`. Do not migrate them either. Since Sprint 11 step 6 the validator's
+restricted-unit check (Rule 16) reads a group's `administrativeUnit` with the same cast, and decides
+through the one local helper Rule 12 calls (`Test-UnitNamedByReference`), so the two rules name the
+same unit ([#restricted-unit-pim](#restricted-unit-pim)).
 
 ## mfa-authcontext-exclusion
 
@@ -7189,9 +7192,13 @@ during Azure Resource Manager requests. A role assignment at a resource whose na
 characters, or white space where it is refused, cannot be declared in a document: its scope cannot be
 sent as written without naming another scope, and the module does not escape a scope's segments. Each
 of those `Error` messages ends by saying so and tells the operator to remove the entry, and README, the
-about topic and the schema descriptions state the same limit. If wrong: such an export is refused until
-the entry is removed, the safe direction; lifting the limit would take an escaping of the scope's
-segments in the transport, which no decision has asked for.
+about topic and the schema descriptions state the same limit. If wrong: such an export was refused until
+the entry was removed, the safe direction; lifting the limit would take an escaping of the scope's
+segments in the transport, which no decision has asked for. Since Sprint 11 step 6 the export no
+longer writes such an entry: `Get-OERScopeSpellingProblem` owns both spelling rules, the validator
+reports what it returns, and `Get-OERInventory` leaves a role assignment at a scope that breaks either
+rule out of the document and names it in a warning and an information record
+([#undeclarable-scope](#undeclarable-scope)).
 
 The rule applies only to a scope NOT written in the `mg:`, `sub:` or `subscription:` form (R9). Those
 forms name a management group or a subscription by id, name or display name, and a display name may
@@ -8252,7 +8259,10 @@ Nothing here was measured live: the rules were derived from the code and proven 
 entry declares, before the review is renamed or anything else is written to it, and its `Failed` row
 then says where the review was found. An `accessPackage` or `assignmentPolicy` name for which the
 run's rename map holds an id, a package or policy the same document renames, is compared as that id,
-as written, with no lookup (`## rename-policies-and-reviews`, D5 and D6).
+as written, with no lookup (`## rename-policies-and-reviews`, D5 and D6). Since Sprint 11 step 6 the
+map holds the id of every access package the document declares, renamed or not, so an `accessPackage`
+name the document declares is compared as the id of the package its entry found or created, and never
+looked up in the whole tenant ([#review-package-in-the-same-run](#review-package-in-the-same-run)).
 
 **Since Sprint 11 step 5.** The export no longer writes a shared name here: `Get-OERInventory` sends
 the same two lookups this check sends and keeps a review's `accessPackage` or `assignmentPolicy` name
@@ -8612,7 +8622,11 @@ wrong: a review that names the new name of a package or policy whose entry stopp
 by name and could reach another object that carries it. The cost, accepted, is step 4's: while
 `-Include` leaves the section out and the entry still declares `previousDisplayName`, every review
 that names the new name by name is refused, even when the rename was done in an earlier run (a review
-that names the package by object id looks a policy up by name, P6).
+that names the package by object id looks a policy up by name, P6). Since Sprint 11 step 6 (BL-147)
+every accessPackages entry is marked, not only one that renames: the package handler marks an entry
+that renames nothing as refused until it registers the package's id, and `Invoke-OERStructure` marks
+it so when `-Include` leaves the section out, so every review that names a declared package by name is
+refused there ([#review-package-in-the-same-run](#review-package-in-the-same-run)).
 
 **D5 (a review reads the map).** `Sync-OERStructureAccessReview` takes `-RenameMap` and reads it,
 before any Graph call for the entry, for its `accessPackage` (by name; a GUID is an object id and not a
@@ -8626,7 +8640,11 @@ of the review entry that only the target check and the create read, so the check
 written and a new review is created on it; the diff keeps the names. A `Failed` row of the target
 check then says which declared name was read as which id. If wrong: a review that names a package or
 policy by the new name the same run gives it would fail in the plan and in the first run, as before
-this step, or, with a refusal ignored, could reach another object that carries the new name.
+this step, or, with a refusal ignored, could reach another object that carries the new name. Since
+Sprint 11 step 6 the map holds every declared package, and the rows of an entry that renames nothing
+do not speak of a rename: its refusal says the package "has no id in this run", and its note that the
+name was read as "the access package its accessPackages entry resolved in this run"
+([#review-package-in-the-same-run](#review-package-in-the-same-run)).
 
 **P5 (a review is not registered).** No entry of a document names an access review, so no reader of a
 review's rename exists, and the review handler decides through `Resolve-OERStructureRename` without
@@ -8708,19 +8726,23 @@ decision would replace an earlier one's, and a review that names the package by 
 whichever entry registered last. `Test-OERStructureSchema` therefore refuses, as an Error at
 `accessReviews[i].accessPackage`, a review whose `accessPackage` is a name, not an object id, that two
 or more accessPackages entries declare as their `displayName` or as a `previousDisplayName` that
-renames, while at least one of those entries renames its package; the message names the entries and
-says to name the access package by its object id. A match on a renaming `previousDisplayName` counts
+renames -- in this step only while at least one of those entries renamed its package, and since Sprint
+11 step 6 (BL-147) whether or not one does, since every accessPackages entry now registers its package
+under the name key ([#review-package-in-the-same-run](#review-package-in-the-same-run)); the message
+names the entries, names the rename only when one of them renames, and says to name the access
+package by its object id. A match on a renaming `previousDisplayName` counts
 too: the review's name is then one entry's new name and another entry's old name, and the keys built
 on that name are the first entry's, so the review would be read as the first entry's package while it
 may mean the other one, which carries the name in the tenant until its rename is applied.
 `Invoke-OERStructure` refuses a document that fails validation before it signs in or writes anything.
-When none of those entries renames its package nothing is reported, and the review's apply-time
-lookup refuses the ambiguous name as before, as in known limit (b): the target check of a review that
-exists with `AmbiguousName`, and the create of one that does not with `AmbiguousAccessPackageName`
+In this step, when none of those entries renamed its package nothing was reported, and the review's
+apply-time lookup refused the ambiguous name: the target check of a review that exists with
+`AmbiguousName`, and the create of one that does not with `AmbiguousAccessPackageName`
 (`Resolve-OERAccessReviewScopeTarget`), except that a plan for a review that does not exist yet
-reaches no lookup and says it would create it. No error id and no schema change. Cost if wrong: a
-document that was unambiguous to its author -- two same-named packages, one of them renamed -- must
-name the review's package by its object id.
+reached no lookup and said it would create it. Since Sprint 11 step 6 that case is refused offline
+too, and the review never reaches a tenant-wide lookup of a name the document declares. No error id
+and no schema change. Cost if wrong: a document that was unambiguous to its author -- two same-named
+packages in two catalogs -- must name the review's package by its object id.
 
 **Known limits.** (a) A map key joins display names with `|`, so a `|` inside a name can make two keys
 collide, and one rename and one review reference are enough to meet it: a package `A|B` whose policy
@@ -8734,14 +8756,11 @@ refused rename or an undecided mark -- the review naming `A` and `B|C` is refuse
 it names neither that package nor that policy. A package whose display name is spelled like another
 package's object id meets the same three: a review that names that other package by its id reads
 the first package's policy keys. (b) Two accessPackages entries with one display name in different
-catalogs share the package-name key and the policy keys built on it. Rule 15 refuses offline every
-document in which a review names that name while one of those entries renames its package, so an
-applied document never has a review read a package key two entries share. When neither entry renames
-its package but both rename a policy to one new name, the two still share that policy's name key; a
-review that names the package by that name is then refused, by the refused entry the key holds or by
-the tenant-wide package lookup of the target check (`AmbiguousName`) or of the create
-(`AmbiguousAccessPackageName`), except that a plan for a review that does not exist yet reaches no
-lookup and says it would create it. (c) A `Rename` registered before a later refusal or failure of the policy
+catalogs share the package-name key and the policy keys built on it. Since Sprint 11 step 6 (BL-147)
+Rule 15 refuses offline every document in which a review names that name, whether or not one of those
+entries renames its package, so an applied document never has a review read a package key two entries
+share. A review that names one of those packages by its object id reads only the policy keys built
+with that id, which the two entries do not share (P6). (c) A `Rename` registered before a later refusal or failure of the policy
 update keeps the id of the policy found under its previous name, so a review in the same run is
 checked against that policy while it still carries its old name; step 4 set that precedent for
 packages and catalogs. (d) The not-found codes of the access review probe by id (D6): measured live on
@@ -8880,7 +8899,8 @@ per such scope for G groups in the tenant, for example about 9,300 requests for 
 30,000 groups. A listing that fails costs no more than its own requests: the group principals of
 that invocation are written by id (R-3c). A lookup per name was considered and costs the same
 order: k names per scope, an inherited name looked up again at every scope beneath its assignment.
-The controller raises the multiplier to the architect.
+The controller raises the multiplier to the architect. Closed for the export in Sprint 11 step 6: an
+export shares one index among all its calls ([#export-run-context](#export-run-context)).
 
 **R-3 (the counts reach the export).** `Get-OERInventory` hands every name it left out, with its
 section and count, to its caller in ONE information record tagged `Omnicit.EntraRBAC.SharedName` (a
@@ -9012,9 +9032,420 @@ invocation that meets a group principal whose name was read, and `Export-OERInve
 invocation per Azure scope, whose role assignment read returns inherited assignments too: one group
 assignment at a management group costs ceil(G/999) requests at every scope beneath it (about 9,300
 for 300 scopes and 30,000 groups, R-2), raised to the architect; a lookup per name costs the same
-order. A group row at the root scope alone makes `Get-OERInventory` read the listing, and the
+order. Closed for the export in Sprint 11 step 6: `Export-OERInventory` shares ONE index among all
+its `Get-OERInventory` calls, the roster's when the roster was read and otherwise the first caller's
+listing, so an export lists every group at most once
+([#export-run-context](#export-run-context)); a standalone `Get-OERInventory` still lists at most
+once per invocation. A group row at the root scope alone makes `Get-OERInventory` read the listing, and the
 verbose line of R-3c says "every group principal" even when only root-scope rows met it. (e) The policies of a
 package that is itself left out for a shared name are still reported, and two same-named packages of
 one catalog that each hold a same-named pair of policies report the policy name twice, the same way:
 noise, since neither package is written. (f) Closed by the live checklist (measurement B): `$count` counts a
 service principal, and it trails a membership change by seconds, as the full read does.
+
+**Since Sprint 11 step 6.** `principalType` is written for every `roleAssignments` row whose principal
+type maps to the schema enum, a group written by its name included, so the collision pass no longer
+stamps it ([#unresolved-principals](#unresolved-principals)). A group principal that the directory did
+not return, or whose lookup failed, carries its object id as its name, which `Get-OERGroupReference`
+returns as it is, with no index read.
+
+## export-run-context
+
+Sprint 11 step 6 (R-2 of step 5, ruling R-1, amended on the review of Task 1) gave one export a
+context that all its `Get-OERInventory` calls share. This anchor records why it exists, why it is a
+module-scope object keyed on the export's own invocation rather than a parameter, why there is no
+`try`/`finally` around it, and its limits. No public parameter was added (A9). The rules were
+derived from the code and proven with mocked tests; nothing here was measured live.
+
+**The problem.** `Export-OERInventory` calls `Get-OERInventory` once for the Entra ID sections and
+once per Azure scope it walks, and every call was standalone. Each call that met a group principal
+listed every group in the tenant again ([#roster-identity-and-shared-names](#roster-identity-and-shared-names),
+R-2 and known limit (d): about 9,300 requests for 300 scopes and 30,000 groups), and what one call
+learned about a role assignment principal could neither be shared with the next scope nor handed
+back to the export, short of a new public parameter.
+
+**R-1 (one object, one creator).** `Export-OERInventory` creates `$script:_OERInventoryRunContext` in
+ONE place, directly before its Entra ID `Get-OERInventory` call, overwriting whatever stood there, and
+sets it back to `$null` with a plain statement directly after the Azure walk. Its members:
+
+- `Owner`: the export's own `$MyInvocation`;
+- `GroupNameIndex`: the `Get-OERGroupNameIndex` result -- the index built from the roster when the
+  roster was read, with no request, and otherwise `$null` until the first caller lists every group
+  once and stores the index there;
+- `PrincipalStatus`: a dictionary, keyed without regard to letter case, of every answer of the
+  deleted items read that succeeded, so a principal whose read succeeds is read once per export; a
+  read that fails is not kept, and the next scope that needs it reads again
+  ([#unresolved-principals](#unresolved-principals));
+- `UnreadPrincipal` and `UnreadPrincipalCause`: the role assignment principals that could not be
+  read, and their causes, index for index, which the export names in `IncompleteReads` and its own
+  `InventoryPartial` -- without the entries of a scope it skipped, and without a failed lookup of an
+  assignment that another scope read (known limits (b) and (e) of
+  [#unresolved-principals](#unresolved-principals)).
+
+A local reference keeps the two lists after the context is cleared. Cost if wrong: one more member for
+each thing an export shares; the alternative, a parameter, would have been a new public parameter.
+
+**The owner check.** `Get-OERInventory` reads the context ONCE per invocation and uses it only when its
+`Owner` is the `InvocationInfo` of a frame of the current call stack, compared by reference through
+`Microsoft.PowerShell.Utility\Get-PSCallStack` -- module-qualified, as `Lock-OERSignIn` calls it, so a
+session function of that name cannot turn the check off. That the export's `$MyInvocation` IS the
+object its call stack frame carries was measured with the tests: an owner stored as
+`$MyInvocation.MyCommand` instead matches no frame and turns six of them red. Otherwise the call
+behaves exactly as standalone, with a holder of its own that nothing outlives. So a context an export
+leaves behind when it is stopped before the clearing statement is ignored by every later call, a
+later export's included, which overwrites it.
+
+**No `try`/`finally` (the controller's ruling on Task 1).** The first version cleared the context in a
+`finally` around the region. Measured in a scratch `pwsh`: without a `try`, a statement-terminating
+error (`$X = Thrower`, where `Thrower` calls `ThrowTerminatingError`) skips that statement and the
+function carries on; inside `try { } finally { }` it skips the REST of the `try` body -- here the
+whole Azure walk -- runs the `finally` and carries on after it. So the `finally` would have changed the
+export's control flow, and the owner check replaced it. A test holds that a statement-terminating
+error in the Entra ID call still skips only that statement, and that the walk runs and the bundle is
+written. It runs the export in a runspace of its own, from a script with no `try`, because every test
+body runs inside a `try` that Pester itself wraps around it, and there such an error would be caught
+by Pester's `try` up the call stack instead of skipping only its own statement.
+
+**Known limits.** (a) A stopped export's context keeps its `InvocationInfo`, and with it the export's
+bound parameters, a tenant among them, until the next export overwrites it or the module is removed.
+It holds no token, and nothing reads it once its owner is off the stack. (b) A listing of every group
+that fails is kept in the context for the whole export, as it was kept for one call before, so the
+export does not retry it at the next scope: the group principals of every scope are then written by
+object id, which is exact and leaves nothing unread, and the verbose line of R-3c of
+[#roster-identity-and-shared-names](#roster-identity-and-shared-names) repeats once per scope.
+(c) The owner check's `$null -ne Owner` term is an equivalent guard: no frame carries a null
+`InvocationInfo`, so a context without an owner matches nothing either way. It stays as a defence.
+
+## unresolved-principals
+
+Sprint 11 step 6 (BL-133, decision A18) made the export tell a role assignment principal the directory
+did not return from one it could not look up, and made the apply engine never create a role
+assignment for the first. This anchor records the problem, the measurement, the rulings with what
+each costs if it is wrong, and the known limits. `Get-OERDeletedPrincipalStatus` is the one read of
+`directory/deletedItems` (CLAUDE.md, Code Style). No ErrorId and no public parameter was added (A9).
+
+**The problem (BL-133).** `Get-OERInventory` named a role assignment's principal through
+`Resolve-OERPrincipalName`, whose map falls back to the object id both for an id the directory did not
+return and for every id of a batch whose request failed. A deleted principal, a principal of another
+tenant (Azure Lighthouse, say) and a failed lookup therefore all came out as the same bare object id,
+with nothing to tell them apart: a failed read was written as if it were a fact, and nothing in the
+document told the apply engine that the principal was not a live object.
+
+**The measurement (live, read-only, as `oer-live-cc`, 2026-10-15).** A read of
+`v1.0/directory/deletedItems/{id}` for an id the directory holds nowhere answered 404 with the error
+code `Request_ResourceNotFound`, and the deleted items collections of users, groups and service
+principals answered 200. So the read by id needs no object type, and `Request_ResourceNotFound` is the
+not-found code; `ResourceNotFound` and `NotFound` are declared beside it as a margin only. A read by
+the id of an object that IS among the deleted items was not measured in this step: the `Deleted`
+answer rests on the documented read ("Get deleted item (directory object)", Microsoft Learn).
+
+**R-2 (the lookup).** `Resolve-OERPrincipalName -Detailed` omits the getByIds `types` filter, so every
+directory object type is searched, and returns one object per distinct id: `Id`, `Read`, `Found`,
+`Name`, `ObjectType` and `Cause`. `Read` is false, with the cause, for every id of a batch whose request
+failed, and (fix round 1, F5) of a batch whose answer carries no `value` collection, which says
+nothing about its ids; an empty `value` IS an answer. `Found` true carries the name (a user's user
+principal name, else the display name, else the id) and the object type. `Read` true and `Found` false
+is an id a successful batch did not return. Without `-Detailed` the map is exactly what it was for its
+other callers. `Get-OERDeletedPrincipalStatus` reads `v1.0/directory/deletedItems/{id}`, the id
+escaped, with the three not-found codes declared to the transport: an object is `Deleted`; the
+not-found marker is `Unresolved`, read; a throw (scrubbed first) or an empty answer is `Unresolved`,
+NOT read, with its cause. It never throws and never writes an error record, and keeps an answer that
+was read under the lower-cased id in the dictionary it is handed, never a failure. Microsoft Learn's
+page for that read asks for a permission per object type (`User.Read.All`, `Group.Read.All`,
+`Application.Read.All`), and the type is not known before the read, so `Directory.Read.All`, which the
+inventory already requires, is the one permission that covers it; `tests/QA/requiredscope.tests.ps1`
+holds a read of the path to `Directory.Read.All` or `Directory.ReadWrite.All`, and a write to
+`Directory.ReadWrite.All`. Cost if wrong: one request per principal not returned, once per export
+while the read succeeds; a read that fails is sent again by the next scope that needs it.
+
+**R-3 (what the export writes).**
+
+- **A failed lookup.** The row keeps the object id as `principal` and its `principalType`, carries no
+  `principalStatus`, and is named unread as `roleAssignments/<role> -> <principal id> @ <scope>/principal`
+  with the cause `Could not look up the principal of a role assignment through directoryObjects/getByIds: ...`.
+- **Found.** The name: a user by its user principal name, a group by the rule of
+  [#roster-identity-and-shared-names](#roster-identity-and-shared-names), a service principal by its
+  display name. A principal the directory returns as another type, a device for one, is written by its
+  object id, as it was before the lookup searched every type (a deviation from the letter of R-3 that
+  Task 2 raised and the review kept):
+  `principalType` cannot name it, and its display name alone would be applied as a group of that name,
+  a wrong-write path.
+- **Not found.** The object id, with `principalStatus` from the deleted items read: `Deleted` or
+  `Unresolved`. When that read fails the row is `Unresolved` AND named unread as `.../principalStatus`:
+  the getByIds batch succeeded without the principal, so it is certainly not a live readable object
+  the engine could create an assignment for, and only the reason is unread.
+- **principalType** is written for EVERY row whose Azure Resource Manager type maps to the schema enum
+  (User, Group, ServicePrincipal, and ForeignGroup as Group), and left out for any other type. The key
+  order is `scope, role, principal, principalType, principalStatus, description, condition,
+  conditionVersion, id`, each where present.
+- **The order of the splits.** The root scope first (a root row stays in the root list only), then the
+  scope no document can declare ([#undeclarable-scope](#undeclarable-scope)), then the collision pass,
+  then the status step, so the role and principal it names are the ones written.
+
+One warning per call counts the rows with `principalStatus`, and one information record tagged
+`Omnicit.EntraRBAC.UnresolvedPrincipal` (type `Omnicit.EntraRBAC.UnresolvedPrincipalNotice`) hands over
+the warning and the rows: `RoleAssignmentId`, `Scope`, `Role`, `Principal`, `PrincipalType`,
+`PrincipalStatus` and `StatusRead` (fix round 1, F1: false where the deleted items read failed, so a
+reader never states the reason of such an `Unresolved` as a fact; a row without the member is read the
+same way). Standalone, the unread entries join the call's own `InventoryPartial`. Under an export,
+which calls each scope with `-ErrorAction Stop`, where that error would skip the whole scope, they go
+to the run context instead ([#export-run-context](#export-run-context)), and the export names them in
+`IncompleteReads`, after the Entra ID entries and before the role policy selection entries, and in a
+clause of its own in its `InventoryPartial`. The export suppresses the per-scope warnings, deduplicates
+the rows on the role assignment id (on scope, role and principal for a row with none) without regard
+to letter case, warns once before its `ShouldProcess`, and hands the rows to the README section "Role
+assignments whose principal the directory did not return". Cost if wrong: a finding the operator
+reviews; the assignment stays in the document either way.
+
+**R-4 (the apply engine; A18).** `Sync-OERStructureRoleAssignment` takes the `principal` of an entry
+that declares `principalStatus` as the object id it names, with no principal lookup at all, for the
+entry and for it as a sibling in the key rows; one whose principal is not an object id is `Failed` with
+no lookup and no error record, which only a caller that skips the validator can reach. The root scope
+check stays first. The role lookup, the duplicate check and the read at the scope run as for any entry,
+so a matching live assignment is `Unchanged`, or `Updated` on declared drift, and one inherited from an
+ancestor scope is `Skipped` as before. Where the entry would CREATE the assignment it is `Skipped`, with
+the Detail `principalStatus '<value>': the principal '<principal>' could not be looked up when the
+document was exported, so the apply engine never creates a role assignment for this entry. Nothing was
+written. Remove the entry, or name a principal that exists and remove principalStatus`, with no
+`ShouldProcess` and no `New-OERRoleAssignment`, so a plan and a real run report the same row. The prune
+pass is unchanged: the entry's key is its object id and the role, so it protects the live assignment,
+and a document without the entry lets `-Prune` remove it like any undeclared assignment at a declared
+scope. The ruling: the specification's "before every lookup" is read as "before any principal lookup
+and before any create path", since the role lookup and the read at the scope are what make the
+`Unchanged` row and the prune protection possible. Cost if wrong: a create the document's author
+wanted is never sent until the entry names a principal that exists.
+
+**R-5 (the validator and the schema).** `principalStatus` is a known key of `roleAssignments` only (an
+unknown key, a Warning, in `directoryRoleAssignments`) and an enum of `Resolve-OERStructureEnumCasing`
+(`Deleted`, `Unresolved`): any other value, or a value that is not a string, is an Error, and a
+non-canonical letter case a Warning, which `Read-OERStructureDocument` canonicalises before the engine
+reads it. A declared `principalStatus` requires `principal` to be an object id (`Test-OERGuid`), or the
+`principal` is an Error. An explicit null is not declared. The schema declares the enum and a
+description that tells a model what the engine does and never to add the key itself.
+
+**The scope of BL-133 here (ruling).** The Azure `roleAssignments` section only. Directory role
+assignments, group eligibility, reviewers and catalog resources keep `Resolve-OERPrincipalName`'s
+default path: a principal they cannot name is written by its object id, with no status and no deleted
+items read, and a failed lookup there is still not told apart from a principal that is gone. A known
+limit, raised as a finding.
+
+**Known limits.** (a) The scope above. (b) An assignment several scopes read can be looked up
+differently by each, and the export merges the scopes' rows on scope, role and principal (no id
+without `-IncludeId`). Where one scope's getByIds batch fails and another's succeeds without the
+principal, both rows carry the object id and so share a key; the merge keeps each key's index, and a
+row with `principalStatus` takes the place of a kept row without it, so the assignment is written once
+with its status whichever scope read it first. Its `.../principal` entry, and the cause beside it, is
+then left out of `IncompleteReads` and the `InventoryPartial` clause, since another scope read the
+principal (the whole-branch review of Sprint 11 step 6 found the first-row-wins merge writing the row
+without a status, while the warning and the README named it `Deleted` or `Unresolved`, and the
+never-create guard was lost for it). What remains: where one scope's batch fails and another's FINDS
+the principal, one row is written by object id and one by name, so the keys differ and the
+assignment is written twice, and the failed lookup stays unread. Applying that is not destructive:
+the engine resolves both to one key, reports the later entry `Failed` as a repeat, and keeps its key
+declared ([#role-assignment-key](#role-assignment-key)). (c) The `roleAssignments`
+section no longer shares the principal name cache of the other sections, so a principal named in both
+`roleAssignments` and `directoryRoleAssignments` costs two lookups per call. (d) A root-scope row's
+principal is looked up like any other, which is how the root list names it, but it is not looked for
+among the deleted items, and a failed lookup of it is not reported. (e) A scope the export skips after
+its per-scope call -- its role management policy list fails, say -- merges none of its rows, so the
+export takes back what that call handed over: its rows with `principalStatus`, its rows at a scope no
+document can declare ([#undeclarable-scope](#undeclarable-scope)), and its unread principal entries
+with their causes, each list to the count it had before the scope. The warnings, the README and
+`IncompleteReads` therefore name no row that only a skipped scope read, and the skipped scope itself is
+what the bundle reports for it. Two things still outlive the skip: the root notices, since a root row
+is left out of the document whichever scope read it and the warning says just that, and the answers
+of the deleted items read that the call kept in the run context, which are facts read and not rows.
+
+## undeclarable-scope
+
+Sprint 11 step 6 (A13, A15; ruling R-6) gave the two scope spelling rules one owner and made the export
+leave out a role assignment at a scope no document can declare. This anchor records the problem, the
+rulings and the known limits. `Get-OERScopeSpellingProblem` is the single owner of the rules (CLAUDE.md,
+Code Style). The measurements behind the rules themselves are in
+[#role-assignment-key](#role-assignment-key); nothing new was measured in this step.
+
+**The problem.** The validator refuses, as an Error, a `roleAssignments` or `roleManagementPolicies`
+scope with a trailing or doubled `/` (A15) and a path scope with a `.` or `..` segment, a `%`, a `\`, a
+`?` or a `#`, or white space it refuses (A13). The names of a few Azure resource types can hold such a
+character, and `Get-OERInventory` reads role assignments at a subscription or a management group
+without `atScope()`, so an assignment at such a resource below it was exported with its scope as Azure
+Resource Manager returns it. The validator then refused the whole exported document, and the operator
+had to find and remove the entry by hand.
+
+**R-6 (one owner).** `Get-OERScopeSpellingProblem -Scope -Path` holds both rules, moved from the
+validator verbatim, and returns one `Rule` and `Message` per broken rule, in the order the validator
+reports them (`Slash`, then `DotSegment`, `Escape`, `Backslash`, `QueryOrFragment` and `WhiteSpace`),
+with the validator's exact message for the path given; the `mg:`, `sub:` and `subscription:` forms are
+exempt from the segment rules, decided by `ConvertTo-OERScopeSplat`. It is pure. The validator's two
+functions add one Error per problem and decide no spelling themselves: every validator test passed
+unchanged, which is the refactor's proof, and an agreement test holds the validator, the owner and the
+export's filter to one answer over seventeen scopes. Its help is the reference list of the rules (Task
+7 of this step, and its fix round, took the copies out of the help of `Test-OERStructureSchema`,
+`Get-OERStructureSchemaJson`, `Get-OERInventory` and `Export-OERInventory`, the validator's source
+comments and the bundle README, which now point at a list or give an example). Five texts still list
+the rules for their readers, and a new rule must reach each: README.md, the about topic, the two scope
+descriptions in the schema JSON (the list a model validates against), the CLAUDE.md bullet of
+`ConvertTo-OERCanonicalScope`, and `Get-OERInventory`'s words for each rule in the Reason; no gate
+holds them, so the owner's help names them. Cost if wrong: two copies of a rule that only a test
+keeps in step.
+
+**The export leaves the row out.** `Get-OERInventory` calls the owner on each projected role
+assignment's scope after the root split and before the collision pass and the principal status step:
+a root row stays in the root list only; an undeclarable row never changes how another row is named;
+its principal is never looked for among the deleted items, and a failed lookup of it is never reported.
+One warning per call counts the rows, and one information record tagged
+`Omnicit.EntraRBAC.UndeclarableScope` (type `Omnicit.EntraRBAC.UndeclarableScopeNotice`) hands over the
+warning and the rows: `RoleAssignmentId`, `Scope`, `Role`, `Principal`, `PrincipalType` and `Reason`,
+which names the broken rules in words that hold no character the README's Markdown reads as markup.
+`Export-OERInventory` suppresses the per-scope warnings, deduplicates the rows on the role assignment
+id (on scope, role and principal for a row with none) without regard to letter case, warns once
+before its `ShouldProcess`, and lists them in the README section "Role assignments at a scope
+no document can declare". The row is left out, not unread: it is not named in `IncompleteReads` and
+raises no `InventoryPartial`. Cost if wrong: an assignment the operator wanted in the document is only
+in the README, and a document carrying it is refused anyway.
+
+**It is never pruned.** The engine prunes only an assignment DEFINED at a scope a document declares
+(the handler compares the live assignment's scope with the declared one exactly), and no document can
+declare such a scope, so such an assignment is never a prune candidate, and leaving it out of the
+document removes nothing.
+
+**Known limits.** (a) Role management policies at such a scope are NOT filtered. The walk lists
+management groups and subscriptions only, so such a policy is reachable only through a `-Scope` the
+operator gives `Get-OERInventory` or `Export-OERInventory`; a document that then carries it is refused
+by the validator as before. (b) The words of each rule live in `Get-OERInventory` beside the record, not
+in the owner, whose shape R-6 fixed at `Rule` and `Message`: a rule added to the owner without words is
+named by its `Rule` name, never left out of the reason. (c) The directory role sections are not
+affected: their `/` is the Microsoft Entra tenant scope.
+
+## restricted-unit-pim
+
+Sprint 11 step 6 (BL-134, ruling R-7) made the export name, and the validator warn about, a group that
+uses PIM for Groups and is a member of a restricted management administrative unit. This anchor records
+what Microsoft documents, what is not measured, the rulings and the known limits. No request was added.
+
+**What Microsoft Learn states (as fact).** The PIM for Groups articles ("Bring groups into Privileged
+Identity Management", "Assign eligibility for a group in Privileged Identity Management", "Configure
+PIM for Groups settings") each say: "Privileged Identity Management doesn't support groups in
+Restricted Management Administrative Units (RMAU)." And "Restricted management administrative units in
+Microsoft Entra ID", under Limitations, item 2: "Groups and users in a restricted management
+administrative unit can't be managed with Microsoft Entra ID Governance features such as Privileged
+Identity Management, Entitlement management, Lifecycle workflows and Access reviews." The texts state
+the limit as fact and name its source; an earlier wording that only said a tenant-level identity "may
+not be able to" manage such a group was withdrawn on review, since it suggested an identity scoped to
+the unit could.
+
+**What is not measured.** What Microsoft Graph answers when the apply engine sends a PIM eligibility or
+a PIM for Groups policy write for such a group. So every text says that `Invoke-OERStructure` still
+sends those writes, and nothing claims a particular answer. A live checklist item that measures it
+would close BL-134.
+
+**R-7 (the export).** With `Groups` and `AdministrativeUnits` both included, `Export-OERInventory`
+checks, before it strips the object ids, each group `inventory.json` keeps that carries a `pimPolicy`
+(a present key that is not null) or an eligibility with at least one entry, against every
+administrative unit whose `restricted` is the boolean true and whose `members` were read: a unit that
+lists the group's object id, compared without regard to letter case, makes one entry of the group and
+its units. One warning before the bundle's `ShouldProcess` counts the groups, and the README section
+"Groups using PIM for Groups in a restricted management unit" names each group and its units by display
+name, never by id. Nothing is left out of the export. A unit whose `members` are an explicit null
+(unread, and named in `IncompleteReads`) lists nobody. A dynamic unit carries no `members`, which is no
+gap: Microsoft Learn states that administrative units with rules for dynamic membership groups for
+groups are not supported, so a group is never a member of one. Without either section there are no
+groups or no units, so nothing is found and nothing is read for it. Cost if wrong: a finding the
+operator reviews.
+
+**The validator (Rule 16).** A Warning, never an Error: an Error would refuse a document that may well
+apply, while the limit is documented and the answer unmeasured. A group that uses PIM for Groups -- a
+`pimPolicy` that is not null, or an `eligibility` array with at least one entry -- draws it at
+`groups[i].administrativeUnit` when that reference names a restricted `administrativeUnits[]` entry,
+read as Rule 12 reads it (an object id, parsed with `-as [guid]`, matches the entry that declares that
+id; any other value matches by display name, ignoring case; one local helper serves both rules), and at
+`groups[i]` when such a unit's `members` list the group by its name (a template's computed name
+included) or its declared id, ignoring case; each shape at most once per unit. An exported document
+raises neither shape: its groups carry no object id and no `administrativeUnit`, and its units list a
+group member by object id, which the document declares nowhere. The shapes fire on a hand-written
+document and on `Get-OERInventory -IncludeId` output, which carries the ids.
+
+**Known limits.** (a) The Graph answer is not measured (above). (b) A restricted unit left out of the
+document because another unit shares its name is not in what `Get-OERInventory` returns, so it is not
+checked; it is named as a shared name and in `IncompleteReads`. (c) `Get-OERInventory` on its own does
+not check: it carries no group ids without `-IncludeId`. A finding, if a later step wants it. (d) The
+validator cannot see the export's case (above), which is why the export warns on its own.
+
+## review-package-in-the-same-run
+
+Sprint 11 step 6 (BL-147, ruling R-8) put every `accessPackages` entry's package into the run's rename
+map, so an access review reaches the package its own document's entry found or created, and never one
+of that name in another catalog. This anchor records the problem, the rulings, the residual R-8 accepts
+and the known limits. `Resolve-OERStructureRename` stays the single owner of the map's keys. No ErrorId
+and no public parameter was added. The rules were derived from the code and proven with mocked tests;
+nothing here was measured live.
+
+**The problem (BL-147).** The map held only a package the document renames
+([#rename-policies-and-reviews](#rename-policies-and-reviews)). A review that named by display name a
+package the document declares without a rename was resolved like any name, in the whole tenant: by the
+target check (`Resolve-OERAccessPackageId`) and by the create (`Resolve-OERAccessReviewScopeTarget`).
+So for a package declared in catalog A while a package of that name exists in catalog B, the review was
+checked against, or created on, B's package -- the mocked test for it showed the create looking the
+name up and finding B's package. Step 5's guard already failed the package itself when
+`New-OERAccessPackage` returned another catalog's ([#roster-identity-and-shared-names](#roster-identity-and-shared-names),
+known limit (c)); the review was the remaining path.
+
+**R-8 (every entry in the map).** `Resolve-OERStructureRename` gains two parameter sets for an
+`accessPackages` entry that renames nothing: `-Identified -Id` registers `accesspackages|<name>` with the
+package's id, and `-Unidentified -Reason` registers it refused, with no id and no ErrorId. Both carry no
+previous name (`PreviousName` null), which is how a reader tells such an entry from a rename's; any
+other section, or `-Identified` without an id, is a caller error thrown before anything is registered.
+`Sync-OERStructureAccessPackage` marks every entry with a non-empty `displayName` and no
+`previousDisplayName` refused first ("the accessPackages entry did not find or create it; see that
+entry's rows"), and registers the package's id as soon as it has the package: the existing package
+found in the declared catalog, before anything else is read or written for it (also after a `Current`
+rename outcome), or the package it created there, once the created package is shown not to be another
+catalog's (an answer with no id leaves the refusal). A rename keeps its own registration. A stop before
+that -- the catalog refused, a failed or ambiguous lookup, a refused rename, a failed create, a create
+that returned another catalog's package -- leaves the refusal, and a failure after it (an update, the
+resource role bindings, the policies) does not take the id back. `Invoke-OERStructure`, when `-Include`
+leaves out AccessPackages, registers every entry that renames nothing refused, with the reason "the
+accessPackages section is not selected by -Include".
+
+**The review reads it.** `Sync-OERStructureAccessReview` reads the map for a package NAME (an object id
+is never a key). A registered id replaces the name in the copy the target check and the create read, so
+neither looks the name up, and the policy is resolved within the package by that id; a `Failed` row of
+the target check says "accessPackage '...' was read as '...', the access package its accessPackages
+entry resolved in this run". A refusal is one `Failed` row, "access package '...' has no id in this run
+(reason), so the access package this access review reviews cannot be identified; nothing was created,
+read or written for it", with no error record and nothing read: it does not speak of a rename. Cost if
+wrong: a review the operator expected to apply is refused, and never written to the wrong package.
+
+**Rule 15, widened.** Every entry now registers its package under the name key, so two entries of one
+display name in two catalogs would replace each other's registration whether or not one renames. The
+validator therefore refuses, as an Error, a review that names by display name a package two or more
+`accessPackages` entries declare (as `displayName` or as a `previousDisplayName` that renames), with or
+without a rename; its message names the rename only when one of the entries renames, so the rename-case
+texts are unchanged. Cost: such a document, which applied before when no entry renamed, must now name
+the review's package by its object id.
+
+**The residual R-8 accepts (`-WhatIf`).** A package the plan would create has no id yet, so it is
+registered refused ("the accessPackages entry would create it, and the create was not carried out:
+-WhatIf, or a declined confirmation"), and the plan reports the review `Failed` while a real run creates
+the package first and then the review. A declined confirmation of the package's create gives the same
+refusal. Accepted: the plan errs towards refusing, never towards a review on another package.
+
+**The `-Include` refusal.** With `-Include` leaving out AccessPackages, nothing is read for the
+package entries, so the run cannot know which package a declared name means: every review that names a
+declared package by display name is refused, renamed or not, with no error record, so `-ErrorAction
+Stop` and `$?` do not see it. A review that names the package by object id, or a package the document
+does not declare, is resolved as before. Cost: a run that selects `AccessReviews` without
+`AccessPackages` refuses reviews it applied before; include `AccessPackages`, or name the package by
+its object id.
+
+**Known limits.** (a) The `-Include` marks of the assignment policies under the package's name are no
+longer reached by a review that names the package by name, since the package's refusal is read first;
+they are kept, and matter again only if that order or that key ever changes. (b) The `-WhatIf` residual
+above. (c) Rule 15 refuses offline a document it accepted before (two same-named packages in two
+catalogs and a review naming that name). The release note does not list it (the controller's ruling on
+Task 7's review): only a hand-written document reaches it. An export can write two `accessPackages`
+entries of one name, one per catalog ([#roster-identity-and-shared-names](#roster-identity-and-shared-names),
+R-5), but it names a review's access package by its object id whenever another package in the tenant
+carries that name ([#access-review-target](#access-review-target), since Sprint 11 step 5), and Rule
+15 never reads a reference that is an object id. The refusal names the entries and says to name the
+package by its object id.

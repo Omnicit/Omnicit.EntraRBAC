@@ -4767,13 +4767,13 @@ Describe 'Test-OERStructureSchema renames of assignment policies (BL-128, Sprint
     }
 }
 
-Describe 'Test-OERStructureSchema refuses a review naming an access package that several entries declare while one renames it (Rule 15, Sprint 11 step 4b)' {
+Describe 'Test-OERStructureSchema refuses a review naming an access package that several entries declare (Rule 15, Sprint 11 step 4b, widened by BL-147)' {
     # The run's rename map keys a package, and the policies within it, by the package's name, without its
     # catalog, while the same name in two catalogs is two packages. A review that names such a name, not
-    # an object id, while one of the entries declaring it is renamed through previousDisplayName, could
-    # reach either package, so the document is refused offline with an Error at the review's
-    # accessPackage. Without a rename among those entries nothing is reported (the apply-time lookup
-    # refuses the ambiguous name).
+    # an object id, could reach either package, so the document is refused offline with an Error at the
+    # review's accessPackage. Since BL-147 every accessPackages entry registers its package in the map,
+    # not only a rename, so the Error stands whether or not one of those entries renames; the message
+    # says that one is renamed only when one is.
     BeforeAll {
         function Invoke-AmbValidation {
             param([object]$Doc)
@@ -4799,6 +4799,9 @@ Describe 'Test-OERStructureSchema refuses a review naming an access package that
         $script:AmbMessage = "Access review '{0}' at accessReviews[{1}] declares accessPackage '{2}', which {3} accessPackages entries declare as displayName " +
             'or previousDisplayName ({4}) while at least one of them is renamed through previousDisplayName, so the run cannot tell which access ' +
             'package the review means. Name the access package by its object id.'
+        $script:AmbMessageNoRename = "Access review '{0}' at accessReviews[{1}] declares accessPackage '{2}', which {3} accessPackages entries declare as " +
+            'displayName or previousDisplayName ({4}), so the run cannot tell which access package the review means. Name the access package by ' +
+            'its object id.'
     }
 
     It 'refuses two entries of different catalogs that share the displayName the review names, one of them renamed' {
@@ -4853,17 +4856,24 @@ Describe 'Test-OERStructureSchema refuses a review naming an access package that
         $Third[0].Message | Should -BeExactly ($script:AmbMessage -f 'rev_three', 2, 'ap-X', 3, 'accessPackages[0], accessPackages[2], accessPackages[3]')
     }
 
-    It 'does not report the shared name when no entry that declares it renames its package' {
+    It 'refuses two entries of different catalogs that share the displayName the review names when none of them renames (BL-147)' {
+        # Before BL-147 nothing was reported here; every entry now registers its package by its name.
         $V = Invoke-AmbValidation -Doc (New-AmbDoc -PackageJson @(
                 '{ "displayName": "ap-x", "catalog": "cat-x" }'
                 '{ "displayName": "ap-x", "catalog": "cat-y" }'
                 '{ "displayName": "ap-y", "previousDisplayName": "ap-old", "catalog": "cat-x" }'
             ))
-        @($V.Errors) | Should -BeNullOrEmpty
-        $V.Valid | Should -BeTrue
+        $Hit = @(Get-AmbFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Section | Should -BeExactly 'accessReviews'
+        $Hit[0].Item | Should -BeExactly 'rev_one'
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Message | Should -BeExactly ($script:AmbMessageNoRename -f 'rev_one', 0, 'ap-x', 2, 'accessPackages[0], accessPackages[1]')
+        @($V.Errors).Count | Should -Be 1
+        $V.Valid | Should -BeFalse
     }
 
-    It 'does not report the shared name when the previousDisplayName of an entry that declares it renames nothing (<Case>)' -ForEach @(
+    It 'refuses the shared name without the rename clause when the previousDisplayName of an entry that declares it renames nothing (<Case>)' -ForEach @(
         @{ Case = 'it equals the displayName ignoring case'; Prev = '"AP-X"'; Finding = 'Warning' }
         @{ Case = 'it is not a non-empty string'; Prev = '5'; Finding = 'Error' }
     ) {
@@ -4871,12 +4881,25 @@ Describe 'Test-OERStructureSchema refuses a review naming an access package that
                 '{ "displayName": "ap-x", "previousDisplayName": ' + $Prev + ', "catalog": "cat-x" }'
                 '{ "displayName": "ap-x", "catalog": "cat-y" }'
             ))
-        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].accessPackage' }) | Should -BeNullOrEmpty
+        $Hit = @(Get-AmbFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeExactly ($script:AmbMessageNoRename -f 'rev_one', 0, 'ap-x', 2, 'accessPackages[0], accessPackages[1]')
         # The finding of the previousDisplayName itself proves the entry was reached.
         $Own = @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].previousDisplayName' })
         $Own.Count | Should -Be 1
         $Own[0].Severity | Should -BeExactly $Finding
-        @($V.Errors).Count | Should -Be 1
+        @($V.Errors).Count | Should -Be 2
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'does not report two entries of one displayName that no review names' {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -ReviewPackageJson '"ap-y"' -PackageJson @(
+                '{ "displayName": "ap-x", "catalog": "cat-x" }'
+                '{ "displayName": "ap-x", "catalog": "cat-y" }'
+                '{ "displayName": "ap-y", "catalog": "cat-x" }'
+            ))
+        @($V.Errors) | Should -BeNullOrEmpty
+        $V.Valid | Should -BeTrue
     }
 
     It 'does not report a review that names the package by its object id, even when two entries rename from that id' {
@@ -6276,5 +6299,415 @@ Describe 'Test-OERStructureSchema tenantId (BL-88, A14)' {
         $Finding.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
         $Finding[0].Message | Should -BeLike '*not a string*'
         $Finding[0].Message | Should -BeLike '*Omit the key*'
+    }
+}
+
+Describe 'Test-OERStructureSchema roleAssignments principalStatus (A18, Sprint 11 step 6)' {
+    # Get-OERInventory and Export-OERInventory write a role assignment whose principal the directory did
+    # not return by the principal's object id, with principalStatus Deleted or Unresolved. The validator
+    # knows the key: only those two values (any other, or a value that is not a string, is an Error; a
+    # non-canonical letter case is a Warning, as for principalType), and a declared principalStatus
+    # requires the principal to be an object id (Test-OERGuid), since the engine looks no principal up
+    # for such an entry. An explicit null is not declared. No id below is version-4 shaped.
+    BeforeAll {
+        $script:PsGone = 'dddd9999-0000-0000-0000-000000000001'
+        $script:PsSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        function Invoke-PsValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        # One roleAssignments entry. -Principal is the JSON text of the principal value (quotes included),
+        # -Extra the JSON text that follows it inside the entry.
+        function Get-PsDocument {
+            param([string]$Principal = $script:PsGone, [string]$Extra = '')
+            '{ "version": "1.0", "roleAssignments": [ { "scope": "' + $script:PsSub + '", "role": "Reader", "principal": ' + $Principal + $Extra + ' } ] }'
+        }
+    }
+
+    It 'accepts principalStatus <Status> on an entry that names its principal by object id, with no finding at all' -ForEach @(
+        @{ Status = 'Deleted' }
+        @{ Status = 'Unresolved' }
+    ) {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('"' + $script:PsGone + '"') -Extra (', "principalType": "User", "principalStatus": "' + $Status + '"'))
+        @($V.Errors).Count | Should -Be 0 -Because "principalStatus '$Status' and principalType are known keys: $(@($V.Errors | ForEach-Object { $_.Message }) -join ' | ')"
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'accepts principalStatus <Status> without principalType (the export omits the type for an object it cannot map)' -ForEach @(
+        @{ Status = 'Deleted' }
+        @{ Status = 'Unresolved' }
+    ) {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('"' + $script:PsGone + '"') -Extra (', "principalStatus": "' + $Status + '"'))
+        @($V.Errors).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    # A string is shown quoted; a value that is not a string is named by its type, as the principal rule
+    # names one, so an array holding 'Deleted' never reads as the string 'Deleted'.
+    It 'refuses principalStatus <Shown> as an Error at the key, naming the two values' -ForEach @(
+        @{ Shown = '"Gone"'; Got = "'Gone'" }
+        @{ Shown = '"Active"'; Got = "'Active'" }
+        @{ Shown = '""'; Got = "''" }
+        @{ Shown = '1'; Got = 'a value that is not a string (Int64)' }
+        @{ Shown = 'true'; Got = 'a value that is not a string (Boolean)' }
+        @{ Shown = '["Deleted"]'; Got = 'a value that is not a string (Object[])' }
+    ) {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('"' + $script:PsGone + '"') -Extra (', "principalStatus": ' + $Shown))
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principalStatus' })
+        $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Section | Should -BeExactly 'roleAssignments'
+        $Hit[0].Item | Should -BeExactly 'Reader'
+        $Hit[0].Message | Should -BeExactly "'principalStatus' at roleAssignments[0] must be one of: Deleted, Unresolved. Got: $Got."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'warns, and stays Valid, for principalStatus <Written>: the canonical spelling is <Canonical>' -ForEach @(
+        @{ Written = 'deleted'; Canonical = 'Deleted' }
+        @{ Written = 'UNRESOLVED'; Canonical = 'Unresolved' }
+    ) {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('"' + $script:PsGone + '"') -Extra (', "principalStatus": "' + $Written + '"'))
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principalStatus' })
+        $Hit.Count | Should -Be 1 -Because 'the casing rule must have been reached for the message to be read'
+        $Hit[0].Severity | Should -BeExactly 'Warning'
+        $Hit[0].Message | Should -BeLike "'principalStatus' at roleAssignments[[]0].principalStatus is '$Written'; the canonical spelling is '$Canonical'. *"
+        @($V.Errors).Count | Should -Be 1
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'requires the principal to be an object id when principalStatus is declared: <Case>' -ForEach @(
+        @{ Case = 'a user principal name'; Principal = '"person1@example.com"'; Got = 'person1@example.com' }
+        @{ Case = 'a display name'; Principal = '"Reporting Readers"'; Got = 'Reporting Readers' }
+        @{ Case = 'a braced object id'; Principal = '"{dddd9999-0000-0000-0000-000000000001}"'; Got = '{dddd9999-0000-0000-0000-000000000001}' }
+        @{ Case = 'an object id without hyphens'; Principal = '"dddd9999000000000000000000000001"'; Got = 'dddd9999000000000000000000000001' }
+        @{ Case = 'an empty string'; Principal = '""'; Got = '' }
+    ) {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal $Principal -Extra ', "principalStatus": "Deleted"')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principal' })
+        $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Section | Should -BeExactly 'roleAssignments'
+        $Hit[0].Item | Should -BeExactly 'Reader'
+        $Hit[0].Message | Should -BeExactly ("'principal' at roleAssignments[0] must be an object id (a GUID) when 'principalStatus' is declared: the entry stands for a " +
+            'principal the directory did not return when the document was exported, so the engine looks no principal up for it. ' +
+            "Got: '$Got'. Name the principal by its object id, or remove 'principalStatus' to have the principal looked up by name.")
+        @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principalStatus' }).Count | Should -Be 0
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'refuses a principal that is not a string when principalStatus is declared (an array holding one object id is not an object id)' {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('["' + $script:PsGone + '"]') -Extra ', "principalStatus": "Unresolved"')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principal' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Message | Should -BeLike "*must be an object id (a GUID) when 'principalStatus' is declared*"
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'accepts an upper-case object id as the principal' {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('"' + $script:PsGone.ToUpperInvariant() + '"') -Extra ', "principalStatus": "Deleted"')
+        @($V.Errors).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'reports both findings for an entry with an unknown status and a name for a principal' {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal '"person1@example.com"' -Extra ', "principalStatus": "Gone"')
+        @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principalStatus' }).Count | Should -Be 1
+        @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principal' }).Count | Should -Be 1
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 2
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'applies the object id rule to a declared principalStatus only: an explicit null is not declared' {
+        $V = Invoke-PsValidation -Json (Get-PsDocument -Principal '"person1@example.com"' -Extra ', "principalStatus": null')
+        @($V.Errors).Count | Should -Be 0 -Because 'a null principalStatus is not declared, so the principal may be a name'
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'leaves an entry without principalStatus alone: a name and an object id are both valid principals' {
+        foreach ($Principal in '"person1@example.com"', '"Reporting Readers"', ('"' + $script:PsGone + '"')) {
+            $V = Invoke-PsValidation -Json (Get-PsDocument -Principal $Principal)
+            @($V.Errors).Count | Should -Be 0 -Because "principal $Principal needs no object id without principalStatus"
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'reports only the missing principal, not a second finding about its form, when principalStatus is declared without one' {
+        $V = Invoke-PsValidation -Json ('{ "version": "1.0", "roleAssignments": [ { "scope": "' + $script:PsSub + '", "role": "Reader", "principalStatus": "Deleted" } ] }')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principal' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeExactly "'principal' is required at roleAssignments[0]."
+        @($V.Errors).Count | Should -Be 1
+    }
+
+    It 'still reports principalStatus as an unknown key in a directoryRoleAssignments entry: the status is the Azure section''s alone' {
+        $V = Invoke-PsValidation -Json ('{ "version": "1.0", "directoryRoleAssignments": [ { "role": "Reports Reader", "principal": "' + $script:PsGone + '", "assignmentType": "Eligible", "principalStatus": "Deleted" } ] }')
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].principalStatus' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Warning'
+        $Hit[0].Message | Should -BeLike "Unknown key 'principalStatus' at directoryRoleAssignments[[]0]*"
+    }
+
+    It 'compares two entries that differ only in principalStatus as one assignment, since the key stays scope, role and principal' {
+        $Json = '{ "version": "1.0", "roleAssignments": [ ' +
+            '{ "scope": "' + $script:PsSub + '", "role": "Reader", "principal": "' + $script:PsGone + '", "principalStatus": "Deleted" }, ' +
+            '{ "scope": "' + $script:PsSub + '", "role": "Reader", "principal": "' + $script:PsGone + '", "principalStatus": "Unresolved" } ] }'
+        $V = Invoke-PsValidation -Json $Json
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[1]' -and $_.Severity -eq 'Error' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeLike 'roleAssignments[[]1] declares the same scope, role and principal as roleAssignments[[]0]*'
+    }
+}
+
+Describe 'Test-OERStructureSchema warns about PIM for Groups in a restricted management unit (Rule 16, Sprint 11 step 6, BL-134)' {
+    # Microsoft Learn states that Privileged Identity Management does not support a group in a restricted
+    # management administrative unit, so a group that uses PIM for Groups (a non-empty eligibility, or a
+    # pimPolicy) and sits in one is a finding. What Microsoft Graph answers to the writes the apply engine
+    # sends is not measured, so the validator warns, never refuses, in two shapes: at
+    # groups[i].administrativeUnit when the group names a restricted unit, and at groups[i] when a restricted
+    # unit's members list the group. A group raises each shape at most once for a unit. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        $script:RuUnitId = 'eeee5555-0000-0000-0000-0000000000a1'
+        $script:RuGroupId = 'eeee5555-0000-0000-0000-0000000000a2'
+        $script:RuEligibility = '"eligibility": [ { "principal": "person1@example.com", "accessType": "Member" } ]'
+        $script:RuRisk = 'Microsoft Learn states that Privileged Identity Management does not support a group in a restricted management administrative unit. Invoke-OERStructure still sends the PIM settings and eligibility the document declares for the group; what Microsoft Graph answers to those writes has not been measured. Review it before applying the document.'
+        function Invoke-RuValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        # The findings of this rule, among all a document raises: the ones whose message speaks of a
+        # restricted management unit.
+        function Get-RuFinding {
+            param([object]$Validation)
+            @($Validation.Errors | Where-Object { $_.Message -like '*restricted management unit*' })
+        }
+    }
+
+    Context 'a group that names a restricted unit' {
+        It 'warns once, at the group administrativeUnit path, naming the group, the unit and the risk, and keeps the document Valid' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-R", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-0", "members": null }, { "displayName": "AU-R", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+            $Hit[0].Path | Should -BeExactly 'groups[0].administrativeUnit'
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Section | Should -BeExactly 'groups'
+            $Hit[0].Item | Should -BeExactly 'GroupX'
+            $Hit[0].Message | Should -BeExactly ("Group 'GroupX' at groups[0] declares PIM for Groups settings (an eligibility or a pimPolicy) and administrativeUnit 'AU-R', which names " +
+                "administrativeUnits[1], a restricted management unit. $($script:RuRisk)")
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'counts a pimPolicy as PIM for Groups settings, with no eligibility' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-R", "pimPolicy": { "member": { "activationMaxHours": 8 } } } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'groups[0].administrativeUnit'
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'matches the unit''s displayName ignoring case' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "au-r", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeLike "Group 'GroupX' at groups[[]0] declares PIM for Groups settings (an eligibility or a pimPolicy) and administrativeUnit 'au-r', which names administrativeUnits[[]0], a restricted management unit. *"
+        }
+
+        It 'matches the unit by the id its entry declares, compared as a GUID, when the group names it <Label>' -ForEach @(
+            @{ Label = 'in upper case'; Style = 'Upper' }
+            @{ Label = 'in braces'; Style = 'Braced' }
+            @{ Label = 'without dashes'; Style = 'Plain' }
+        ) {
+            $Ref = switch ($Style) {
+                'Upper' { $script:RuUnitId.ToUpperInvariant() }
+                'Braced' { '{' + $script:RuUnitId + '}' }
+                'Plain' { $script:RuUnitId.Replace('-', '') }
+            }
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "' + $Ref + '", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "id": "' + $script:RuUnitId + '", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'groups[0].administrativeUnit'
+            $Hit[0].Message | Should -BeLike "Group 'GroupX' at groups[[]0] declares PIM for Groups settings (an eligibility or a pimPolicy) and administrativeUnit '$([System.Management.Automation.WildcardPattern]::Escape($Ref))', which names administrativeUnits[[]0], a restricted management unit. *"
+        }
+        It 'warns once for each restricted unit the reference names' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-R", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "SomeoneElse" ] }, { "displayName": "au-r", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 2
+            $Hit[0].Message | Should -BeLike "*which names administrativeUnits[[]0], a restricted management unit.*"
+            $Hit[1].Message | Should -BeLike "*which names administrativeUnits[[]1], a restricted management unit.*"
+        }
+    }
+
+    Context 'a restricted unit whose members list the group' {
+        It 'warns once, at the group path, naming the group, the unit and the risk, and keeps the document Valid' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-0", "members": [ "GroupX" ] }, { "displayName": "AU-R", "restricted": true, "members": [ "SomeoneElse", "groupx" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1 -Because 'the rule must have been reached for the message to be read'
+            $Hit[0].Path | Should -BeExactly 'groups[0]'
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Section | Should -BeExactly 'groups'
+            $Hit[0].Item | Should -BeExactly 'GroupX'
+            $Hit[0].Message | Should -BeExactly ("Group 'GroupX' at groups[0] declares PIM for Groups settings (an eligibility or a pimPolicy), and administrativeUnits[1] ('AU-R'), " +
+                "a restricted management unit, lists the group in its members as 'groupx'. $($script:RuRisk)")
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'matches the member by the id the group declares, ignoring case, and counts a pimPolicy' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "id": "' + $script:RuGroupId + '", "pimPolicy": { "member": { "activationMaxHours": 8 } } } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "' + $script:RuGroupId.ToUpperInvariant() + '" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'groups[0]'
+            $Hit[0].Message | Should -BeLike "*lists the group in its members as '$($script:RuGroupId.ToUpperInvariant())'. *"
+        }
+
+        It 'names the group by the name its template computes' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "template": "grp-{Region}", "tokens": { "Region": "EU" }, ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "GRP-eu" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Item | Should -BeExactly 'grp-EU'
+            $Hit[0].Message | Should -BeLike "Group 'grp-EU' at groups[[]0] declares PIM for Groups settings*"
+        }
+
+        It 'still finds a group whose template name cannot be computed by the id it declares, and names it by its path' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "template": "grp-{Unknown}", "tokens": { "Region": "EU" }, "id": "' + $script:RuGroupId + '", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "' + $script:RuGroupId + '" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Item | Should -BeExactly 'groups[0]'
+            $Hit[0].Message | Should -BeLike "Group at groups[[]0] declares PIM for Groups settings*"
+        }
+
+        It 'warns once for a unit that lists the group twice, by name and by id' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "id": "' + $script:RuGroupId + '", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "GroupX", "' + $script:RuGroupId + '" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            # The first member that lists the group is the one the message names.
+            $Hit[0].Message | Should -BeLike "*lists the group in its members as 'GroupX'. *"
+        }
+
+        It 'warns once for each restricted unit that lists the group' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "GroupX" ] }, { "displayName": "AU-S", "restricted": true, "members": [ "GroupX" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 2
+            $Hit[0].Message | Should -BeLike "*administrativeUnits[[]0] ('AU-R'), a restricted management unit, lists the group*"
+            $Hit[1].Message | Should -BeLike "*administrativeUnits[[]1] ('AU-S'), a restricted management unit, lists the group*"
+        }
+    }
+
+    Context 'both shapes for one group and one unit' {
+        It 'raises each shape once, at its own path' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-R", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "GroupX" ] } ] }')
+            $Hit = @(Get-RuFinding -Validation $V)
+            $Hit.Count | Should -Be 2
+            @($Hit | ForEach-Object { $_.Path }) | Should -Be @('groups[0].administrativeUnit', 'groups[0]')
+            @($Hit | ForEach-Object { $_.Severity } | Select-Object -Unique) | Should -Be @('Warning')
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    Context 'where it raises nothing' {
+        It 'raises nothing for a unit that is not restricted (<Label>), in either shape' -ForEach @(
+            @{ Label = 'restricted false'; Unit = '"restricted": false' }
+            @{ Label = 'no restricted key'; Unit = '"description": "x"' }
+            @{ Label = 'restricted null'; Unit = '"restricted": null' }
+            @{ Label = 'restricted the string true'; Unit = '"restricted": "true"' }
+        ) {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-R", ' + $script:RuEligibility + ' }, { "displayName": "GroupY", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", ' + $Unit + ', "members": [ "GroupX", "GroupY" ] } ] }')
+            # Reach proof: the document was validated, and the unit names group X on both counts.
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-RuFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'raises nothing for a group that uses no PIM for Groups (<Label>), in either shape' -ForEach @(
+            @{ Label = 'no eligibility and no pimPolicy'; Group = '"displayName": "GroupX"' }
+            @{ Label = 'an empty eligibility'; Group = '"displayName": "GroupX", "eligibility": []' }
+            @{ Label = 'a null eligibility'; Group = '"displayName": "GroupX", "eligibility": null' }
+            @{ Label = 'a null pimPolicy'; Group = '"displayName": "GroupX", "pimPolicy": null' }
+            @{ Label = 'an eligibility that is not an array'; Group = '"displayName": "GroupX", "eligibility": "x"' }
+            @{ Label = 'an eligibility that holds only a null'; Group = '"displayName": "GroupX", "eligibility": [ null ]' }
+            @{ Label = 'an eligibility that is a number'; Group = '"displayName": "GroupX", "eligibility": 5' }
+        ) {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { ' + $Group + ', "administrativeUnit": "AU-R" } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "GroupX" ] } ] }')
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-RuFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'raises nothing in the second shape when the restricted unit''s members are an explicit null, omitted or do not list the group' -ForEach @(
+            @{ Label = 'null'; Members = '"members": null' }
+            @{ Label = 'omitted'; Members = '"description": "x"' }
+            @{ Label = 'another name'; Members = '"members": [ "GroupZ", "person1@example.com" ]' }
+            @{ Label = 'empty'; Members = '"members": []' }
+        ) {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, ' + $Members + ' } ] }')
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-RuFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'raises nothing in the first shape for an empty administrativeUnit, although a restricted unit has the empty name' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-RuFinding -Validation $V).Count | Should -Be 0
+        }
+        It 'raises nothing in the first shape when the group names a unit this document does not declare, or a restricted unit by another name' {
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-Ghost", ' + $script:RuEligibility + ' }, ' +
+                '{ "displayName": "GroupY", "administrativeUnit": "' + $script:RuGroupId + '", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "id": "' + $script:RuUnitId + '", "restricted": true, "members": [ "SomeoneElse" ] } ] }')
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-RuFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'raises nothing for an exported document: its groups carry no object id and its units list a group member by object id' {
+            # The shape Export-OERInventory writes: no id on a group, no administrativeUnit, and the unit's
+            # members hold the group's object id, which the document does not declare anywhere.
+            $V = Invoke-RuValidation -Json ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", ' + $script:RuEligibility + ' } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "' + $script:RuGroupId + '" ] } ] }')
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-RuFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'raises nothing for a document without groups or without administrativeUnits' {
+            foreach ($Json in @(
+                    '{ "version": "1.0", "administrativeUnits": [ { "displayName": "AU-R", "restricted": true, "members": [ "GroupX" ] } ] }'
+                    ('{ "version": "1.0", "groups": [ { "displayName": "GroupX", ' + $script:RuEligibility + ' } ] }')
+                )) {
+                $V = Invoke-RuValidation -Json $Json
+                $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+                @(Get-RuFinding -Validation $V).Count | Should -Be 0
+            }
+        }
+    }
+
+    It 'states the rule in the help' {
+        $Description = InModuleScope $script:moduleName {
+            ((@((Get-Help Test-OERStructureSchema -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        }
+        $Description | Should -Match ([regex]::Escape('groups[] entry with a non-empty eligibility or a pimPolicy that names, by displayName (ignoring case) or by the id its entry declares, an administrativeUnits[] entry whose restricted is true'))
+        $Description | Should -Match ([regex]::Escape('or that such a unit lists in its members by the group''s name or declared id, is a Warning'))
+        $Description | Should -Match ([regex]::Escape('Microsoft Learn states that Privileged Identity Management does not support a group in a restricted management administrative unit'))
+        $Description | Should -Match ([regex]::Escape('what Microsoft Graph answers to those writes has not been measured, so the finding is a Warning and never an Error'))
     }
 }

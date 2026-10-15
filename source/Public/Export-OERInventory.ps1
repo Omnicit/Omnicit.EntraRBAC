@@ -160,9 +160,12 @@ function Export-OERInventory {
     Stop warning preference (-WarningAction Stop, or $WarningPreference set to 'Stop') the export
     stops at that warning, before it writes the bundle. Any other warning of a scope's read is
     written after that read. An operator's -WarningVariable also collects the warnings of the
-    per-scope reads -- Get-OERInventory's root-scope warning once per scope, and any other per-scope
-    warning twice -- while the display shows each other per-scope warning once, and the root-scope
-    assignments only in the export's one warning.
+    per-scope reads -- Get-OERInventory's root-scope warning, its warning on role assignments whose
+    principal the directory did not return, and the warning on role assignments at a scope no document
+    can declare, once per scope, and any other per-scope warning twice -- while the display shows each
+    other per-scope warning once, and the root-scope assignments, the assignments whose principal the
+    directory did not return and the assignments at a scope no document can declare only in the
+    export's own warnings.
 
     NAMES THAT TWO OR MORE OBJECTS SHARE. Microsoft Entra ID does not keep display names unique, and
     the apply engine refuses a name that more than one live object answers to, so inventory.json and
@@ -171,14 +174,82 @@ function Export-OERInventory {
     Groups are counted over every group in the tenant, the roster's unfiltered listing, so a security
     group that shares its name with a Microsoft 365 group or a distribution group is left out too;
     when the roster could not be read, they are counted among the security-enabled groups the export
-    reads. The export writes ONE warning that gives how many names were left out and how many objects
-    carry them in all. It writes it before the bundle is written, so -WhatIf shows it too, and under a
+    reads. Whether a group named as the principal of a role assignment or a directory role assignment
+    is written by its display name or by its object id is decided over an index of every group's
+    display name, which the export builds once for the whole export -- from the roster when it was
+    read, otherwise with one listing of every group -- and never once per Azure scope. The export
+    writes ONE warning that gives how many names were left out and how many objects carry them in
+    all. It writes it before the bundle is written, so -WhatIf shows it too, and under a
     Stop warning preference (-WarningAction Stop, or $WarningPreference set to 'Stop') the export
     stops at that warning, before it writes the bundle. The generated README.md lists each name, with
     how many objects carry it and its section, in a section "Names two or more objects share",
     directly after "Role assignments at the root scope (elevated access)", or says that no two objects
     share a name. The names stay in IncompleteReads as well. Leaving them out changes nothing in the
     tenant.
+
+    ROLE ASSIGNMENTS WHOSE PRINCIPAL THE DIRECTORY DID NOT RETURN. A role assignment can name a
+    principal that Microsoft Entra ID does not return: one that was deleted, or one the directory
+    cannot read. Such an assignment stays in inventory.json and roleAssignments.json, written by the
+    principal's object id with principalStatus Deleted, when the principal is among the directory's
+    deleted items, or Unresolved, when it is found neither there nor in the directory or its deleted
+    items could not be read (the Get-OERInventory help describes the rule). Invoke-OERStructure never
+    creates such an assignment, and removing its entry lets -Prune remove it, like any undeclared
+    assignment, at a scope the document still declares. A principal is looked for among the deleted
+    items once for the whole export when that read succeeds, however many Azure scopes read the
+    assignment; a read that fails is not kept, and is sent again by the next scope that needs it. The
+    export writes ONE warning that gives how many such assignments it read, each counted once. It
+    writes it after the walk and before the bundle is written, so -WhatIf shows it too, and under a
+    Stop warning preference the export stops at that warning, before it writes the bundle. The
+    generated README.md lists them, with their count, in a section "Role assignments whose principal
+    the directory did not return", directly after "Names two or more objects share": each by role,
+    scope, principal and, when it is known, the principal type, with its status and the reason in
+    words -- or that the reason is not known, where the deleted items read failed -- or the statement
+    that none was found. A principal whose lookup failed is written by its object id with no
+    principalStatus and is named in IncompleteReads (below), and so is one whose deleted items read
+    failed, which is written as Unresolved. The Azure scope is never skipped for either. An assignment
+    that several Azure scopes read is written once: where one scope's lookup of its principal failed
+    and another scope's lookup did not return it, it is written with principalStatus, and the failed
+    lookup is not named. A scope that the export skips after reading it adds none of its assignments
+    to this warning, this README section or IncompleteReads, nor to the warning and README section of
+    the next paragraph, since none of its rows is written.
+
+    ROLE ASSIGNMENTS AT A SCOPE NO DOCUMENT CAN DECLARE. Azure Resource Manager can return a role
+    assignment at a scope whose spelling the validator refuses as an Error, for example the scope of a
+    resource whose name holds a '#' or a '%' (about_Omnicit.EntraRBAC lists the scope spelling rules
+    under RENAMES, MAIL ALIASES AND SCOPE SPELLING). No document can declare such a scope, and a
+    document that carried one would be refused as a whole, so inventory.json and roleAssignments.json
+    never carry one: Get-OERInventory leaves it out of every scope's read (the Get-OERInventory help
+    describes the rule). Invoke-OERStructure never creates a role assignment at such a scope, and
+    never removes one, since it prunes only at a scope a document declares. A role assignment at the
+    root scope whose spelling is refused too is named only as a root scope assignment. The export
+    writes ONE warning that gives how many such assignments it read, each counted once however many
+    Azure scopes read it. It writes it after the walk and before the bundle is written, so -WhatIf
+    shows it too, and under a Stop warning preference the export stops at that warning, before it
+    writes the bundle. The generated README.md lists them, with their count, in a section "Role
+    assignments at a scope no document can declare", directly after "Role assignments whose principal
+    the directory did not return": each by role, scope, principal and, when it is known, the principal
+    type, with the rules its scope breaks in words -- or the statement that none was read. Such an
+    assignment is left out, not unread: it is not named in IncompleteReads, and it makes no bundle
+    partial. Leaving them out of the export changes nothing in the tenant.
+
+    GROUPS USING PIM FOR GROUPS IN A RESTRICTED MANAGEMENT UNIT. Microsoft Learn states that
+    Privileged Identity Management does not support a group in a restricted management administrative
+    unit, so a group with PIM eligibility or a pimPolicy block that is a member of one is a finding to
+    review. The group stays in inventory.json and Invoke-OERStructure still sends the PIM settings and
+    eligibility a document declares for it; what Microsoft Graph answers to those writes has not been
+    measured. When both Groups and AdministrativeUnits are included, the export finds each group that
+    inventory.json writes with a non-empty eligibility or a pimPolicy and that a unit lists by the
+    group's object id (compared without regard to letter case), where the unit's restricted is true and
+    its members were read, with no request of its own. A unit whose members could not be read is named
+    in IncompleteReads and lists nobody here, and a unit left out of the document because another unit
+    shares its name is not checked here: it is named in IncompleteReads and under "Names two or more
+    objects share" in README.md. The export writes ONE warning that gives how many such groups it found,
+    after the reads and before the bundle is written, so -WhatIf shows it too, and under a Stop warning
+    preference the export stops at that warning, before it writes the bundle. The generated README.md
+    lists them in a section "Groups using PIM for Groups in a restricted management unit", directly
+    after "Role assignments at a scope no document can declare": each group and its units by display
+    name, never an id -- or the statement that none was found. Nothing is left out of the export, and
+    listing a group changes nothing in the tenant.
 
     Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
     Groups read when it left anything unread, then one entry per partial report from
@@ -189,7 +260,12 @@ function Export-OERInventory {
     by its own name alone (groups also when the group read stops on an unforeseen error, with the
     warning 'Could not read groups: ...'), and is written as an empty array that does not mean the
     tenant has none; the entry groupsRoster likewise means groupsRoster.json is empty only because
-    the roster read failed. Last, after every Entra ID entry, IncompleteReads carries one entry per
+    the roster read failed. After every Entra ID entry, IncompleteReads carries one entry per role
+    assignment principal that could not be read (see ROLE ASSIGNMENTS WHOSE PRINCIPAL THE DIRECTORY
+    DID NOT RETURN above), each once however many Azure scopes read the assignment, reading
+    'roleAssignments/<role> -> <principal id> @ <scope>' followed by '/principal' when the principal
+    could not be looked up, or '/principalStatus' when only its deleted items read failed. Last, after
+    those entries, IncompleteReads carries one entry per
     Azure scope where at least one role management policy could not be judged (see WHICH AZURE ROLE
     MANAGEMENT POLICIES ARE EXPORTED above), reading 'roleManagementPolicies/role selection at' and
     the scope in its canonical form -- for a subscription,
@@ -201,13 +277,15 @@ function Export-OERInventory {
     kept: when only one row could not be judged, the other unused, unchanged policies there are still
     left out. The Count of IncompleteReads is therefore one for the Groups read when it left anything
     unread, plus the number of partial reports from Get-OERInventory, plus one when the group roster
-    could not be read, plus one per such Azure scope, and not the number of unread collections; read
-    the entries for that. The same non-terminating InventoryPartial error is raised here when
-    IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty, and its message gives the
-    causes of the unread group reads (Get-OERInventory's own InventoryPartial gives those of the other
-    sections). The part of that message that counts partial Entra ID read entries counts the Entra ID
-    entries only; the Azure scopes where policies could not be judged have a clause of their own,
-    which names each of them. A members, scopedRoles, resources or resourceRoles collection that
+    could not be read, plus one per role assignment principal that could not be read, plus one per
+    such Azure scope, and not the number of unread collections; read the entries for that. The same
+    non-terminating InventoryPartial error is raised here when IncompleteReads, SkippedScopes or
+    SkippedEligibilityScopes is non-empty, and its message gives the causes of the unread group reads
+    (Get-OERInventory's own InventoryPartial gives those of the other sections). The part of that
+    message that counts partial Entra ID read entries counts the Entra ID entries only; the role
+    assignment principals that could not be read have a clause of their own, which names each of them
+    and gives the causes, and so have the Azure scopes where policies could not be judged. A members,
+    scopedRoles, resources or resourceRoles collection that
     could not be read, or that has an entry the export could name by nothing the apply engine
     accepts, is NOT written into inventory.json as an empty one or with an empty name: its key is an
     explicit null, which the apply engine reads as "leave untouched" (so is the members key of a group
@@ -220,8 +298,9 @@ function Export-OERInventory {
 
     The bundle says so itself. The generated README.md carries a section named "What this export
     could not read": one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes
-    entry, an Azure scope where role management policies could not be judged under a label of its
-    own, or the statement that nothing was left unread, so whoever receives the bundle
+    entry -- among the IncompleteReads entries, those of a role assignment principal that could not be
+    read and those of an Azure scope where role management policies could not be judged each under a
+    label of its own -- or the statement that nothing was left unread, so whoever receives the bundle
     (an LLM, say) can tell a collection that was not read from one that is empty. The lists go into
     README.md only, never into inventory.json or any other file that is validated or applied.
 
@@ -507,6 +586,39 @@ function Export-OERInventory {
         # other four: they are deliberately absent from the ARM-triggering check above, so naming
         # either one alone never acquires an ARM token.
         $EntraSections = @($Include | Where-Object { $_ -in @('AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments') })
+        # Sprint 11 step 6 (R-2 of step 5): the export's run context. ONE object, held for the Entra ID
+        # call below and the whole Azure walk after it -- every Get-OERInventory call this export makes,
+        # the eligibility read and the role policy selection included -- and set back to $null as a plain
+        # statement directly after the walk. It holds what one export shares across its Get-OERInventory
+        # calls: for now the index of every group's display name (GroupNameIndex), which the group
+        # principals of the role assignments are named through. When the roster was read, the index built
+        # from it goes in at once, with no request; otherwise the first caller lists the groups once and
+        # stores the index here, so an export lists them at most once and not once per Azure scope. A
+        # module-scope object and not a parameter, since Get-OERInventory gets no new public parameter
+        # (A9). Owner is this command's own invocation, the very object a frame of the call stack carries
+        # (Lock-OERSignIn keys the sign-in latch on it the same way): Get-OERInventory uses the context
+        # only while the Owner is on its call stack, so one that this export leaves behind when it is
+        # stopped before the statement after the walk is ignored by every later call, an export's
+        # included, which overwrites it here. There is deliberately NO try/finally around the region: a
+        # statement-terminating error inside it must keep skipping only its own statement.
+        #
+        # Sprint 11 step 6 (BL-133, A18): three more members for the role assignment principals. The
+        # per-scope calls keep every answer of the deleted items read that succeeded in PrincipalStatus (keyed
+        # without regard to letter case), so a principal the directory did not return is read there once for
+        # the whole export when that read succeeds; a read that fails is not kept, and the next scope that
+        # needs it reads again. A principal whose lookup or deleted items read failed is named in
+        # UnreadPrincipal, with its cause at the same index in UnreadPrincipalCause, instead of in the call's
+        # own InventoryPartial, which the call's -ErrorAction Stop below would turn into a skip of the whole
+        # scope. The local reference keeps both lists after the context is cleared, for IncompleteReads and
+        # the partial message.
+        $RunContext = [PSCustomObject]@{
+            Owner                = $MyInvocation
+            GroupNameIndex       = $GroupNameIndex
+            PrincipalStatus      = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            UnreadPrincipal      = [System.Collections.Generic.List[string]]::new()
+            UnreadPrincipalCause = [System.Collections.Generic.List[object]]::new()
+        }
+        $script:_OERInventoryRunContext = $RunContext
         # The ids the roster member-count join below is keyed on come from the group reader alone:
         # it is asked for -IncludeId above, PURELY to key that join on object id instead of display
         # name (Entra permits duplicate group display names -- Add-OERGroupMember.ps1:43-45 -- so a
@@ -652,6 +764,14 @@ function Export-OERInventory {
         # Get-OERInventory calls left out, as each call's Omnicit.EntraRBAC.RootScopeAssignment
         # information record carries them: one list for the whole walk, deduplicated after it.
         $RootScopeRows = [System.Collections.Generic.List[object]]::new()
+        # Sprint 11 step 6 (BL-133, A18): the role assignments written with principalStatus, as each per-scope
+        # call's Omnicit.EntraRBAC.UnresolvedPrincipal information record carries them: one list for the
+        # whole walk, deduplicated after it.
+        $UnresolvedPrincipalRows = [System.Collections.Generic.List[object]]::new()
+        # A13, A15: the role assignments at a scope no document can declare that the per-scope calls left
+        # out, as each call's Omnicit.EntraRBAC.UndeclarableScope information record carries them: one list
+        # for the whole walk, deduplicated after it.
+        $UndeclarableScopeRows = [System.Collections.Generic.List[object]]::new()
 
         if ($AzureSections.Count -gt 0) {
             $TreeParams = @{}
@@ -685,8 +805,16 @@ function Export-OERInventory {
                 $SkippedEligibilityScopes.Add('<all Azure scopes: scope enumeration failed>')
             }
             if ($Tree) {
-                $SeenRa = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                # The merged role assignments' keys, each with the index of its row in $RoleAssignments, so a
+                # row that a later scope's read writes with principalStatus can take the place of the row an
+                # earlier read wrote without it (see the merge below).
+                $RaIndexByKey = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 $SeenRmp = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                # Shortens a list back to the count it had before a scope's reads (see the catch below).
+                $UndoScopeHandover = {
+                    param([System.Collections.IList]$List, [int]$Count)
+                    while ($List.Count -gt $Count) { $List.RemoveAt($List.Count - 1) }
+                }
                 $ScopeIndex = 0
                 try {
                     foreach ($S in @($Tree.Scopes)) {
@@ -696,6 +824,20 @@ function Export-OERInventory {
                         $ScopeCandidates = @()
                         $ScopeAssignments = @()
                         $ScopeAssignmentsUnread = $false
+                        # What this scope's call hands over beyond its rows -- the rows of its
+                        # Omnicit.EntraRBAC.UnresolvedPrincipal and Omnicit.EntraRBAC.UndeclarableScope notices,
+                        # and the principals it names unread in the run context -- counts only once the scope's
+                        # rows are merged below. A scope skipped after its call (a failed policy list, say) merges
+                        # no row, so the catch below takes those back to the counts noted here, and the README,
+                        # the warnings and IncompleteReads never name a row that only a skipped scope read --
+                        # the README and the warning say a row with principalStatus is in inventory.json. The
+                        # two run context lists are taken back together, so they stay index for index (each
+                        # unread principal beside its cause). The root notices still count from a skipped scope:
+                        # a root row is left out of the document whichever scope read it.
+                        $UnresolvedMark = $UnresolvedPrincipalRows.Count
+                        $UndeclarableMark = $UndeclarableScopeRows.Count
+                        $UnreadPrincipalMark = $RunContext.UnreadPrincipal.Count
+                        $UnreadPrincipalCauseMark = $RunContext.UnreadPrincipalCause.Count
                         try {
                             # Selecting, the call leaves RoleManagementPolicies (and -AllRolesAtScope)
                             # out and is not made at all when nothing is left; otherwise it is the call
@@ -725,6 +867,12 @@ function Export-OERInventory {
                                 # -WarningVariable still collects the captured warnings too: PowerShell
                                 # appends a nested command's warnings to every enclosing -WarningVariable,
                                 # whatever that command's -WarningAction (measured).
+                                #
+                                # Sprint 11 step 6 (BL-133): the Omnicit.EntraRBAC.UnresolvedPrincipal notices are
+                                # read the same way: their rows join $UnresolvedPrincipalRows, their warning texts
+                                # are not written again, and ONE warning after the walk counts the rows. So are the
+                                # Omnicit.EntraRBAC.UndeclarableScope notices (A13, A15): their rows join
+                                # $UndeclarableScopeRows.
                                 $ScopeWarnings = $null
                                 $ScopeInformation = $null
                                 try {
@@ -732,9 +880,17 @@ function Export-OERInventory {
                                         -InformationAction SilentlyContinue -InformationVariable ScopeInformation
                                 } finally {
                                     $ScopeNotices = @($ScopeInformation | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.RootScopeAssignment' } | ForEach-Object { $_.MessageData })
-                                    $ScopeNoticeTexts = @($ScopeNotices | ForEach-Object { [string]$_.Warning })
+                                    $ScopePrincipalNotices = @($ScopeInformation | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.UnresolvedPrincipal' } | ForEach-Object { $_.MessageData })
+                                    $ScopeUndeclarableNotices = @($ScopeInformation | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.UndeclarableScope' } | ForEach-Object { $_.MessageData })
+                                    $ScopeNoticeTexts = @(@($ScopeNotices) + @($ScopePrincipalNotices) + @($ScopeUndeclarableNotices) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_.Warning })
                                     foreach ($ScopeNotice in $ScopeNotices) {
                                         foreach ($RootRow in @($ScopeNotice.Assignments)) { if ($null -ne $RootRow) { $RootScopeRows.Add($RootRow) } }
+                                    }
+                                    foreach ($ScopePrincipalNotice in $ScopePrincipalNotices) {
+                                        foreach ($PrincipalRow in @($ScopePrincipalNotice.Assignments)) { if ($null -ne $PrincipalRow) { $UnresolvedPrincipalRows.Add($PrincipalRow) } }
+                                    }
+                                    foreach ($ScopeUndeclarableNotice in $ScopeUndeclarableNotices) {
+                                        foreach ($UndeclarableRow in @($ScopeUndeclarableNotice.Assignments)) { if ($null -ne $UndeclarableRow) { $UndeclarableScopeRows.Add($UndeclarableRow) } }
                                     }
                                     foreach ($ScopeWarning in @($ScopeWarnings)) {
                                         if ($null -eq $ScopeWarning) { continue }
@@ -765,13 +921,33 @@ function Export-OERInventory {
                             Remove-OERErrorRecord -Record $PSItem
                             Write-Warning "Skipping scope '$S': $($PSItem.Exception.Message)"
                             $SkippedScopes.Add([string]$S)
+                            # The skipped scope merges no row, so what its call handed over is taken back.
+                            & $UndoScopeHandover $UnresolvedPrincipalRows $UnresolvedMark
+                            & $UndoScopeHandover $UndeclarableScopeRows $UndeclarableMark
+                            & $UndoScopeHandover $RunContext.UnreadPrincipal $UnreadPrincipalMark
+                            & $UndoScopeHandover $RunContext.UnreadPrincipalCause $UnreadPrincipalCauseMark
                             continue
                         }
                         # $ScopeInv is $null when no call was made, and @($null.X) is a one-element
                         # array holding $null, so every read of it drops nulls.
+                        #
+                        # Sprint 11 step 6 (BL-133): an assignment several scopes read (an inherited one) is merged
+                        # once, on its id or, with none, on scope, role and principal. A principal is written by its
+                        # object id both where its lookup failed (no principalStatus) and where a lookup that
+                        # succeeded did not return it (principalStatus), so the two rows of one assignment share a
+                        # key. The row with principalStatus is the one kept, whichever scope read it first: a later
+                        # one takes the earlier row's place in the list, and an earlier one stays. That the lookup
+                        # failed at another scope is then no longer unread (see the unread principals after the
+                        # walk).
                         foreach ($Ra in @($ScopeInv.RoleAssignments | Where-Object { $null -ne $_ })) {
                             $Key = if ($Ra.PSObject.Properties.Name -contains 'id' -and $Ra.id) { [string]$Ra.id } else { '{0}|{1}|{2}' -f $Ra.scope, $Ra.role, $Ra.principal }
-                            if ($SeenRa.Add($Key)) { $RoleAssignments.Add($Ra) }
+                            if (-not $RaIndexByKey.ContainsKey($Key)) {
+                                $RaIndexByKey[$Key] = $RoleAssignments.Count
+                                $RoleAssignments.Add($Ra)
+                            } elseif (-not [string]::IsNullOrEmpty([string]$Ra.principalStatus) -and
+                                [string]::IsNullOrEmpty([string]$RoleAssignments[$RaIndexByKey[$Key]].principalStatus)) {
+                                $RoleAssignments[$RaIndexByKey[$Key]] = $Ra
+                            }
                         }
                         # Non-empty only under -AllRolePolicies: selecting, the call reads no policy.
                         foreach ($Rmp in @($ScopeInv.RoleManagementPolicies | Where-Object { $null -ne $_ })) {
@@ -821,6 +997,9 @@ function Export-OERInventory {
                 }
             }
         }
+        # The walk is over: no later Get-OERInventory call of this export exists. A plain statement and no
+        # finally (see the run context above), so the control flow of the region is what it always was.
+        $script:_OERInventoryRunContext = $null
 
         # BL-126 (R3): the role assignments at the root scope the walk's reads left out, each once
         # (Format-OERRootScopeAssignment deduplicates them on the role assignment id and owns their
@@ -833,6 +1012,80 @@ function Export-OERInventory {
             $RootScopeAssignments = @($RootList.Assignments)
             Write-Warning "Export-OERInventory: left out $($RootScopeAssignments.Count) role assignment(s) at the root scope '/', which grants access over every management group and subscription in the tenant (elevated access), from inventory.json and roleAssignments.json: $($RootList.Text). README.md names them under 'Role assignments at the root scope (elevated access)'; review them as a finding. Invoke-OERStructure never creates or removes a role assignment at the root scope."
         }
+
+        # Sprint 11 step 6 (BL-133, A18): the role assignments the walk's reads wrote with principalStatus,
+        # each once -- an assignment inherited by several scopes is handed over by each read -- deduplicated
+        # on the role assignment id, and on scope, role and principal for a row with none, without regard to
+        # letter case, in the order first handed over. They stay in inventory.json and roleAssignments.json.
+        # One warning counts them, here after the walk and before the bundle's ShouldProcess, so -WhatIf
+        # shows it too, and the README lists them (docs/development/rationale.md#unresolved-principals).
+        $UnresolvedPrincipalAssignments = @()
+        if ($UnresolvedPrincipalRows.Count -gt 0) {
+            $SeenPrincipalRow = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $UnresolvedPrincipalAssignments = @(foreach ($PrincipalRow in $UnresolvedPrincipalRows) {
+                    $PrincipalRowKey = if (-not [string]::IsNullOrWhiteSpace([string]$PrincipalRow.RoleAssignmentId)) {
+                        'id|' + [string]$PrincipalRow.RoleAssignmentId
+                    } else {
+                        'row|{0}|{1}|{2}' -f $PrincipalRow.Scope, $PrincipalRow.Role, $PrincipalRow.Principal
+                    }
+                    if ($SeenPrincipalRow.Add($PrincipalRowKey)) { $PrincipalRow }
+                })
+            Write-Warning "Export-OERInventory: $($UnresolvedPrincipalAssignments.Count) role assignment(s) in inventory.json and roleAssignments.json name a principal the directory did not return, each written by the principal's object id with principalStatus Deleted (found among the directory's deleted items) or Unresolved (found neither in the directory nor among its deleted items, or its deleted items could not be read). README.md names them under 'Role assignments whose principal the directory did not return'; review them as a finding. Invoke-OERStructure never creates such an assignment."
+        }
+
+        # A13, A15: the role assignments at a scope no document can declare that the walk's reads left out,
+        # each once -- an assignment inherited by several scopes is handed over by each read -- deduplicated on
+        # the role assignment id, and on scope, role and principal for a row with none, without regard to
+        # letter case, in the order first handed over. One warning counts them, here after the walk and before
+        # the bundle's ShouldProcess, so -WhatIf shows it too, and the README lists them
+        # (docs/development/rationale.md#undeclarable-scope).
+        $UndeclarableScopeAssignments = @()
+        if ($UndeclarableScopeRows.Count -gt 0) {
+            $SeenUndeclarableRow = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $UndeclarableScopeAssignments = @(foreach ($UndeclarableRow in $UndeclarableScopeRows) {
+                    $UndeclarableRowKey = if (-not [string]::IsNullOrWhiteSpace([string]$UndeclarableRow.RoleAssignmentId)) {
+                        'id|' + [string]$UndeclarableRow.RoleAssignmentId
+                    } else {
+                        'row|{0}|{1}|{2}' -f $UndeclarableRow.Scope, $UndeclarableRow.Role, $UndeclarableRow.Principal
+                    }
+                    if ($SeenUndeclarableRow.Add($UndeclarableRowKey)) { $UndeclarableRow }
+                })
+            Write-Warning "Export-OERInventory: left out $($UndeclarableScopeAssignments.Count) role assignment(s) whose scope no document can declare from inventory.json and roleAssignments.json: the validator refuses the scope's spelling, so a document that carried one would be refused as a whole. README.md names them under 'Role assignments at a scope no document can declare'; review them as a finding. Invoke-OERStructure never creates or removes a role assignment at such a scope."
+        }
+
+        # Sprint 11 step 6 (BL-133, A18): the role assignment principals the walk's reads could not look up,
+        # or could not look for among the directory's deleted items, as they named them to the run context,
+        # each entry once (an inherited assignment is read by several scopes), in the order first named. Kept
+        # apart from the Entra ID entries in $IncompleteReads and appended after them, before the role policy
+        # selection entries, so the Entra ID entries keep their documented order and own clause.
+        #
+        # A '<...>/principal' entry -- a failed lookup -- is left out, with its cause, where the merged row of
+        # its assignment carries principalStatus: another scope's lookup succeeded and did not return the
+        # principal, so the principal was read after all (see the merge in the walk). The entry is
+        # 'roleAssignments/<role> -> <principal id> @ <scope>/principal', and such a row's principal is that
+        # object id, so the row's own fields spell the entry. The run context's two lists stand index for index
+        # (each unread principal beside its cause), so an entry left out takes the cause at its index with it.
+        $StatusRowLookupEntries = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($MergedRa in $RoleAssignments) {
+            if (-not [string]::IsNullOrEmpty([string]$MergedRa.principalStatus)) {
+                [void]$StatusRowLookupEntries.Add("roleAssignments/$($MergedRa.role) -> $($MergedRa.principal) @ $($MergedRa.scope)/principal")
+            }
+        }
+        $UnreadPrincipalEntries = @($RunContext.UnreadPrincipal)
+        $LeftOutUnreadIndex = [System.Collections.Generic.HashSet[int]]::new()
+        for ($UnreadIndex = 0; $UnreadIndex -lt $UnreadPrincipalEntries.Count; $UnreadIndex++) {
+            if ($StatusRowLookupEntries.Contains([string]$UnreadPrincipalEntries[$UnreadIndex])) { [void]$LeftOutUnreadIndex.Add($UnreadIndex) }
+        }
+        $UnreadPrincipalReads = [System.Collections.Generic.List[string]]::new()
+        $SeenUnreadPrincipal = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        for ($UnreadIndex = 0; $UnreadIndex -lt $UnreadPrincipalEntries.Count; $UnreadIndex++) {
+            $UnreadPrincipal = [string]$UnreadPrincipalEntries[$UnreadIndex]
+            if ([string]::IsNullOrWhiteSpace($UnreadPrincipal) -or $LeftOutUnreadIndex.Contains($UnreadIndex)) { continue }
+            if ($SeenUnreadPrincipal.Add($UnreadPrincipal)) { $UnreadPrincipalReads.Add($UnreadPrincipal) }
+        }
+        $UnreadPrincipalCauses = @(for ($CauseIndex = 0; $CauseIndex -lt $RunContext.UnreadPrincipalCause.Count; $CauseIndex++) {
+                if (-not $LeftOutUnreadIndex.Contains($CauseIndex)) { $RunContext.UnreadPrincipalCause[$CauseIndex] }
+            })
 
         # --- Group split: RBAC-relevant kept in inventory.json; unfiltered roster written separately ---
         # The whole if/else is wrapped in @(...) because an empty 'else' result (no RBAC-relevant
@@ -916,6 +1169,48 @@ function Export-OERInventory {
             if ($KeptGroup.PSObject.Properties.Name -contains 'id' -and $KeptGroup.id) { $KeptGroupIds[[string]$KeptGroup.id] = $true }
         }
         $ReadmePimLeftOut = @($PimLeftOut | Where-Object { $KeptGroupIds.ContainsKey([string]$_.GroupId) })
+
+        # Sprint 11 step 6 (BL-134): the groups inventory.json writes with PIM eligibility or a pimPolicy block
+        # that are members of a restricted management unit. Microsoft Learn states that Privileged Identity
+        # Management does not support a group in a restricted management administrative unit
+        # (docs/development/rationale.md#restricted-unit-pim); what Microsoft Graph answers when the apply
+        # engine sends such a group's eligibility or PIM policy writes is not measured. The administrative
+        # units list a group member by its object id (Get-OERInventory), and the groups still carry theirs
+        # here, before the strip below, so the link is found with no request. A unit counts when it is
+        # restricted (the boolean true) and its members were read: a unit whose members are an explicit null
+        # (unread) or absent (a dynamic unit) lists nobody, and is named in IncompleteReads when unread. A
+        # unit Get-OERInventory left out of the document because another unit shares its name is not in
+        # $Inv.AdministrativeUnits, so it is not checked here; it is named as a shared name. The ids are
+        # compared without regard to letter case. Without Groups or without AdministrativeUnits in -Include
+        # there are no groups or no units here, so nothing is found and nothing is read for it. One warning
+        # counts the groups, here before the bundle's ShouldProcess, so -WhatIf shows it too; the README lists
+        # each group and its units by display name, never an id.
+        $RestrictedUnitMembers = [System.Collections.Generic.List[object]]::new()
+        foreach ($RestrictedUnit in @($Inv.AdministrativeUnits)) {
+            if ($null -eq $RestrictedUnit -or $RestrictedUnit.restricted -ne $true) { continue }
+            $UnitMemberIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($UnitMember in @($RestrictedUnit.members)) {
+                if ($UnitMember) { $null = $UnitMemberIds.Add([string]$UnitMember) }
+            }
+            $RestrictedUnitMembers.Add([PSCustomObject]@{ Name = [string]$RestrictedUnit.displayName; MemberIds = $UnitMemberIds })
+        }
+        $RestrictedUnitPimGroups = @(foreach ($PimGroup in $DetailedGroups) {
+                # The null-filter inside the count is the keep filter's own (above): eligibility is absent on a
+                # group whose eligibility read failed, and @($null).Count is 1. A pimPolicy that is present but
+                # null is no policy, though the keep filter above keeps the group on the key alone.
+                $UsesPim = (($PimGroup.PSObject.Properties.Name -contains 'pimPolicy') -and $null -ne $PimGroup.pimPolicy) -or
+                @($PimGroup.eligibility | Where-Object { $null -ne $_ }).Count -gt 0
+                if (-not $UsesPim) { continue }
+                # A group with no id reads as the empty string, which no unit lists (an empty member is not
+                # added above).
+                $PimGroupUnits = @($RestrictedUnitMembers | Where-Object { $_.MemberIds.Contains([string]$PimGroup.id) } | ForEach-Object { $_.Name })
+                if ($PimGroupUnits.Count -gt 0) {
+                    [PSCustomObject]@{ Group = [string]$PimGroup.displayName; Units = $PimGroupUnits }
+                }
+            })
+        if ($RestrictedUnitPimGroups.Count -gt 0) {
+            Write-Warning "Export-OERInventory: $($RestrictedUnitPimGroups.Count) group(s) written to inventory.json use PIM for Groups (PIM eligibility or a pimPolicy block) and are members of a restricted management administrative unit. Microsoft Learn states that Privileged Identity Management does not support a group in a restricted management administrative unit. Invoke-OERStructure still sends the PIM settings and eligibility a document declares for these groups; what Microsoft Graph answers to those writes has not been measured. README.md names each group and its units under 'Groups using PIM for Groups in a restricted management unit'; review them as a finding. Nothing is left out of the export."
+        }
 
         # inventory.json staying id-free is a documented portability property of the export
         # (Get-OERInventory's own .DESCRIPTION) -- the reader's -IncludeId above exists purely to key
@@ -1064,8 +1359,12 @@ function Export-OERInventory {
             # The members and owners the group reader left out as PIM for Groups access go into the
             # README alone too, per group by name, for the groups inventory.json writes (BL-125), and
             # so do the role assignments at the root scope the walk left out (BL-126), and the names two
-            # or more objects share, with their counts (BL-131).
-            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments -SharedNames $SharedNames) |
+            # or more objects share, with their counts (BL-131), and the role assignments written with
+            # principalStatus (BL-133), and the role assignments at a scope no document can declare (A13,
+            # A15), and the groups that use PIM for Groups in a restricted management unit (BL-134). The
+            # role assignment principals that could not be read follow the
+            # Entra ID entries and precede the role policy selection's, as in the output object.
+            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments -SharedNames $SharedNames -UnresolvedPrincipalAssignments $UnresolvedPrincipalAssignments -UndeclarableScopeAssignments $UndeclarableScopeAssignments -RestrictedUnitPimGroups $RestrictedUnitPimGroups) |
                 Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
         }
         $WrittenFiles.Add('README.md')
@@ -1114,9 +1413,10 @@ function Export-OERInventory {
             SkippedScopes          = @($SkippedScopes)
             AzurePimEligibility    = @($AzureEligibilities).Count
             SkippedEligibilityScopes = @($SkippedEligibilityScopes)
-            # The Entra ID entries first, in their documented order, then the scopes where role
-            # management policies that could not be judged were kept (BL-107).
-            IncompleteReads        = @($IncompleteReads) + @($RolePolicySelectionReads)
+            # The Entra ID entries first, in their documented order, then the role assignment principals
+            # that could not be read (BL-133), then the scopes where role management policies that could
+            # not be judged were kept (BL-107).
+            IncompleteReads        = @($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads)
             Files                  = $WrittenFiles.ToArray()
         }
         $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.InventoryBundle')
@@ -1126,7 +1426,7 @@ function Export-OERInventory {
         # then learns the coverage is incomplete. A warning alone left $? true, -ErrorAction Stop
         # inert and a try/catch seeing success, which is how a heavily truncated bundle reached the
         # LLM -> Invoke-OERStructure workflow looking exactly like a full tenant snapshot.
-        if ($SkippedScopes.Count -gt 0 -or $SkippedEligibilityScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0 -or $RolePolicySelectionReads.Count -gt 0) {
+        if ($SkippedScopes.Count -gt 0 -or $SkippedEligibilityScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0 -or $UnreadPrincipalReads.Count -gt 0 -or $RolePolicySelectionReads.Count -gt 0) {
             $PartialParts = [System.Collections.Generic.List[string]]::new()
             # A '<...>' entry is not a scope that failed to READ: it names the whole walk that could not
             # start, or a level of the tree (management groups, subscriptions) that could not be LISTED,
@@ -1197,6 +1497,19 @@ function Export-OERInventory {
                     if ($GroupCauseClause) { $IncompletePart += '.' + $GroupCauseClause.TrimEnd('.') }
                 }
                 $PartialParts.Add($IncompletePart)
+            }
+            if ($UnreadPrincipalReads.Count -gt 0) {
+                # A clause of its own (BL-133), not folded into the Entra ID one above, whose count and
+                # wording stay over the Entra ID entries only: these are rows of roleAssignments.json, each
+                # written by its principal's object id. The causes are the ones the per-scope reads handed
+                # to the run context; Format-OERUnreadCauseClause owns their wording, deduplication and cap,
+                # and its trailing period is trimmed, as above, because the parts are joined with one.
+                $PrincipalPart = "$($UnreadPrincipalReads.Count) role assignment principal read(s) failed, so each principal is written by its object id -- " +
+                    'with no principalStatus where its lookup through directoryObjects/getByIds failed, and as Unresolved where only the read of ' +
+                    "the directory's deleted items failed: $($UnreadPrincipalReads -join '; ')"
+                $PrincipalCauseClause = Format-OERUnreadCauseClause -Cause $UnreadPrincipalCauses -Label 'Causes of the unread principal lookups'
+                if ($PrincipalCauseClause) { $PrincipalPart += '.' + $PrincipalCauseClause.TrimEnd('.') }
+                $PartialParts.Add($PrincipalPart)
             }
             if ($RolePolicySelectionReads.Count -gt 0) {
                 # A clause of its own (BL-107), not folded into the Entra ID one above, whose count and

@@ -32,8 +32,11 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
   export could not read (or says that nothing was left unread), lists under "Role assignments at the
   root scope (elevated access)" the role assignments at the Azure root scope the export left out
   (see below), lists under "Names two or more objects share" every name the export left out because
-  two or more objects carry it (see below), and holds the next steps. These lists are written into
-  this file only, never into `inventory.json` or any other JSON file.
+  two or more objects carry it (see below), lists under "Role assignments whose principal the
+  directory did not return", "Role assignments at a scope no document can declare" and "Groups using
+  PIM for Groups in a restricted management unit" the findings described below, and holds the next
+  steps. These lists are written into this file only, never into `inventory.json` or any other JSON
+  file.
 
 By default the Entra sections -- including the Microsoft Entra directory role sections,
 `DirectoryRoleManagementPolicies` and `DirectoryRoleAssignments` -- plus tenant-wide
@@ -239,6 +242,77 @@ Global Administrator -- and a finding to review, not part of the RBAC model a pr
   prunes the root scope, with or without `-Prune`. An entry at any other scope in the same document
   is applied and pruned as before.
 
+## Role assignments whose principal the directory did not return
+
+An Azure role assignment can name a principal that Microsoft Entra ID does not return: one that was
+deleted, or one this directory cannot read. The export looks every principal of the `roleAssignments`
+section up through `directoryObjects/getByIds`, over every directory object type, and looks for each
+principal that lookup did not return among the directory's deleted items, with one read of
+`directory/deletedItems` per principal (once per export when the read succeeds).
+
+- **The export keeps the assignment and says why.** `inventory.json` and `roleAssignments.json` write
+  it with the principal's object id as `principal` and `principalStatus` after `principalType`:
+  `Deleted` when the principal is among the directory's deleted items, `Unresolved` when it is found
+  neither there nor in the directory (deleted beyond the retention period, a principal of another
+  tenant, for example through Azure Lighthouse, or not readable), or when the read of its deleted
+  items failed. The export writes one warning with the count, and the bundle's `README.md` lists each
+  one, by role, scope, principal and type, with the status and its reason in words -- or, where the
+  deleted items read failed, that the reason is not known -- under "Role assignments whose principal
+  the directory did not return".
+- **A failed read is never a fact.** When the lookup itself fails, the principal is written by its
+  object id with no `principalStatus`, and the row is named under "What this export could not read"
+  as `roleAssignments/<role> -> <principal id> @ <scope>/principal`; when only the deleted items read
+  fails, the row is written as `Unresolved` and named there as `.../principalStatus`. Both are
+  labelled "Role assignment principal that could not be read" and raise `InventoryPartial`.
+- **The prompt treats it as a finding.** It tells the model to keep such an entry as exported or
+  leave it out, never to invent or substitute a principal for it, and never to write
+  `principalStatus` itself.
+- **The validator.** `Test-OERStructure` refuses a `principalStatus` other than `Deleted` or
+  `Unresolved` (a non-canonical letter case is a warning), and a `principalStatus` beside a
+  `principal` that is not an object id.
+- **The apply engine never creates such an assignment.** `Invoke-OERStructure` takes the object id
+  as written and looks no principal up. A live assignment of that principal and role at the scope is
+  matched as for any entry (`Unchanged`, or `Updated` when the declared `description`, `condition` or
+  `conditionVersion` differ), and one inherited from an ancestor scope is `Skipped`. Where the entry
+  would create the assignment it is reported `Skipped`, with no prompt and nothing written, the same
+  under `-WhatIf`. Under `-Prune` the entry protects the live assignment, and a document without it
+  lets `-Prune` remove it like any undeclared assignment at a scope the document declares. To have
+  the assignment created, name a principal that exists and remove `principalStatus`.
+
+This covers the `roleAssignments` section only. Directory role assignments, a group's eligibility,
+reviewers and catalog resources keep their earlier rule: a principal they cannot name is written by
+its object id, with no status and no deleted items read.
+
+## Role assignments at a scope no document can declare
+
+Azure Resource Manager can return a role assignment at a scope whose spelling the validator refuses,
+for example the scope of a resource whose name holds a `#` or a `%` (the `scope` description in
+`schema.json` lists the rules). No document can declare such a scope, and one that carried it would
+be refused as a whole. So the export leaves the assignment out of `inventory.json` and
+`roleAssignments.json`, with one warning that counts them, and the bundle's `README.md` lists each
+one, by role, scope, principal and type, with the rules its scope breaks, under "Role assignments at
+a scope no document can declare". It is left out, not unread: it raises no `InventoryPartial`. A role
+assignment at the root scope whose spelling is refused too is listed as a root scope assignment only.
+`Invoke-OERStructure` never creates a role assignment at such a scope and never removes one, since it
+prunes only at a scope a document declares. Leaving it out changes nothing in the tenant.
+
+## Groups using PIM for Groups in a restricted management unit
+
+Microsoft Learn states that Privileged Identity Management does not support a group in a restricted
+management administrative unit. With `Groups` and `AdministrativeUnits` included, the export finds
+each group `inventory.json` writes with PIM eligibility or a `pimPolicy` that a restricted unit lists
+among its members, with no request of its own, writes one warning with the count, and lists each
+group and its units by display name under "Groups using PIM for Groups in a restricted management
+unit". Nothing is left out of the export. A unit whose members could not be read, and a unit left out
+because another unit shares its name, are not checked; both are named under "What this export could
+not read".
+
+`Test-OERStructure` warns, and never refuses, when a document places a group that declares PIM
+eligibility or a `pimPolicy` in a restricted unit the document declares: by the group's
+`administrativeUnit`, or in the unit's `members`. An exported document raises neither warning, since
+its groups carry no object id and no `administrativeUnit`. `Invoke-OERStructure` still sends such a
+group's PIM settings and eligibility; what Microsoft Graph answers to them has not been measured.
+
 ## Renaming a group
 
 `displayName` is the match key for a group. To rename a group through the apply document, declare
@@ -429,12 +503,28 @@ an earlier run: include the section, or remove `previousDisplayName` once the ne
 refusal because `-Include` leaves the section out publishes no error record, only the `Failed` row,
 so `-ErrorAction Stop` and `$?` do not see it: check the rows.
 
+**A review reaches the package its entry resolved, renamed or not.** Every `accessPackages` entry
+records its package in the run, not only one that renames: the id of the package it found in its
+declared catalog, or created there. So an access review whose `accessPackage` gives that package by
+its display name is checked, and created, against that id, and the name is never looked up in the
+whole tenant, where a package of that name in another catalog would be found; the `Failed` row of the
+target check then says the name was read as the id of "the access package its accessPackages entry
+resolved in this run". Until the entry has that id the review is refused, `Failed` with nothing read
+or written for it, under `-WhatIf` too: when the entry stopped first (its catalog refused, a failed
+or ambiguous lookup, a failed create, a create that returned another catalog's package), when a
+`-WhatIf` plan would create the package or a declined confirmation skipped its create (the plan then
+reports the review `Failed` although a real run creates the package first, then the review), and
+when `-Include` leaves out the `AccessPackages` section. Such a refusal publishes no error record of
+its own, only the review's `Failed` row, so `-ErrorAction Stop` and `$?` do not see it. A review that
+names the package by object id, or names a package the document does not declare, is resolved as
+before.
+
 **Two packages with one name.** The same display name in two catalogs is two packages, but the run
-keys a renamed package, and its policies, by the package's name, without its catalog. So
+keys every declared package, and its policies, by the package's name, without its catalog. So
 `Test-OERStructure` refuses, as an error, an access review whose `accessPackage` gives by name a
 package that two or more `accessPackages` entries declare, as `displayName` or
-`previousDisplayName`, while one of them is renamed; name the package by its object id in such a
-review.
+`previousDisplayName`, whether or not one of them is renamed; name the package by its object id in
+such a review.
 
 `Test-OERStructure` reports an empty or non-string `previousDisplayName` as an error, and one equal
 to `displayName` (ignoring case) as a warning -- a case-only rename is not possible through the
@@ -690,7 +780,10 @@ catalogs, access reviews, the access packages of one catalog and the assignment 
 access package. A group's name is counted over every group in the tenant, Microsoft 365 and
 distribution groups included: `Export-OERInventory` counts over its roster, and `Get-OERInventory`
 makes one more paged listing of every group's id and display name, at most once per call; when that
-listing fails, `groupNames` is reported unread and the names are counted among the groups read. An
+listing fails, `groupNames` is reported unread and the names are counted among the groups read.
+`Export-OERInventory` shares one index of every group's name among all its `Get-OERInventory` calls,
+built from the roster when it was read and otherwise with one listing, so an export lists the groups
+at most once, never once per Azure scope. An
 access package's name is counted among the packages of its catalog, an assignment policy's among the
 policies of its own access package only, and the name of an administrative unit, a catalog or an
 access review among the ones read (with `Get-OERInventory -Catalog`, only the catalogs it reads; an
@@ -745,7 +838,9 @@ The bundle's `README.md` lists every such report, and every Azure scope the expo
 under "What this export could not read" -- one bullet per entry, each written as a code span so an
 entry such as `<all Azure scopes: scope enumeration failed>` is shown as it is. An Azure scope where
 at least one role management policy could not be judged is listed there too, after the Entra ID
-entries, as `roleManagementPolicies/role selection at <scope>` under a label of its own. Every policy
+entries and after the role assignment principals that could not be read (see "Role assignments whose
+principal the directory did not return", labelled "Role assignment principal that could not be
+read"), as `roleManagementPolicies/role selection at <scope>` under a label of its own. Every policy
 there that could not be judged was kept, none of them left out -- where the scope's role assignment
 or eligibility read failed, that is every policy of a role neither used nor changed there -- so
 `roleManagementPolicies.json` may hold policies of roles that are neither used nor changed at that

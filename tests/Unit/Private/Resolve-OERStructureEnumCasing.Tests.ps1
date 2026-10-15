@@ -32,6 +32,19 @@ Describe 'Resolve-OERStructureEnumCasing' {
             Resolve-OERStructureEnumCasing -EnumName 'approverInfoVisibility' -Value 'notvisible' | Should -Be 'NotVisible'
             Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value 'eligible' | Should -BeExactly 'Eligible'
             Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value 'ACTIVE' | Should -BeExactly 'Active'
+            Resolve-OERStructureEnumCasing -EnumName 'principalStatus' -Value 'deleted' | Should -BeExactly 'Deleted'
+            Resolve-OERStructureEnumCasing -EnumName 'principalStatus' -Value 'UNRESOLVED' | Should -BeExactly 'Unresolved'
+            Resolve-OERStructureEnumCasing -EnumName 'principalStatus' -Value 'Unresolved' | Should -BeExactly 'Unresolved'
+        }
+    }
+
+    It 'returns null for a principalStatus that is not Deleted or Unresolved (A18)' {
+        # A principal that is a live object, or any other word, is not a status the export writes.
+        InModuleScope $script:moduleName {
+            foreach ($Value in 'Gone', 'Active', 'Resolved', 'Delete', 'User') {
+                $Result = Resolve-OERStructureEnumCasing -EnumName 'principalStatus' -Value $Value
+                $null -eq $Result | Should -Be $true -Because "'$Value' is not a member of principalStatus"
+            }
         }
     }
 
@@ -71,6 +84,7 @@ Describe 'Resolve-OERStructureEnumCasing' {
                 accessReviewDefaultDecision   = @('None', 'Approve', 'Deny', 'Recommendation')
                 principalType                 = @('User', 'Group', 'ServicePrincipal')
                 directoryRoleAssignmentType   = @('Eligible', 'Active')
+                principalStatus               = @('Deleted', 'Unresolved')
             }
             foreach ($Name in $Expected.Keys) {
                 $Actual = @(Resolve-OERStructureEnumCasing -EnumName $Name -List)

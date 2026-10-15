@@ -3236,6 +3236,8 @@ Invoke-OERStructure -Json $Json -Confirm:$false | ForEach-Object { "ROW:$($_.Sec
 
             $Run.Output[-1] | Should -BeExactly 'END'
             # Positive proof first: every section ran and made its reads -- and R-Pkg made none. No write.
+            # R-New's target check compares AP-Pol by the id its accessPackages entry found in CAT-2, with no
+            # name lookup of the package (BL-147).
             $Logged = if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log | Where-Object { $_ }) } else { @() }
             @($Logged) | Should -Be @(
                 'READ catalog-name CAT-Bad', 'READ catalog dddd4444-0000-0000-0000-000000000041'
@@ -3243,7 +3245,7 @@ Invoke-OERStructure -Json $Json -Confirm:$false | ForEach-Object { "ROW:$($_.Sec
                 'READ graph v1.0/identityGovernance/entitlementManagement/accessPackages/aaaa1111-0000-0000-0000-000000000041/resourceRoleScopes'
                 'READ policies aaaa1111-0000-0000-0000-000000000041'
                 'READ packages CAT-2'
-                "READ reviews displayName eq 'R-New'", "READ reviews displayName eq 'R-Old'", 'READ package-name AP-Pol'
+                "READ reviews displayName eq 'R-New'", "READ reviews displayName eq 'R-Old'"
             )
             @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
                 'ROW:catalogs:CAT-Bad:Failed'
@@ -3414,8 +3416,10 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
     }
 
+    # Neither key costs a package lookup since BL-147: the review names the package by name, and the
+    # package's entry registered the id of the package it found, so the name is read as that id.
     It 'renames the policy and updates its review by the policy''s id, the package named by <Key> (<Mode>)' -ForEach @(
-        @{ Key = 'name'; Package = 'AP-1'; PackageLookups = 1; Mode = 'a real run'; PlanOnly = $false; Sets = 1; Expected = @(
+        @{ Key = 'name'; Package = 'AP-1'; PackageLookups = 0; Mode = 'a real run'; PlanOnly = $false; Sets = 1; Expected = @(
                 'accessPackages|AP-1|Unchanged|access package properties match'
                 "accessPackages|AP-1|Updated|renamed assignmentPolicy 'POL-Old' to 'POL-New'"
                 "accessReviews|Q3 AP review|Updated|updated access review 'Q3 AP review' (durationInDays=21)"
@@ -3427,7 +3431,7 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
                 "accessReviews|Q3 AP review|Updated|updated access review 'Q3 AP review' (durationInDays=21)"
             )
         }
-        @{ Key = 'name'; Package = 'AP-1'; PackageLookups = 1; Mode = 'a plan under -WhatIf'; PlanOnly = $true; Sets = 0; Expected = @(
+        @{ Key = 'name'; Package = 'AP-1'; PackageLookups = 0; Mode = 'a plan under -WhatIf'; PlanOnly = $true; Sets = 0; Expected = @(
                 'accessPackages|AP-1|Unchanged|access package properties match'
                 "accessPackages|AP-1|Skipped|would rename assignmentPolicy 'POL-Old' to 'POL-New'"
                 "accessReviews|Q3 AP review|Skipped|would update access review 'Q3 AP review' (durationInDays=21)"
@@ -3453,6 +3457,9 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times $Sets -Exactly
     }
 
+    # Since BL-147 every accessPackages entry is marked when -Include leaves the section out, so a review of
+    # a policy of a package that renames nothing is refused for its package first: the policy's own mark
+    # is read only after the package's.
     It 'refuses the review of a <Case> the document renames, reading and writing nothing for it, when -Include leaves AccessPackages out (<Mode>)' -ForEach @(
         foreach ($Mode in @('a real run', 'a plan under -WhatIf')) {
             @{ Case = 'package'; Mode = $Mode; Doc = 'package'
@@ -3461,9 +3468,8 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
                     'cannot be identified; nothing was created, read or written for it')
             }
             @{ Case = 'policy'; Mode = $Mode; Doc = 'policy'
-                Detail = ("assignment policy 'POL-New' of access package 'AP-1' was not reconciled in this run: its rename from 'POL-Old' was " +
-                    'refused (the accessPackages section is not selected by -Include, so its rename is not reconciled in this run), so the ' +
-                    'assignment policy this access review reviews cannot be identified; nothing was created, read or written for it')
+                Detail = ("access package 'AP-1' has no id in this run (the accessPackages section is not selected by -Include), so the access " +
+                    'package this access review reviews cannot be identified; nothing was created, read or written for it')
             }
         }
     ) {
@@ -3591,9 +3597,35 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
         Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackage -Times 0
     }
 
-    It 'still updates a review by name when -Include leaves AccessPackages out and nothing it names is renamed (control)' {
+    It 'refuses a review of a package the document declares when -Include leaves AccessPackages out, although nothing is renamed (BL-147, <Mode>)' -ForEach @(
+        @{ Mode = 'a real run' }
+        @{ Mode = 'a plan under -WhatIf' }
+    ) {
+        # Before BL-147 this review was looked up by name in the whole tenant, where a package of that name
+        # in another catalog would be found. The entry is not reconciled, so the run has no id for it.
         $Doc = ('{ "version": "1.0", ' +
             '"accessPackages": [ { "displayName": "AP-1", "catalog": "CAT-1", "resourceRoles": [], "assignmentPolicies": [ { "displayName": "Standard" } ] } ], ' +
+            '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', 'AP-1').Replace('#POL#', 'Standard') + ' ] }')
+        $Params = @{ Json = $Doc; Include = 'AccessReviews'; ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
+        if ($Mode -eq 'a plan under -WhatIf') { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+        $Rows = @(Invoke-OERStructure @Params)
+
+        @(ConvertTo-RvRowLine -Row $Rows) | Should -Be @(
+            ("accessReviews|Q3 AP review|Failed|access package 'AP-1' has no id in this run (the accessPackages section is not selected by -Include), " +
+                'so the access package this access review reviews cannot be identified; nothing was created, read or written for it')
+        )
+        $Rows[0].Error | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessReviewDefinition -Times 0
+    }
+
+    It 'still updates a review by name when -Include leaves AccessPackages out and the document does not declare its package (control)' {
+        $Doc = ('{ "version": "1.0", ' +
+            '"accessPackages": [ { "displayName": "AP-Other", "catalog": "CAT-1", "resourceRoles": [] } ], ' +
             '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', 'AP-1').Replace('#POL#', 'Standard') + ' ] }')
         $Rows = @(Invoke-OERStructure -Json $Doc -Include AccessReviews -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
 
@@ -3619,13 +3651,258 @@ Describe 'Invoke-OERStructure: an access review reaches an access package or ass
             '"accessReviews": [ ' + $script:RvReview.Replace('#PKG#', 'AP-1').Replace('#POL#', 'POL-New') + ' ] }')
         $Rows = @(Invoke-OERStructure -Json $Doc -Include AccessReviews -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
 
-        # Positive proof that the marking ran past the skipped entries: the policy of the last one is
-        # registered, so the review that names it is refused.
+        # Positive proof that the marking ran past the skipped entries: the last entry is registered, so the
+        # review that names it is refused -- for its package, which since BL-147 is marked whether or not it
+        # renames, and whose mark is read before its policy's.
         @($Rows).Count | Should -Be 1
         $Rows[0].Section | Should -BeExactly 'accessReviews'
         $Rows[0].Action | Should -BeExactly 'Failed'
-        $Rows[0].Detail | Should -BeLike "assignment policy 'POL-New' of access package 'AP-1' was not reconciled in this run: *"
+        $Rows[0].Detail | Should -BeLike "access package 'AP-1' has no id in this run (the accessPackages section is not selected by -Include), *"
         Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
+    }
+}
+
+Describe 'Invoke-OERStructure: an access review reaches the access package its accessPackages entry found or created, or is refused (BL-147)' {
+    # R-8: every accessPackages entry registers its outcome in the run's map -- the id of the package it
+    # found in its declared catalog or created there, or a refusal until it has one -- so a review that
+    # names the package by name never looks the name up in the whole tenant, where a package of that name
+    # in another catalog is found. The real engine, the real access package and access review handlers,
+    # the real New-OERAccessReviewDefinition and the real target check run; the sign-in, the cmdlets the
+    # package handler calls, the scope and name lookups and the transport are mocked. The tenant holds
+    # AP-Twin in catalog CAT-B; the document declares AP-Twin in catalog CAT-A. No id below is version-4
+    # shaped. docs/development/rationale.md#review-package-in-the-same-run
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        $script:TwCatA = 'eeee5555-0000-0000-0000-000000000061'
+        $script:TwCatB = 'eeee5555-0000-0000-0000-000000000062'
+        $script:TwPkgA = 'aaaa1111-0000-0000-0000-000000000061'
+        $script:TwPkgB = 'aaaa1111-0000-0000-0000-000000000062'
+        $script:TwPolA = 'bbbb2222-0000-0000-0000-000000000061'
+        $script:TwJson = ('{ "version": "1.0", ' +
+            '"accessPackages": [ { "displayName": "AP-Twin", "catalog": "CAT-A", "resourceRoles": [] } ], ' +
+            '"accessReviews": [ { "displayName": "Q3 twin review", "accessPackage": "AP-Twin", "assignmentPolicy": "Standard", ' +
+            '"durationInDays": 21, "reviewers": [ "person1@example.com" ] } ] }')
+        $script:TwTwinRow = ("accessPackages|AP-Twin|Failed|access package 'AP-Twin' was not created in catalog 'CAT-A': a package of that name " +
+            "already exists in another catalog ($($script:TwCatB)), and New-OERAccessPackage returned it ($($script:TwPkgB)); nothing was written to it")
+        $script:TwRefusal = ("access package 'AP-Twin' has no id in this run ({0}), so the access package this access review reviews cannot be " +
+            'identified; nothing was created, read or written for it')
+        function New-TwLive {
+            param([string]$AccessPackageId = $script:TwPkgA, [int]$DurationInDays = 14)
+            [PSCustomObject]@{
+                Id = 'cccc3333-0000-0000-0000-000000000061'; DisplayName = 'Q3 twin review'; Status = 'InProgress'
+                Scope = 'the declared package and policy'; AccessPackageId = $AccessPackageId; AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000061'
+                Reviewers = @(@{ query = '/users/usr-1' }); FallbackReviewers = @(); DurationInDays = $DurationInDays
+                Settings = @{ instanceDurationInDays = $DurationInDays }
+            }
+        }
+        function ConvertTo-TwRowLine {
+            param([object[]]$Row)
+            @($Row | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.Section, $_.Item, $_.Action, $_.Detail })
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        # CatalogA: the packages catalog CAT-A lists. Created: what New-OERAccessPackage returns. Review: the
+        # review the definition lookup finds ($null: none). Posts: the bodies POSTed to the transport.
+        $script:TwState = @{
+            CatalogA = @()
+            Created  = $null
+            Review   = $null
+            Posts    = [System.Collections.Generic.List[object]]::new()
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { 'usr-1' }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+            if ($Catalog) { return @($script:TwState.CatalogA) }
+            foreach ($Package in @($script:TwState.CatalogA)) {
+                if ([string]$Package.Id -eq $Id) { [PSCustomObject]@{ Id = $Package.Id; DisplayName = $Package.DisplayName; Description = $null; IsHidden = $false } }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @() }
+        Mock -ModuleName $script:moduleName New-OERAccessPackage {
+            if ($null -eq $script:TwState.Created) { throw 'unexpected access package create' }
+            $script:TwState.Created
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERCatalogId {
+            if ($DisplayName -eq 'CAT-A') { return 'eeee5555-0000-0000-0000-000000000061' }
+            throw "unexpected catalog lookup: $DisplayName"
+        }
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { $script:TwState.Review }
+        # The tenant-wide name lookups: AP-Twin is found -- in catalog CAT-B. An id is taken as it is.
+        Mock -ModuleName $script:moduleName Resolve-OERAccessPackageId {
+            if ($DisplayName -eq 'AP-Twin') { return 'aaaa1111-0000-0000-0000-000000000062' }
+            $DisplayName
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERAccessReviewScopeTarget {
+            $PackageId = if ($AccessPackage -eq 'AP-Twin') { 'aaaa1111-0000-0000-0000-000000000062' } else { $AccessPackage }
+            @{ AccessPackageId = $PackageId; AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000061'; CatalogId = $null; FailedKind = $null; FailedValue = $null; FailedRecord = $null }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId { 'bbbb2222-0000-0000-0000-000000000061' }
+        Mock -ModuleName $script:moduleName Resolve-OERReviewerScope {
+            @{ Reviewers = @(@{ query = '/users/usr-1'; queryType = 'MicrosoftGraph' }); FallbackReviewers = @(); FailedKind = $null; FailedValue = $null; FailedRecord = $null }
+        }
+        Mock -ModuleName $script:moduleName Set-OERAccessReviewDefinition { New-TwLive -DurationInDays 21 }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            if ($Uri -like '*/resourceRoleScopes*') { return [PSCustomObject]@{ value = @() } }
+            if ($Method -eq 'POST' -and $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions') {
+                $script:TwState.Posts.Add($Body)
+                return @{ id = 'cccc3333-0000-0000-0000-000000000062'; displayName = $Body.displayName; scope = $Body.scope; status = 'NotStarted' }
+            }
+            throw "unexpected Graph request: $Method $Uri"
+        }
+    }
+
+    It 'fails the package that New-OERAccessPackage returns from another catalog, and refuses its review, creating, reading and writing nothing for it' {
+        $script:TwState.Created = [PSCustomObject]@{ Id = $script:TwPkgB; DisplayName = 'AP-Twin'; CatalogId = $script:TwCatB }
+
+        $Rows = @(Invoke-OERStructure -Json $script:TwJson -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+
+        @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @(
+            $script:TwTwinRow
+            ("accessReviews|Q3 twin review|Failed|" + ($script:TwRefusal -f "the accessPackages entry did not find or create it; see that entry's rows"))
+        )
+        $Rows[1].Error | Should -BeNullOrEmpty
+        # The package's own create was attempted, so the guard was reached.
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 1 -Exactly
+        # Nothing for the review: no definition read, no tenant-wide name lookup of the package -- which here
+        # finds the package of catalog CAT-B -- and no create.
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessReviewScopeTarget -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times 0
+        @($script:TwState.Posts).Count | Should -Be 0
+    }
+
+    It 'updates the review of the package its entry found in the declared catalog, by that id with no package lookup (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run'; PlanOnly = $false; Sets = 1; ReviewRow = "accessReviews|Q3 twin review|Updated|updated access review 'Q3 twin review' (durationInDays=21)" }
+        @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true; Sets = 0; ReviewRow = "accessReviews|Q3 twin review|Skipped|would update access review 'Q3 twin review' (durationInDays=21)" }
+    ) {
+        $script:TwState.CatalogA = @([PSCustomObject]@{ Id = $script:TwPkgA; DisplayName = 'AP-Twin' })
+        $script:TwState.Review = New-TwLive
+        $Params = @{ Json = $script:TwJson; ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
+        if ($PlanOnly) { $Params.WhatIf = $true } else { $Params.Confirm = $false }
+
+        $Rows = @(Invoke-OERStructure @Params)
+
+        @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @('accessPackages|AP-Twin|Unchanged|access package properties match', $ReviewRow)
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAssignmentPolicyId -Times 1 -Exactly -ParameterFilter {
+            $AccessPackageId -eq 'aaaa1111-0000-0000-0000-000000000061' -and $AssignmentPolicy -eq 'Standard'
+        }
+        Should -Invoke -ModuleName $script:moduleName Set-OERAccessReviewDefinition -Times $Sets -Exactly
+    }
+
+    It 'creates the review of the package its entry <Case>, on that package''s id with no package lookup' -ForEach @(
+        @{ Case = 'found in the declared catalog'; Found = $true; PackageRow = 'accessPackages|AP-Twin|Unchanged|access package properties match' }
+        @{ Case = 'created in the declared catalog'; Found = $false; PackageRow = "accessPackages|AP-Twin|Created|created access package AP-Twin (aaaa1111-0000-0000-0000-000000000061)" }
+    ) {
+        if ($Found) {
+            $script:TwState.CatalogA = @([PSCustomObject]@{ Id = $script:TwPkgA; DisplayName = 'AP-Twin' })
+        } else {
+            $script:TwState.Created = [PSCustomObject]@{ Id = $script:TwPkgA; DisplayName = 'AP-Twin'; CatalogId = $script:TwCatA }
+        }
+
+        $Rows = @(Invoke-OERStructure -Json $script:TwJson -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+
+        @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @($PackageRow, "accessReviews|Q3 twin review|Created|created access review 'Q3 twin review' (recurrence: OneTime)")
+        # Created on the id of the package of catalog CAT-A, which the scope target takes as it is; the name,
+        # which the tenant-wide lookup answers with the package of catalog CAT-B, is never looked up.
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessReviewScopeTarget -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessReviewScopeTarget -Times 1 -Exactly -ParameterFilter {
+            $AccessPackage -eq 'aaaa1111-0000-0000-0000-000000000061' -and $AssignmentPolicy -eq 'Standard'
+        }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        @($script:TwState.Posts).Count | Should -Be 1
+        $script:TwState.Posts[0].scope.query | Should -BeLike "*accessPackage/id eq '$($script:TwPkgA)'*"
+    }
+
+    It 'refuses the review of a package the plan would create, reading nothing for it (-WhatIf)' {
+        $Rows = @(Invoke-OERStructure -Json $script:TwJson -WhatIf -ErrorAction Stop -WarningAction SilentlyContinue)
+
+        @(ConvertTo-TwRowLine -Row $Rows) | Should -Be @(
+            'accessPackages|AP-Twin|Skipped|would create access package AP-Twin'
+            ('accessReviews|Q3 twin review|Failed|' + ($script:TwRefusal -f 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation'))
+        )
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessReviewScopeTarget -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERAccessPackageId -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAccessPackage -Times 0
+    }
+
+    Context 'in a script with no try above it' {
+        # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere
+        # above it, as at a prompt. The script installs its own fakes in ITS copy of the module scope and
+        # logs every review read, lookup, create and Graph request with AppendAllText. #FLAGS# are the
+        # engine's own switches.
+        BeforeAll {
+            function script:New-TwNoTryScenario {
+                param([string]$Log, [string]$Flags)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Get-OERAccessPackage -Value {
+        [CmdletBinding()]
+        param([string]$Catalog, [string]$Id)
+        if ($Catalog) { return @() }
+        [System.IO.File]::AppendAllText('#LOG#', "READ package $Id`n")
+    }
+    Set-Item -Path function:script:New-OERAccessPackage -Value {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([string]$DisplayName, [string]$Catalog, [string]$Description, [switch]$Hidden)
+        [pscustomobject]@{ Id = 'aaaa1111-0000-0000-0000-000000000062'; DisplayName = $DisplayName; CatalogId = 'eeee5555-0000-0000-0000-000000000062' }
+    }
+    Set-Item -Path function:script:Resolve-OERCatalogId -Value {
+        [CmdletBinding()]
+        param([string]$DisplayName)
+        'eeee5555-0000-0000-0000-000000000061'
+    }
+    Set-Item -Path function:script:Get-OERAccessReviewDefinition -Value {
+        [CmdletBinding()]
+        param([string]$Filter)
+        [System.IO.File]::AppendAllText('#LOG#', "READ review`n")
+    }
+    Set-Item -Path function:script:Resolve-OERAccessPackageId -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "LOOKUP package`n")
+        'aaaa1111-0000-0000-0000-000000000062'
+    }
+    Set-Item -Path function:script:Resolve-OERAccessReviewScopeTarget -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "LOOKUP scope`n")
+        @{ AccessPackageId = 'aaaa1111-0000-0000-0000-000000000062'; AssignmentPolicyId = 'bbbb2222-0000-0000-0000-000000000061'; FailedKind = $null; FailedValue = $null; FailedRecord = $null }
+    }
+    Set-Item -Path function:script:New-OERAccessReviewDefinition -Value { [System.IO.File]::AppendAllText('#LOG#', "NEW review`n") }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value { [System.IO.File]::AppendAllText('#LOG#', "GRAPH`n") }
+}
+$Json = '#JSON#'
+Invoke-OERStructure -Json $Json #FLAGS# | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#FLAGS#', $Flags).Replace('#JSON#', $script:TwJson.Replace("'", "''")))
+            }
+            function script:Get-TwLoggedLine {
+                param([string]$Log)
+                if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log | Where-Object { $_ }) } else { @() }
+            }
+        }
+
+        It 'reaches the end of the script with the package and its review Failed, and creates, reads or looks up nothing for the review (<Flags>)' -ForEach @(
+            @{ Flags = '-Confirm:$false' }
+            @{ Flags = '-Confirm:$false -ErrorAction Stop' }
+        ) {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-TwNoTryScenario -Log $Log -Flags $Flags)
+
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+                ('ROW:Failed:' + ($script:TwTwinRow -replace '^accessPackages\|AP-Twin\|Failed\|', ''))
+                ('ROW:Failed:' + ($script:TwRefusal -f "the accessPackages entry did not find or create it; see that entry's rows"))
+            )
+            # Nothing read, looked up, created or sent for the review; a failure here prints the calls made.
+            @(Get-TwLoggedLine -Log $Log) | Should -BeNullOrEmpty
+            @($Run.Errors).Count | Should -Be 0
+        }
     }
 }
 
@@ -3981,5 +4258,269 @@ Describe 'Invoke-OERStructure applies a group principal an export writes by its 
         @($script:GpEngDir.Removed).Count | Should -Be 1
         @($script:GpEngDir.Live | ForEach-Object { $_.PrincipalId }) | Should -Be @($script:GpEngGroup)
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+}
+
+Describe 'Invoke-OERStructure never creates a role assignment for a principalStatus entry (A18, Sprint 11 step 6)' {
+    # Get-OERInventory and Export-OERInventory write a role assignment whose principal the directory did
+    # not return by the principal's object id, with principalStatus Deleted or Unresolved. The real engine,
+    # the real validator, the real handler and the real ARM cmdlets run here; only the sign-in, the three
+    # principal lookups and the ARM transport are mocked, and the transport records every request. A
+    # principalStatus entry is validated, then Skipped where it would be created (no principal lookup, no
+    # create, no ShouldProcess, the same row in a plan and a real run); a matching live assignment is
+    # Unchanged and kept by -Prune; the same document without the row lets -Prune remove it. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        $script:PuSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:PuGone = 'dddd9090-0000-0000-0000-000000000001'
+        $script:PuPerson2 = 'dddd9090-0000-0000-0000-000000000002'
+        $script:PuGone3 = 'dddd9090-0000-0000-0000-000000000003'
+        $script:PuGone2 = 'dddd9090-0000-0000-0000-000000000004'
+        $script:PuOther = 'dddd9090-0000-0000-0000-000000000009'
+        $script:PuReaderGuid = 'bbbb9090-0000-0000-0000-000000000001'
+        $script:PuReaderId = "$($script:PuSub)/providers/Microsoft.Authorization/roleDefinitions/$($script:PuReaderGuid)"
+        $script:PuContributorId = "$($script:PuSub)/providers/Microsoft.Authorization/roleDefinitions/bbbb9090-0000-0000-0000-000000000002"
+        $script:PuRaPath = "$($script:PuSub)/providers/Microsoft.Authorization/roleAssignments"
+        function script:New-PuLive {
+            param([string]$PrincipalId, [string]$Suffix)
+            [PSCustomObject]@{ id = "$($script:PuRaPath)/cccc9090-0000-0000-0000-0000000000$Suffix"; name = "cccc9090-0000-0000-0000-0000000000$Suffix"
+                properties = [PSCustomObject]@{ scope = $script:PuSub; principalId = $PrincipalId; principalType = 'User'; roleDefinitionId = $script:PuReaderId } }
+        }
+        # The text of the Skipped Detail of a principalStatus entry that would be created.
+        function script:Get-PuSkippedDetail {
+            param([string]$Status, [string]$Principal)
+            "principalStatus '$Status': the principal '$Principal' could not be looked up when the document was exported, so the apply engine never creates a role assignment for this entry. Nothing was written. Remove the entry, or name a principal that exists and remove principalStatus"
+        }
+        # Four entries: a deleted principal with no live assignment, a user by name whose assignment is live, an
+        # unresolved principal with no live assignment, and a deleted principal whose assignment is live.
+        $script:PuJson = '{ "version": "1.0", "roleAssignments": [ ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "dddd9090-0000-0000-0000-000000000001", "principalType": "User", "principalStatus": "Deleted" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Contributor", "principal": "dddd9090-0000-0000-0000-000000000004", "principalStatus": "Unresolved" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "dddd9090-0000-0000-0000-000000000003", "principalType": "Group", "principalStatus": "Deleted" } ] }'
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:PuArmLog = [System.Collections.Generic.List[string]]::new()
+        $script:PuLive = [System.Collections.Generic.List[object]]::new()
+        $script:PuLive.Add((New-PuLive -PrincipalId $script:PuPerson2 -Suffix '02'))
+        $script:PuLive.Add((New-PuLive -PrincipalId $script:PuGone3 -Suffix '03'))
+        $script:PuLive.Add((New-PuLive -PrincipalId $script:PuOther -Suffix '09'))
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected Graph request: $Uri" }
+        # The principal lookups: person2 is the one name in the document. A lookup for anything else fails
+        # the test; the three objects the document names by object id are never looked up.
+        Mock -ModuleName $script:moduleName Resolve-OERUserId {
+            if ($UserPrincipalName -eq 'person2@example.com') { return 'dddd9090-0000-0000-0000-000000000002' }
+            throw "unexpected user lookup: $UserPrincipalName"
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { throw "unexpected group lookup: $DisplayName" }
+        Mock -ModuleName $script:moduleName Resolve-OERApplicationId { throw "unexpected application lookup: $DisplayName" }
+        # New-OERRoleAssignment looks up the principal it creates for on its own.
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipal {
+            [PSCustomObject]@{ PrincipalId = 'dddd9090-0000-0000-0000-000000000001'; PrincipalType = 'User' }
+        }
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest {
+            $RequestMethod = if ($Method) { $Method } else { 'GET' }
+            $script:PuArmLog.Add("$RequestMethod $Path")
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:PuSub)/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=roleName%20eq%20%27Reader%27") {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:PuReaderId }) }
+            }
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:PuSub)/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=roleName%20eq%20%27Contributor%27") {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = $script:PuContributorId }) }
+            }
+            if ($RequestMethod -eq 'GET' -and $Path -eq "$($script:PuRaPath)?api-version=2022-04-01&`$filter=atScope()") {
+                return [PSCustomObject]@{ value = @($script:PuLive) }
+            }
+            if ($RequestMethod -eq 'PUT' -and $Path -like "$($script:PuRaPath)/*?api-version=2022-04-01") {
+                return [PSCustomObject]@{ id = $Path.Split('?')[0]; name = 'created'; properties = [PSCustomObject]@{
+                        scope = $script:PuSub; principalId = $Body.properties.principalId; roleDefinitionId = $Body.properties.roleDefinitionId } }
+            }
+            if ($RequestMethod -eq 'DELETE') {
+                $Gone = @($script:PuLive | Where-Object { "$($_.id)?api-version=2022-04-01" -eq $Path })
+                if ($Gone.Count -ne 1) { throw "unexpected ARM delete: $Path" }
+                return $Gone[0]
+            }
+            throw "unexpected ARM call: $RequestMethod $Path"
+        }
+    }
+
+    It 'skips the principalStatus entries, sends no create, looks nobody up by object id, and reconciles the rest as before (<Mode>)' -ForEach @(
+        @{ Mode = 'a real run with -Prune'; Splat = @{ Prune = $true; Confirm = $false }; Undeclared = 'Removed'; Deletes = 1 }
+        @{ Mode = 'a real run without -Prune'; Splat = @{ Confirm = $false }; Undeclared = 'Extra'; Deletes = 0 }
+        @{ Mode = 'a plan with -Prune'; Splat = @{ Prune = $true; WhatIf = $true }; Undeclared = 'Skipped'; Deletes = 0 }
+    ) {
+        $Rows = @(Invoke-OERStructure -Json $script:PuJson -Include RoleAssignments @Splat -WarningAction SilentlyContinue -ErrorAction Stop)
+
+        # Positive proof first: the scope was read once per entry, and the live state reconciled as it says.
+        @($script:PuArmLog | Where-Object { $_ -eq "GET $($script:PuRaPath)?api-version=2022-04-01&`$filter=atScope()" }).Count | Should -Be 4
+        @($Rows | Where-Object { $_.Item -eq "Reader -> person2@example.com @ $($script:PuSub)" }).Action | Should -Be @('Unchanged')
+        @($Rows | Where-Object { $_.Item -eq "$($script:PuReaderGuid) -> $($script:PuOther) @ $($script:PuSub)" }).Action | Should -Be @($Undeclared)
+        @($script:PuArmLog | Where-Object { $_ -like 'DELETE *' }).Count | Should -Be $Deletes
+        if ($Deletes -gt 0) {
+            @($script:PuArmLog | Where-Object { $_ -like 'DELETE *' }) | Should -Be @("DELETE $($script:PuRaPath)/cccc9090-0000-0000-0000-000000000009?api-version=2022-04-01")
+        }
+
+        # The entry with no live assignment: Skipped with the guard's text, in a plan and a real run alike.
+        $Gone = @($Rows | Where-Object { $_.Item -eq "Reader -> $($script:PuGone) @ $($script:PuSub)" })
+        $Gone.Count | Should -Be 1
+        $Gone[0].Action | Should -Be 'Skipped'
+        $Gone[0].Detail | Should -BeExactly (Get-PuSkippedDetail -Status 'Deleted' -Principal $script:PuGone)
+        $Unresolved = @($Rows | Where-Object { $_.Item -eq "Contributor -> $($script:PuGone2) @ $($script:PuSub)" })
+        $Unresolved.Count | Should -Be 1
+        $Unresolved[0].Action | Should -Be 'Skipped'
+        $Unresolved[0].Detail | Should -BeExactly (Get-PuSkippedDetail -Status 'Unresolved' -Principal $script:PuGone2)
+        # The entry whose assignment is live is Unchanged, and -Prune keeps it.
+        @($Rows | Where-Object { $_.Item -eq "Reader -> $($script:PuGone3) @ $($script:PuSub)" }).Action | Should -Be @('Unchanged')
+        $Rows.Count | Should -Be 5
+
+        # Not one create, and not one lookup for an object named by id.
+        @($script:PuArmLog | Where-Object { $_ -like 'PUT *' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERUserId -Times 0 -ParameterFilter { $UserPrincipalName -ne 'person2@example.com' }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERApplicationId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipal -Times 0
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'states the principalStatus rule in the help' {
+        # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+        $Help = Get-Help Invoke-OERStructure -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('A roleAssignments entry that declares principalStatus (Deleted or Unresolved), which Get-OERInventory and Export-OERInventory write for a role assignment whose principal the directory did not return, names its principal by object id and is never created: no principal is looked up for it, and where the entry would create the assignment it is reported Skipped, with a Detail starting "principalStatus ''<value>'':", with no ShouldProcess prompt and nothing written, so -WhatIf and a real run report the same row.'))
+        # Sprint 11 step 6: the advice is the Skipped Detail's -- keep or remove the entry, or name a
+        # principal that exists and remove principalStatus to have the assignment created.
+        $Description | Should -Match ([regex]::Escape('The same document without the entry lets -Prune remove that assignment like any undeclared one. Such an entry is kept as the export wrote it, or removed; to have the assignment created, name a principal that exists and remove principalStatus, as the Skipped row says.'))
+        $Description | Should -Not -Match ([regex]::Escape('To apply such an entry, remove it'))
+    }
+
+    It 'lets -Prune remove the live assignment of the same document without the principalStatus row, like any undeclared assignment' {
+        $Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction Stop)
+        @($Rows | Where-Object { $_.Item -eq "Reader -> person2@example.com @ $($script:PuSub)" }).Action | Should -Be @('Unchanged')
+        # The assignment the first document kept, because its entry declared it, goes with the entry.
+        @($Rows | Where-Object { $_.Item -eq "$($script:PuReaderGuid) -> $($script:PuGone3) @ $($script:PuSub)" }).Action | Should -Be @('Removed')
+        @($Rows | Where-Object { $_.Item -eq "$($script:PuReaderGuid) -> $($script:PuOther) @ $($script:PuSub)" }).Action | Should -Be @('Removed')
+        @($script:PuArmLog | Where-Object { $_ -like 'DELETE *' } | Sort-Object) | Should -Be @(
+            "DELETE $($script:PuRaPath)/cccc9090-0000-0000-0000-000000000003?api-version=2022-04-01"
+            "DELETE $($script:PuRaPath)/cccc9090-0000-0000-0000-000000000009?api-version=2022-04-01"
+        )
+        $Rows.Count | Should -Be 3
+    }
+
+    It 'canonicalizes the casing of principalStatus before it applies the document, and the entry reports the canonical value' {
+        $Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "dddd9090-0000-0000-0000-000000000001", "principalStatus": "deleted" } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Confirm:$false -WarningAction SilentlyContinue -ErrorAction Stop)
+        # Reach proof: the scope was read once (the three live assignments there are Extra without -Prune).
+        @($script:PuArmLog | Where-Object { $_ -like 'GET *roleAssignments*' }).Count | Should -Be 1
+        $Entry = @($Rows | Where-Object { $_.Item -eq "Reader -> $($script:PuGone) @ $($script:PuSub)" })
+        $Entry.Count | Should -Be 1
+        $Entry[0].Action | Should -Be 'Skipped'
+        $Entry[0].Detail | Should -BeExactly (Get-PuSkippedDetail -Status 'Deleted' -Principal $script:PuGone)
+        @($script:PuArmLog | Where-Object { $_ -like 'PUT *' }).Count | Should -Be 0
+    }
+
+    It 'refuses a document whose principalStatus entry names its principal by name, before any sign-in or request' {
+        $Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com", "principalStatus": "Deleted" } ] }'
+        $Err = $null
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+        $Rows.Count | Should -Be 0
+        $Refused = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'StructureValidationFailed,*' })
+        $Refused.Count | Should -Be 1
+        $Refused[0].Exception.Message | Should -BeLike "*roleAssignments``[0``].principal: 'principal' at roleAssignments``[0``] must be an object id (a GUID) when 'principalStatus' is declared*"
+        $script:PuArmLog.Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERUserId -Times 0
+    }
+
+    Context 'in a script with no try above it' {
+        # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere
+        # above it, as at a prompt. The script installs its own fakes in ITS copy of the module scope and
+        # logs every ARM request and every lookup with AppendAllText, whose path is substituted into the
+        # text. The first scenario's document holds a principalStatus entry; the control's holds the same
+        # entry without principalStatus, so the create is reachable with the same fakes.
+        BeforeAll {
+            function script:New-PuNoTryScenario {
+                param([string]$Log, [string]$EntryJson)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERUserId -Value { [System.IO.File]::AppendAllText('#LOG#', "LOOKUP user`n"); 'dddd9090-0000-0000-0000-000000000002' }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { [System.IO.File]::AppendAllText('#LOG#', "LOOKUP group`n"); 'dddd9090-0000-0000-0000-000000000002' }
+    Set-Item -Path function:script:Resolve-OERApplicationId -Value { [System.IO.File]::AppendAllText('#LOG#', "LOOKUP application`n"); 'dddd9090-0000-0000-0000-000000000002' }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "LOOKUP principal`n")
+        [pscustomobject]@{ PrincipalId = 'dddd9090-0000-0000-0000-000000000001'; PrincipalType = 'User' }
+    }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Method = 'GET', [string]$Path, [hashtable]$Body, [switch]$All)
+        [System.IO.File]::AppendAllText('#LOG#', "$Method $Path`n")
+        $Sub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $Reader = "$Sub/providers/Microsoft.Authorization/roleDefinitions/bbbb9090-0000-0000-0000-000000000001"
+        if ($Method -eq 'GET' -and $Path -like '*/roleDefinitions?*') { return [pscustomobject]@{ value = @([pscustomobject]@{ id = $Reader }) } }
+        if ($Method -eq 'GET' -and $Path -like '*/roleAssignments?*atScope()') {
+            return [pscustomobject]@{ value = @(
+                [pscustomobject]@{ id = "$Sub/providers/Microsoft.Authorization/roleAssignments/cccc9090-0000-0000-0000-000000000002"; name = 'a'
+                    properties = [pscustomobject]@{ scope = $Sub; principalId = 'dddd9090-0000-0000-0000-000000000002'; roleDefinitionId = $Reader } }
+                [pscustomobject]@{ id = "$Sub/providers/Microsoft.Authorization/roleAssignments/cccc9090-0000-0000-0000-000000000009"; name = 'b'
+                    properties = [pscustomobject]@{ scope = $Sub; principalId = 'dddd9090-0000-0000-0000-000000000009'; roleDefinitionId = $Reader } }
+            ) }
+        }
+        if ($Method -eq 'PUT') {
+            return [pscustomobject]@{ id = $Path.Split('?')[0]; name = 'created'; properties = [pscustomobject]@{
+                    scope = $Sub; principalId = $Body.properties.principalId; roleDefinitionId = $Body.properties.roleDefinitionId } }
+        }
+        if ($Method -eq 'DELETE') { return [pscustomobject]@{ id = $Path.Split('?')[0]; properties = [pscustomobject]@{} } }
+        throw "unexpected $Method $Path"
+    }
+}
+$Json = '{ "version": "1.0", "roleAssignments": [ #ENTRY#, { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person2@example.com" } ] }'
+Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$($_.Action):$($_.Item)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#ENTRY#', $EntryJson))
+            }
+            $script:PuGoneLabel = 'Reader -> dddd9090-0000-0000-0000-000000000001 @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $script:PuPerson2Label = 'Reader -> person2@example.com @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $script:PuOtherLabel = 'bbbb9090-0000-0000-0000-000000000001 -> dddd9090-0000-0000-0000-000000000009 @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        }
+
+        It 'reaches the end, having skipped the entry and sent no create, though it removed the undeclared assignment' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Entry = '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "dddd9090-0000-0000-0000-000000000001", "principalStatus": "Deleted" }'
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PuNoTryScenario -Log $Log -EntryJson $Entry)
+            $Run.Output[-1] | Should -BeExactly 'END'
+            $Logged = @(Get-Content -LiteralPath $Log)
+            # Reached: the undeclared assignment was removed after the entry was skipped.
+            $Logged | Should -Contain 'DELETE /subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleAssignments/cccc9090-0000-0000-0000-000000000009?api-version=2022-04-01'
+            @($Logged | Where-Object { $_ -like 'PUT *' }).Count | Should -Be 0 -Because "the create is never sent; the requests were:`n$($Logged -join "`n")"
+            $Logged | Should -Not -Contain 'LOOKUP principal'
+            $Logged | Should -Not -Contain 'LOOKUP group'
+            $Logged | Should -Not -Contain 'LOOKUP application'
+            # The first entry of a scope runs the scope's prune pass right after its own row.
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+                "ROW:Skipped:$($script:PuGoneLabel)"
+                "ROW:Removed:$($script:PuOtherLabel)"
+                "ROW:Unchanged:$($script:PuPerson2Label)"
+            )
+            @($Run.Errors).Count | Should -Be 0
+            @($Run.Prompts).Count | Should -Be 0
+        }
+
+        It 'creates the same entry in the same script when it declares no principalStatus, so the scenario can tell a skip from silence' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Entry = '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "dddd9090-0000-0000-0000-000000000001" }'
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-PuNoTryScenario -Log $Log -EntryJson $Entry)
+            $Run.Output[-1] | Should -BeExactly 'END'
+            $Logged = @(Get-Content -LiteralPath $Log)
+            @($Logged | Where-Object { $_ -like 'PUT *' }).Count | Should -Be 1
+            @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
+                "ROW:Created:$($script:PuGoneLabel)"
+                "ROW:Removed:$($script:PuOtherLabel)"
+                "ROW:Unchanged:$($script:PuPerson2Label)"
+            )
+        }
     }
 }

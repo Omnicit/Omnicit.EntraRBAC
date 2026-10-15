@@ -101,12 +101,29 @@ function Invoke-OERStructure {
     package declared in it, and for an access package or assignment policy every access review that
     names it by that name (one that names the package by object id looks a policy up by name, as
     above), existing ones included -- even when the rename was done in an earlier run: include the
-    section, or remove previousDisplayName once the new name resolves. A refusal because -Include
-    leaves the section out publishes no error record, only the Failed row, so -ErrorAction Stop and
-    $? do not see it: check the rows. Test-OERStructure warns on a reference that still names a
-    renamed object by its previous name, and refuses a document in which an access review names by
-    display name an access package that two or more accessPackages entries declare while one of them
-    is renamed (the map keys a package by its name alone): name that package by its object id.
+    section, or remove previousDisplayName once the new name resolves. Leaving out the accessPackages
+    section refuses, besides, every access review that names an access package the document declares
+    by its display name, whether or not that entry renames (see the next paragraph). A refusal
+    because -Include leaves the section out publishes no error record, only the Failed row, so
+    -ErrorAction Stop and $? do not see it: check the rows. Test-OERStructure warns on a reference
+    that still names a renamed object by its previous name, and refuses a document in which an access
+    review names by display name an access package that two or more accessPackages entries declare,
+    renamed or not (the map keys a package by its name alone): name that package by its object id.
+
+    An access review and the access package the same document declares (BL-147): every accessPackages
+    entry, not only a rename, records its package in the run's rename map -- the id of the package it
+    found in its declared catalog or created there -- so an access review whose accessPackage names that
+    package by its display name reaches it by that id, and its name is never looked up in the whole
+    tenant, where a package of that name in another catalog would be found. Until the entry has that
+    id, the review is refused, Failed with nothing created, read or written for it, under -WhatIf too:
+    when the entry stops first (its catalog refused, a failed or ambiguous lookup, a failed create, or
+    a create that returned another catalog's package), when the -WhatIf plan would create the package
+    or a declined confirmation skipped its create (the plan then reports the review Failed although a
+    real run creates the package first and then the review), and when -Include leaves out the
+    AccessPackages section, whether or not the entry renames. Such a refusal publishes no error record
+    of its own, only the review's Failed row (an entry that stopped on an error carries that error on
+    its own row), so -ErrorAction Stop and $? do not see it: check the rows. A review that names a
+    package the document does not declare, or names it by object id, is resolved as before.
 
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
@@ -241,6 +258,20 @@ function Invoke-OERStructure {
     call at '/' -- and the root scope is never pruned (see -Prune). No ShouldProcess is involved, so
     -WhatIf and a real run report the same row. An entry at any other scope in the same document is
     applied and pruned as before. Test-OERStructure reports such an entry as a Warning.
+
+    A roleAssignments entry that declares principalStatus (Deleted or Unresolved), which
+    Get-OERInventory and Export-OERInventory write for a role assignment whose principal the directory
+    did not return, names its principal by object id and is never created: no principal is looked up
+    for it, and where the entry would create the assignment it is reported Skipped, with a Detail
+    starting "principalStatus '<value>':", with no ShouldProcess prompt and nothing written, so -WhatIf
+    and a real run report the same row. The root scope is checked first, and the role is looked up and
+    the scope read as for any entry, so a live assignment of that principal and role is reported
+    Unchanged (Updated when the declared condition, conditionVersion or description differ, and an
+    assignment inherited from an ancestor scope is Skipped as before), and -Prune keeps it while the
+    entry is declared. The same document without the entry lets -Prune remove that assignment like any
+    undeclared one. Such an entry is kept as the export wrote it, or removed; to have the assignment
+    created, name a principal that exists and remove principalStatus, as the Skipped row says. A
+    principalStatus entry whose principal is not an object id fails validation.
 
     An access package that has to be created in the catalog it declares while a package of that name
     exists in another catalog is reported Failed, with nothing written to that package or for the
@@ -406,7 +437,12 @@ function Invoke-OERStructure {
     access package in such a catalog, or an access review that names such an access package or such
     an assignment policy by its new name, is reported Failed with no error record (one that names the
     access package by object id looks such a policy up by name; see References to a renamed object
-    above).
+    above). Leaving out AccessPackages matters for every access review besides (BL-147): a review that
+    names, by its display name, an access package the document declares -- renamed or not -- is
+    reported Failed with no error record, so -ErrorAction Stop and $? do not see it, and nothing is
+    read or written for it; a review that names the package by its object id, or names one the
+    document does not declare, is resolved as before (see An access review and the access package the
+    same document declares, above).
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. Without it
@@ -594,11 +630,14 @@ function Invoke-OERStructure {
 
         # BL-128 (A5): the run's rename map. Resolve-OERStructureRename registers each administrative
         # unit, catalog, access package and assignment policy the document renames (found under
-        # previousDisplayName alone) and each one whose rename it refused or has not decided yet;
+        # previousDisplayName alone) and each one whose rename it refused or has not decided yet, and --
+        # since BL-147 (R-8) -- every other accessPackages entry the document declares: the id of the
+        # package it found in its catalog or created there, or refused until it has one;
         # Get-OERStructureRenameTarget reads it for a reference to the new name in the same run -- a
         # group created into a unit, an access package in a catalog, an access review's access package
-        # and assignment policy -- which Graph's name lookup cannot find yet. One map per document,
-        # passed to the pre-pass and to the five handlers.
+        # and assignment policy -- which Graph's name lookup cannot find yet, or, for a declared access
+        # package, could find in another catalog. One map per document, passed to the pre-pass and to
+        # the five handlers. docs/development/rationale.md#review-package-in-the-same-run
         $RenameMap = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
         # R12: a section -Include leaves out decides none of its renames, so a reference to an entry's new
@@ -609,7 +648,16 @@ function Invoke-OERStructure {
         # An access package's assignment policies are renamed by its entry too, so for a left-out
         # accessPackages section each policy that declares previousDisplayName is registered as well,
         # under the package's declared name (D4), whether or not the package itself is renamed. No read,
-        # no row, no write.
+        # no row, no write. BL-147 (R-8): every accessPackages entry registers its package in the map, so
+        # for a left-out accessPackages section an entry that renames nothing is registered refused too
+        # (Resolve-OERStructureRename -Unidentified), and a review that names its package by name is refused
+        # instead of being looked up in the whole tenant, where a package of that name in another catalog
+        # would be found. docs/development/rationale.md#review-package-in-the-same-run
+        # Since then every package of a left-out accessPackages section is refused under its name, and
+        # Sync-OERStructureAccessReview reads the package's entry before the policy's, so a review that
+        # names the package by its name is refused for the package first and never reaches these policy
+        # marks; a review that names it by object id reads only keys built with an id, which these marks
+        # are not. The policy marks are kept: they matter again only if that order or that key ever changes.
         $UndecidedSection = @(
             [PSCustomObject]@{ IncludeName = 'AdministrativeUnits'; DocKey = 'administrativeUnits' }
             [PSCustomObject]@{ IncludeName = 'Catalogs'; DocKey = 'catalogs' }
@@ -627,6 +675,9 @@ function Invoke-OERStructure {
                     -not [string]::IsNullOrEmpty([string]$Entry.previousDisplayName)) {
                     $null = Resolve-OERStructureRename -Section $Undecided.DocKey -Name ([string]$Entry.displayName) `
                         -PreviousName ([string]$Entry.previousDisplayName) -Undecided -Reason $UndecidedReason -RenameMap $RenameMap
+                } elseif ($Undecided.DocKey -eq 'accessPackages') {
+                    $null = Resolve-OERStructureRename -Section 'accessPackages' -Name ([string]$Entry.displayName) -Unidentified `
+                        -Reason 'the accessPackages section is not selected by -Include' -RenameMap $RenameMap
                 }
                 if ($Undecided.DocKey -ne 'accessPackages') { continue }
                 if (-not (Test-OERDeclaredProperty -Node $Entry -Name 'assignmentPolicies')) { continue }

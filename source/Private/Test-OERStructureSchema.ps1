@@ -96,7 +96,7 @@ function Test-OERStructureSchema {
     being created or updated (issue #70).
     Every closed enum value (accessType, enablement, membershipRuleProcessingState,
     catalogResourceType, approverInfoVisibility, accessReviewRecurrence, accessReviewDefaultDecision,
-    principalType, directoryRoleAssignmentType) is accepted in any casing, but a non-canonically cased
+    principalType, directoryRoleAssignmentType, principalStatus) is accepted in any casing, but a non-canonically cased
     value is reported as a Warning naming the canonical spelling Get-OERStructureSchemaJson declares,
     because draft-07 matches "enum" case-sensitively. An accessReviews item validates
     reviewers/fallbackReviewers as string arrays,
@@ -187,13 +187,12 @@ function Test-OERStructureSchema {
     one named. An accessReviews[] entry whose accessPackage is a string that is not an object id, and
     that equals, ignoring case, the displayName or the previousDisplayName (read as Rule 14 reads it: a
     non-empty string that differs from the entry's displayName ignoring case) of two or more
-    accessPackages[] entries, at least one of which renames its package through previousDisplayName, is
-    an Error at accessReviews[i].accessPackage naming those entries (Rule 15, Sprint 11 step 4b): the
-    same name in two catalogs is two packages, but the run's rename map keys a package, and the policies
-    within it, by the package's name, without its catalog, so the run cannot tell which package the
-    review means; the Error says to name the access package by its object id. When none of those
-    entries declares such a previousDisplayName nothing is reported, and the apply-time lookup refuses
-    the ambiguous name as before. A second top-level entry
+    accessPackages[] entries is an Error at accessReviews[i].accessPackage naming those entries (Rule 15,
+    Sprint 11 step 4b, widened by BL-147): the same name in two catalogs is two packages, but the run's
+    rename map keys a package, and the policies within it, by the package's name, without its catalog,
+    and every accessPackages entry registers its package there, so the run cannot tell which package the
+    review means; the Error says to name the access package by its object id, and says that one of the
+    entries is renamed through previousDisplayName only when one is. A second top-level entry
     whose key matches an earlier one, compared without regard to letter case, is an Error at the later
     entry's path that names the earlier entry's index, since the two describe one live object and
     applying both makes each undo the other, or through a child collection removes what the other
@@ -221,32 +220,34 @@ function Test-OERStructureSchema {
     engine shares, so sub: and subscription: with an id, and mg:, are spellings of the scope's path;
     the comparison never resolves a scope online. A role or principal is compared as written. An
     entry missing a key part is not compared. directoryRoleAssignments keeps its own check, described
-    above. A roleAssignments or roleManagementPolicies scope that ends with '/' (other than the root
-    '/' itself) or contains '//' is an Error at the entry's scope path: the canonical form would merge
-    it with the scope written without the stray '/', so a scope written only that way would start to
-    be pruned and '//' would become the root, and the document is refused instead. A roleAssignments
-    or roleManagementPolicies scope that is written as an Azure path is an Error at the entry's scope
-    path, once for each rule it breaks (A13, BL-141), when it holds a '.' or '..' segment (split at
-    '/' and at '\'), a '%', a '\', a '?' or a '#', white space at the start or end of the scope or of
-    a segment, white space other than a space (U+0020), or a control character. The request URI
-    removes a dot segment, reads '\' as '/', ends the path at a '?' or '#', and decodes an escape of an
-    unreserved character (such as %2e), so such a spelling names another scope than the text says,
-    while the engine groups entries on the text's canonical form, and two spellings of one scope would
-    each prune what the other declares. Every '%' is refused, whatever it escapes. Microsoft Learn's
-    naming rules exclude '%', '\', '?' and '#' for most resource types but not all, so a role assignment
-    at a resource whose name holds one cannot be declared, and the message says to remove the entry.
-    One or more spaces between other characters of a segment are accepted: an Azure resource name can
-    hold them (a Microsoft.Kusto or a Microsoft.Sql database, for instance, per Microsoft Learn's naming
-    rules), so a role assignment at such a resource, as Get-OERInventory exports it, is valid.
-    A scope in the mg:, sub: or subscription: form is exempt, as ConvertTo-OERScopeSplat reads the
-    form: it names a management group or subscription by id, name or display name (a display name may
-    contain spaces), a lookup resolves it, and it is never sent as written. A roleAssignments
-    scope that is the Azure root scope '/' (Test-OERAzureRootScope decides, so '//' is reported this
+    above. A roleAssignments or roleManagementPolicies scope that breaks one of the two scope
+    spelling rules -- the trailing or doubled '/' rule (A15) and, for a scope written as an Azure path,
+    the segment rules (A13, BL-141) -- is an Error at the entry's scope path, once for each rule it
+    breaks, with the message Get-OERScopeSpellingProblem gives for it. That helper owns the rules,
+    their order and their texts; its help is the reference list and says why each rule exists
+    (docs/development/rationale.md#role-assignment-key). This validator decides no spelling itself:
+    Add-ScopeSlashFinding and Add-ScopeSegmentFinding add one Error per problem the helper returns.
+    The slash rule applies to every scope; a scope in the mg:, sub: or subscription: form is exempt
+    from the segment rules, as the helper decides through ConvertTo-OERScopeSplat, since a lookup
+    resolves it and it is never sent as written. A role assignment at a resource whose name breaks a
+    rule cannot be declared, and the message says to remove the entry; one or more spaces between
+    other characters of a segment are accepted, since an Azure resource name can hold them, so a role
+    assignment at such a resource, as Get-OERInventory exports it, is valid. A roleAssignments scope
+    that is the Azure root scope '/' (Test-OERAzureRootScope decides, so '//' is reported this
     way too, beside its Error, and so is a spelling the Azure Resource Manager transport sends to the
     root, such as '/.' or '/%2e', beside its A13 Error) is a Warning at the entry's scope path (BL-126): a role assignment
     there is elevated access, which Invoke-OERStructure never creates or removes, so the entry is
     reported Skipped and the root scope is never pruned. A roleManagementPolicies scope '/' is not reported,
-    and neither is the '/' of the directory role sections, the Microsoft Entra tenant scope. An OMITTED
+    and neither is the '/' of the directory role sections, the Microsoft Entra tenant scope. A
+    roleAssignments entry's principalStatus (A18), which Get-OERInventory and Export-OERInventory write
+    for a role assignment whose principal the directory did not return, must be the string Deleted or
+    Unresolved (any other value, or a value that is not a string, is an Error at its path; a
+    non-canonical letter case is a Warning, as for principalType), and the entry's principal must then
+    be an object id (Test-OERGuid decides): a principal that is not one is an Error at the principal's
+    path, since Invoke-OERStructure looks no principal up for such an entry and never creates a role
+    assignment for it. An explicit null principalStatus is not declared, so neither rule applies to it.
+    principalStatus is a known key of roleAssignments only: in a directoryRoleAssignments entry it is an
+    unknown key. An OMITTED
     groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
     catalogs[].resources or accessPackages[].resourceRoles key is a Warning naming the collection:
     each of those is still reconciled against an empty declared set when its key is omitted, so
@@ -256,7 +257,23 @@ function Test-OERStructureSchema {
     reported. The exclusion trusts the document's dynamic flag: a group declared dynamic whose live
     group is static (Set-OERGroup cannot convert it), or an administrative unit whose conversion to
     dynamic is not applied in this run (-WhatIf, a declined prompt, a failed update, or no
-    membershipRule available), still has its omitted members pruned, and is not reported. Returns a tagged Omnicit.EntraRBAC.StructureValidation object with a Valid flag and an
+    membershipRule available), still has its omitted members pruned, and is not reported. A
+    groups[] entry with a non-empty eligibility or a pimPolicy that names, by displayName (ignoring case)
+    or by the id its entry declares, an administrativeUnits[] entry whose restricted is true, or that such
+    a unit lists in its members by the group's name or declared id, is a Warning, never an Error (Rule
+    16, Sprint 11 step 6, BL-134): the Warning is raised at groups[i].administrativeUnit for the first
+    shape and at groups[i] for the second, once for each such unit. A group uses PIM for Groups here when
+    it declares a pimPolicy (not null) or an eligibility array with at least one entry. Microsoft Learn
+    states that Privileged Identity Management does not support a group in a restricted management
+    administrative unit; Invoke-OERStructure still sends the PIM settings and eligibility the document
+    declares for such a group, and what Microsoft Graph answers to those writes has not been measured,
+    so the finding is a Warning and never an Error. The unit is matched as the administrativeUnit
+    placement check above matches it; the members name the group when they list its name (a
+    template-based group's computed name included) or its declared id, ignoring case. An exported
+    document raises neither shape, since an exported group carries no object id and no
+    administrativeUnit and its units list a group member by object id: Export-OERInventory names such
+    groups in its own warning and README section. Returns a tagged
+    Omnicit.EntraRBAC.StructureValidation object with a Valid flag and an
     Errors collection of records carrying Section, Item, Path, Message, and Severity. No Graph or ARM
     calls are made and no authentication occurs.
     .PARAMETER Document
@@ -1656,96 +1673,34 @@ function Test-OERStructureSchema {
         }
     }
 
-    # Rules 9 and 10 share one scope spelling rule. A scope that ends with '/' (other than the root '/'
-    # itself) or contains '//' anywhere is an Error at the entry's scope path. ConvertTo-OERCanonicalScope
-    # strips every trailing '/', so such a spelling would be merged with the scope written without it:
-    # a scope written ONLY with the stray '/' would start to be pruned, and '//' would become the root
-    # '/'. Before the engine grouped on the canonical scope, neither was ever pruned, and a refusal
-    # removes nothing. Azure Resource Manager never returns a scope carrying either spelling, so an
-    # exported document is not hit. Add-ScopeSegmentFinding, below, is the second spelling rule (A13).
+    # Rules 9 and 10 share two scope spelling rules, and Get-OERScopeSpellingProblem owns both: their
+    # checks, their order and their message texts, which Get-OERInventory applies to every role
+    # assignment it reads too, leaving one at a scope that breaks either rule out of the document
+    # (docs/development/rationale.md#undeclarable-scope). The two functions below add one Error at the
+    # entry's scope path per problem the owner returns for that rule, and never decide a spelling
+    # themselves. The owner's help is the reference list of the rules and says why each exists
+    # (docs/development/rationale.md#role-assignment-key); this file keeps no copy of it.
+    # Add-ScopeSlashFinding reports the first rule (A15, the trailing or doubled '/'), every problem
+    # whose Rule is Slash.
     function Add-ScopeSlashFinding {
         param([object]$Node, [string]$Section, [string]$Item, [string]$Path)
         if (-not (Test-HasProp -Node $Node -Name 'scope')) { return }
-        $ScopeText = [string]$Node.scope
-        if (($ScopeText.EndsWith('/') -and $ScopeText -cne '/') -or $ScopeText.Contains('//')) {
-            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message "'scope' at $Path must be written without a trailing or doubled '/'. Got: '$ScopeText'."
+        foreach ($Problem in @(Get-OERScopeSpellingProblem -Scope ([string]$Node.scope) -Path $Path)) {
+            if ($Problem.Rule -cne 'Slash') { continue }
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" -Message $Problem.Message
         }
     }
 
-    # A13 (BL-141, narrowed 2026-10-14): a scope written as an Azure Resource Manager path is sent as
-    # written, as part of a System.Uri, while the engine groups entries on the text's canonical form. A
-    # spelling the request reads as another scope would let two spellings of one scope form two groups,
-    # and each prune pass could remove what the other declares (the mechanism of BL-01). Each check below
-    # is an Error at the entry's scope path, in the form of the slash rule above, and they are
-    # independent, so one scope can draw several:
-    # - a '.' or '..' segment, with '/' or '\' as the separator: System.Uri removes it;
-    # - a '%': an escape can let two spellings reach one resource (System.Uri decodes an escape of an
-    #   unreserved character such as %2e and keeps one such as %2f), so every '%' is refused, whatever it
-    #   escapes;
-    # - a '\': System.Uri reads it as '/', so the text is a second spelling of the path written with '/';
-    # - a '?' or a '#': either ends the path of the request URI, so the rest of the scope never reaches
-    #   it as a path;
-    # - white space at the start or end of the scope or of a segment, white space other than a space
-    #   (U+0020) anywhere, and a control character. The first segment starts where the scope starts and
-    #   the last ends where it ends, so the segment test covers the scope's own start and end too. One
-    #   or more spaces BETWEEN other characters of a segment are accepted: an Azure resource name can
-    #   hold them (Microsoft Learn, "Naming rules and restrictions for Azure resources": Microsoft.Kusto
-    #   databases, and by its exclusion lists Microsoft.Sql servers/databases and elasticPools and
-    #   Microsoft.Insights components), the request sends each one as %20, and the export writes the
-    #   scope as Azure Resource Manager returns it, so a role assignment at such a resource, as
-    #   Get-OERInventory exports it, is valid (docs/development/rationale.md#role-assignment-key).
-    # The same page excludes '%', '\', '?' and '#' for most resource types, though not for all (a few
-    # allow '%', '\' or '?', and several allow '#', which it says not to use since it interferes with
-    # Azure Resource Manager requests), and not every type excludes a leading space: a role assignment
-    # at such a resource cannot be declared, and each message says to remove the entry.
-    # The mg:, sub: and subscription: forms are exempt: they name a management group or subscription by
-    # id, name or display name (a display name may contain spaces) and are resolved by a lookup, never
-    # sent as written. ConvertTo-OERScopeSplat owns that syntax, so the exemption asks it: only a scope it
-    # returns as @{ Scope = ... } is the text that is sent as written, and the prefix pattern is never
-    # repeated here.
+    # Add-ScopeSegmentFinding reports the second rule (A13, BL-141, narrowed 2026-10-14), every problem
+    # whose Rule is not Slash, in the order the owner returns them; one scope can draw several. The
+    # owner exempts the mg:, sub: and subscription: forms from it through ConvertTo-OERScopeSplat, so
+    # the prefix pattern is never repeated here.
     function Add-ScopeSegmentFinding {
         param([object]$Node, [string]$Section, [string]$Item, [string]$Path)
         if (-not (Test-HasProp -Node $Node -Name 'scope')) { return }
-        $ScopeText = [string]$Node.scope
-        if (-not (ConvertTo-OERScopeSplat -Scope $ScopeText).ContainsKey('Scope')) { return }
-        $Segments = @($ScopeText -split '[/\\]')
-        if (@($Segments | Where-Object { $_ -ceq '.' -or $_ -ceq '..' }).Count -gt 0) {
-            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message "'scope' at $Path must be written without a '.' or '..' segment: the request would name another scope than the one written. Got: '$ScopeText'."
-        }
-        if ($ScopeText.Contains('%')) {
-            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message ("'scope' at $Path must be written without a '%': an escape can let two spellings reach one resource, and the " +
-                    "names of most Azure resource types hold no '%'. Got: '$ScopeText'. A resource whose name holds one cannot be " +
-                    'declared in a document; remove the entry.')
-        }
-        if ($ScopeText.Contains('\')) {
-            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message ("'scope' at $Path must be written without a '\': the request reads it as '/', so the scope would be a second " +
-                    "spelling of the one written with '/'. Got: '$ScopeText'. A resource whose name holds one cannot be declared in a " +
-                    'document; remove the entry.')
-        }
-        if ($ScopeText.Contains('?') -or $ScopeText.Contains('#')) {
-            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message ("'scope' at $Path must be written without a '?' or '#': either ends the path of the request, which would " +
-                    "then name another scope than the one written. Got: '$ScopeText'. A resource whose name holds one cannot be " +
-                    'declared in a document; remove the entry.')
-        }
-        # String.Trim() removes exactly the characters [char]::IsWhiteSpace reports, at both ends.
-        $EdgeWhiteSpace = @($Segments | Where-Object { $_ -cne $_.Trim() }).Count -gt 0
-        $OtherWhiteSpace = @($ScopeText.ToCharArray() | Where-Object {
-                [char]::IsControl($_) -or ([char]::IsWhiteSpace($_) -and [int]$_ -ne 32)
-            } | Select-Object -Unique)
-        if ($EdgeWhiteSpace -or $OtherWhiteSpace.Count -gt 0) {
-            $Named = if ($OtherWhiteSpace.Count -gt 0) {
-                ' It contains ' + (($OtherWhiteSpace | ForEach-Object { 'U+{0:X4}' -f [int]$_ }) -join ', ') + '.'
-            } else { '' }
-            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
-                -Message ("'scope' at $Path must be written without white space at the start or end of the scope or of a segment, " +
-                    "white space other than a space (U+0020) or a control character; a space between other characters of a segment " +
-                    "is accepted. Got: '$ScopeText'.$Named A resource whose name holds one of these cannot be declared in a " +
-                    'document; remove the entry.')
+        foreach ($Problem in @(Get-OERScopeSpellingProblem -Scope ([string]$Node.scope) -Path $Path)) {
+            if ($Problem.Rule -ceq 'Slash') { continue }
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" -Message $Problem.Message
         }
     }
 
@@ -1760,7 +1715,7 @@ function Test-OERStructureSchema {
                 $RAItem = if (Test-HasProp -Node $RA -Name 'role') { $RA.role } else { "roleAssignments[$I]" }
 
                 Add-UnknownKeyWarning -Node $RA -Section 'roleAssignments' -Item $RAItem -Path $RAPath `
-                    -KnownKey @('scope', 'role', 'principal', 'principalType', 'description',
+                    -KnownKey @('scope', 'role', 'principal', 'principalType', 'principalStatus', 'description',
                         'condition', 'conditionVersion', 'id')
 
                 foreach ($Req in @('scope', 'role', 'principal')) {
@@ -1809,6 +1764,45 @@ function Test-OERStructureSchema {
                     } else {
                         Add-EnumCasingWarning -EnumName 'principalType' -Key 'principalType' -Value $RA.principalType `
                             -Section 'roleAssignments' -Item $RAItem -Path "$RAPath.principalType"
+                    }
+                }
+
+                # A18 (Sprint 11 step 6): principalStatus marks an entry whose principal the directory did not
+                # return when the document was exported (Get-OERInventory and Export-OERInventory write it,
+                # with the principal's object id). Only Deleted and Unresolved, and only as a string: an
+                # array holding one of them is not a status. A non-canonical letter case is a Warning, as
+                # for principalType. The entry names its principal by object id (Test-OERGuid), since
+                # Sync-OERStructureRoleAssignment looks no principal up for it and never creates the
+                # assignment; an explicit null is not declared, so neither rule applies to it.
+                if (Test-HasProp -Node $RA -Name 'principalStatus') {
+                    $ValidPrincipalStatuses = @(Resolve-OERStructureEnumCasing -EnumName 'principalStatus' -List)
+                    if ($RA.principalStatus -isnot [string] -or $ValidPrincipalStatuses -inotcontains $RA.principalStatus) {
+                        # A value that is not a string is named by its type, as the principal rule below does,
+                        # so an array holding 'Deleted' is never shown as if it were the string 'Deleted'.
+                        $StatusFound = if ($RA.principalStatus -is [string]) {
+                            "'$($RA.principalStatus)'"
+                        } else {
+                            "a value that is not a string ($($RA.principalStatus.GetType().Name))"
+                        }
+                        Add-Finding -Section 'roleAssignments' -Item $RAItem `
+                            -Path "$RAPath.principalStatus" `
+                            -Message "'principalStatus' at $RAPath must be one of: $($ValidPrincipalStatuses -join ', '). Got: $StatusFound."
+                    } else {
+                        Add-EnumCasingWarning -EnumName 'principalStatus' -Key 'principalStatus' -Value $RA.principalStatus `
+                            -Section 'roleAssignments' -Item $RAItem -Path "$RAPath.principalStatus"
+                    }
+                    if ((Test-HasProp -Node $RA -Name 'principal') -and
+                        ($RA.principal -isnot [string] -or -not (Test-OERGuid -Value $RA.principal))) {
+                        $PrincipalFound = if ($RA.principal -is [string]) {
+                            "'$($RA.principal)'"
+                        } else {
+                            "a value that is not a string ($($RA.principal.GetType().Name))"
+                        }
+                        Add-Finding -Section 'roleAssignments' -Item $RAItem `
+                            -Path "$RAPath.principal" `
+                            -Message ("'principal' at $RAPath must be an object id (a GUID) when 'principalStatus' is declared: the entry stands for a " +
+                                'principal the directory did not return when the document was exported, so the engine looks no principal up for it. ' +
+                                "Got: $PrincipalFound. Name the principal by its object id, or remove 'principalStatus' to have the principal looked up by name.")
                     }
                 }
 
@@ -2206,6 +2200,20 @@ function Test-OERStructureSchema {
         return $false
     }
 
+    # Whether an administrativeUnits[] entry is the unit a groups[] administrativeUnit reference names, read
+    # the way New-OERGroup reads it (Rule 12 and Rule 16 share it): a reference that parses as a GUID
+    # (-as [guid], so braced and dash-less forms too) is an object id and matches the entry that declares
+    # that id, compared as a GUID; any other reference is a display name and matches the entry of that
+    # displayName, ignoring case. -ReferenceGuid is the reference parsed, $null when it is not a GUID, so
+    # two values that are not object ids never match as two nulls.
+    function Test-UnitNamedByReference {
+        param([object]$Unit, [string]$Reference, [object]$ReferenceGuid)
+        if ($null -ne $ReferenceGuid) {
+            return (Test-HasProp -Node $Unit -Name 'id') -and (([string]$Unit.id -as [guid]) -eq $ReferenceGuid)
+        }
+        (Test-HasProp -Node $Unit -Name 'displayName') -and ([string]$Unit.displayName -ieq $Reference)
+    }
+
     if ((Test-HasProp -Node $Document -Name 'groups') -and
         ($Document.groups -is [System.Collections.IEnumerable]) -and
         ($Document.groups -isnot [string]) -and
@@ -2242,12 +2250,7 @@ function Test-OERStructureSchema {
             $PMatchedAuIndex = -1
             for ($K = 0; $K -lt $AuPlacementUnits.Count; $K++) {
                 $PUnit = $AuPlacementUnits[$K]
-                $PUnitMatches = if ($null -ne $PAuGuid) {
-                    (Test-HasProp -Node $PUnit -Name 'id') -and (([string]$PUnit.id -as [guid]) -eq $PAuGuid)
-                } else {
-                    (Test-HasProp -Node $PUnit -Name 'displayName') -and ([string]$PUnit.displayName -ieq $PAuName)
-                }
-                if ($PUnitMatches) {
+                if (Test-UnitNamedByReference -Unit $PUnit -Reference $PAuName -ReferenceGuid $PAuGuid) {
                     $PMatchedAuIndex = $K
                     break
                 }
@@ -2463,22 +2466,22 @@ function Test-OERStructureSchema {
         }
     }
 
-    # Rule 15 (Sprint 11 step 4b): a review that names by display name a package two or more
-    # accessPackages entries declare, while one of them renames its package. A package is identified by its
+    # Rule 15 (Sprint 11 step 4b; widened by BL-147): a review that names by display name a package two or
+    # more accessPackages entries declare. A package is identified by its
     # catalog together with its name, so the same name in two catalogs is two packages (the duplicate
     # check above does not refuse it), but Invoke-OERStructure's run-scoped rename map keys a package --
     # and a policy within it -- by the package's name, without its catalog ('accessPackages|<name>',
     # 'assignmentPolicies|<package name>|<policy>'; a policy also under the package's id once the access
     # package handler knows it). A review reads that map for a package name that is not
-    # an object id, so it would reach whichever entry registered the name last, where the tenant-wide
-    # lookup the review otherwise makes refuses an ambiguous name; and one entry's mark or decision would
-    # overwrite another's refusal. The run cannot tell which package the review means, so the document is
-    # refused offline: an Error at the review's accessPackage, naming every entry that declares the name as
-    # its displayName or (Get-RenameDeclaration, Rename state) its previousDisplayName, when there are two
-    # or more and at least one of them is in the Rename state. Without such a rename the map holds no
-    # package for the name, and the review's apply-time lookup of the package refuses the ambiguous name as
-    # before, so nothing is reported. A reference that is an object id is never read in the map, so it is
-    # never reported either.
+    # an object id, so it would reach whichever entry registered the name last; and one entry's mark or
+    # decision would overwrite another's refusal. The run cannot tell which package the review means, so
+    # the document is refused offline: an Error at the review's accessPackage, naming every entry that
+    # declares the name as its displayName or (Get-RenameDeclaration, Rename state) its
+    # previousDisplayName, when there are two or more. Before BL-147 only a rename registered a package, so
+    # the Error needed one of those entries in the Rename state; since every accessPackages entry registers
+    # its package (R-8, docs/development/rationale.md#review-package-in-the-same-run), it stands whether or
+    # not one renames, and the message names the rename only when there is one. A reference that is an
+    # object id is never read in the map, so it is never reported.
     if ((Test-HasProp -Node $Document -Name 'accessPackages') -and
         ($Document.accessPackages -is [System.Collections.IEnumerable]) -and
         ($Document.accessPackages -isnot [string]) -and
@@ -2503,14 +2506,99 @@ function Test-OERStructureSchema {
                 $AmbPaths.Add("accessPackages[$P]")
                 if ($AmbRename.State -eq 'Rename') { $AmbRenamed = $true }
             }
-            if ($AmbPaths.Count -lt 2 -or -not $AmbRenamed) { continue }
+            if ($AmbPaths.Count -lt 2) { continue }
 
+            # The message says that one of the entries renames only when one does.
+            $AmbRenameClause = if ($AmbRenamed) { ' while at least one of them is renamed through previousDisplayName' } else { '' }
             $AmbReviewName = if (Test-HasProp -Node $AmbReviews[$I] -Name 'displayName') { [string]$AmbReviews[$I].displayName } else { "accessReviews[$I]" }
             Add-Finding -Section 'accessReviews' -Item $AmbReviewName -Path "accessReviews[$I].accessPackage" `
                 -Message ("Access review '$AmbReviewName' at accessReviews[$I] declares accessPackage '$AmbRef', which $($AmbPaths.Count) " +
-                    "accessPackages entries declare as displayName or previousDisplayName ($($AmbPaths -join ', ')) while at least one of " +
-                    'them is renamed through previousDisplayName, so the run cannot tell which access package the review means. ' +
-                    'Name the access package by its object id.')
+                    "accessPackages entries declare as displayName or previousDisplayName ($($AmbPaths -join ', '))$AmbRenameClause, " +
+                    'so the run cannot tell which access package the review means. Name the access package by its object id.')
+        }
+    }
+
+    # Rule 16 (Sprint 11 step 6, BL-134): a group that uses PIM for Groups in a restricted management unit.
+    # Microsoft Learn states that Privileged Identity Management does not support a group in a restricted
+    # management administrative unit (an administrativeUnits[] entry whose restricted is the boolean true).
+    # Invoke-OERStructure still sends the PIM settings and eligibility a document declares for such a
+    # group, and what Microsoft Graph answers to those writes is not measured, so this is a Warning and
+    # never an Error (docs/development/rationale.md#restricted-unit-pim). A group uses PIM for Groups when
+    # it declares a pimPolicy (a present key that is not null) or an eligibility array with at least one
+    # entry. Two shapes, each raised at most once per unit:
+    #   - the group names a restricted unit (its administrativeUnit, read as Rule 12 reads it: an object id
+    #     matches the entry that declares that id, any other value the entry of that displayName, ignoring
+    #     case) -- a Warning at groups[i].administrativeUnit;
+    #   - a restricted unit's members list the group, by its name (ignoring case, the name Rule 12 computes
+    #     for a template-based group) or by the id the group declares -- a Warning at groups[i].
+    # An exported document raises neither: its groups carry no object id and no administrativeUnit, and its
+    # units list a group member by object id, which the document does not declare anywhere. Export-OERInventory
+    # names those groups in its own warning and README section instead.
+    function Test-UnitRestricted {
+        param([object]$Unit)
+        (Test-HasProp -Node $Unit -Name 'restricted') -and ($Unit.restricted -is [bool]) -and $Unit.restricted
+    }
+
+    if ((Test-HasProp -Node $Document -Name 'groups') -and
+        ($Document.groups -is [System.Collections.IEnumerable]) -and
+        ($Document.groups -isnot [string]) -and
+        (Test-HasProp -Node $Document -Name 'administrativeUnits') -and
+        ($Document.administrativeUnits -is [System.Collections.IEnumerable]) -and
+        ($Document.administrativeUnits -isnot [string])) {
+        $RestrictedGroups = @($Document.groups)
+        $RestrictedUnits = @($Document.administrativeUnits)
+        $RestrictedRisk = ('Microsoft Learn states that Privileged Identity Management does not support a group in a restricted management administrative unit. ' +
+            'Invoke-OERStructure still sends the PIM settings and eligibility the document declares for the group; what Microsoft Graph answers to those writes ' +
+            'has not been measured. Review it before applying the document.')
+        for ($I = 0; $I -lt $RestrictedGroups.Count; $I++) {
+            $RestrictedGroup = $RestrictedGroups[$I]
+            $UsesPim = (Test-HasProp -Node $RestrictedGroup -Name 'pimPolicy') -or
+                ((Test-HasProp -Node $RestrictedGroup -Name 'eligibility') -and
+                ($RestrictedGroup.eligibility -is [System.Collections.IEnumerable]) -and
+                ($RestrictedGroup.eligibility -isnot [string]) -and
+                (@($RestrictedGroup.eligibility | Where-Object { $null -ne $_ }).Count -gt 0))
+            if (-not $UsesPim) { continue }
+
+            $RestrictedName = Get-GroupEntryName -Group $RestrictedGroup
+            $RestrictedId = if (Test-HasProp -Node $RestrictedGroup -Name 'id') { [string]$RestrictedGroup.id } else { $null }
+            $RestrictedItem = if ($null -ne $RestrictedName) { $RestrictedName } else { "groups[$I]" }
+            $RestrictedLabel = if ($null -ne $RestrictedName) { "Group '$RestrictedName' at groups[$I]" } else { "Group at groups[$I]" }
+
+            # The group names a restricted unit.
+            if (Test-HasProp -Node $RestrictedGroup -Name 'administrativeUnit') {
+                $RestrictedRef = [string]$RestrictedGroup.administrativeUnit
+                if (-not [string]::IsNullOrEmpty($RestrictedRef)) {
+                    $RestrictedRefGuid = $RestrictedRef -as [guid]
+                    for ($K = 0; $K -lt $RestrictedUnits.Count; $K++) {
+                        if (-not (Test-UnitRestricted -Unit $RestrictedUnits[$K])) { continue }
+                        if (-not (Test-UnitNamedByReference -Unit $RestrictedUnits[$K] -Reference $RestrictedRef -ReferenceGuid $RestrictedRefGuid)) { continue }
+                        Add-Finding -Section 'groups' -Item $RestrictedItem -Path "groups[$I].administrativeUnit" -Severity 'Warning' `
+                            -Message ("$RestrictedLabel declares PIM for Groups settings (an eligibility or a pimPolicy) and administrativeUnit '$RestrictedRef', " +
+                                "which names administrativeUnits[$K], a restricted management unit. $RestrictedRisk")
+                    }
+                }
+            }
+
+            # A restricted unit's members list the group.
+            for ($K = 0; $K -lt $RestrictedUnits.Count; $K++) {
+                $RestrictedUnit = $RestrictedUnits[$K]
+                if (-not (Test-UnitRestricted -Unit $RestrictedUnit)) { continue }
+                # An omitted or null members lists nobody.
+                $ListedAs = $null
+                foreach ($UnitMember in @($RestrictedUnit.members)) {
+                    $MemberText = [string]$UnitMember
+                    if ((-not [string]::IsNullOrEmpty($RestrictedName) -and $MemberText -ieq $RestrictedName) -or
+                        (-not [string]::IsNullOrEmpty($RestrictedId) -and $MemberText -ieq $RestrictedId)) {
+                        $ListedAs = $MemberText
+                        break
+                    }
+                }
+                if ($null -eq $ListedAs) { continue }
+                $RestrictedUnitName = if (Test-HasProp -Node $RestrictedUnit -Name 'displayName') { [string]$RestrictedUnit.displayName } else { "administrativeUnits[$K]" }
+                Add-Finding -Section 'groups' -Item $RestrictedItem -Path "groups[$I]" -Severity 'Warning' `
+                    -Message ("$RestrictedLabel declares PIM for Groups settings (an eligibility or a pimPolicy), and administrativeUnits[$K] ('$RestrictedUnitName'), " +
+                        "a restricted management unit, lists the group in its members as '$ListedAs'. $RestrictedRisk")
+            }
         }
     }
 

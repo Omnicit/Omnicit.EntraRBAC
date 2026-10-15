@@ -29,6 +29,13 @@ function Test-OERStructure {
     Invoke-OERStructure reports such an entry Skipped and never prunes the root scope. A
     roleManagementPolicies scope '/' is not reported.
 
+    A roleAssignments entry that declares principalStatus, which Get-OERInventory and
+    Export-OERInventory write for a role assignment whose principal the directory did not return, must
+    carry Deleted or Unresolved (any other value, or one that is not a string, is an Error; a
+    non-canonical letter case is a Warning) and must name its principal by object id (an Error
+    otherwise). Invoke-OERStructure looks no principal up for such an entry and never creates a role
+    assignment for it: where the entry would create one, it is reported Skipped.
+
     A previousDisplayName is read on a groups, administrativeUnits, catalogs, accessPackages or
     accessReviews entry, and on an assignmentPolicies entry of an access package, where
     Invoke-OERStructure renames the object it names in place: an access package within its catalog, an
@@ -56,11 +63,23 @@ function Test-OERStructure {
     cannot decide it; its help describes both.
 
     An accessReviews entry whose accessPackage is a name, not an object id, that two or more
-    accessPackages entries declare, as their displayName or as a previousDisplayName that renames,
-    while at least one of those entries renames its package, is an Error at the review's
-    accessPackage. The same name in two catalogs is two packages, but Invoke-OERStructure keys a
-    renamed package, and the policies within it, by the package's name, without its catalog, so the
-    run cannot tell which package the review means. Name the access package by its object id.
+    accessPackages entries declare, as their displayName or as a previousDisplayName that renames, is
+    an Error at the review's accessPackage, whether or not one of those entries renames its package.
+    The same name in two catalogs is two packages, but Invoke-OERStructure keys every declared package,
+    and the policies within it, by the package's name, without its catalog, so the run cannot tell
+    which package the review means. Name the access package by its object id.
+
+    A groups entry that uses PIM for Groups -- it declares a pimPolicy, or an eligibility with at least
+    one entry -- in a restricted management administrative unit the same document declares (an
+    administrativeUnits entry whose restricted is true) is a Warning, never an Error: at the group's
+    administrativeUnit when it names such a unit, by display name or by the id the unit's entry
+    declares, and at the group when such a unit lists the group in its members, by its name or its
+    declared id. Microsoft Learn states that Privileged Identity Management does not support a group in
+    a restricted management administrative unit; Invoke-OERStructure still sends the PIM settings and
+    eligibility the document declares for such a group, and what Microsoft Graph answers to those
+    writes has not been measured. A document Export-OERInventory writes raises neither Warning, since
+    its groups carry no object id and no administrativeUnit; the export names such groups in its own
+    warning and in its README.md instead.
 
     A top-level tenantId, when present, must be a string holding a canonical GUID (an explicit null, a
     value that is not a string, such as an array, or any other value is an Error; a document without

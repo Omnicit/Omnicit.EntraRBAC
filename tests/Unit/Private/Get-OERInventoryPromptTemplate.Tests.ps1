@@ -582,3 +582,70 @@ Describe 'Get-OERInventoryPromptTemplate tenantId (BL-88, A14)' {
         }
     }
 }
+
+Describe 'Get-OERInventoryPromptTemplate unresolved principals, undeclarable scopes, restricted units and declared packages (Sprint 11 step 6)' {
+    # BL-133 (A18): the export writes principalStatus for a role assignment whose principal the directory
+    # did not return, and the engine never creates such an assignment; a model that invented a principal
+    # would hand the operator a grant to someone the export never saw. A13/A15: a role assignment at a
+    # scope no document can declare is left out and listed in the README. BL-134: PIM for Groups in a
+    # restricted management unit is a documented limit. BL-147: a review reaches the package its entry
+    # resolved in the same run.
+    It 'lists principalStatus among the roleAssignments fields and says what Deleted and Unresolved mean' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('principalType (User | Group | ServicePrincipal), principalStatus (Deleted | Unresolved; written by the export only, see below) }'))
+            $T | Should -Match ([regex]::Escape('principalStatus marks a role assignment whose principal Microsoft Entra ID did not return when the inventory was read, and its principal is then the object id.'))
+            $T | Should -Match ([regex]::Escape('Deleted: the principal was found among the directory''s deleted items.'))
+            $T | Should -Match ([regex]::Escape('Unresolved: it was found neither in the directory nor among its deleted items (deleted beyond the retention period, a principal of another tenant, for example through Azure Lighthouse, or not readable), or the read of its deleted items failed'))
+        }
+    }
+
+    It 'tells the model the engine never creates such an assignment and never to invent a principal for one' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('Invoke-OERStructure looks no principal up for such an entry and never creates the assignment'))
+            $T | Should -Match ([regex]::Escape('Never invent, guess or substitute a principal for it, never remove principalStatus from it, and never write principalStatus on an entry yourself'))
+            # The reasons for an id without a status are hedged, not a closed list.
+            $T | Should -Match ([regex]::Escape('a principal written as an object id WITHOUT principalStatus is one the export did not, or could not, write by name -- among other reasons a group whose name another group shares, a principal whose lookup failed'))
+            $T | Should -Match ([regex]::Escape('or a principal that is not a user, group or service principal: keep it as it is.'))
+        }
+    }
+
+    It 'names the three new README sections and the label of an unread principal in the Inputs bullet' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('"Role assignments whose principal the directory did not return" lists the role assignments inventory.json writes with principalStatus'))
+            $T | Should -Match ([regex]::Escape('"Role assignments at a scope no document can declare" lists the role assignments the export left out of inventory.json because the offline check refuses the spelling of their scope'))
+            $T | Should -Match ([regex]::Escape('"Groups using PIM for Groups in a restricted management unit" lists the groups inventory.json writes with PIM eligibility or a pimPolicy that are members of a restricted management administrative unit'))
+            $T | Should -Match ([regex]::Escape('an entry labelled "Role assignment principal that could not be read" names a role assignment whose principal could not be looked up (written by its object id with no principalStatus) or whose deleted items could not be read (written with principalStatus Unresolved)'))
+            # The three sections are named inside the README bullet, before the inventory.json bullet.
+            $T.IndexOf('"Groups using PIM for Groups in a restricted management unit" lists') | Should -BeLessThan $T.IndexOf('- inventory.json -- the current state')
+        }
+    }
+
+    It 'tells the model a role assignment at a scope no document can declare is a finding, never an entry' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('A scope written as a path must also follow the other spelling rules the scope description in schema.json states.'))
+            $T | Should -Match ([regex]::Escape('a role assignment at such a scope cannot be declared, so the export leaves it out of inventory.json and lists it in README.md under "Role assignments at a scope no document can declare". Name it in your rationale as a finding; never declare it, and never rewrite its scope into another spelling.'))
+        }
+    }
+
+    It 'states the documented PIM limit in a restricted management unit and what the validator does' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('Microsoft Learn states that Privileged Identity Management does not support a group in a restricted management administrative unit'))
+            $T | Should -Match ([regex]::Escape('Do not propose eligibility or a pimPolicy for a group in a restricted unit, and do not place a group that uses PIM for Groups in one'))
+            $T | Should -Match ([regex]::Escape('what Microsoft Graph answers to them has not been measured'))
+        }
+    }
+
+    It 'tells the model a review reaches the package its accessPackages entry resolved, and to give a twin name by id' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('is the package that entry finds in its catalog or creates there -- never one of that name in another catalog.'))
+            $T | Should -Match ([regex]::Escape('or the run leaves the accessPackages section out with -Include), the review is refused and nothing is written for it'))
+            $T | Should -Match ([regex]::Escape('the offline check refuses a review that gives that name: give the access package by its object id there.'))
+        }
+    }
+}

@@ -241,14 +241,63 @@ function Get-OERInventory {
     distribution group, which the default filter never reads, is left out too; the reported cause
     names how many live objects carry the name. When that listing fails, groupNames is reported
     unread through the InventoryPartial
-    error, with its cause, and the names are counted among the groups read. Each name left out is
+    error, with its cause, and the names are counted among the groups read. Export-OERInventory
+    shares that one listing among all the calls it makes to this cmdlet, so an export lists the
+    groups at most once, not once per Azure scope. Each name left out is
     also handed over in one information record tagged Omnicit.EntraRBAC.SharedName, whose Names list
     carries the Section, Name and Count of each; under the default $InformationPreference the record
     is not displayed. Role assignments whose scope
     (compared in its canonical form), role and principal collide are written with the principal's
-    object id and, when the principal is already an id, with the role's full definition id;
-    principalType is then written for a user, group or service principal. A role management policy
-    read twice, for example by naming the same role twice in -Role, is written once.
+    object id and, when the principal is already an id, with the role's full definition id. A role
+    management policy read twice, for example by naming the same role twice in -Role, is written once.
+
+    In RoleAssignments, principalType is written for every role assignment whose principal type is a
+    user, a group (a ForeignGroup included) or a service principal, and left out for any other type,
+    such as a device, which the document's principalType cannot name. Each principal is looked up in
+    Microsoft Entra ID through directoryObjects/getByIds, over every directory object type, in batches
+    of up to 1000 ids, one request per batch. A principal the directory returns is written by its
+    name -- a user by its user principal name, a group by the rule above and a service principal by
+    its display name; a principal of any other type, such as a device, is written by its object id.
+    A principal the directory did not return is written by its object id with principalStatus:
+    Deleted when it is found among the directory's deleted items, Unresolved when it is found neither
+    there nor in the directory -- deleted beyond the retention period, a principal of another tenant,
+    for example through Azure Lighthouse, or not readable -- or when its deleted items could not be
+    read. Each such principal is looked for among the deleted items with one read of
+    directory/deletedItems: an answer that was read is kept for the rest of the call, and under
+    Export-OERInventory for the rest of the export, while a read that fails is not kept and is sent
+    again for the next role assignment that needs it. principalStatus stands directly after
+    principalType, or after principal when there is none. Such an assignment stays in the document:
+    Invoke-OERStructure never creates it, and removing the entry lets -Prune remove it, like any
+    undeclared assignment, at a scope the document still declares. One warning counts them, and an
+    information record tagged Omnicit.EntraRBAC.UnresolvedPrincipal hands the caller the same rows
+    (RoleAssignmentId, Scope, Role, Principal, PrincipalType, PrincipalStatus and StatusRead, which is
+    false where the deleted items read failed) and the warning's text; under the default
+    $InformationPreference the record is not displayed. Under a Stop warning preference the
+    command stops at that warning, before it returns the inventory, as it does at the root scope
+    warning. When the lookup itself fails, the principal is written by its object id with no
+    principalStatus, and 'roleAssignments/<role> -> <principal id> @ <scope>/principal' is reported
+    through the InventoryPartial error with its cause; when only the deleted items read fails, the
+    principal is written as Unresolved, with its reason not known, and '.../principalStatus' is
+    reported the same way. A role assignment at the root scope is named only as described above: its
+    principal is looked up like any other, which is how the root list names it, but it is not looked
+    for among the deleted items, and a failed lookup of it is not reported -- the root list names it
+    by its object id.
+
+    A role assignment whose scope breaks a scope spelling rule the validator applies, as the scope of
+    a resource whose name holds a '#' or a '%' does for example (Test-OERStructure refuses such a
+    scope as an Error; about_Omnicit.EntraRBAC lists the rules under RENAMES, MAIL ALIASES AND SCOPE
+    SPELLING), is left out of the RoleAssignments section too: no document can declare that scope, so
+    a document that carried it would be refused as a whole. Invoke-OERStructure never creates a role
+    assignment at such a scope, and never removes one, since it prunes only at a scope a document
+    declares. The root scope is decided first, so a role assignment at the root scope whose spelling
+    is refused too is named only as described above. One warning counts such assignments, and an
+    information record tagged Omnicit.EntraRBAC.UndeclarableScope hands the caller the rows
+    (RoleAssignmentId, Scope, Role, Principal, PrincipalType and Reason, which names the rules
+    the scope breaks in words) and the warning's text; under the default $InformationPreference the
+    record is not displayed. Under a Stop warning preference the command stops at that warning, before
+    it returns the inventory. Such a role assignment's principal is looked up like any other, which is
+    how the record names it, but it is not looked for among the deleted items, a failed lookup of it is
+    not reported, and it never changes how another role assignment is named.
 
     The inventory carries a top-level tenantId, directly after its version: the tenant ID the session's
     Microsoft Graph token was issued for, never the tenant as named with -TenantId (a domain, or
@@ -517,8 +566,64 @@ function Get-OERInventory {
         # principal is written by its object id instead, which is exact, so nothing is unread there
         # (Get-GroupPrincipalReference). Kept in a holder, since a local function cannot assign a
         # variable of this block.
+        #
+        # Sprint 11 step 6 (R-2 of step 5): under Export-OERInventory the holder is the export's run
+        # context ($script:_OERInventoryRunContext, GroupNameIndex), not this invocation's own, so the
+        # export's many calls (one per Azure scope) share ONE index: once per export, with the
+        # roster's index there already when the roster was read, and the first caller's listing
+        # otherwise. Without a context the invocation's own holder serves, as it always did, and
+        # nothing outlives the call.
+        #
+        # The context is read ONCE per invocation, here, and used only when its Owner -- the
+        # invocation of the Export-OERInventory that made it -- is a frame of the CURRENT call stack
+        # (the very object a frame carries, compared by reference; module-qualified, so a function named
+        # Get-PSCallStack defined in the session cannot turn the check off, as in Lock-OERSignIn). An
+        # export that was stopped before it cleared its context leaves it behind, and a later call --
+        # standalone, or another export's -- finds an Owner that is on no stack and behaves as standalone.
+        $RunContext = $null
+        $RunContextFound = $script:_OERInventoryRunContext
+        if ($null -ne $RunContextFound -and $null -ne $RunContextFound.Owner) {
+            foreach ($Frame in Microsoft.PowerShell.Utility\Get-PSCallStack) {
+                if ([object]::ReferenceEquals($Frame.InvocationInfo, $RunContextFound.Owner)) {
+                    $RunContext = $RunContextFound
+                    break
+                }
+            }
+        }
+        # Sprint 11 step 6 (BL-133, A18): where the RoleAssignments section keeps what it learns about a
+        # principal the directory did not return. The answers of the deleted items read that succeeded are
+        # kept per principal, under the export's run context in its PrincipalStatus dictionary (one read per
+        # principal for the whole export while that read succeeds), and otherwise in this invocation's own
+        # dictionary; a read that fails is not kept, so the next row that needs it reads again. A principal
+        # whose lookup or deleted items read failed is named unread: under a run context in the context's
+        # UnreadPrincipal and UnreadPrincipalCause lists, which Export-OERInventory names in its
+        # IncompleteReads and its own InventoryPartial -- the export calls this command per Azure scope
+        # with -ErrorAction Stop, where this call's own InventoryPartial would skip the whole scope --
+        # and otherwise in this call's unread collections and causes, so this call's InventoryPartial
+        # names them like every other unread collection.
+        $PrincipalStatusCache = if ($null -ne $RunContext) {
+            $RunContext.PrincipalStatus
+        } else {
+            [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        }
+        function Add-PrincipalUnread {
+            param([string]$Path, [string]$Cause, [string]$Target)
+            Write-Verbose "Get-OERInventory: $Cause"
+            if ($null -ne $RunContext) {
+                $RunContext.UnreadPrincipal.Add($Path)
+                $RunContext.UnreadPrincipalCause.Add([PSCustomObject]@{ Cause = $Cause; Target = $Target })
+                return
+            }
+            Add-UnreadCause -Cause $Cause -Target $Target
+            $UnreadCollections.Add($Path)
+        }
+
         $GroupNameIndexHolder = @{ Index = $null }
         function Get-GroupNameIndexOnce {
+            if ($null -ne $RunContext) {
+                if ($null -eq $RunContext.GroupNameIndex) { $RunContext.GroupNameIndex = Get-OERGroupNameIndex }
+                return $RunContext.GroupNameIndex
+            }
             if ($null -ne $GroupNameIndexHolder.Index) { return $GroupNameIndexHolder.Index }
             $GroupNameIndexHolder.Index = Get-OERGroupNameIndex
             $GroupNameIndexHolder.Index
@@ -1239,53 +1344,94 @@ function Get-OERInventory {
                 if ($ManagementGroup) { $RaParams.ManagementGroup = $ManagementGroup }
                 $RaItems = @(Get-OERRoleAssignment @RaParams)
 
-                # Resolve principal object ids to names (UPN for users so the apply @-heuristic routes
-                # them to -User; displayName for groups / service principals). Batched into the shared
-                # per-invocation cache.
-                $RaPrincipalIds = @($RaItems | ForEach-Object { [string]$_.PrincipalId } | Where-Object { $_ })
-                $MissingRaIds = @($RaPrincipalIds | Where-Object { -not $PrincipalNameCache.ContainsKey($_) } | Select-Object -Unique)
-                if ($MissingRaIds.Count -gt 0) {
-                    $ResolvedRa = Resolve-OERPrincipalName -Id $MissingRaIds
-                    foreach ($K in $ResolvedRa.Keys) { $PrincipalNameCache[$K] = $ResolvedRa[$K] }
+                # Sprint 11 step 6 (BL-133, A18): the principals are looked up with
+                # Resolve-OERPrincipalName -Detailed, one batched lookup per call, into this section's
+                # own answers (the shared $PrincipalNameCache of the other sections is not read or
+                # written here). The answer tells three cases apart that the default map could not:
+                # a principal the directory returned (written by its name: a UPN for a user, so the
+                # apply @-heuristic routes it to -User, a display name otherwise), one a successful
+                # lookup did not return (written by its object id with principalStatus, below), and
+                # one whose lookup failed (written by its object id and reported unread, never as a
+                # fact). Keyed without regard to letter case.
+                $RaPrincipalIds = @($RaItems | ForEach-Object { [string]$_.PrincipalId } | Where-Object { $_ } | Select-Object -Unique)
+                $RaPrincipalAnswers = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                if ($RaPrincipalIds.Count -gt 0) {
+                    foreach ($RaAnswer in @(Resolve-OERPrincipalName -Id $RaPrincipalIds -Detailed)) {
+                        if ($null -eq $RaAnswer -or [string]::IsNullOrEmpty([string]$RaAnswer.Id)) { continue }
+                        $RaPrincipalAnswers[[string]$RaAnswer.Id] = $RaAnswer
+                    }
                 }
 
                 # Projected first and added to the section below: whether two principals collide can
                 # only be decided once every row has its name.
                 $RaProjected = [System.Collections.Generic.List[object]]::new()
                 foreach ($Ra in $RaItems) {
-                    $PrincipalName = if ($Ra.PrincipalId -and $PrincipalNameCache.ContainsKey([string]$Ra.PrincipalId)) {
-                        $PrincipalNameCache[[string]$Ra.PrincipalId]
-                    } elseif ($Ra.PrincipalDisplayName) {
-                        $Ra.PrincipalDisplayName
+                    $RaPrincipalId = [string]$Ra.PrincipalId
+                    # What the lookup said about this row's principal: Found (a name), NotFound (the
+                    # principalStatus decided after the splits below) or a failed lookup (its cause).
+                    # A row with no principal id is not looked up and keeps the name it was read under,
+                    # as before.
+                    $PrincipalNotFound = $false
+                    $PrincipalLookupCause = $null
+                    $PrincipalName = if (-not $RaPrincipalId) {
+                        if ($Ra.PrincipalDisplayName) { $Ra.PrincipalDisplayName } else { $Ra.PrincipalId }
                     } else {
-                        $Ra.PrincipalId
+                        # An id the lookup gave no answer for was not looked up: it is read as a failed
+                        # lookup, never as one the directory did not return.
+                        $RaAnswer = if ($RaPrincipalAnswers.ContainsKey($RaPrincipalId)) { $RaPrincipalAnswers[$RaPrincipalId] } else { $null }
+                        if ($null -eq $RaAnswer -or $RaAnswer.Read -ne $true) {
+                            $PrincipalLookupCause = if ($null -ne $RaAnswer -and -not [string]::IsNullOrWhiteSpace([string]$RaAnswer.Cause)) {
+                                [string]$RaAnswer.Cause
+                            } else {
+                                'the lookup returned no answer for this principal.'
+                            }
+                            $RaPrincipalId
+                        } elseif ($RaAnswer.Found -ne $true) {
+                            $PrincipalNotFound = $true
+                            $RaPrincipalId
+                        } elseif ($RaAnswer.ObjectType -and [string]$RaAnswer.ObjectType -notin @('user', 'group', 'servicePrincipal')) {
+                            # A principal the directory returned as another type (a device, for one) is
+                            # written by its object id, as it was before the lookup searched every type:
+                            # principalType cannot name it, and its display name alone would be applied
+                            # as a group of that name.
+                            $RaPrincipalId
+                        } else {
+                            [string]$RaAnswer.Name
+                        }
                     }
-                    # Normalize the ARM principal type to the apply schema enum
-                    # (User|Group|ServicePrincipal). A user UPN / group name routes via the apply
-                    # @-heuristic, so principalType is emitted only for a service principal (a name
-                    # cannot disambiguate one) and for a group written by its object id (below).
-                    # ForeignGroup -- a B2B / cross-tenant group -- maps to Group; any other ARM type
-                    # (e.g. Device) is omitted rather than emitting an invalid enum value that would
-                    # fail Test-OERStructure validation.
+                    # Normalize the ARM principal type to the apply schema enum (User|Group|
+                    # ServicePrincipal). ForeignGroup -- a B2B / cross-tenant group -- maps to Group.
+                    # $PrincipalType keeps the normalised ARM type for the root-scope and unresolved
+                    # principal rows below ('Device' stays 'Device'); $SchemaType is what the document
+                    # carries as principalType: written for EVERY row whose type maps to the enum
+                    # (Sprint 11 step 6, A18), in the enum's own casing, and omitted for any other ARM
+                    # type (e.g. Device) rather than emitting an invalid enum value that would fail
+                    # Test-OERStructure validation.
                     $PrincipalType = if ($Ra.PrincipalType -eq 'ForeignGroup') { 'Group' } else { [string]$Ra.PrincipalType }
+                    $SchemaType = switch ($PrincipalType) {
+                        'User' { 'User' }
+                        'Group' { 'Group' }
+                        'ServicePrincipal' { 'ServicePrincipal' }
+                        default { $null }
+                    }
                     # BL-131 (Task 3c): a group is written by its display name only when no other group
                     # in the tenant carries that name (Get-OERGroupReference), since the apply engine
                     # refuses a group name more than one live group answers to; otherwise by its object
-                    # id with principalType Group, directly after principal, which Invoke-OERStructure
-                    # resolves verbatim. Decided here, before the root-scope split and the collision
-                    # pass below, which run on the name chosen here.
-                    $GroupById = $false
-                    if ($PrincipalType -eq 'Group' -and $Ra.PrincipalId) {
-                        $PrincipalName = Get-GroupPrincipalReference -Id ([string]$Ra.PrincipalId) -Name ([string]$PrincipalName)
-                        $GroupById = ([string]$PrincipalName -eq [string]$Ra.PrincipalId)
+                    # id with principalType Group, which Invoke-OERStructure resolves verbatim. Decided
+                    # here, before the root-scope split and the collision pass below, which run on the
+                    # name chosen here. A group written by its object id because it was not found, or
+                    # its lookup failed, carries its id as the name, which Get-GroupPrincipalReference
+                    # returns as it is, with no index read.
+                    if ($PrincipalType -eq 'Group' -and $RaPrincipalId) {
+                        $PrincipalName = Get-GroupPrincipalReference -Id $RaPrincipalId -Name ([string]$PrincipalName)
                     }
                     $Proj = [ordered]@{
                         scope     = $Ra.Scope
                         role      = $(if ($Ra.RoleName) { $Ra.RoleName } else { $Ra.RoleDefinitionId })
                         principal = $PrincipalName
                     }
-                    if ($PrincipalType -eq 'ServicePrincipal' -or $GroupById) {
-                        $Proj.principalType = $PrincipalType
+                    if ($SchemaType) {
+                        $Proj.principalType = $SchemaType
                     }
                     # ABAC condition and the free-text description are writable by New-OERRoleAssignment
                     # and readable here, so project them or a condition-scoped assignment would be
@@ -1297,7 +1443,10 @@ function Get-OERInventory {
                         $Proj.conditionVersion = $(if ($Ra.ConditionVersion) { [string]$Ra.ConditionVersion } else { '2.0' })
                     }
                     if ($IncludeId) { $Proj.id = $Ra.RoleAssignmentId }
-                    $RaProjected.Add([PSCustomObject]@{ Ra = $Ra; Proj = $Proj; Type = $PrincipalType })
+                    $RaProjected.Add([PSCustomObject]@{
+                            Ra = $Ra; Proj = $Proj; Type = $PrincipalType
+                            NotFound = $PrincipalNotFound; LookupCause = $PrincipalLookupCause
+                        })
                 }
 
                 # BL-126 (A4): a role assignment at the Azure root scope '/' (Test-OERAzureRootScope owns
@@ -1315,16 +1464,38 @@ function Get-OERInventory {
                 }
                 $RaProjected = $RaKeptRows
 
+                # A13, A15: a role assignment whose scope breaks a scope spelling rule the validator applies
+                # (Get-OERScopeSpellingProblem owns the rules) is at a scope no document can declare: a
+                # document that carried it would be refused as a whole. Azure Resource Manager returns one
+                # at a resource whose name holds a '#' or a '%', for instance. It is taken out here, AFTER
+                # the root split (a row at the root scope stays in the root list only) and BEFORE the
+                # collision pass and the principalStatus step below, so it never changes how another row is
+                # named and its principal is never looked for among the deleted items. Invoke-OERStructure
+                # never prunes such an assignment: it prunes only at a scope a document declares. The rows
+                # are counted in one warning and handed over in one information record after the section is
+                # built (docs/development/rationale.md#undeclarable-scope).
+                $RaUndeclarableRows = [System.Collections.Generic.List[object]]::new()
+                $RaDeclarableRows = [System.Collections.Generic.List[object]]::new()
+                foreach ($Row in $RaProjected) {
+                    $ScopeProblems = @(Get-OERScopeSpellingProblem -Scope ([string]$Row.Proj.scope) -Path 'roleAssignments')
+                    if ($ScopeProblems.Count -gt 0) {
+                        $RaUndeclarableRows.Add([PSCustomObject]@{ Row = $Row; Problems = $ScopeProblems })
+                    } else {
+                        $RaDeclarableRows.Add($Row)
+                    }
+                }
+                $RaProjected = $RaDeclarableRows
+
                 # Entra does not keep display names unique, a group can carry a user's user principal
                 # name as its display name, and Azure may return one scope in two spellings -- so two
                 # rows can export the same (scope, role, principal), which the validator refuses as a
                 # duplicate and so invalidates the whole document. The key is the validator's: the
                 # canonical scope, the role and the principal, compared without regard to letter case.
                 # Every row whose key collides moves its principal to the object id, the one name
-                # that is unique, and, when the type is known (ForeignGroup is a Group), stamps
-                # principalType so an id-named user or group is created as the right type on a
-                # re-apply. Users move too: a user's fallback name can be a display name, and a group
-                # can carry a user principal name. A colliding row whose principal already is its id
+                # that is unique; an id-named user, group or service principal is created as the right
+                # type on a re-apply, since principalType is written for every row whose type maps to
+                # the enum (above). Users move too: a user's fallback name can be a display name, and a
+                # group can carry a user principal name. A colliding row whose principal already is its id
                 # then moves its role to the full role definition id, for two role definitions that
                 # share a display name. Repeated until nothing changes, since an object id can in turn
                 # equal another principal's name. Each change moves a field to its id, and a field
@@ -1342,12 +1513,6 @@ function Get-OERInventory {
                         if ($RaKeyCount[$RaKey] -le 1) { continue }
                         if ($Row.Ra.PrincipalId -and [string]$Row.Proj.principal -ne [string]$Row.Ra.PrincipalId) {
                             $Row.Proj.principal = [string]$Row.Ra.PrincipalId
-                            if ($Row.Type -in @('User', 'Group', 'ServicePrincipal')) {
-                                # principalType belongs directly after principal, where it sits for a
-                                # service principal, so the entry keeps its key order.
-                                if ($Row.Proj.Contains('principalType')) { $Row.Proj.principalType = $Row.Type }
-                                else { $Row.Proj.Insert(3, 'principalType', $Row.Type) }
-                            }
                             $RaMoved = $true
                         } elseif ($Row.Ra.RoleDefinitionId -and [string]$Row.Proj.role -ne [string]$Row.Ra.RoleDefinitionId) {
                             $Row.Proj.role = [string]$Row.Ra.RoleDefinitionId
@@ -1355,6 +1520,45 @@ function Get-OERInventory {
                         }
                     }
                 } while ($RaMoved)
+
+                # Sprint 11 step 6 (BL-133, A18): a principal the lookup did not return, or could not
+                # look up, decided for the rows the document keeps -- after the root-scope split and the
+                # undeclarable scope split above (a root row stays in the root list only, and an undeclarable
+                # row in its own list, so nothing below is read or reported for either) and after the
+                # collision pass, so the role and principal named here are the ones written.
+                #   - A failed lookup: the row keeps its object id and principalType, carries no
+                #     principalStatus, and is named unread as '<...>/principal' with its cause.
+                #   - Not found: the principal is looked for among the directory's deleted items
+                #     (Get-OERDeletedPrincipalStatus; a read that succeeds is kept, for the whole export under
+                #     a run context and for the call otherwise, and a read that fails is sent again by the next
+                #     row that needs it), and principalStatus says Deleted or Unresolved, directly after
+                #     principalType (after principal when there is none). When that read fails the row
+                #     is Unresolved -- the lookup succeeded and did not return the principal, so it is
+                #     certainly not a live object the engine could create an assignment for; only the
+                #     reason is unread -- and it is named unread as '<...>/principalStatus'.
+                # '<...>' is 'roleAssignments/<role> -> <principal id> @ <scope>'.
+                $RaStatusRows = [System.Collections.Generic.List[object]]::new()
+                foreach ($Row in $RaProjected) {
+                    $RowPath = "roleAssignments/$($Row.Proj.role) -> $($Row.Ra.PrincipalId) @ $($Row.Proj.scope)"
+                    if ($null -ne $Row.LookupCause) {
+                        Add-PrincipalUnread -Path "$RowPath/principal" `
+                            -Cause "Could not look up the principal of a role assignment through directoryObjects/getByIds: $($Row.LookupCause)" `
+                            -Target ([string]$Row.Ra.PrincipalId)
+                        continue
+                    }
+                    if (-not $Row.NotFound) { continue }
+                    $StatusAnswer = Get-OERDeletedPrincipalStatus -Id ([string]$Row.Ra.PrincipalId) -Cache $PrincipalStatusCache
+                    $StatusIndex = if ($Row.Proj.Contains('principalType')) { 4 } else { 3 }
+                    $Row.Proj.Insert($StatusIndex, 'principalStatus', [string]$StatusAnswer.Status)
+                    if ($StatusAnswer.Read -ne $true) {
+                        Add-PrincipalUnread -Path "$RowPath/principalStatus" `
+                            -Cause "Could not read whether the principal of a role assignment is among the directory's deleted items: $($StatusAnswer.Cause)" `
+                            -Target ([string]$Row.Ra.PrincipalId)
+                    }
+                    # StatusRead: whether the deleted items read behind the status succeeded, so a reader
+                    # never takes the reason of an unread Unresolved as a fact.
+                    $RaStatusRows.Add([PSCustomObject]@{ Row = $Row; StatusRead = ($StatusAnswer.Read -eq $true) })
+                }
                 foreach ($Row in $RaProjected) { $RoleAssignments.Add([PSCustomObject]$Row.Proj) }
 
                 # BL-126: the root rows taken out above, one per assignment: Role and Principal are the
@@ -1380,6 +1584,75 @@ function Get-OERInventory {
                     }
                     $RootNotice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.RootScopeAssignmentNotice')
                     Write-Information -MessageData $RootNotice -Tags 'Omnicit.EntraRBAC.RootScopeAssignment'
+                }
+
+                # A13, A15: the rows at a scope no document can declare, taken out above, counted in ONE
+                # warning and handed over in ONE information record (tag Omnicit.EntraRBAC.UndeclarableScope),
+                # the root-scope pattern above, so a caller -- Export-OERInventory among them -- reads the rows
+                # without parsing the text. Role and Principal are the projected names, PrincipalType the
+                # normalised ARM type ('' when unknown), and Reason names the rules the scope breaks in words,
+                # in the order Get-OERScopeSpellingProblem returns them. The words carry no character the
+                # README's Markdown would read as markup.
+                if ($RaUndeclarableRows.Count -gt 0) {
+                    $UndeclarableAssignments = @(foreach ($Undeclarable in $RaUndeclarableRows) {
+                            $Row = $Undeclarable.Row
+                            $RuleWords = @(foreach ($Problem in $Undeclarable.Problems) {
+                                    switch -CaseSensitive ([string]$Problem.Rule) {
+                                        'Slash' { 'a trailing or doubled slash' }
+                                        'DotSegment' { "a dot segment ('.' or '..')" }
+                                        'Escape' { 'a percent sign' }
+                                        'Backslash' { 'a backslash' }
+                                        'QueryOrFragment' { 'a question mark or a number sign' }
+                                        'WhiteSpace' { 'white space at the start or end of the scope or of a segment, white space other than a space, or a control character' }
+                                        default { [string]$Problem.Rule }
+                                    }
+                                })
+                            [PSCustomObject]@{
+                                RoleAssignmentId = [string]$Row.Ra.RoleAssignmentId
+                                Scope            = [string]$Row.Proj.scope
+                                Role             = [string]$Row.Proj.role
+                                Principal        = [string]$Row.Proj.principal
+                                PrincipalType    = [string]$Row.Type
+                                Reason           = 'the scope holds ' + ($RuleWords -join '; ')
+                            }
+                        })
+                    $UndeclarableWarning = "Get-OERInventory: left out $($UndeclarableAssignments.Count) role assignment(s) whose scope no document can declare: the validator refuses the scope's spelling, so a document that carried one would be refused as a whole. Invoke-OERStructure never creates such an assignment, and never removes one, since it prunes only at a scope a document declares. An information record tagged Omnicit.EntraRBAC.UndeclarableScope names each with the rules its scope breaks; review them as a finding."
+                    Write-Warning $UndeclarableWarning
+                    $UndeclarableNotice = [PSCustomObject]@{
+                        Warning     = $UndeclarableWarning
+                        Assignments = $UndeclarableAssignments
+                    }
+                    $UndeclarableNotice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.UndeclarableScopeNotice')
+                    Write-Information -MessageData $UndeclarableNotice -Tags 'Omnicit.EntraRBAC.UndeclarableScope'
+                }
+
+                # Sprint 11 step 6 (BL-133, A18): every row written with principalStatus, counted in ONE
+                # warning and handed over in ONE information record (tag
+                # Omnicit.EntraRBAC.UnresolvedPrincipal), the root-scope pattern above, so a caller --
+                # Export-OERInventory among them -- reads the rows without parsing the text. The rows stay
+                # in the document. PrincipalType is the normalised ARM type ('' when unknown); StatusRead is
+                # false where the deleted items read failed (a Deleted status is always read).
+                if ($RaStatusRows.Count -gt 0) {
+                    $StatusAssignments = @(foreach ($StatusRow in $RaStatusRows) {
+                            $Row = $StatusRow.Row
+                            [PSCustomObject]@{
+                                RoleAssignmentId = [string]$Row.Ra.RoleAssignmentId
+                                Scope            = [string]$Row.Proj.scope
+                                Role             = [string]$Row.Proj.role
+                                Principal        = [string]$Row.Proj.principal
+                                PrincipalType    = [string]$Row.Type
+                                PrincipalStatus  = [string]$Row.Proj.principalStatus
+                                StatusRead       = [bool]$StatusRow.StatusRead
+                            }
+                        })
+                    $StatusWarning = "Get-OERInventory: $($StatusAssignments.Count) role assignment(s) name a principal the directory did not return, so each is written by the principal's object id with principalStatus: Deleted when the principal was found among the directory's deleted items, Unresolved when it was found neither in the directory nor among its deleted items (deleted beyond the retention period, a principal of another tenant, or not readable) or when its deleted items could not be read. Invoke-OERStructure never creates such an assignment; review them as a finding."
+                    Write-Warning $StatusWarning
+                    $StatusNotice = [PSCustomObject]@{
+                        Warning     = $StatusWarning
+                        Assignments = $StatusAssignments
+                    }
+                    $StatusNotice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.UnresolvedPrincipalNotice')
+                    Write-Information -MessageData $StatusNotice -Tags 'Omnicit.EntraRBAC.UnresolvedPrincipal'
                 }
             }
         }

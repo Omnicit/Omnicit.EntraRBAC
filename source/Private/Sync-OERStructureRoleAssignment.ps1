@@ -24,12 +24,32 @@ function Sync-OERStructureRoleAssignment {
     inherited match is, but its warning and Detail say it comes from the root scope, which the
     document never manages, instead of advising to declare the entry there.
 
-    Per-item processing:
+    principalStatus (A18, Sprint 11 step 6): Get-OERInventory and Export-OERInventory write a role
+    assignment whose principal the directory did not return by the principal's object id, with
+    principalStatus Deleted or Unresolved. An entry that declares principalStatus takes its principal as
+    the object id it names, with no principal lookup at all (Resolve-OERStructurePrincipal and the
+    resolvers under it are not called for it, nor for it as a sibling in the key rows), and a principal
+    that is not an object id is reported Failed, with no lookup and no error record. The root scope check
+    stays first; the role lookup, the duplicate check and the read at the scope run as for any entry, so
+    a matching live assignment is Unchanged (Updated on declared drift of its condition, conditionVersion
+    or description, as for any entry) and one inherited from an ancestor scope is Skipped as step 4 says.
+    Where step 5 would create the assignment, the entry is reported Skipped with a Detail that starts
+    "principalStatus '<value>':" and says the principal could not be looked up when the document was
+    exported, that the apply engine never creates a role assignment for such an entry, that nothing was
+    written, and what to do (remove the entry, or name a principal that exists and remove
+    principalStatus): no ShouldProcess, no New-OERRoleAssignment, and the same row under -WhatIf and in a
+    real run. The prune pass is unchanged: the entry's key is its object id and the role, so it protects
+    the matching live assignment, and a document without the entry lets -Prune remove that assignment
+    like any undeclared one.
+
+    Per-item processing (after the root scope check above):
     1. Resolve the principal object id via Resolve-OERStructurePrincipal (returns $null -> Failed + return).
        When the document item has an optional 'principalType' property (User, Group, or ServicePrincipal),
        the type hint is forwarded to Resolve-OERStructurePrincipal via -Type. Without principalType the
        existing heuristic applies: an '@'-containing value triggers a user lookup; anything else triggers
-       a group-then-user lookup.
+       a group-then-user lookup. An entry that declares principalStatus is the exception: its principal
+       is taken as the object id it names, with no lookup, and one that is not an object id is Failed +
+       return, with no lookup and no error record.
     2. Resolve the full ARM role definition id via Resolve-OERRoleDefinitionId (throws -> Failed + return).
     3. Read current at-scope assignments via Get-OERRoleAssignment -AtScope -ErrorAction Stop (fails ->
        Failed + return, so a failed read is never taken as an empty list and no prune pass runs).
@@ -52,8 +72,10 @@ function Sync-OERStructureRoleAssignment {
        the ancestor one. It is reported as a Skipped record naming the ancestor scope and the assignment
        id, with a warning. A current assignment carrying no Scope value at all counts as at-scope, the
        same convention the prune pass below uses.
-    5. Otherwise (no assignment for this principal+role anywhere at or above the scope) gate via
-       $Caller.ShouldProcess:
+    5. Otherwise (no assignment for this principal+role anywhere at or above the scope), an entry that
+       declares principalStatus is reported Skipped with its "principalStatus '<value>':" Detail (5a),
+       with no ShouldProcess and no New-OERRoleAssignment, the same row under -WhatIf and in a real run;
+       any other entry is gated via $Caller.ShouldProcess:
        - Under -WhatIf (returns $false): emit Skipped with planned-action Detail.
        - Otherwise: call New-OERRoleAssignment (throws -> Failed; succeeds -> Created inside try),
          forwarding the declared description, condition and conditionVersion (conditionVersion
@@ -65,7 +87,8 @@ function Sync-OERStructureRoleAssignment {
 
     Scope-wide prune pass (only when -ReconcileScope is set):
     After reconciling this item the handler resolves the principal and role of every sibling in
-    $DeclaredAtScope into a declared '<principal object id>|<role definition GUID>' key set, then
+    $DeclaredAtScope (the principal of a sibling that declares principalStatus is taken as written, as
+    in step 1, with no lookup) into a declared '<principal object id>|<role definition GUID>' key set, then
     iterates $Current and compares each assignment against it. The key holds the role definition's
     GUID (the last segment of its id), compared without regard to letter case, never the whole path,
     for the reason step 4 gives. Only assignments DEFINED at this scope are
@@ -84,7 +107,8 @@ function Sync-OERStructureRoleAssignment {
     - Otherwise, without -Prune: emit Extra (informational).
 
     A sibling in $DeclaredAtScope whose principal or role lookup gives nothing, or throws, carries no
-    key, so the pass cannot tell which live assignment it names -- its own live counterpart would look
+    key (and so does one that declares principalStatus with a principal that is not an object id), so
+    the pass cannot tell which live assignment it names -- its own live counterpart would look
     undeclared. Such a sibling therefore withholds the prune for the WHOLE scope: every undeclared
     candidate at this scope is reported Skipped, with a Detail that starts
     "prune withheld: declared entry '<role> -> <principal> @ <scope>' could not be resolved"
@@ -141,7 +165,9 @@ function Sync-OERStructureRoleAssignment {
     principal (string). The optional property principalType (User, Group, or ServicePrincipal) enables
     type-directed resolution and controls which switch is passed to New-OERRoleAssignment. The optional
     properties condition, conditionVersion and description carry the ABAC condition and free-text
-    description onto a newly created assignment and are compared against an existing one. An explicit
+    description onto a newly created assignment and are compared against an existing one. The optional
+    property principalStatus (Deleted or Unresolved) marks an entry whose principal is an object id the
+    directory did not return: it is never looked up and never created (see principalStatus above). An explicit
     JSON null on any optional property counts as NOT DECLARED -- the live value is left untouched --
     the same rule the offline validator and the other apply diffs apply.
 
@@ -276,6 +302,19 @@ function Sync-OERStructureRoleAssignment {
             ($RoleDefinitionId.TrimEnd('/') -split '/')[-1]
         }
 
+        # A18 (Sprint 11 step 6): the object id of the principal of an entry that declares principalStatus --
+        # the principal as written, when it is an object id (Test-OERGuid decides, and a value that is
+        # not a string is not one), and $null otherwise. Get-OERInventory and Export-OERInventory write
+        # such an entry for a role assignment whose principal the directory did not return, so the id is
+        # taken as written and never looked up: Resolve-OERStructurePrincipal would send a request for a
+        # principal that is not an object id, and the engine sends none for this entry. The entry itself
+        # and the key rows of its siblings both read the id here, so they cannot disagree.
+        function Get-StatusPrincipalId {
+            param([object]$Node)
+            if ($Node.principal -is [string] -and (Test-OERGuid -Value $Node.principal)) { return [string]$Node.principal }
+            $null
+        }
+
         # The key of every entry of the scope's group, in group order, as
         # [PSCustomObject]@{ Position; DocumentIndex; Label; Key }. Key is '<principal object id>|<role
         # definition GUID>', or $null when the principal or the role of that entry gave nothing or its
@@ -299,9 +338,15 @@ function Sync-OERStructureRoleAssignment {
                 $EntryLabel = "$($Entry.role) -> $($Entry.principal) @ $($Entry.scope)"
                 $EntryKey = $null
                 try {
-                    $EntryParams = @{ Reference = $Entry.principal }
-                    if (Test-OERDeclaredProperty -Node $Entry -Name 'principalType') { $EntryParams.Type = $Entry.principalType }
-                    $EntryPrincipalId = Resolve-OERStructurePrincipal @EntryParams
+                    if (Test-OERDeclaredProperty -Node $Entry -Name 'principalStatus') {
+                        # A18: no lookup for a principalStatus entry; one whose principal is not an object
+                        # id carries no key, like any entry whose principal gave nothing.
+                        $EntryPrincipalId = Get-StatusPrincipalId -Node $Entry
+                    } else {
+                        $EntryParams = @{ Reference = $Entry.principal }
+                        if (Test-OERDeclaredProperty -Node $Entry -Name 'principalType') { $EntryParams.Type = $Entry.principalType }
+                        $EntryPrincipalId = Resolve-OERStructurePrincipal @EntryParams
+                    }
                     $EntryRole = Resolve-OERRoleDefinitionId -Role $Entry.role -Scope $Scope
                     if ($EntryPrincipalId -and $EntryRole) {
                         $EntryKey = "$EntryPrincipalId|$(Get-RoleDefinitionGuid -RoleDefinitionId $EntryRole)"
@@ -353,23 +398,40 @@ function Sync-OERStructureRoleAssignment {
         $RawScope = $ResolvedScope
 
         # -- 1. Resolve principal id (for diff) --------------------------------------------
+        # An entry that declares principalStatus (A18, Sprint 11 step 6) names a principal the directory
+        # did not return when the document was exported, by its object id: that id is taken as written,
+        # with no principal lookup at all, and a principal that is not an object id is Failed, still with
+        # no lookup (the validator refuses such a document, so only a caller that skips it gets here).
+        # The root scope guard above stays first, and the role lookup, the duplicate check and the read
+        # at the scope below run as for any entry; step 5 is where the entry is stopped.
+        $HasPrincipalStatus = Test-DeclHas -Node $Item -Name 'principalStatus'
+        $PrincipalStatus = if ($HasPrincipalStatus) { [string]$Item.principalStatus } else { $null }
         $PrincipalObjId = $null
-        $ResolveParams = @{ Reference = $Item.principal }
-        if ($PrincipalType) { $ResolveParams.Type = $PrincipalType }
-        try {
-            $PrincipalObjId = Resolve-OERStructurePrincipal @ResolveParams
-        } catch {
-            Remove-OERErrorRecord -Record $PSItem
-            $Caller.WriteError($PSItem)
-            ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
-                -Detail "could not resolve principal '$($Item.principal)': $($PSItem.Exception.Message)" `
-                -ErrorRecord $PSItem
-            return
-        }
-        if (-not $PrincipalObjId) {
-            ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
-                -Detail "principal '$($Item.principal)' could not be resolved to an object id"
-            return
+        if ($HasPrincipalStatus) {
+            $PrincipalObjId = Get-StatusPrincipalId -Node $Item
+            if (-not $PrincipalObjId) {
+                ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
+                    -Detail "principalStatus '$PrincipalStatus' is declared, but principal '$($Item.principal)' is not an object id, so no principal lookup was made and nothing was written. Name the principal by its object id, or remove principalStatus"
+                return
+            }
+        } else {
+            $ResolveParams = @{ Reference = $Item.principal }
+            if ($PrincipalType) { $ResolveParams.Type = $PrincipalType }
+            try {
+                $PrincipalObjId = Resolve-OERStructurePrincipal @ResolveParams
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $Caller.WriteError($PSItem)
+                ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
+                    -Detail "could not resolve principal '$($Item.principal)': $($PSItem.Exception.Message)" `
+                    -ErrorRecord $PSItem
+                return
+            }
+            if (-not $PrincipalObjId) {
+                ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
+                    -Detail "principal '$($Item.principal)' could not be resolved to an object id"
+                return
+            }
         }
 
         # -- 2. Resolve role full id (for diff) -------------------------------------------
@@ -528,6 +590,16 @@ function Sync-OERStructureRoleAssignment {
                 ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Skipped' `
                     -Detail "no role assignment is defined at '$RawScope': the principal holds this role here through the assignment defined at the ancestor scope '$AncestorScope' ($($Inherited.RoleAssignmentId)). Nothing was written -- editing that assignment would change the ancestor grant, and creating one here would add a grant that survives removal of the ancestor. Declare this entry under scope '$AncestorScope' to manage it"
             }
+        } elseif ($HasPrincipalStatus) {
+            # -- 5a. A principalStatus entry is never created (A18) ------------------------
+            # No assignment exists for this principal and role at or above the scope, and the entry stands
+            # for a principal the directory did not return when the document was exported (Deleted, or
+            # Unresolved): a create would grant a role to an object that is not there. So nothing is
+            # created, with no ShouldProcess call and no New-OERRoleAssignment: a plan and a real run
+            # report the same row. A live assignment, had there been one, was Unchanged or Updated above,
+            # and the prune pass below keeps its key like any declared entry's.
+            ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Skipped' `
+                -Detail "principalStatus '$PrincipalStatus': the principal '$($Item.principal)' could not be looked up when the document was exported, so the apply engine never creates a role assignment for this entry. Nothing was written. Remove the entry, or name a principal that exists and remove principalStatus"
         } else {
             # -- 5. Create (absent) -------------------------------------------------------
             if (-not $Caller.ShouldProcess($RawScope, "Create role assignment '$($Item.role)' for '$($Item.principal)'")) {

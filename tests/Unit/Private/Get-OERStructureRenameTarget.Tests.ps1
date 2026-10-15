@@ -151,6 +151,23 @@ Describe 'Get-OERStructureRenameTarget' {
                 Get-OERStructureRenameTarget -Section 'accessPackages' -Name 'AP-New' -RenameMap $Map | Should -BeNullOrEmpty
             }
         }
+        It 'returns the entry an access package entry without a rename registered, with no previous name (<Outcome>, BL-147)' -ForEach @(
+            @{ Outcome = 'Identified'; Splat = @{ Identified = $true; Id = 'aaaaaaaa-0000-0000-0000-00000000000a' }; Refused = $false; Id = 'aaaaaaaa-0000-0000-0000-00000000000a'; Reason = $null }
+            @{ Outcome = 'Unidentified'; Splat = @{ Unidentified = $true; Reason = 'r' }; Refused = $true; Id = $null; Reason = 'r' }
+        ) {
+            $Entry = InModuleScope $script:moduleName -Parameters @{ Splat = $Splat } {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Main' @Splat -RenameMap $Map
+                Get-OERStructureRenameTarget -Section 'accessPackages' -Name 'ap-MAIN' -RenameMap $Map
+            }
+            $Entry | Should -Not -BeNullOrEmpty
+            $Entry.Name | Should -BeExactly 'AP-Main'
+            $Entry.PreviousName | Should -BeNullOrEmpty
+            $Entry.Refused | Should -Be $Refused
+            if ($Id) { $Entry.Id | Should -BeExactly $Id } else { $Entry.Id | Should -BeNullOrEmpty }
+            if ($Reason) { $Entry.Reason | Should -BeExactly $Reason } else { $Entry.Reason | Should -BeNullOrEmpty }
+            $Entry.ErrorId | Should -BeNullOrEmpty
+        }
     }
 
     Context 'Key format, held against a hand-written key' {

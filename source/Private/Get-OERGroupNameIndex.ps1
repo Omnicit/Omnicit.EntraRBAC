@@ -16,7 +16,8 @@ function Get-OERGroupNameIndex {
       gives them. No request is made.
     - Without -Group, from ONE paged listing of every group's id and display name
       (v1.0/groups?$select=id,displayName&$top=999, every page), which Get-OERInventory makes at most
-      once per invocation.
+      once per invocation, and Export-OERInventory at most once per export (its run context shares
+      the index among the Get-OERInventory calls the export makes, one per Azure scope).
 
     It returns ONE tagged Omnicit.EntraRBAC.GroupNameIndex object and never writes an error record:
     - Read: true when the index was built, false when the listing failed.

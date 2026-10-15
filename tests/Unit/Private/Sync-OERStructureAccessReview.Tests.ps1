@@ -5159,4 +5159,103 @@ Describe 'Sync-OERStructureAccessReview reaches an access package or assignment 
             Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
         }
     }
+
+    # R-8 (BL-147): every accessPackages entry registers its outcome in the map, not only a rename: the id
+    # of the package it found in its catalog or created there, or -- until it has one -- a refusal with a
+    # reason. A review that names such a package by name reaches that id, or is refused; the tenant-wide
+    # name lookup, which can find a package of that name in another catalog, is never made for it. The
+    # entry carries no previous name, so the texts never speak of a rename.
+    # docs/development/rationale.md#review-package-in-the-same-run
+    Context 'an access package entry without a rename (BL-147)' {
+
+        BeforeEach {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewScopeTarget { throw 'unexpected scope target lookup' }
+        }
+
+        It 'refuses the review, reading and writing nothing, when the entry has no id in this run: <Case> (<Mode>)' -ForEach @(
+            foreach ($Mode in @('a real run', 'a plan under -WhatIf')) {
+                @{ Case = 'the entry stopped first'; Mode = $Mode; Reason = "the accessPackages entry did not find or create it; see that entry's rows" }
+                @{ Case = 'the entry would create it'; Mode = $Mode; Reason = 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation' }
+                @{ Case = '-Include leaves the section out'; Mode = $Mode; Reason = 'the accessPackages section is not selected by -Include' }
+            }
+        ) {
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-New'; Unidentified = $true; Reason = $Reason }
+            $Run = Invoke-MpSync -Item (New-MpEntry) -RenameMap $Map -WhatIf:($Mode -ne 'a real run')
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Section | Should -BeExactly 'accessReviews'
+            $Run.Rows[0].Item | Should -BeExactly 'Q3 AP review'
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly ("access package 'AP-New' has no id in this run ($Reason), so the access package this access review " +
+                'reviews cannot be identified; nothing was created, read or written for it')
+            $Run.Rows[0].Detail | Should -Not -BeLike '*rename*'
+            $Run.Rows[0].Error | Should -BeNullOrEmpty
+            @($Run.All).Count | Should -Be 0
+            # Nothing read: not the definition, not the package by its name anywhere, not a reviewer.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewScopeTarget -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERStructurePrincipal -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 0
+        }
+
+        It 'updates the review of the package the entry found, checked by its id with no package lookup (<Mode>)' -ForEach @(
+            @{ Mode = 'a real run'; PlanOnly = $false; Action = 'Updated'; Detail = "updated access review 'Q3 AP review' (durationInDays=21)"; Sets = 1 }
+            @{ Mode = 'a plan under -WhatIf'; PlanOnly = $true; Action = 'Skipped'; Detail = "would update access review 'Q3 AP review' (durationInDays=21)"; Sets = 0 }
+        ) {
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-New'; Identified = $true; Id = $script:MpPkgId }
+            $Run = Invoke-MpSync -Item (New-MpEntry) -RenameMap $Map -WhatIf:$PlanOnly
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly $Action
+            $Run.Rows[0].Detail | Should -BeExactly $Detail
+            @($Run.All).Count | Should -Be 0
+            # The package by the map's id, as written; its policy within that package.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAssignmentPolicyId -Times 1 -Exactly -ParameterFilter {
+                $AccessPackageId -eq 'aaaa1111-0000-0000-0000-000000000021' -and $AssignmentPolicy -eq 'Standard'
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times $Sets -Exactly
+        }
+
+        It 'creates the review on the id of the package the entry found or created' {
+            $script:MpLiveNow = $null
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-New'; Identified = $true; Id = $script:MpPkgId }
+            $Run = Invoke-MpSync -Item (New-MpEntry) -RenameMap $Map
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Created'
+            @($Run.All).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC New-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                $AccessPackage -eq 'aaaa1111-0000-0000-0000-000000000021' -and $AssignmentPolicy -eq 'Standard'
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+        }
+
+        It 'says in the Failed row of the target check that the name was read as the id its entry resolved, with no word of a rename' {
+            $script:MpLiveNow = New-MpLive -AccessPackageId $script:MpOtherPkgId
+            $Map = New-MpMap
+            Register-MpRename -RenameMap $Map -Splat @{ Section = 'accessPackages'; Name = 'AP-New'; Identified = $true; Id = $script:MpPkgId }
+            $Run = Invoke-MpSync -Item (New-MpEntry) -RenameMap $Map
+
+            $Run.Rows.Count | Should -Be 1
+            $Run.Rows[0].Action | Should -BeExactly 'Failed'
+            $Run.Rows[0].Detail | Should -BeExactly ("Access review 'Q3 AP review' in the tenant reviews access package 'aaaa1111-0000-0000-0000-000000000022', not the access " +
+                "package 'aaaa1111-0000-0000-0000-000000000021' this entry declares, so it is not the review this entry declares. Nothing was " +
+                'written. Access review display names are not unique: give the entry or the review in the tenant another display name. ' +
+                "(accessPackage 'AP-New' was read as 'aaaa1111-0000-0000-0000-000000000021', the access package its accessPackages entry resolved in this run)")
+            $Run.Errors.Count | Should -Be 1
+            [string]$Run.Errors[0].FullyQualifiedErrorId | Should -BeExactly 'AccessReviewScopeMismatch,Invoke-SyncArViaCaller'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERAccessReviewDefinition -Times 0
+        }
+    }
 }

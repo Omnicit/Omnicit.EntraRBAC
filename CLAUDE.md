@@ -982,9 +982,10 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Why: docs/development/rationale.md#reviewer-scope-query`
 - **`Test-OERGuid` is the single GUID predicate.** Never re-implement the canonical GUID regex
   inline. The wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup` is a deliberate
-  exception -- do not migrate those two -- and so are the two places that read a group's
+  exception -- do not migrate those two -- and so are the places that read a group's
   `administrativeUnit` the way `New-OERGroup` does: the created-membership match in
-  `Sync-OERStructureAdministrativeUnit` and the unit placement check in `Test-OERStructureSchema`.
+  `Sync-OERStructureAdministrativeUnit`, and in `Test-OERStructureSchema` the unit placement check
+  (Rule 12) and the restricted-unit check (Rule 16), which share one local helper.
   `Why: docs/development/rationale.md#guid-predicate`
 - **`Test-OERAzureRootScope` is the single owner of whether an Azure role assignment scope addresses
   the root scope `/` (any spelling the ARM transport sends there)**, and
@@ -1009,6 +1010,17 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Why: docs/development/rationale.md#root-scope-is-not-in-the-document`,
   `docs/development/rationale.md#access-review-target`,
   `docs/development/rationale.md#roster-identity-and-shared-names`
+- **`Resolve-OERStructureRename` is the single owner of the keys of the run's rename map, and every
+  `accessPackages` entry registers its package there, not only a rename** (BL-147): an entry that
+  renames nothing through `-Identified -Id` once it has found the package in its catalog or created it
+  there, and through `-Unidentified -Reason` (refused, no ErrorId) until then; such an entry carries
+  no previous name, which is how a reader tells it from a rename and words its rows. So
+  `Sync-OERStructureAccessReview` reads a declared package's name only through the map and never
+  looks it up in the whole tenant; with `-Include` leaving AccessPackages out every such review is
+  refused. Validator Rule 15 refuses a review that names by display name a package two or more
+  `accessPackages` entries declare, with or without a rename. Never register a map key outside the
+  owner, and never let a review resolve a declared package's name past a refusal.
+  `Why: docs/development/rationale.md#review-package-in-the-same-run`
 - **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared, and
   `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax** -- never re-implement
   either inline; the first is pure, since the offline validator uses it. A document scope that
@@ -1019,8 +1031,18 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   excepted, as `ConvertTo-OERScopeSplat` reads them). A space between other characters of a segment
   is accepted, since an Azure resource name can hold one: never widen the white space rule back to
   every space, which refused a whole export. Never drop the rule in favour of the trim, which would
-  make such a scope prune.
-  `Why: docs/development/rationale.md#role-assignment-key`
+  make such a scope prune. **`Get-OERScopeSpellingProblem` is the single owner of those two spelling
+  rules** -- their checks, their order and their message texts, for the `roleAssignments` and
+  `roleManagementPolicies` scopes: the validator's `Add-ScopeSlashFinding` and
+  `Add-ScopeSegmentFinding` add one Error per problem it returns and decide no spelling, and
+  `Get-OERInventory` leaves a role assignment at a scope with any problem out of the document (one
+  warning and one `Omnicit.EntraRBAC.UndeclarableScope` record per call), which the engine never
+  prunes. Never decide a scope spelling anywhere else. The owner's help is the reference list of the
+  rules and names every text that must follow a new one: README.md, the about topic, the two scope
+  descriptions in the schema JSON, this bullet, and `Get-OERInventory`'s words for each rule in the
+  Reason. Every other help, the bundle README and the prompt point at a list or give an example.
+  `Why: docs/development/rationale.md#role-assignment-key`,
+  `docs/development/rationale.md#undeclarable-scope`
 - **`Resolve-OERPimActivationConflict` is the single owner of the MFA / authentication-context
   mutual-exclusion rule.** An enabled authentication context and `MultiFactorAuthentication` on
   activation cannot both be in force. All call sites -- the Graph group write path, the apply
@@ -1161,7 +1183,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Get-OERGroupNameIndex` is the single owner of which groups in the tenant carry a display
   name**: from the groups given (`-Group`, the export's roster) with no request, or from ONE paged
   listing `v1.0/groups?$select=id,displayName&$top=999`, which `Get-OERInventory` reads at most once
-  per invocation. It never throws and never writes an error record: it returns `Read`, `IdsByName`
+  per invocation, and `Export-OERInventory` at most once per export through its run context (below).
+  It never throws and never writes an error record: it returns `Read`, `IdsByName`
   (a name, compared without regard to letter case, to the lower-cased ids that carry it; `$null` when
   the listing failed, never an empty index) and `Message`. **`Get-OERGroupReference` is the single
   owner of how the export names a group it references as the principal of a role assignment or a
@@ -1171,6 +1194,39 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   reviewer, a catalog resource or a resource role is outside it and keeps its display name (R-6).
   Never re-implement either inline.
   `Why: docs/development/rationale.md#roster-identity-and-shared-names`
+- **`Export-OERInventory` is the only command that sets and clears the export run context
+  (`$script:_OERInventoryRunContext`)**, the one object its `Get-OERInventory` calls share (the group
+  name index, the deleted items answers, the role assignment principals that could not be read);
+  `Get-OERInventory` fills its members, `Get-OERDeletedPrincipalStatus` through the `PrincipalStatus`
+  dictionary it is handed. Export creates it in ONE place, directly before its Entra ID
+  `Get-OERInventory` call, with `Owner` set to its own `$MyInvocation`, and sets it back to `$null`
+  with a plain statement directly after the Azure walk -- never in a `finally`, which turns a
+  statement-terminating error into a skip of the rest of the walk. `Get-OERInventory` reads it once
+  per invocation and uses it only while its `Owner` is the `InvocationInfo` of a frame of the current
+  call stack (`Microsoft.PowerShell.Utility\Get-PSCallStack`, compared by reference), and behaves
+  standalone otherwise, so a context a stopped export left behind is ignored. Never read or write it
+  anywhere else, never replace it by a public parameter (A9), and add a member to it rather than a
+  second module variable.
+  `Why: docs/development/rationale.md#export-run-context`
+- **`Get-OERDeletedPrincipalStatus` is the single read of `directory/deletedItems`, and
+  `Resolve-OERPrincipalName -Detailed` the lookup that tells a principal the directory returned from
+  one it did not return and from one whose lookup failed** (BL-133, A18). Only the `roleAssignments`
+  section of `Get-OERInventory` uses them: a principal not returned is written by its object id with
+  `principalStatus` `Deleted` or `Unresolved`, and a failed lookup or a failed deleted items read is
+  never a fact -- it is named unread (`.../principal`, `.../principalStatus`; the second still written
+  `Unresolved`, never as a principal that exists). The read never throws, never writes an error
+  record, and caches only an answer that was read. `Sync-OERStructureRoleAssignment` looks no principal
+  up for an entry that declares `principalStatus` and never creates its assignment (`Skipped`, no
+  `ShouldProcess`). The other sections keep `Resolve-OERPrincipalName`'s default map, which is
+  unchanged. Never read `directory/deletedItems` anywhere else.
+  `Why: docs/development/rationale.md#unresolved-principals`
+- **A group that uses PIM for Groups in a restricted management administrative unit is a Warning,
+  never an Error or a refusal**: `Export-OERInventory` warns before its `ShouldProcess` (with `Groups`
+  and `AdministrativeUnits` included, from what it read, with no request) and lists the groups in the
+  bundle README, and validator Rule 16 warns on a document that places such a group in a restricted
+  unit it declares. State the limit as Microsoft Learn documents it, as fact, and what Microsoft Graph
+  answers to the engine's PIM writes for such a group as unmeasured until a live run measures it.
+  `Why: docs/development/rationale.md#restricted-unit-pim`
 - **`Test-OERRolePolicyModified` is the single owner of whether an Azure role management policy has
   been changed** -- the list row's `policyAssignmentProperties.policy` (carried as `PolicyMetadata`
   by `Get-OERRoleManagementPolicyForScope`, with no request of its own) with a non-empty
