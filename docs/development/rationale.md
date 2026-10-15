@@ -1357,11 +1357,12 @@ definition is the one the list expanded, or else the listed definition it names;
 neither makes the subscription unread. Assignments are deduplicated on their id (a blank id on scope
 and definition id), a subscription named only through a scope below it keeps the delegations at
 the subscription and at the named groups, and a subscription's rows join the result only when every
-read of it succeeded. Then each distinct role GUID is read once, at the subscription of the first row
-that carries it, and the rows are sorted by scope, managing tenant, offer and assignment id. A failed subscription names each of
-its scopes in `Unread` as `lighthouseDelegations at <scope>`, adds one cause and writes one warning;
-a failed role read, other than a role that does not exist, names `lighthouseDelegations role <guid>`
-the same way. Both catches scrub the error record first, and the reader writes no error record.
+read of it succeeded. Then each distinct role GUID is read once, at the subscription of the first
+row that carries it, and the rows are sorted by scope, managing tenant, offer and assignment id. A
+failed subscription names each of its scopes in `Unread` as `lighthouseDelegations at <scope>`, adds
+one cause and writes one warning; a failed role read, other than a role that does not exist, names
+`lighthouseDelegations role <guid>` the same way. Both catches scrub the error record first, and the
+reader writes no error record.
 
 **R-1 (the api-version).** `2022-10-01` for both Microsoft.ManagedServices lists, read at every
 subscription the walk visits: the latest GA version Learn documents for List, and measured `200` on
@@ -1422,6 +1423,29 @@ listed apart. Cost if wrong: one more mapping line.
 (see the equivalent mutants below): they make the null case explicit at no cost. Cost if wrong: two
 lines come out.
 
+**R-12 (the direction of a delegation).** The whole-branch review found that a delegation can run
+the other way. Microsoft Learn ("Cross-tenant management experiences") states that the
+`HomeTenantId` and `ManagedByTenantIds` of each subscription Azure PowerShell returns "help you
+identify whether a returned subscription belongs to a managed tenant or to your managing tenant",
+and that the REST API's Subscriptions - Get and Subscriptions - List include `ManagedByTenant`: in a
+managing (service provider) tenant the subscription list also returns the customer subscriptions
+delegated to it (inferred from Learn, not measured here). The export's walk then visits them, and
+the Lighthouse read can return a row whose `managedByTenantId` is THIS tenant: access this tenant
+holds over another tenant's subscription, while every text described each row as another tenant's
+access here. The ruling fixes it in the texts and the bundle README, not by filtering subscriptions
+by tenant: the walk's scopes stay what they are for every Azure file, so the Lighthouse read covers
+what the role assignment read covers, and a row's direction is decidable from its
+`managedByTenantId` against the `tenantId` of `inventory.json` (the Graph token's tenant, which
+`Export-OERInventory` already holds as `$DocumentTenantId`). The warning names no direction;
+`Get-OERInventoryReadme -TenantId` (optional; `Export-OERInventory` passes `$DocumentTenantId`)
+marks a bullet whose `managedByTenantId` equals it, letter case ignored and never when the tenant is
+blank, as access this tenant holds over another tenant's subscription or resource group; and the
+export help, the prompt, README.md, the about topic and `docs/inventory-to-llm/README.md` say so in
+one sentence each. Cost if wrong (the architect prefers this tenant's own subscriptions only):
+carrying each subscription's tenant through the scope tree and skipping the foreign ones is a later
+step. The reads from a managing tenant are unmeasured (known limit (g)), so the sprint's C-check
+records it.
+
 **Known limits.**
 
 - (a) A delegation at a resource group whose definition an assignment of the subscription list also
@@ -1439,11 +1463,21 @@ lines come out.
 - (d) A `-Scope` at a management group reads no delegation and names nothing (R-9): `-Scope` does
   not walk the subscriptions below it, and `-ManagementGroup` does.
 - (e) `Export-OERInventory` recognises a failed subscription listing by the literal
-  `<subscriptions: the listing failed>`, which `Resolve-OERInventoryScopeTree` writes; no test holds
-  the two literals together.
-- (f) The bundle README's Files bullet says the delegations are at the subscriptions in
-  `scopeHierarchy.json`, and a `-Scope` run writes no subscription into that file, so the bullet is
-  loose there, as the `azurePimEligibility.json` bullet beside it already was.
+  `<subscriptions: the listing failed>`, which `Resolve-OERInventoryScopeTree` writes. Closed in the
+  final fix wave: the export test "recognises the subscription listing failure by the literal the
+  REAL scope tree writes" runs the real tree with the subscription listing failing, so a change to
+  the literal on either side turns it red (mutation proofs below).
+- (f) The bundle README's Files bullet said the delegations are at the subscriptions in
+  `scopeHierarchy.json`, which a `-Scope` run leaves without a subscription. Since the final fix
+  wave it says "at the subscriptions the Azure walk visits", and the "None." text adds that a
+  `-Scope` at a management group or the root scope visits no subscription, so it reads no
+  delegation. The `azurePimEligibility.json` bullet beside it still names `scopeHierarchy.json` and
+  stays loose there.
+- (g) The reads from a managing tenant against a delegated customer subscription are not measured:
+  no tenant here manages another (R-12). A refused read there names the subscription unread, as the
+  role assignment walk already skips such a scope. If the read answers, it may also return that
+  customer's delegations to a third managing tenant; such a row carries no mark, although it is
+  neither access over this tenant nor access this tenant holds. Not measured either.
 
 **Mutation proofs.** Each mutation was applied to the source, the module built, the covering tests
 run and seen red, and the file restored, with `git status` clean after each; "N red" is the number of
@@ -1552,7 +1586,9 @@ also turned export tests red):
   authorization, and a blank role id gives an empty last segment that `Test-OERGuid` refuses (first
   loop) or that is no key of the role names (second loop).
 - The converter's `[string[]]` cast of `delegatedRoleDefinitionIds`: an empty `object[]` serializes
-  as `[]` too.
+  as `[]` too, and a one-element one stays an array. The Task 1 reports disagreed on whether this
+  mutant was run, so the final fix wave ran it: the cast removed, the module built, the converter
+  and reader suites green (49 passed, 0 failed), the file restored.
 - `Export-OERInventory`'s `if ($null -ne $LighthouseRead)` (R-11): the module sets no StrictMode, so
   `$null.Unread` is `$null`, and `@($null)` is one null element, which the blank check right below
   drops; the path of a reader that returned nothing is behaviour-tested.

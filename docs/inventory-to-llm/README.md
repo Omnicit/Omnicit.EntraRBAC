@@ -39,7 +39,8 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
   directory did not return", "Role assignments at a scope no document can declare", "Groups using
   PIM for Groups in a restricted management unit" and "Azure Lighthouse delegations (access from
   another tenant)" the findings described below, and holds the next steps. These lists are written
-  into this file only, never into `inventory.json` or any other JSON file.
+  into this file only, never into `inventory.json` or any other JSON file, except the Azure
+  Lighthouse delegations, which are the rows of `lighthouseDelegations.json`.
 
 By default the Entra sections -- including the Microsoft Entra directory role sections,
 `DirectoryRoleManagementPolicies` and `DirectoryRoleAssignments` -- plus tenant-wide
@@ -328,7 +329,10 @@ row per delegation with its `scope`, the managing tenant (`managedByTenantId`,
 `eligibleAuthorizations` (the just-in-time ones), each with the principal and the role. When it
 read any, it writes one warning with the count, and the bundle's `README.md` lists each delegation
 under "Azure Lighthouse delegations (access from another tenant)", by scope, managing tenant, offer
-and roles, never by principal.
+and roles, never by principal. When this tenant is itself a managing tenant, the walk also reaches
+the subscriptions other tenants delegated to it: a row whose `managedByTenantId` is the `tenantId`
+of `inventory.json` is access this tenant holds over another tenant's subscription or resource
+group, not the reverse, and the README marks its bullet so.
 
 - **A finding, not an apply section.** The file is read-only context: no apply cmdlet reads it, and
   `Invoke-OERStructure` never creates or removes a delegation. The prompt tells the model never to

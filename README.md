@@ -1002,8 +1002,11 @@ hold, permanently or as eligible (just-in-time) authorizations. The file is read
 `azurePimEligibility.json`: written exactly when that file is, always a JSON array (`[]` when none
 was read), and never part of the apply document, so `Invoke-OERStructure` never creates or removes
 a delegation. The export warns once with the count, and its `README.md` lists each delegation under
-"Azure Lighthouse delegations (access from another tenant)", as a finding to review. A subscription
-whose delegations could not be read has no row in the file and is named in `IncompleteReads`
+"Azure Lighthouse delegations (access from another tenant)", as a finding to review. When this
+tenant is itself a managing tenant, the walk also reaches the subscriptions other tenants delegated
+to it, and a row whose `managedByTenantId` is the `tenantId` of `inventory.json` is access this
+tenant holds over another tenant, which that README marks. A subscription whose delegations could
+not be read has no row in the file and is named in `IncompleteReads`
 (`lighthouseDelegations at <scope>`) and in `InventoryPartial`, and so is a role whose name could
 not be read (`lighthouseDelegations role <id>`, its `roleName` written `null`). The read costs two
 paged lists per subscription and one read per distinct role, plus a listing of the subscription's

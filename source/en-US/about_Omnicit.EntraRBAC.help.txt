@@ -229,14 +229,17 @@ AZURE LIGHTHOUSE DELEGATIONS IN AN EXPORT
     Invoke-OERStructure never creates or removes a delegation. The export
     warns once with the count, and its README lists each delegation under
     "Azure Lighthouse delegations (access from another tenant)", as a finding
-    to review. A subscription whose delegations could not be read has no row
-    in the file and is named in IncompleteReads as
-    'lighthouseDelegations at <scope>' and in InventoryPartial, and so is a
-    role whose name could not be read, as 'lighthouseDelegations role <id>',
-    its roleName written null. The read costs two paged lists per
-    subscription and one read per distinct role, plus a listing of the
-    subscription's resource groups and one read per group only when a
-    delegation may sit at one; Reader covers it.
+    to review. When this tenant is itself a managing tenant, the walk also
+    reaches the subscriptions other tenants delegated to it, and a row whose
+    managedByTenantId is the tenantId of inventory.json is access this tenant
+    holds over another tenant, which that README marks. A subscription whose
+    delegations could not be read has no row in the file and is named in
+    IncompleteReads as 'lighthouseDelegations at <scope>' and in
+    InventoryPartial, and so is a role whose name could not be read, as
+    'lighthouseDelegations role <id>', its roleName written null. The read
+    costs two paged lists per subscription and one read per distinct role,
+    plus a listing of the subscription's resource groups and one read per
+    group only when a delegation may sit at one; Reader covers it.
 
 ROLE ASSIGNMENTS AT THE ROOT SCOPE
 
