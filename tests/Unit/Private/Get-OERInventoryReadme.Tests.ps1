@@ -1371,6 +1371,23 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
         $Bullets[1] | Should -BeExactly '- `/subscriptions/22222222-2222-2222-2222-222222222222` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Managed Services`: 0 authorization(s) and 0 eligible authorization(s), roles none'
     }
 
+    It 'counts only the authorizations a row holds: a null entry in a list, or a list the row does not carry, is none' {
+        $Row = [PSCustomObject]@{
+            scope                    = '/subscriptions/11111111-1111-1111-1111-111111111111'
+            managedByTenantId        = '33333333-3333-3333-3333-333333333333'
+            managedByTenantName      = 'Contoso Corp.'
+            offerName                = 'Managed Services'
+            authorizations           = @($null, (New-LhAuth -RoleName 'Contributor'))
+        }
+        $Bullet = @(Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows @($Row))))[0]
+        $Bullet | Should -BeExactly '- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Managed Services`: 1 authorization(s) and 0 eligible authorization(s), roles `Contributor`'
+    }
+
+    It 'writes no empty code span for an authorization whose role has neither a name nor a definition id' {
+        $Row = New-LhRow -Authorizations @((New-LhAuth -RoleName '' -RoleId ''), (New-LhAuth -RoleName 'Contributor')) -Eligible @((New-LhAuth -RoleName $null -RoleId ' '))
+        $Bullet = @(Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows @($Row))))[0]
+        $Bullet | Should -BeExactly '- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Managed Services`: 2 authorization(s) and 1 eligible authorization(s), roles `Contributor`'
+    }
     It 'writes "not given" for a managing tenant name, a tenant id and an offer the row does not carry' {
         $Row = New-LhRow -TenantName $null -TenantId '' -Offer ' ' -Authorizations @((New-LhAuth -RoleName 'Contributor'))
         $Bullets = Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows @($Row)))

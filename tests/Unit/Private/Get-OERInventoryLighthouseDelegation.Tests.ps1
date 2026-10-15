@@ -331,6 +331,120 @@ Describe 'Get-OERInventoryLighthouseDelegation' {
         }
     }
 
+    Context 'list answers with a null entry, no value or no body' {
+        # ARM answers a list as { "value": [...] }, and the transport hands back $null for an empty body. A
+        # null entry or a missing list is nothing to read, never a failed read: without the null filters it
+        # would reach the converter as an assignment with no definition and make the subscription unread.
+        It 'reads a subscription whose assignment list holds a null entry as if the entry were not there' {
+            $SubPath = "/subscriptions/$($script:SubA)"
+            $Definition = New-LhDefinition -Sub $script:SubA -Guid '55555555-5555-5555-5555-555555555555'
+            $Assignment = New-LhAssignment -At $SubPath -Guid '66666666-6666-6666-6666-666666666666' -Definition $Definition -Expand
+            $script:Replies["$SubPath$($script:AssignmentQuery)"] = New-LhList @($null, $Assignment)
+            $script:Replies["$SubPath$($script:DefinitionQuery)"] = New-LhList @($Definition)
+            $script:Replies["$SubPath/providers/Microsoft.Authorization/roleDefinitions/$($script:RoleContributor)?api-version=2022-04-01"] = [PSCustomObject]@{ properties = [PSCustomObject]@{ roleName = 'Contributor' } }
+
+            $Result = InModuleScope $script:moduleName -Parameters @{ Sub = $script:SubA } {
+                Get-OERInventoryLighthouseDelegation -Scope "/subscriptions/$Sub" -WarningAction SilentlyContinue
+            }
+
+            @($Result.Delegations).Count | Should -Be 1
+            @($Result.Unread).Count | Should -Be 0
+        }
+
+        It 'reads a subscription whose two lists answer with no body as a subscription with nothing delegated' {
+            $SubPath = "/subscriptions/$($script:SubA)"
+            $script:Replies["$SubPath$($script:AssignmentQuery)"] = $null
+            $script:Replies["$SubPath$($script:DefinitionQuery)"] = $null
+
+            $Result = InModuleScope $script:moduleName -Parameters @{ Sub = $script:SubA } {
+                Get-OERInventoryLighthouseDelegation -Scope "/subscriptions/$Sub" -WarningAction SilentlyContinue
+            }
+
+            @($Result.Delegations).Count | Should -Be 0
+            @($Result.Unread).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0 -ParameterFilter { $Path -like '*/resourcegroups?api-version=2025-04-01' }
+        }
+
+        It 'skips a null resource group and a null assignment, and a group list with no body, in the resource group fallback' {
+            $SubPath = "/subscriptions/$($script:SubA)"
+            $GroupOne = "$SubPath/resourceGroups/rg-one"
+            $GroupTwo = "$SubPath/resourceGroups/rg-two"
+            $Definition = New-LhDefinition -Sub $script:SubA -Guid '55555555-5555-5555-5555-555555555555'
+            $Assignment = New-LhAssignment -At $GroupOne -Guid '66666666-6666-6666-6666-666666666666' -Definition $Definition -Expand
+            $script:Replies["$SubPath$($script:AssignmentQuery)"] = New-LhList
+            $script:Replies["$SubPath$($script:DefinitionQuery)"] = New-LhList @($Definition)
+            $script:Replies["$SubPath/resourcegroups?api-version=2025-04-01"] = New-LhList @($null, [PSCustomObject]@{ id = $GroupOne }, [PSCustomObject]@{ id = $GroupTwo })
+            $script:Replies["$GroupOne$($script:AssignmentQuery)"] = New-LhList @($null, $Assignment)
+            $script:Replies["$GroupTwo$($script:AssignmentQuery)"] = $null
+            $script:Replies["$SubPath/providers/Microsoft.Authorization/roleDefinitions/$($script:RoleContributor)?api-version=2022-04-01"] = [PSCustomObject]@{ properties = [PSCustomObject]@{ roleName = 'Contributor' } }
+
+            $Result = InModuleScope $script:moduleName -Parameters @{ Sub = $script:SubA } {
+                Get-OERInventoryLighthouseDelegation -Scope "/subscriptions/$Sub" -WarningAction SilentlyContinue
+            }
+
+            @($Result.Delegations).Count | Should -Be 1
+            $Result.Delegations[0].resourceGroup | Should -BeExactly 'rg-one'
+            @($Result.Unread).Count | Should -Be 0
+        }
+
+        It 'reads a named resource group whose list answers with <Shape> as <Rows> row(s)' -ForEach @(
+            @{ Shape = 'a null entry beside an assignment'; Rows = 1 }
+            @{ Shape = 'no body'; Rows = 0 }
+        ) {
+            $SubPath = "/subscriptions/$($script:SubA)"
+            $GroupA = "$SubPath/resourceGroups/rgA"
+            $Definition = New-LhDefinition -Sub $script:SubA -Guid '55555555-5555-5555-5555-555555555555'
+            $Assignment = New-LhAssignment -At $GroupA -Guid '66666666-6666-6666-6666-666666666666' -Definition $Definition -Expand
+            $script:Replies["$SubPath$($script:AssignmentQuery)"] = New-LhList
+            $script:Replies["$SubPath$($script:DefinitionQuery)"] = New-LhList @($Definition)
+            $script:Replies["$GroupA$($script:AssignmentQuery)"] = if ($Rows -gt 0) { New-LhList @($null, $Assignment) } else { $null }
+            $script:Replies["$SubPath/providers/Microsoft.Authorization/roleDefinitions/$($script:RoleContributor)?api-version=2022-04-01"] = [PSCustomObject]@{ properties = [PSCustomObject]@{ roleName = 'Contributor' } }
+
+            $Result = InModuleScope $script:moduleName -Parameters @{ Sub = $script:SubA } {
+                Get-OERInventoryLighthouseDelegation -Scope "/subscriptions/$Sub/resourceGroups/rgA" -WarningAction SilentlyContinue
+            }
+
+            @($Result.Delegations).Count | Should -Be $Rows
+            @($Result.Unread).Count | Should -Be 0
+        }
+
+        It 'does not take a definition listed without an id for an unreferenced one, and so lists no resource group' {
+            $SubPath = "/subscriptions/$($script:SubA)"
+            $Definition = New-LhDefinition -Sub $script:SubA -Guid '55555555-5555-5555-5555-555555555555'
+            $NoId = [PSCustomObject]@{ properties = [PSCustomObject]@{ registrationDefinitionName = 'No id'; authorizations = @(); eligibleAuthorizations = @() } }
+            $Assignment = New-LhAssignment -At $SubPath -Guid '66666666-6666-6666-6666-666666666666' -Definition $Definition -Expand
+            $script:Replies["$SubPath$($script:AssignmentQuery)"] = New-LhList @($Assignment)
+            $script:Replies["$SubPath$($script:DefinitionQuery)"] = New-LhList @($Definition, $NoId)
+            $script:Replies["$SubPath/providers/Microsoft.Authorization/roleDefinitions/$($script:RoleContributor)?api-version=2022-04-01"] = [PSCustomObject]@{ properties = [PSCustomObject]@{ roleName = 'Contributor' } }
+
+            $Result = InModuleScope $script:moduleName -Parameters @{ Sub = $script:SubA } {
+                Get-OERInventoryLighthouseDelegation -Scope "/subscriptions/$Sub" -WarningAction SilentlyContinue
+            }
+
+            @($Result.Delegations).Count | Should -Be 1
+            @($Result.Unread).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0 -ParameterFilter { $Path -like '*/resourcegroups?api-version=2025-04-01' }
+        }
+
+        It 'names a resource group written in another letter case by a second scope once, and reads it once' {
+            $SubPath = "/subscriptions/$($script:SubA)"
+            $GroupA = "$SubPath/resourceGroups/rgA"
+            $Definition = New-LhDefinition -Sub $script:SubA -Guid '55555555-5555-5555-5555-555555555555'
+            $Assignment = New-LhAssignment -At $GroupA -Guid '66666666-6666-6666-6666-666666666666' -Definition $Definition -Expand
+            $script:Replies["$SubPath$($script:AssignmentQuery)"] = New-LhList
+            $script:Replies["$SubPath$($script:DefinitionQuery)"] = New-LhList @($Definition)
+            $script:Replies["$GroupA$($script:AssignmentQuery)"] = New-LhList @($Assignment)
+            $script:Replies["$SubPath/providers/Microsoft.Authorization/roleDefinitions/$($script:RoleContributor)?api-version=2022-04-01"] = [PSCustomObject]@{ properties = [PSCustomObject]@{ roleName = 'Contributor' } }
+
+            $Result = InModuleScope $script:moduleName -Parameters @{ Sub = $script:SubA } {
+                Get-OERInventoryLighthouseDelegation -Scope "/subscriptions/$Sub/resourceGroups/rgA", "/subscriptions/$Sub/resourceGroups/RGA/providers/Microsoft.Web/sites/app" -WarningAction SilentlyContinue
+            }
+
+            @($Result.Delegations).Count | Should -Be 1
+            @($Result.Unread).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -like '*/resourceGroups/rga/providers/Microsoft.ManagedServices/registrationAssignments?*' }
+        }
+    }
     Context 'a failed read' {
         It 'names the subscription unread, adds one cause and one warning, and still reads the other subscription' {
             $PathA = "/subscriptions/$($script:SubA)"
@@ -511,6 +625,18 @@ Describe 'Get-OERInventoryLighthouseDelegation' {
             "$($Result.Warnings[0])" | Should -BeExactly "Could not read the name of the role '$($script:RoleContributor)' for lighthouseDelegations.json, so roleName is null where it appears: Forbidden: denied"
         }
 
+        It 'leaves roleName null, not an empty string, when the role answers with a blank or a missing name' {
+            $script:Replies["$($script:SubPath)/providers/Microsoft.Authorization/roleDefinitions/$($script:RoleContributor)?api-version=2022-04-01"] = [PSCustomObject]@{ properties = [PSCustomObject]@{ roleName = '  ' } }
+            $script:Replies["$($script:SubPath)/providers/Microsoft.Authorization/roleDefinitions/$($script:RoleAccessAdmin)?api-version=2022-04-01"] = [PSCustomObject]@{ properties = [PSCustomObject]@{ } }
+
+            $Result = InModuleScope $script:moduleName -Parameters @{ Sub = $script:SubA } {
+                Get-OERInventoryLighthouseDelegation -Scope "/subscriptions/$Sub" -WarningAction SilentlyContinue
+            }
+
+            $Result.Delegations[0].authorizations[0].roleName | Should -BeNull
+            $Result.Delegations[0].authorizations[1].roleName | Should -BeNull
+            @($Result.Unread).Count | Should -Be 0
+        }
         It 'scrubs the error record of a failed role read before it reads it' {
             $script:Replies["$($script:SubPath)/providers/Microsoft.Authorization/roleDefinitions/$($script:RoleContributor)?api-version=2022-04-01"] = New-LhArmError -Code 'Forbidden' -Message 'denied'
             $script:Replies["$($script:SubPath)/providers/Microsoft.Authorization/roleDefinitions/$($script:RoleAccessAdmin)?api-version=2022-04-01"] = New-LhArmError -Code 'RoleDefinitionDoesNotExist' -Message 'gone'
@@ -728,6 +854,20 @@ Describe 'Get-OERInventoryLighthouseDelegation' {
                 '/subscriptions/A/resourceGroups/rg1|33|Alpha|01'
                 '/subscriptions/B|33|Beta|06'
             )
+        }
+    }
+
+    Context 'its help' {
+        It 'states the measured limits of the reads and that the read has no switch' {
+            $Text = InModuleScope $script:moduleName {
+                ((Get-Help Get-OERInventoryLighthouseDelegation -Full).Description | ForEach-Object { $_.Text }) -join ' '
+            }
+            $Collapsed = $Text -replace '\s+', ' '
+            $Collapsed | Should -Match ([regex]::Escape('answers InvalidRegistrationDefinitionUri'))
+            $Collapsed | Should -Match ([regex]::Escape('which is why the definitions are read only at the subscription'))
+            $Collapsed | Should -Match ([regex]::Escape('a resource group that does not exist answers 200 with an empty list'))
+            $Collapsed | Should -Match ([regex]::Escape('The read is always on when an Azure section is included'))
+            $Collapsed | Should -Match ([regex]::Escape('rationale.md#lighthouse-delegations'))
         }
     }
 }

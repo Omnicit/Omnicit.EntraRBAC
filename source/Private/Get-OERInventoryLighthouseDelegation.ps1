@@ -29,6 +29,17 @@ function Get-OERInventoryLighthouseDelegation {
     below it reads the assignment list of each resource group it names, and keeps the delegations at the
     subscription and at those resource groups.
 
+    The registration definitions are read at the subscription only: a definition list read at a
+    resource group is refused (measured: it answers InvalidRegistrationDefinitionUri, "Registration
+    definitions are allowed at subscription scope only"), which is why the definitions are read only
+    at the subscription. An assignment list read at a resource group that does not exist answers 200
+    with an empty list (measured), so a named resource group is read without a check that it exists,
+    and an absent one is a group with nothing delegated, not a failed read.
+
+    The read is always on when an Azure section is included: Export-OERInventory has no switch for it
+    and no -Include value, since a switch would hide the access another tenant holds by default
+    (Sprint 11 step 6b).
+
     A subscription is read whole or not at all: a failed read of any of its lists, or an assignment
     whose definition is neither expanded nor listed, leaves it with no row. The failure is never
     written as an empty list. It is returned in Unread (one entry per scope of the subscription, as
