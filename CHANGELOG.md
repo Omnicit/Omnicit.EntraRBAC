@@ -46,7 +46,7 @@ lists each name and count. `Invoke-OERStructure` fails, writing nothing, when a 
 create exists in another catalog.
 
 Inventories write `principalStatus` `Deleted`/`Unresolved` for a role assignment whose principal
-Entra ID no longer returns (apply never creates it), report a failed lookup as partial and omit one at
+Entra ID does not return (apply never creates it), report a failed lookup as partial and omit one at
 an undeclarable scope. Exports flag PIM groups in restricted units. Reviews reach a declared package
 via its entry; `-Include` without `AccessPackages` fails them (or use the id).
 
