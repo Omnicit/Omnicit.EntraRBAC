@@ -5049,7 +5049,7 @@ $Bundle = Export-OERInventory -OutputPath '#ROOT#' -Include AdministrativeUnits,
     }
 }
 
-Describe 'Export-OERInventory (role assignments whose principal could not be looked up, Sprint 11 step 6, BL-133)' {
+Describe 'Export-OERInventory (role assignments whose principal the directory did not return, Sprint 11 step 6, BL-133)' {
     # BL-133 (A18). A role assignment whose principal Microsoft Entra ID does not return stays in
     # inventory.json and roleAssignments.json, written by the principal's object id with principalStatus.
     # Every per-scope Get-OERInventory call names such rows in a warning and an information record tagged
@@ -5068,7 +5068,7 @@ Describe 'Export-OERInventory (role assignments whose principal could not be loo
                 if ($Notice) { Microsoft.PowerShell.Utility\Write-Information -MessageData $Notice -Tags 'Omnicit.EntraRBAC.UnresolvedPrincipal' }
             } $Warning $Notice
         }
-        $script:UpxHeading = '## Role assignments whose principal could not be looked up'
+        $script:UpxHeading = '## Role assignments whose principal the directory did not return'
         $script:UpxMg = '/providers/Microsoft.Management/managementGroups/plat'
         $script:UpxS1 = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
         $script:UpxGone = 'dddd9999-0000-0000-0000-000000000001'
@@ -5077,10 +5077,11 @@ Describe 'Export-OERInventory (role assignments whose principal could not be loo
         $script:UpxIdA = "$($script:UpxMg)/providers/Microsoft.Authorization/roleAssignments/cccc9999-0000-0000-0000-000000000001"
         function script:Get-UpxExportWarning {
             param([int]$Count)
-            "Export-OERInventory: $Count role assignment(s) in inventory.json and roleAssignments.json name a principal that Microsoft " +
-            "Entra ID does not return, each written by the principal's object id with principalStatus Deleted (found among the " +
-            "directory's deleted items) or Unresolved (found neither in the directory nor among its deleted items). README.md names " +
-            "them under 'Role assignments whose principal could not be looked up'; review them as a finding. Invoke-OERStructure never " +
+            "Export-OERInventory: $Count role assignment(s) in inventory.json and roleAssignments.json name a principal the " +
+            "directory did not return, each written by the principal's object id with principalStatus Deleted (found among the " +
+            "directory's deleted items) or Unresolved (found neither in the directory nor among its deleted items, or its deleted " +
+            "items could not be read). README.md names them under 'Role assignments whose principal the directory did not return'; " +
+            "review them as a finding. Invoke-OERStructure never " +
             'creates such an assignment.'
         }
         # The README section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -5108,10 +5109,14 @@ Describe 'Export-OERInventory (role assignments whose principal could not be loo
 
     It 'states the rule in the help' {
         $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
-        $Description | Should -Match ([regex]::Escape('ROLE ASSIGNMENTS WHOSE PRINCIPAL COULD NOT BE LOOKED UP.'))
+        $Description | Should -Match ([regex]::Escape('ROLE ASSIGNMENTS WHOSE PRINCIPAL THE DIRECTORY DID NOT RETURN.'))
         $Description | Should -Match ([regex]::Escape('Invoke-OERStructure never creates such an assignment, and removing its entry lets -Prune remove it.'))
-        $Description | Should -Match ([regex]::Escape('in a section "Role assignments whose principal could not be looked up", directly after "Names two or more objects share"'))
+        $Description | Should -Match ([regex]::Escape('in a section "Role assignments whose principal the directory did not return", directly after "Names two or more objects share"'))
         $Description | Should -Match ([regex]::Escape('The Azure scope is never skipped for either.'))
+        # Fix round 1 (F4): one read per principal for the whole export holds only for a read that succeeded.
+        $Description | Should -Match ([regex]::Escape('A principal is looked for among the deleted items once for the whole export when that read succeeds, however many Azure scopes read the assignment; a read that fails is not kept, and is sent again by the next scope that needs it.'))
+        # Fix round 1 (F3): the README lists the principal entries under a label of their own.
+        $Description | Should -Match ([regex]::Escape('a role assignment principal that could not be read and an Azure scope where role management policies could not be judged, each under a label of its own'))
     }
 
     Context 'the rows the per-scope calls hand over' {
@@ -5139,11 +5144,11 @@ Describe 'Export-OERInventory (role assignments whose principal could not be loo
                     $First = $Scope -eq $script:UpxMg
                     $RowA = [PSCustomObject]@{
                         RoleAssignmentId = $(if ($First) { $script:UpxIdA } else { $script:UpxIdA.ToUpperInvariant() })
-                        Scope = $script:UpxMg; Role = 'Reader'; Principal = $script:UpxGone; PrincipalType = 'User'; PrincipalStatus = 'Deleted'
+                        Scope = $script:UpxMg; Role = 'Reader'; Principal = $script:UpxGone; PrincipalType = 'User'; PrincipalStatus = 'Deleted'; StatusRead = $true
                     }
                     $RowB = [PSCustomObject]@{
                         RoleAssignmentId = ''; Scope = $script:UpxS1; Role = $(if ($First) { 'Owner' } else { 'OWNER' })
-                        Principal = $(if ($First) { $script:UpxNowhere } else { $script:UpxNowhere.ToUpperInvariant() }); PrincipalType = ''; PrincipalStatus = 'Unresolved'
+                        Principal = $(if ($First) { $script:UpxNowhere } else { $script:UpxNowhere.ToUpperInvariant() }); PrincipalType = ''; PrincipalStatus = 'Unresolved'; StatusRead = $false
                     }
                     $Notice = [PSCustomObject]@{ Warning = "per-scope unresolved principals at $Scope"; Assignments = @($RowA, $RowB) }
                     $Notice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.UnresolvedPrincipalNotice')
@@ -5172,7 +5177,9 @@ Describe 'Export-OERInventory (role assignments whose principal could not be loo
             $Section | Should -Match '(?m)^This export read 2 such role assignment\(s\):\r?$'
             @($Section -split '\r?\n' | Where-Object { $_ -like '- *' }) | Should -Be @(
                 "- ``Reader`` at ``$($script:UpxMg)`` for ``$($script:UpxGone)`` (User): ``Deleted``, found among the directory's deleted items"
-                "- ``Owner`` at ``$($script:UpxS1)`` for ``$($script:UpxNowhere)``: ``Unresolved``, found neither in the directory nor among its deleted items (deleted beyond the retention period, a principal of another tenant, for example through Azure Lighthouse, or not readable)"
+                # Row B's deleted items read failed (StatusRead false): the export hands the member to the
+                # README, which gives no reason as a fact (fix round 1, F1).
+                "- ``Owner`` at ``$($script:UpxS1)`` for ``$($script:UpxNowhere)``: ``Unresolved``, not returned by the directory, and the read of its deleted items failed, so the reason is not known; that read is named under `"What this export could not read`""
             )
             # The rows stay in the document, and nothing about them is a partial read.
             $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
@@ -5297,8 +5304,11 @@ Describe 'Export-OERInventory (role assignments whose principal could not be loo
             $Message | Should -BeLike "*1 role assignment principal read(s) failed, so each principal is written by its object id -- with no principalStatus where its lookup through directoryObjects/getByIds failed, and as Unresolved where only the read of the directory's deleted items failed: $Entry. Causes of the unread principal lookups: Could not look up the principal of a role assignment through directoryObjects/getByIds: Too many requests (429).*"
             # The Entra ID clause still counts the Entra ID entries only.
             $Message | Should -BeLike '*1 partial Entra ID read entry(ies) name*'
-            # The README names it under "What this export could not read".
-            (Get-Content (Join-Path $Run.Result.BundlePath 'README.md') -Raw) | Should -Match ([regex]::Escape("- Entra ID: ``$Entry``"))
+            # The README names it under "What this export could not read", under a label of its own (fix
+            # round 1, F3), apart from the Entra ID entry.
+            $Readme = Get-Content (Join-Path $Run.Result.BundlePath 'README.md') -Raw
+            $Readme | Should -Match ([regex]::Escape("- Role assignment principal that could not be read: ``$Entry``"))
+            $Readme | Should -Match ([regex]::Escape('- Entra ID: `groups/Team/members`'))
         }
 
         It 'raises InventoryPartial for a failed principal lookup alone, when nothing else was left unread' {

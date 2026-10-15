@@ -16,7 +16,12 @@ function Get-OERInventoryReadme {
     '<all Azure scopes: scope enumeration failed>' is shown and not swallowed as an HTML tag. An
     IncompleteReads entry that starts with 'roleManagementPolicies/' is an Azure scope where the
     export kept role management policies it could not judge, not an Entra ID read, and is listed
-    under the label 'Azure role management policies kept without being judged'.
+    under the label 'Azure role management policies kept without being judged'. An IncompleteReads
+    entry that starts with 'roleAssignments/' names a row of roleAssignments.json whose principal could
+    not be read (Sprint 11 step 6, BL-133), and is listed under the label 'Role assignment principal
+    that could not be read'; the section's prose says how such a row is written: by the principal's
+    object id with no principalStatus where its lookup failed ('/principal'), and with principalStatus
+    Unresolved, its reason not known, where only its deleted items read failed ('/principalStatus').
 
     Directly after it comes the section "Members and owners left out as PIM for Groups access"
     (BL-125, A3). It says that inventory.json and groups.json write a group's standing members and
@@ -54,8 +59,8 @@ function Get-OERInventoryReadme {
     that no two objects the export read share a name. That parameter is mandatory for the same
     reason as the five above.
 
-    Directly after it comes the section "Role assignments whose principal could not be looked up"
-    (Sprint 11 step 6, BL-133). It says that such an assignment stays in inventory.json and
+    Directly after it comes the section "Role assignments whose principal the directory did not
+    return" (Sprint 11 step 6, BL-133). It says that such an assignment stays in inventory.json and
     roleAssignments.json, written by the principal's object id with principalStatus, that
     Invoke-OERStructure never creates one and that removing its entry from the document lets -Prune
     remove it, and that a principal whose lookup failed is named under "What this export could not
@@ -64,15 +69,21 @@ function Get-OERInventoryReadme {
     entries above), the principal type in parentheses when it is known, and the status as a code span
     with its reason in words -- Deleted, found among the directory's deleted items; Unresolved, found
     neither in the directory nor among its deleted items (deleted beyond the retention period, a
-    principal of another tenant, for example through Azure Lighthouse, or not readable). It never
-    writes the role assignment id. When -UnresolvedPrincipalAssignments is empty it says that none was
+    principal of another tenant, for example through Azure Lighthouse, or not readable). An
+    Unresolved row whose StatusRead is not true -- its deleted items read failed, or the row does not
+    say -- is given no reason as a fact: the bullet says that the read failed, so the reason is not
+    known, and that the read is named under "What this export could not read". It never writes the
+    role assignment id. When -UnresolvedPrincipalAssignments is empty it says that none was
     found. That parameter is mandatory for the same reason as the six above.
 
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
     collections or objects that could not be read, could not be written without an empty name, or
-    were left out because two or more live objects share a name. Then, last, one entry per Azure
-    scope where at least one role management policy could not be judged, reading
+    were left out because two or more live objects share a name. Then one entry per role assignment
+    principal that could not be read, reading 'roleAssignments/<role> -> <principal id> @ <scope>'
+    followed by '/principal' (its lookup failed) or '/principalStatus' (only its deleted items read
+    failed). Then, last, one entry per Azure scope where at least one role management policy could not
+    be judged, reading
     'roleManagementPolicies/role selection at <scope>': every policy there that could not be judged
     was kept, none of them left out (where the scope's role assignment read or eligibility read
     failed, that is every policy of a role neither used nor changed there), so
@@ -116,8 +127,9 @@ function Get-OERInventoryReadme {
     principalStatus, and deduplicated by Export-OERInventory from the information records tagged
     Omnicit.EntraRBAC.UnresolvedPrincipal that Get-OERInventory writes: one object per assignment with
     Scope, Role, Principal (the object id), PrincipalType (the principal type, or an empty string when
-    unknown) and PrincipalStatus (Deleted or Unresolved). Any other property, such as RoleAssignmentId,
-    is not written. Pass an empty array when there are none.
+    unknown), PrincipalStatus (Deleted or Unresolved) and StatusRead (true when the deleted items read
+    behind PrincipalStatus succeeded; a Deleted status is always read). Any other property, such as
+    RoleAssignmentId, is not written. Pass an empty array when there are none.
 
     .EXAMPLE
     Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @()
@@ -125,8 +137,8 @@ function Get-OERInventoryReadme {
     says that nothing was left unread, its "Members and owners left out as PIM for Groups access"
     section that none was left out, its "Role assignments at the root scope (elevated access)"
     section that none was read, its "Names two or more objects share" section that no two objects
-    share a name, and its "Role assignments whose principal could not be looked up" section that none
-    was found.
+    share a name, and its "Role assignments whose principal the directory did not return" section that
+    none was found.
 
     .EXAMPLE
     Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @()
@@ -148,10 +160,10 @@ function Get-OERInventoryReadme {
     the name, how many objects carry it and its section.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; Role = 'Reader'; Principal = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'User'; PrincipalStatus = 'Deleted' })
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; Role = 'Reader'; Principal = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'User'; PrincipalStatus = 'Deleted'; StatusRead = $true })
     Returns the README Markdown with the count and one bullet per role assignment under "Role
-    assignments whose principal could not be looked up": the role, the scope, the principal, its type
-    and the status with its reason.
+    assignments whose principal the directory did not return": the role, the scope, the principal, its
+    type and the status with its reason.
     #>
     [OutputType([string])]
     [CmdletBinding()]
@@ -192,6 +204,12 @@ function Get-OERInventoryReadme {
     # (BL-107), appended after the Entra ID entries, so it gets its own label.
     $AzurePolicyPrefix = 'roleManagementPolicies/'
     $AzurePolicyLabel = 'Azure role management policies kept without being judged'
+    # Sprint 11 step 6 (BL-133): an IncompleteReads entry that starts with 'roleAssignments/' is not an
+    # Entra ID entry either: it names a row of roleAssignments.json whose principal could not be read,
+    # which Export-OERInventory appends after the Entra ID entries and keeps apart from them in its help
+    # and its InventoryPartial, so it gets its own label too.
+    $PrincipalPrefix = 'roleAssignments/'
+    $PrincipalLabel = 'Role assignment principal that could not be read'
     # The two scope lists never hold such an entry: theirs start with '/' or '<'.
     $Lists = @(
         @{ Label = 'Entra ID'; Entries = $IncompleteReads }
@@ -203,6 +221,7 @@ function Get-OERInventoryReadme {
             if ([string]::IsNullOrWhiteSpace($Entry)) { continue }
             $Label = $List.Label
             if ($Entry.StartsWith($AzurePolicyPrefix, [System.StringComparison]::Ordinal)) { $Label = $AzurePolicyLabel }
+            elseif ($Entry.StartsWith($PrincipalPrefix, [System.StringComparison]::Ordinal)) { $Label = $PrincipalLabel }
             $Bullets.Add("- $($Label): $(Format-CodeSpan -Text $Entry)")
         }
     }
@@ -213,9 +232,16 @@ function Get-OERInventoryReadme {
 
 This bundle is PARTIAL: `Export-OERInventory` could not read, or could not write, everything it was
 asked to, so do not treat it as a full tenant snapshot. Apart from the entries labelled "Azure role
-management policies kept without being judged", each entry below names collections or objects that
-could not be read, could not be written without an empty name, or were left out because two or more
-live objects share a name; none of them is stated as a fact in this bundle. "Unread collections"
+management policies kept without being judged" and "Role assignment principal that could not be
+read", each entry below names collections or objects that could not be read, could not be written
+without an empty name, or were left out because two or more live objects share a name; none of them
+is stated as a fact in this bundle. An entry labelled "Role assignment principal that could not be
+read" names a row of `roleAssignments.json` as `roleAssignments/<role> -> <principal id> @ <scope>`,
+followed by `/principal` or `/principalStatus`. With `/principal`, the lookup of the principal
+failed: the row is written by the principal's object id with no `principalStatus`, so whether the
+directory holds the principal is not known. With `/principalStatus`, the directory did not return
+the principal and the read of its deleted items failed: the row is written with `principalStatus`
+`Unresolved`, and the reason is not known. "Unread collections"
 below says how an unread collection is written; an object left out for a shared name is absent from
 `inventory.json` and the per-area files, which does not mean the tenant has none. An entry labelled
 "Azure role management policies kept without being judged" names an Azure scope where the export
@@ -345,8 +371,12 @@ export changes nothing in the tenant.
     foreach ($Entry in @($UnresolvedPrincipalAssignments)) {
         $UnresolvedType = [string]$Entry.PrincipalType
         $UnresolvedStatus = [string]$Entry.PrincipalStatus
+        # Fix round 1 (F1): an Unresolved status whose deleted items read failed was never searched for, so
+        # its reason is not stated as a fact. Only an explicit StatusRead true counts as read.
         $UnresolvedReason = if ($UnresolvedStatus -eq 'Deleted') {
             'found among the directory''s deleted items'
+        } elseif ($Entry.StatusRead -ne $true) {
+            'not returned by the directory, and the read of its deleted items failed, so the reason is not known; that read is named under "What this export could not read"'
         } else {
             'found neither in the directory nor among its deleted items (deleted beyond the retention period, a principal of another tenant, for example through Azure Lighthouse, or not readable)'
         }
@@ -354,7 +384,7 @@ export changes nothing in the tenant.
             $(if ($UnresolvedType) { " ($UnresolvedType)" } else { '' }) + ": $(Format-CodeSpan -Text $UnresolvedStatus), $UnresolvedReason")
     }
     $UnresolvedIntro = @'
-## Role assignments whose principal could not be looked up
+## Role assignments whose principal the directory did not return
 
 A role assignment can name a principal that Microsoft Entra ID does not return: one that was
 deleted, or one this directory cannot read. Such an assignment stays in `inventory.json` and
@@ -362,8 +392,8 @@ deleted, or one this directory cannot read. Such an assignment stays in `invento
 why: `Deleted` or `Unresolved`, as each entry below explains. `Invoke-OERStructure` never creates
 such an assignment, and removing its entry from the document lets `-Prune` remove it. A principal
 whose lookup failed is not listed here: it is written by its object id without `principalStatus`
-and named under "What this export could not read". Where only the read of the deleted items failed,
-the principal is listed here as `Unresolved` and that read is named there too.
+and named under "What this export could not read". Where the read of its deleted items failed, the
+principal is listed here as `Unresolved` with the reason not known, and that read is named there too.
 '@
     $UnresolvedPrincipalSection = if ($UnresolvedBullets.Count -gt 0) {
         $UnresolvedIntro + "`n`n" + "This export read $($UnresolvedBullets.Count) such role assignment(s):" + "`n`n" + ($UnresolvedBullets -join "`n")

@@ -254,27 +254,33 @@ function Get-OERInventory {
     In RoleAssignments, principalType is written for every role assignment whose principal type is a
     user, a group (a ForeignGroup included) or a service principal, and left out for any other type,
     such as a device, which the document's principalType cannot name. Each principal is looked up in
-    Microsoft Entra ID with one batched directoryObjects/getByIds request per call, over every
-    directory object type. A principal it returns is written by its name -- a user by its user principal
-    name, a group by the rule above and a service principal by its display name; a principal of any
-    other type, such as a device, is written by its object id. A
-    principal the lookup does not return is written by its object id with principalStatus: Deleted
-    when it is found among the directory's deleted items (one read of directory/deletedItems per
-    principal, made once per call, and once per export under Export-OERInventory), Unresolved when it
-    is found neither there nor in the directory -- deleted beyond the retention period, a principal of
-    another tenant, for example through Azure Lighthouse, or not readable. principalStatus stands
-    directly after principalType, or after principal when there is none. Such an assignment stays in
-    the document: Invoke-OERStructure never creates it, and removing the entry lets -Prune remove it.
-    One warning counts them, and an information record tagged Omnicit.EntraRBAC.UnresolvedPrincipal
-    hands the caller the same rows (RoleAssignmentId, Scope, Role, Principal, PrincipalType and
-    PrincipalStatus) and the warning's text; under the default $InformationPreference the record is
-    not displayed. Under a Stop warning preference the command stops at that warning, before it
-    returns the inventory, as it does at the root scope warning. When the lookup itself fails, the principal is written by its object id with no
+    Microsoft Entra ID through directoryObjects/getByIds, over every directory object type, in batches
+    of up to 1000 ids, one request per batch. A principal the directory returns is written by its
+    name -- a user by its user principal name, a group by the rule above and a service principal by
+    its display name; a principal of any other type, such as a device, is written by its object id.
+    A principal the directory did not return is written by its object id with principalStatus:
+    Deleted when it is found among the directory's deleted items, Unresolved when it is found neither
+    there nor in the directory -- deleted beyond the retention period, a principal of another tenant,
+    for example through Azure Lighthouse, or not readable -- or when its deleted items could not be
+    read. Each such principal is looked for among the deleted items with one read of
+    directory/deletedItems: an answer that was read is kept for the rest of the call, and under
+    Export-OERInventory for the rest of the export, while a read that fails is not kept and is sent
+    again for the next role assignment that needs it. principalStatus stands directly after
+    principalType, or after principal when there is none. Such an assignment stays in the document:
+    Invoke-OERStructure never creates it, and removing the entry lets -Prune remove it. One warning
+    counts them, and an information record tagged Omnicit.EntraRBAC.UnresolvedPrincipal hands the
+    caller the same rows (RoleAssignmentId, Scope, Role, Principal, PrincipalType, PrincipalStatus and
+    StatusRead, which is false where the deleted items read failed) and the warning's text; under the
+    default $InformationPreference the record is not displayed. Under a Stop warning preference the
+    command stops at that warning, before it returns the inventory, as it does at the root scope
+    warning. When the lookup itself fails, the principal is written by its object id with no
     principalStatus, and 'roleAssignments/<role> -> <principal id> @ <scope>/principal' is reported
     through the InventoryPartial error with its cause; when only the deleted items read fails, the
-    principal is written as Unresolved and '.../principalStatus' is reported the same way. A role
-    assignment at the root scope is named only as described above, and nothing about its principal
-    is read or reported.
+    principal is written as Unresolved, with its reason not known, and '.../principalStatus' is
+    reported the same way. A role assignment at the root scope is named only as described above: its
+    principal is looked up like any other, which is how the root list names it, but it is not looked
+    for among the deleted items, and a failed lookup of it is not reported -- the root list names it
+    by its object id.
 
     The inventory carries a top-level tenantId, directly after its version: the tenant ID the session's
     Microsoft Graph token was issued for, never the tenant as named with -TenantId (a domain, or
@@ -1507,7 +1513,9 @@ function Get-OERInventory {
                             -Cause "Could not read whether the principal of a role assignment is among the directory's deleted items: $($StatusAnswer.Cause)" `
                             -Target ([string]$Row.Ra.PrincipalId)
                     }
-                    $RaStatusRows.Add($Row)
+                    # StatusRead (fix round 1, F1): whether the deleted items read behind the status
+                    # succeeded, so a reader never takes the reason of an unread Unresolved as a fact.
+                    $RaStatusRows.Add([PSCustomObject]@{ Row = $Row; StatusRead = ($StatusAnswer.Read -eq $true) })
                 }
                 foreach ($Row in $RaProjected) { $RoleAssignments.Add([PSCustomObject]$Row.Proj) }
 
@@ -1540,9 +1548,11 @@ function Get-OERInventory {
                 # warning and handed over in ONE information record (tag
                 # Omnicit.EntraRBAC.UnresolvedPrincipal), the root-scope pattern above, so a caller --
                 # Export-OERInventory among them -- reads the rows without parsing the text. The rows stay
-                # in the document. PrincipalType is the normalised ARM type ('' when unknown).
+                # in the document. PrincipalType is the normalised ARM type ('' when unknown); StatusRead is
+                # false where the deleted items read failed (a Deleted status is always read).
                 if ($RaStatusRows.Count -gt 0) {
-                    $StatusAssignments = @(foreach ($Row in $RaStatusRows) {
+                    $StatusAssignments = @(foreach ($StatusRow in $RaStatusRows) {
+                            $Row = $StatusRow.Row
                             [PSCustomObject]@{
                                 RoleAssignmentId = [string]$Row.Ra.RoleAssignmentId
                                 Scope            = [string]$Row.Proj.scope
@@ -1550,9 +1560,10 @@ function Get-OERInventory {
                                 Principal        = [string]$Row.Proj.principal
                                 PrincipalType    = [string]$Row.Type
                                 PrincipalStatus  = [string]$Row.Proj.principalStatus
+                                StatusRead       = [bool]$StatusRow.StatusRead
                             }
                         })
-                    $StatusWarning = "Get-OERInventory: $($StatusAssignments.Count) role assignment(s) name a principal that Microsoft Entra ID does not return, so each is written by the principal's object id with principalStatus: Deleted when the principal was found among the directory's deleted items, Unresolved when it was found neither in the directory nor among its deleted items (deleted beyond the retention period, a principal of another tenant, or not readable). Invoke-OERStructure never creates such an assignment; review them as a finding."
+                    $StatusWarning = "Get-OERInventory: $($StatusAssignments.Count) role assignment(s) name a principal the directory did not return, so each is written by the principal's object id with principalStatus: Deleted when the principal was found among the directory's deleted items, Unresolved when it was found neither in the directory nor among its deleted items (deleted beyond the retention period, a principal of another tenant, or not readable) or when its deleted items could not be read. Invoke-OERStructure never creates such an assignment; review them as a finding."
                     Write-Warning $StatusWarning
                     $StatusNotice = [PSCustomObject]@{
                         Warning     = $StatusWarning

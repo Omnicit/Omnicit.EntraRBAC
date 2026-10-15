@@ -161,9 +161,9 @@ function Export-OERInventory {
     stops at that warning, before it writes the bundle. Any other warning of a scope's read is
     written after that read. An operator's -WarningVariable also collects the warnings of the
     per-scope reads -- Get-OERInventory's root-scope warning, and its warning on role assignments
-    whose principal could not be looked up, once per scope, and any other per-scope warning twice --
-    while the display shows each other per-scope warning once, and the root-scope assignments and the
-    assignments whose principal could not be looked up only in the export's own warnings.
+    whose principal the directory did not return, once per scope, and any other per-scope warning
+    twice -- while the display shows each other per-scope warning once, and the root-scope assignments
+    and the assignments whose principal the directory did not return only in the export's own warnings.
 
     NAMES THAT TWO OR MORE OBJECTS SHARE. Microsoft Entra ID does not keep display names unique, and
     the apply engine refuses a name that more than one live object answers to, so inventory.json and
@@ -184,20 +184,23 @@ function Export-OERInventory {
     share a name. The names stay in IncompleteReads as well. Leaving them out changes nothing in the
     tenant.
 
-    ROLE ASSIGNMENTS WHOSE PRINCIPAL COULD NOT BE LOOKED UP. A role assignment can name a principal
-    that Microsoft Entra ID does not return: one that was deleted, or one the directory cannot read.
-    Such an assignment stays in inventory.json and roleAssignments.json, written by the principal's
-    object id with principalStatus Deleted, when the principal is among the directory's deleted items,
-    or Unresolved, when it is found neither there nor in the directory (the Get-OERInventory help
-    describes the rule). Invoke-OERStructure never creates such an assignment, and removing its entry
-    lets -Prune remove it. Each such principal is looked for among the deleted items once for the
-    whole export, however many Azure scopes read the assignment. The export writes ONE warning that
+    ROLE ASSIGNMENTS WHOSE PRINCIPAL THE DIRECTORY DID NOT RETURN. A role assignment can name a
+    principal that Microsoft Entra ID does not return: one that was deleted, or one the directory
+    cannot read. Such an assignment stays in inventory.json and roleAssignments.json, written by the
+    principal's object id with principalStatus Deleted, when the principal is among the directory's
+    deleted items, or Unresolved, when it is found neither there nor in the directory or its deleted
+    items could not be read (the Get-OERInventory help describes the rule). Invoke-OERStructure never
+    creates such an assignment, and removing its entry lets -Prune remove it. A principal is looked for
+    among the deleted items once for the whole export when that read succeeds, however many Azure
+    scopes read the assignment; a read that fails is not kept, and is sent again by the next scope
+    that needs it. The export writes ONE warning that
     gives how many such assignments it read, each counted once. It writes it after the walk and before
     the bundle is written, so -WhatIf shows it too, and under a Stop warning preference the export
     stops at that warning, before it writes the bundle. The generated README.md lists them, with their
-    count, in a section "Role assignments whose principal could not be looked up", directly after
-    "Names two or more objects share": each by role, scope, principal and, when it is known, the
-    principal type, with its status and the reason in words, or the statement that none was found.
+    count, in a section "Role assignments whose principal the directory did not return", directly
+    after "Names two or more objects share": each by role, scope, principal and, when it is known, the
+    principal type, with its status and the reason in words -- or that the reason is not known, where
+    the deleted items read failed -- or the statement that none was found.
     A principal whose lookup failed is written by its object id with no principalStatus and is named
     in IncompleteReads (below), and so is one whose deleted items read failed, which is written as
     Unresolved. The Azure scope is never skipped for either.
@@ -212,8 +215,8 @@ function Export-OERInventory {
     warning 'Could not read groups: ...'), and is written as an empty array that does not mean the
     tenant has none; the entry groupsRoster likewise means groupsRoster.json is empty only because
     the roster read failed. After every Entra ID entry, IncompleteReads carries one entry per role
-    assignment principal that could not be read (see ROLE ASSIGNMENTS WHOSE PRINCIPAL COULD NOT BE
-    LOOKED UP above), each once however many Azure scopes read the assignment, reading
+    assignment principal that could not be read (see ROLE ASSIGNMENTS WHOSE PRINCIPAL THE DIRECTORY
+    DID NOT RETURN above), each once however many Azure scopes read the assignment, reading
     'roleAssignments/<role> -> <principal id> @ <scope>' followed by '/principal' when the principal
     could not be looked up, or '/principalStatus' when only its deleted items read failed. Last, after
     those entries, IncompleteReads carries one entry per
@@ -248,8 +251,9 @@ function Export-OERInventory {
 
     The bundle says so itself. The generated README.md carries a section named "What this export
     could not read": one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes
-    entry, an Azure scope where role management policies could not be judged under a label of its
-    own, or the statement that nothing was left unread, so whoever receives the bundle
+    entry, a role assignment principal that could not be read and an Azure scope where role management
+    policies could not be judged, each under a label of its own, or the statement that nothing was
+    left unread, so whoever receives the bundle
     (an LLM, say) can tell a collection that was not read from one that is empty. The lists go into
     README.md only, never into inventory.json or any other file that is validated or applied.
 
@@ -925,7 +929,7 @@ function Export-OERInventory {
                     }
                     if ($SeenPrincipalRow.Add($PrincipalRowKey)) { $PrincipalRow }
                 })
-            Write-Warning "Export-OERInventory: $($UnresolvedPrincipalAssignments.Count) role assignment(s) in inventory.json and roleAssignments.json name a principal that Microsoft Entra ID does not return, each written by the principal's object id with principalStatus Deleted (found among the directory's deleted items) or Unresolved (found neither in the directory nor among its deleted items). README.md names them under 'Role assignments whose principal could not be looked up'; review them as a finding. Invoke-OERStructure never creates such an assignment."
+            Write-Warning "Export-OERInventory: $($UnresolvedPrincipalAssignments.Count) role assignment(s) in inventory.json and roleAssignments.json name a principal the directory did not return, each written by the principal's object id with principalStatus Deleted (found among the directory's deleted items) or Unresolved (found neither in the directory nor among its deleted items, or its deleted items could not be read). README.md names them under 'Role assignments whose principal the directory did not return'; review them as a finding. Invoke-OERStructure never creates such an assignment."
         }
 
         # Sprint 11 step 6 (BL-133, A18): the role assignment principals the walk's reads could not look up,

@@ -7461,10 +7461,11 @@ Describe 'Get-OERInventory role assignment principals that could not be looked u
         # The warning Get-OERInventory writes for <Count> rows written with principalStatus.
         function script:Get-UpWarningText {
             param([int]$Count)
-            "Get-OERInventory: $Count role assignment(s) name a principal that Microsoft Entra ID does not return, so each is written by " +
+            "Get-OERInventory: $Count role assignment(s) name a principal the directory did not return, so each is written by " +
             "the principal's object id with principalStatus: Deleted when the principal was found among the directory's deleted items, " +
             'Unresolved when it was found neither in the directory nor among its deleted items (deleted beyond the retention period, a ' +
-            'principal of another tenant, or not readable). Invoke-OERStructure never creates such an assignment; review them as a finding.'
+            'principal of another tenant, or not readable) or when its deleted items could not be read. Invoke-OERStructure never ' +
+            'creates such an assignment; review them as a finding.'
         }
         # The InventoryPartial records Get-OERInventory itself published.
         function script:Get-UpPartial {
@@ -7577,9 +7578,12 @@ Describe 'Get-OERInventory role assignment principals that could not be looked u
         $Notice.Warning | Should -BeExactly (Get-UpWarningText -Count 1)
         $Rows = @($Notice.Assignments)
         $Rows.Count | Should -Be 1
-        @($Rows[0].PSObject.Properties.Name) | Should -Be @('RoleAssignmentId', 'Scope', 'Role', 'Principal', 'PrincipalType', 'PrincipalStatus')
+        @($Rows[0].PSObject.Properties.Name) | Should -Be @('RoleAssignmentId', 'Scope', 'Role', 'Principal', 'PrincipalType', 'PrincipalStatus', 'StatusRead')
         "$($Rows[0].RoleAssignmentId)|$($Rows[0].Scope)|$($Rows[0].Role)|$($Rows[0].Principal)|$($Rows[0].PrincipalType)|$($Rows[0].PrincipalStatus)" |
             Should -Be "$($script:UpSub)/providers/Microsoft.Authorization/roleAssignments/$($script:UpGone)-Reader|$($script:UpSub)|Reader|$($script:UpGone)|User|Deleted"
+        # A Deleted status was read (fix round 1, F1).
+        $Rows[0].StatusRead | Should -BeOfType ([bool])
+        $Rows[0].StatusRead | Should -BeTrue
         (Get-UpPartial -Record @($InvErr)).Count | Should -Be 0
     }
 
@@ -7600,9 +7604,9 @@ Describe 'Get-OERInventory role assignment principals that could not be looked u
         [string]$W[0].Message | Should -BeExactly (Get-UpWarningText -Count 2)
         $Records = @($Info | Where-Object { $_.Tags -contains $script:UpTag })
         $Records.Count | Should -Be 1
-        @($Records[0].MessageData.Assignments | ForEach-Object { "$($_.Role)|$($_.PrincipalType)|$($_.PrincipalStatus)" }) | Should -Be @(
-            'Reader|User|Deleted'
-            'Contributor|Group|Unresolved'
+        @($Records[0].MessageData.Assignments | ForEach-Object { "$($_.Role)|$($_.PrincipalType)|$($_.PrincipalStatus)|$($_.StatusRead)" }) | Should -Be @(
+            'Reader|User|Deleted|True'
+            'Contributor|Group|Unresolved|True'
         )
         (Get-UpPartial -Record @($InvErr)).Count | Should -Be 0
     }
@@ -7639,9 +7643,9 @@ Describe 'Get-OERInventory role assignment principals that could not be looked u
     It 'writes principalStatus Unresolved and names the status unread with its cause when the deleted items read fails, and still counts the row' {
         $script:UpRas = @(New-UpRa -PrincipalId $script:UpDenied -PrincipalType 'ServicePrincipal')
         $script:UpAnswers = @{ $script:UpDenied = New-UpNotFound -Id $script:UpDenied }
-        $W = $null; $InvErr = $null
+        $W = $null; $InvErr = $null; $Info = $null
         $Inv = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningVariable W -WarningAction SilentlyContinue `
-            -ErrorVariable InvErr -ErrorAction SilentlyContinue
+            -ErrorVariable InvErr -ErrorAction SilentlyContinue -InformationVariable Info
         $Ra = @($Inv.roleAssignments)
         "$($Ra[0].principal)|$($Ra[0].principalType)|$($Ra[0].principalStatus)" | Should -Be "$($script:UpDenied)|ServicePrincipal|Unresolved"
         $Partial = Get-UpPartial -Record @($InvErr)
@@ -7649,6 +7653,10 @@ Describe 'Get-OERInventory role assignment principals that could not be looked u
         [string]$Partial[0].TargetObject | Should -BeExactly "roleAssignments/Reader -> $($script:UpDenied) @ $($script:UpSub)/principalStatus"
         $Partial[0].Exception.Message | Should -BeLike "*Could not read whether the principal of a role assignment is among the directory's deleted items: Insufficient privileges to complete the operation.*"
         [string]$W[0].Message | Should -BeExactly (Get-UpWarningText -Count 1)
+        # The record says the status was not read, so no reason is given for it as a fact (fix round 1, F1).
+        $Row = @(@($Info | Where-Object { $_.Tags -contains $script:UpTag })[0].MessageData.Assignments)[0]
+        "$($Row.PrincipalStatus)|$($Row.StatusRead)" | Should -Be 'Unresolved|False'
+        $Row.StatusRead | Should -BeOfType ([bool])
     }
 
     It 'writes a device by its object id with no principalType and no principalStatus when the directory returned it, and with principalStatus when it did not' {
@@ -7754,7 +7762,7 @@ Describe 'Get-OERInventory role assignment principals that could not be looked u
         $script:UpAnswers = @{ $script:UpGone = New-UpNotFound -Id $script:UpGone }
         $script:UpOut = $null
         $Thrown = { $script:UpOut = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningAction Stop } | Should -Throw -PassThru
-        $Thrown.Exception.Message | Should -BeLike '*role assignment(s) name a principal that Microsoft Entra ID does not return*'
+        $Thrown.Exception.Message | Should -BeLike '*role assignment(s) name a principal the directory did not return*'
         $null -eq $script:UpOut | Should -BeTrue
         # Reach proof: the principal was looked for among the deleted items before the warning.
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
@@ -7765,6 +7773,13 @@ Describe 'Get-OERInventory role assignment principals that could not be looked u
         $Help | Should -Match ([regex]::Escape('principalStatus'))
         $Help | Should -Match ([regex]::Escape('Omnicit.EntraRBAC.UnresolvedPrincipal'))
         $Help | Should -Match ([regex]::Escape('principalType is written for every role assignment whose principal type is a user, a group (a ForeignGroup included) or a service principal'))
+        # Fix round 1: the case is named for what it is (F2), and the read counts claim no more than holds (F4).
+        $Help | Should -Match ([regex]::Escape('A principal the directory did not return is written by its object id with principalStatus'))
+        $Help | Should -Match ([regex]::Escape('in batches of up to 1000 ids, one request per batch'))
+        $Help | Should -Match ([regex]::Escape('an answer that was read is kept for the rest of the call, and under Export-OERInventory for the rest of the export, while a read that fails is not kept and is sent again for the next role assignment that needs it'))
+        $Help | Should -Match ([regex]::Escape('its principal is looked up like any other, which is how the root list names it, but it is not looked for among the deleted items, and a failed lookup of it is not reported'))
+        $Help | Should -Not -Match ([regex]::Escape('nothing about its principal is read'))
+        $Help | Should -Not -Match ([regex]::Escape('one batched directoryObjects/getByIds request per call'))
     }
 }
 

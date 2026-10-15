@@ -267,7 +267,12 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
         # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
         $Collapsed = $Section -replace '\s+', ' '
         $Collapsed | Should -Match ([regex]::Escape('This bundle is PARTIAL: `Export-OERInventory` could not read, or could not write, everything it was asked to, so do not treat it as a full tenant snapshot.'))
-        $Collapsed | Should -Match ([regex]::Escape('Apart from the entries labelled "Azure role management policies kept without being judged", each entry below names collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name; none of them is stated as a fact in this bundle.'))
+        $Collapsed | Should -Match ([regex]::Escape('Apart from the entries labelled "Azure role management policies kept without being judged" and "Role assignment principal that could not be read", each entry below names collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name; none of them is stated as a fact in this bundle.'))
+        # Sprint 11 step 6 (BL-133): a role assignment principal entry names a row that IS written, so the
+        # intro says how each kind of it is written instead of counting it among the facts left out.
+        $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Role assignment principal that could not be read" names a row of `roleAssignments.json` as `roleAssignments/<role> -> <principal id> @ <scope>`, followed by `/principal` or `/principalStatus`. With `/principal`, the lookup of the principal failed: the row is written by the principal''s object id with no `principalStatus`, so whether the directory holds the principal is not known. With `/principalStatus`, the directory did not return the principal and the read of its deleted items failed: the row is written with `principalStatus` `Unresolved`, and the reason is not known.'))
+        # Outside its code spans the intro holds no angle bracket: Markdown would read it as a tag.
+        ($Collapsed -replace '`[^`]*`', '') | Should -Not -Match '<'
         # BL-107: the Azure role selection entry is the one kind that names no unread collection, so
         # the intro says what it means instead of counting it among the reads that failed.
         $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Azure role management policies kept without being judged" names an Azure scope where the export could not tell, for at least one policy, whether its role is used there or whether the policy was changed, since a read it needed failed or the policy list gave nothing to judge by. Every policy there that it could not judge was kept, none of them left out -- where a role assignment or eligibility read failed, that is every policy of a role neither used nor changed at the scope -- so `roleManagementPolicies.json` may hold policies of roles that are neither used nor changed there. It does not mean every policy at the scope was kept: when only one policy could not be judged, the other unused, unchanged policies there are still left out.'))
@@ -323,6 +328,25 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
             '- Entra ID: `directoryRoleManagementPolicies/role selection`'
             '- Azure role management policies kept without being judged: `roleManagementPolicies/role selection at /subscriptions/aaaaaaaa-0000-0000-0000-000000000001`'
             '- Azure scope, absent from `roleAssignments.json` and `roleManagementPolicies.json`: `/subscriptions/aaaaaaaa-0000-0000-0000-000000000002`'
+        )
+        ((Get-TestBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
+        $Section | Should -Match 'This bundle is PARTIAL'
+    }
+
+    It 'labels an IncompleteReads entry that starts with roleAssignments/ as a role assignment principal that could not be read (Sprint 11 step 6, BL-133)' {
+        # The export appends one such entry per role assignment principal it could not read, after the
+        # Entra ID entries and before the role policy selection entries, and keeps it apart from both.
+        $Section = Get-TestSection -Readme (Get-TestReadme -IncompleteReads @(
+                'groupsRoster'
+                'roleAssignments/Owner -> dddd7777-0000-0000-0000-000000000011 @ /subscriptions/aaaaaaaa-0000-0000-0000-000000000001/principal'
+                'roleAssignments/Reader -> dddd7777-0000-0000-0000-000000000012 @ /subscriptions/aaaaaaaa-0000-0000-0000-000000000001/principalStatus'
+                'roleManagementPolicies/role selection at /subscriptions/aaaaaaaa-0000-0000-0000-000000000001'
+            ))
+        $Expected = @(
+            '- Entra ID: `groupsRoster`'
+            '- Role assignment principal that could not be read: `roleAssignments/Owner -> dddd7777-0000-0000-0000-000000000011 @ /subscriptions/aaaaaaaa-0000-0000-0000-000000000001/principal`'
+            '- Role assignment principal that could not be read: `roleAssignments/Reader -> dddd7777-0000-0000-0000-000000000012 @ /subscriptions/aaaaaaaa-0000-0000-0000-000000000001/principalStatus`'
+            '- Azure role management policies kept without being judged: `roleManagementPolicies/role selection at /subscriptions/aaaaaaaa-0000-0000-0000-000000000001`'
         )
         ((Get-TestBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
         $Section | Should -Match 'This bundle is PARTIAL'
@@ -467,7 +491,7 @@ Describe 'Get-OERInventoryReadme (members and owners left out as PIM for Groups 
         # follows it.
         $Headings[$Index + 2] | Should -BeExactly '## Role assignments at the root scope (elevated access)'
         $Headings[$Index + 3] | Should -BeExactly '## Names two or more objects share'
-        $Headings[$Index + 4] | Should -BeExactly '## Role assignments whose principal could not be looked up'
+        $Headings[$Index + 4] | Should -BeExactly '## Role assignments whose principal the directory did not return'
         $Headings[$Index + 5] | Should -BeExactly '## Files'
     }
 
@@ -634,7 +658,7 @@ Describe 'Get-OERInventoryReadme (role assignments at the root scope, BL-126)' {
         # BL-131: the shared names section comes directly after this one; Sprint 11 step 6 (BL-133): the
         # unresolved principals section after that, ahead of ## Files.
         $Headings[$Index + 1] | Should -BeExactly '## Names two or more objects share'
-        $Headings[$Index + 2] | Should -BeExactly '## Role assignments whose principal could not be looked up'
+        $Headings[$Index + 2] | Should -BeExactly '## Role assignments whose principal the directory did not return'
         $Headings[$Index + 3] | Should -BeExactly '## Files'
     }
 
@@ -780,7 +804,7 @@ Describe 'Get-OERInventoryReadme (names two or more objects share, BL-131)' {
         $Headings[$Index - 1] | Should -BeExactly '## Role assignments at the root scope (elevated access)'
         # Sprint 11 step 6 (BL-133): the section on role assignment principals that could not be looked
         # up comes directly after this one, ahead of ## Files.
-        $Headings[$Index + 1] | Should -BeExactly '## Role assignments whose principal could not be looked up'
+        $Headings[$Index + 1] | Should -BeExactly '## Role assignments whose principal the directory did not return'
         $Headings[$Index + 2] | Should -BeExactly '## Files'
     }
 
@@ -812,13 +836,13 @@ Describe 'Get-OERInventoryReadme (names two or more objects share, BL-131)' {
     }
 }
 
-Describe 'Get-OERInventoryReadme (role assignments whose principal could not be looked up, Sprint 11 step 6, BL-133)' {
+Describe 'Get-OERInventoryReadme (role assignments whose principal the directory did not return, Sprint 11 step 6, BL-133)' {
     # BL-133 (A18). A role assignment whose principal the directory does not return stays in the
     # document, written by its object id with principalStatus, so the README names each one -- role,
     # scope, principal, type and the reason -- in both states: "none" is a claim the reader needs to rely
     # on as much as the list. No id below is version-4 shaped.
     BeforeAll {
-        $script:UpHeading = '## Role assignments whose principal could not be looked up'
+        $script:UpHeading = '## Role assignments whose principal the directory did not return'
         function Get-UpReadme {
             param([object[]]$Rows = @())
             InModuleScope $script:moduleName -Parameters @{ U = $Rows } {
@@ -839,17 +863,39 @@ Describe 'Get-OERInventoryReadme (role assignments whose principal could not be 
             param([string]$Section)
             @($Section -split '\r?\n' | Where-Object { $_ -like '- *' })
         }
+        # The row shape of the Omnicit.EntraRBAC.UnresolvedPrincipal notice; StatusRead says whether the
+        # deleted items read behind PrincipalStatus succeeded (fix round 1, F1).
         function New-UpRow {
-            param([string]$Scope, [string]$Role, [string]$Principal, [string]$PrincipalType, [string]$PrincipalStatus, [string]$RoleAssignmentId = '')
+            param([string]$Scope, [string]$Role, [string]$Principal, [string]$PrincipalType, [string]$PrincipalStatus, [bool]$StatusRead = $true, [string]$RoleAssignmentId = '')
             [PSCustomObject]@{
                 RoleAssignmentId = $RoleAssignmentId; Scope = $Scope; Role = $Role; Principal = $Principal
-                PrincipalType = $PrincipalType; PrincipalStatus = $PrincipalStatus
+                PrincipalType = $PrincipalType; PrincipalStatus = $PrincipalStatus; StatusRead = $StatusRead
             }
         }
-        $script:UpProse = 'A role assignment can name a principal that Microsoft Entra ID does not return: one that was deleted, or one this directory cannot read. Such an assignment stays in `inventory.json` and `roleAssignments.json`, with its principal written as the object id and `principalStatus` saying why: `Deleted` or `Unresolved`, as each entry below explains. `Invoke-OERStructure` never creates such an assignment, and removing its entry from the document lets `-Prune` remove it. A principal whose lookup failed is not listed here: it is written by its object id without `principalStatus` and named under "What this export could not read". Where only the read of the deleted items failed, the principal is listed here as `Unresolved` and that read is named there too.'
+        $script:UpProse = 'A role assignment can name a principal that Microsoft Entra ID does not return: one that was deleted, or one this directory cannot read. Such an assignment stays in `inventory.json` and `roleAssignments.json`, with its principal written as the object id and `principalStatus` saying why: `Deleted` or `Unresolved`, as each entry below explains. `Invoke-OERStructure` never creates such an assignment, and removing its entry from the document lets `-Prune` remove it. A principal whose lookup failed is not listed here: it is written by its object id without `principalStatus` and named under "What this export could not read". Where the read of its deleted items failed, the principal is listed here as `Unresolved` with the reason not known, and that read is named there too.'
         $script:UpNone = 'None. No role assignment this export read names a principal that the directory did not return, apart from any whose lookup failed, which are named under "What this export could not read". Role assignments are read only when the export includes `RoleAssignments`.'
         $script:UpDeletedReason = 'found among the directory''s deleted items'
         $script:UpUnresolvedReason = 'found neither in the directory nor among its deleted items (deleted beyond the retention period, a principal of another tenant, for example through Azure Lighthouse, or not readable)'
+        $script:UpUnknownReason = 'not returned by the directory, and the read of its deleted items failed, so the reason is not known; that read is named under "What this export could not read"'
+    }
+
+    It 'gives an Unresolved row whose deleted items read failed no reason as a fact, and says why (F1)' {
+        $Section = Get-UpSection -Readme (Get-UpReadme -Rows @(
+                (New-UpRow -Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -Role 'Reader' -Principal 'dddd7777-0000-0000-0000-000000000021' -PrincipalType 'User' -PrincipalStatus 'Unresolved' -StatusRead $false)
+                (New-UpRow -Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -Role 'Owner' -Principal 'dddd7777-0000-0000-0000-000000000022' -PrincipalType 'User' -PrincipalStatus 'Unresolved' -StatusRead $true)
+            ))
+        $Expected = @(
+            "- ``Reader`` at ``/subscriptions/aaaa1111-0000-0000-0000-000000000001`` for ``dddd7777-0000-0000-0000-000000000021`` (User): ``Unresolved``, $($script:UpUnknownReason)"
+            "- ``Owner`` at ``/subscriptions/aaaa1111-0000-0000-0000-000000000001`` for ``dddd7777-0000-0000-0000-000000000022`` (User): ``Unresolved``, $($script:UpUnresolvedReason)"
+        )
+        ((Get-UpBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
+    }
+
+    It 'reads a row with no StatusRead as a status whose read is not known to have succeeded' {
+        # A row without the member says nothing about the read, so its reason is not stated as a fact.
+        $Row = [PSCustomObject]@{ RoleAssignmentId = ''; Scope = '/subscriptions/x'; Role = 'Reader'; Principal = 'dddd7777-0000-0000-0000-000000000023'; PrincipalType = ''; PrincipalStatus = 'Unresolved' }
+        $Bullets = @(Get-UpBullets -Section (Get-UpSection -Readme (Get-UpReadme -Rows @($Row))))
+        $Bullets | Should -Be @("- ``Reader`` at ``/subscriptions/x`` for ``dddd7777-0000-0000-0000-000000000023``: ``Unresolved``, $($script:UpUnknownReason)")
     }
 
     It 'says that none was found when the list is empty' {
@@ -897,7 +943,7 @@ Describe 'Get-OERInventoryReadme (role assignments whose principal could not be 
         @{ State = 'one row'; Rows = @([PSCustomObject]@{ RoleAssignmentId = ''; Scope = '/subscriptions/x'; Role = 'Owner'; Principal = 'dddd7777-0000-0000-0000-000000000004'; PrincipalType = 'Group'; PrincipalStatus = 'Unresolved' }) }
     ) {
         $Md = Get-UpReadme -Rows $Rows
-        ([regex]::Matches($Md, '(?m)^## Role assignments whose principal could not be looked up\r?$')).Count | Should -Be 1
+        ([regex]::Matches($Md, '(?m)^## Role assignments whose principal the directory did not return\r?$')).Count | Should -Be 1
         $Headings = @([regex]::Matches($Md, '(?m)^## .*$') | ForEach-Object { $_.Value.TrimEnd("`r") })
         $Index = [array]::IndexOf($Headings, $script:UpHeading)
         $Index | Should -BeGreaterThan 0
