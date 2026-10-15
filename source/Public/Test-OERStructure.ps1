@@ -63,11 +63,11 @@ function Test-OERStructure {
     cannot decide it; its help describes both.
 
     An accessReviews entry whose accessPackage is a name, not an object id, that two or more
-    accessPackages entries declare, as their displayName or as a previousDisplayName that renames,
-    while at least one of those entries renames its package, is an Error at the review's
-    accessPackage. The same name in two catalogs is two packages, but Invoke-OERStructure keys a
-    renamed package, and the policies within it, by the package's name, without its catalog, so the
-    run cannot tell which package the review means. Name the access package by its object id.
+    accessPackages entries declare, as their displayName or as a previousDisplayName that renames, is
+    an Error at the review's accessPackage, whether or not one of those entries renames its package.
+    The same name in two catalogs is two packages, but Invoke-OERStructure keys every declared package,
+    and the policies within it, by the package's name, without its catalog, so the run cannot tell
+    which package the review means. Name the access package by its object id.
 
     A top-level tenantId, when present, must be a string holding a canonical GUID (an explicit null, a
     value that is not a string, such as an array, or any other value is an Error; a document without

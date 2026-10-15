@@ -88,6 +88,19 @@ function Sync-OERStructureAccessReview {
     read first, so a refused package refuses the entry before its policy is read. A name the map
     holds nothing for is resolved exactly as before.
 
+    Every accessPackages entry of the document is in the map, not only a rename (BL-147, R-8;
+    docs/development/rationale.md#review-package-in-the-same-run), so an accessPackage name that an
+    accessPackages entry declares as its displayName is never looked up in the whole tenant, where a
+    package of that name in another catalog would be found -- not by the target check below and not by
+    the create. An entry that renames nothing registers the id of the package it found in its declared
+    catalog or created there: that id replaces the name as above, and a Failed row of the target check
+    says "accessPackage '<name>' was read as '<id>', the access package its accessPackages entry
+    resolved in this run". Until it has that id -- it stopped first, the -WhatIf plan would create the
+    package, or -Include leaves the accessPackages section out -- the entry is refused instead, with one
+    Failed row "access package '<name>' has no id in this run (<reason>), so the access package this
+    access review reviews cannot be identified; nothing was created, read or written for it", and
+    nothing else, as for a refused rename. The policy is still looked up within the package, by its id.
+
     The update is a FULL-OBJECT PUT: Set-OERAccessReviewDefinition carries the live values of every
     writable top-level property forward by name (including instanceEnumerationScope and
     additionalNotificationRecipients, neither of which the document models). A writable property added
@@ -189,8 +202,9 @@ function Sync-OERStructureAccessReview {
     .PARAMETER RenameMap
     Optional run-scoped rename map Invoke-OERStructure creates once per document. The accessPackages
     handler fills it (through Resolve-OERStructureRename) for every access package and assignment
-    policy the document renames, refuses or cannot decide, and Invoke-OERStructure marks them
-    undecided when -Include leaves the accessPackages section out. This handler only reads it, through
+    policy the document renames, refuses or cannot decide, and for every other accessPackages entry
+    with the package it found or created, or a refusal until it has one (BL-147); Invoke-OERStructure
+    marks them all when -Include leaves the accessPackages section out. This handler only reads it, through
     Get-OERStructureRenameTarget, for the entry's accessPackage and assignmentPolicy (see the
     description); it registers nothing, not even its own rename. When the map is omitted or holds
     nothing for those names, they are resolved as they always have been.
@@ -275,9 +289,20 @@ function Sync-OERStructureAccessReview {
         if (-not (Test-OERGuid -Value $PackageRef)) {
             $PackageTarget = Get-OERStructureRenameTarget -Section 'accessPackages' -Name $PackageRef -RenameMap $RenameMap
         }
+        # BL-147 (R-8): every accessPackages entry registers its package here, not only a rename. An entry
+        # that renames nothing carries no previous name: its id is the package it found in its catalog or
+        # created there, and its refusal says why it has none -- so a package name the document declares is
+        # never looked up in the whole tenant, where a package of that name in another catalog would be
+        # found, and the rows of such an entry do not speak of a rename.
+        # docs/development/rationale.md#review-package-in-the-same-run
+        $PackageRenamed = $PackageTarget -and -not [string]::IsNullOrEmpty([string]$PackageTarget.PreviousName)
         if ($PackageTarget -and $PackageTarget.Refused) {
-            ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
-                -Detail "access package '$PackageRef' was not reconciled in this run: its rename from '$($PackageTarget.PreviousName)' was refused ($($PackageTarget.Reason)), so the access package this access review reviews cannot be identified; nothing was created, read or written for it"
+            $RefusedDetail = if ($PackageRenamed) {
+                "access package '$PackageRef' was not reconciled in this run: its rename from '$($PackageTarget.PreviousName)' was refused ($($PackageTarget.Reason)), so the access package this access review reviews cannot be identified; nothing was created, read or written for it"
+            } else {
+                "access package '$PackageRef' has no id in this run ($($PackageTarget.Reason)), so the access package this access review reviews cannot be identified; nothing was created, read or written for it"
+            }
+            ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' -Detail $RefusedDetail
             return
         }
         $PolicyTarget = Get-OERStructureRenameTarget -Section 'assignmentPolicies' -Name $PolicyRef -AccessPackage $PackageRef -RenameMap $RenameMap
@@ -290,7 +315,11 @@ function Sync-OERStructureAccessReview {
             $TargetItem = $Item.PSObject.Copy()
             if ($PackageTarget) {
                 $TargetItem.accessPackage = [string]$PackageTarget.Id
-                $TranslatedNote.Add("accessPackage '$PackageRef' was read as '$($PackageTarget.Id)', the access package this run renames from '$($PackageTarget.PreviousName)'")
+                if ($PackageRenamed) {
+                    $TranslatedNote.Add("accessPackage '$PackageRef' was read as '$($PackageTarget.Id)', the access package this run renames from '$($PackageTarget.PreviousName)'")
+                } else {
+                    $TranslatedNote.Add("accessPackage '$PackageRef' was read as '$($PackageTarget.Id)', the access package its accessPackages entry resolved in this run")
+                }
             }
             if ($PolicyTarget) {
                 $TargetItem.assignmentPolicy = [string]$PolicyTarget.Id

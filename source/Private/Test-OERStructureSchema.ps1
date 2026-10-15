@@ -187,13 +187,12 @@ function Test-OERStructureSchema {
     one named. An accessReviews[] entry whose accessPackage is a string that is not an object id, and
     that equals, ignoring case, the displayName or the previousDisplayName (read as Rule 14 reads it: a
     non-empty string that differs from the entry's displayName ignoring case) of two or more
-    accessPackages[] entries, at least one of which renames its package through previousDisplayName, is
-    an Error at accessReviews[i].accessPackage naming those entries (Rule 15, Sprint 11 step 4b): the
-    same name in two catalogs is two packages, but the run's rename map keys a package, and the policies
-    within it, by the package's name, without its catalog, so the run cannot tell which package the
-    review means; the Error says to name the access package by its object id. When none of those
-    entries declares such a previousDisplayName nothing is reported, and the apply-time lookup refuses
-    the ambiguous name as before. A second top-level entry
+    accessPackages[] entries is an Error at accessReviews[i].accessPackage naming those entries (Rule 15,
+    Sprint 11 step 4b, widened by BL-147): the same name in two catalogs is two packages, but the run's
+    rename map keys a package, and the policies within it, by the package's name, without its catalog,
+    and every accessPackages entry registers its package there, so the run cannot tell which package the
+    review means; the Error says to name the access package by its object id, and says that one of the
+    entries is renamed through previousDisplayName only when one is. A second top-level entry
     whose key matches an earlier one, compared without regard to letter case, is an Error at the later
     entry's path that names the earlier entry's index, since the two describe one live object and
     applying both makes each undo the other, or through a child collection removes what the other
@@ -2499,22 +2498,22 @@ function Test-OERStructureSchema {
         }
     }
 
-    # Rule 15 (Sprint 11 step 4b): a review that names by display name a package two or more
-    # accessPackages entries declare, while one of them renames its package. A package is identified by its
+    # Rule 15 (Sprint 11 step 4b; widened by BL-147): a review that names by display name a package two or
+    # more accessPackages entries declare. A package is identified by its
     # catalog together with its name, so the same name in two catalogs is two packages (the duplicate
     # check above does not refuse it), but Invoke-OERStructure's run-scoped rename map keys a package --
     # and a policy within it -- by the package's name, without its catalog ('accessPackages|<name>',
     # 'assignmentPolicies|<package name>|<policy>'; a policy also under the package's id once the access
     # package handler knows it). A review reads that map for a package name that is not
-    # an object id, so it would reach whichever entry registered the name last, where the tenant-wide
-    # lookup the review otherwise makes refuses an ambiguous name; and one entry's mark or decision would
-    # overwrite another's refusal. The run cannot tell which package the review means, so the document is
-    # refused offline: an Error at the review's accessPackage, naming every entry that declares the name as
-    # its displayName or (Get-RenameDeclaration, Rename state) its previousDisplayName, when there are two
-    # or more and at least one of them is in the Rename state. Without such a rename the map holds no
-    # package for the name, and the review's apply-time lookup of the package refuses the ambiguous name as
-    # before, so nothing is reported. A reference that is an object id is never read in the map, so it is
-    # never reported either.
+    # an object id, so it would reach whichever entry registered the name last; and one entry's mark or
+    # decision would overwrite another's refusal. The run cannot tell which package the review means, so
+    # the document is refused offline: an Error at the review's accessPackage, naming every entry that
+    # declares the name as its displayName or (Get-RenameDeclaration, Rename state) its
+    # previousDisplayName, when there are two or more. Before BL-147 only a rename registered a package, so
+    # the Error needed one of those entries in the Rename state; since every accessPackages entry registers
+    # its package (R-8, docs/development/rationale.md#review-package-in-the-same-run), it stands whether or
+    # not one renames, and the message names the rename only when there is one. A reference that is an
+    # object id is never read in the map, so it is never reported.
     if ((Test-HasProp -Node $Document -Name 'accessPackages') -and
         ($Document.accessPackages -is [System.Collections.IEnumerable]) -and
         ($Document.accessPackages -isnot [string]) -and
@@ -2539,14 +2538,15 @@ function Test-OERStructureSchema {
                 $AmbPaths.Add("accessPackages[$P]")
                 if ($AmbRename.State -eq 'Rename') { $AmbRenamed = $true }
             }
-            if ($AmbPaths.Count -lt 2 -or -not $AmbRenamed) { continue }
+            if ($AmbPaths.Count -lt 2) { continue }
 
+            # The message says that one of the entries renames only when one does.
+            $AmbRenameClause = if ($AmbRenamed) { ' while at least one of them is renamed through previousDisplayName' } else { '' }
             $AmbReviewName = if (Test-HasProp -Node $AmbReviews[$I] -Name 'displayName') { [string]$AmbReviews[$I].displayName } else { "accessReviews[$I]" }
             Add-Finding -Section 'accessReviews' -Item $AmbReviewName -Path "accessReviews[$I].accessPackage" `
                 -Message ("Access review '$AmbReviewName' at accessReviews[$I] declares accessPackage '$AmbRef', which $($AmbPaths.Count) " +
-                    "accessPackages entries declare as displayName or previousDisplayName ($($AmbPaths -join ', ')) while at least one of " +
-                    'them is renamed through previousDisplayName, so the run cannot tell which access package the review means. ' +
-                    'Name the access package by its object id.')
+                    "accessPackages entries declare as displayName or previousDisplayName ($($AmbPaths -join ', '))$AmbRenameClause, " +
+                    'so the run cannot tell which access package the review means. Name the access package by its object id.')
         }
     }
 

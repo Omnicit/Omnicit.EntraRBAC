@@ -745,6 +745,117 @@ Describe 'Resolve-OERStructureRename' {
         }
     }
 
+    # R-8 (BL-147): every access package entry's outcome is in the map, not only a rename's. An entry
+    # without previousDisplayName registers the package's id once it has found or created it
+    # (-Identified), and is registered refused, with a reason and no error id, until then
+    # (-Unidentified). Neither carries a previous name, so a reader can tell such an entry from a rename.
+    Context 'A non-rename access package entry (BL-147)' {
+        It 'registers -Identified as not refused, with the id and no previous name, error id or reason, under the lower-cased key' {
+            $Result = InModuleScope $script:moduleName {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $Hit = Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Main' -Identified -Id 'aaaaaaaa-0000-0000-0000-00000000000a' -RenameMap $Map
+                [PSCustomObject]@{ Hit = $Hit; Keys = @($Map.Keys); Entry = @($Map.Values)[0] }
+            }
+            $Result.Keys | Should -BeExactly @('accesspackages|ap-main')
+            $Result.Entry.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureRenameTarget'
+            $Result.Entry.Section | Should -BeExactly 'accessPackages'
+            $Result.Entry.Name | Should -BeExactly 'AP-Main'
+            $Result.Entry.PreviousName | Should -BeNullOrEmpty
+            $Result.Entry.Id | Should -BeExactly 'aaaaaaaa-0000-0000-0000-00000000000a'
+            $Result.Entry.Refused | Should -BeFalse
+            $Result.Entry.ErrorId | Should -BeNullOrEmpty
+            $Result.Entry.Reason | Should -BeNullOrEmpty
+            $Result.Hit.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureRename'
+            $Result.Hit.Outcome | Should -BeExactly 'Identified'
+            $Result.Hit.Id | Should -BeExactly 'aaaaaaaa-0000-0000-0000-00000000000a'
+            $Result.Hit.RenameFrom | Should -BeNullOrEmpty
+            $Result.Hit.ErrorRecord | Should -BeNullOrEmpty
+            $Result.Hit.Result | Should -BeNullOrEmpty
+        }
+        It 'registers -Unidentified as refused, with the reason and no id, previous name or error id, under the lower-cased key' {
+            $Result = InModuleScope $script:moduleName {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $Hit = Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Main' -Unidentified -Reason 'r' -RenameMap $Map
+                [PSCustomObject]@{ Hit = $Hit; Keys = @($Map.Keys); Entry = @($Map.Values)[0] }
+            }
+            $Result.Keys | Should -BeExactly @('accesspackages|ap-main')
+            $Result.Entry.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureRenameTarget'
+            $Result.Entry.Section | Should -BeExactly 'accessPackages'
+            $Result.Entry.Name | Should -BeExactly 'AP-Main'
+            $Result.Entry.PreviousName | Should -BeNullOrEmpty
+            $Result.Entry.Id | Should -BeNullOrEmpty
+            $Result.Entry.Refused | Should -BeTrue
+            $Result.Entry.ErrorId | Should -BeNullOrEmpty
+            $Result.Entry.Reason | Should -BeExactly 'r'
+            $Result.Hit.Outcome | Should -BeExactly 'Unidentified'
+            $Result.Hit.Id | Should -BeNullOrEmpty
+            $Result.Hit.RenameFrom | Should -BeNullOrEmpty
+            $Result.Hit.ErrorRecord | Should -BeNullOrEmpty
+            $Result.Hit.Result | Should -BeNullOrEmpty
+        }
+        It 'replaces an -Unidentified mark by the id the entry then registers, under the same key' {
+            $Result = InModuleScope $script:moduleName {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $null = Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Main' -Unidentified -Reason 'r' -RenameMap $Map
+                $null = Resolve-OERStructureRename -Section 'accessPackages' -Name 'ap-main' -Identified -Id 'aaaaaaaa-0000-0000-0000-00000000000a' -RenameMap $Map
+                [PSCustomObject]@{ Count = $Map.Count; Entry = $Map['accesspackages|ap-main'] }
+            }
+            $Result.Count | Should -Be 1
+            $Result.Entry.Refused | Should -BeFalse
+            $Result.Entry.Id | Should -BeExactly 'aaaaaaaa-0000-0000-0000-00000000000a'
+            $Result.Entry.Reason | Should -BeNullOrEmpty
+        }
+        It 'registers nothing and returns the same outcome without a map (<Outcome>)' -ForEach @(
+            @{ Outcome = 'Identified'; Splat = @{ Identified = $true; Id = 'aaaaaaaa-0000-0000-0000-00000000000a' } }
+            @{ Outcome = 'Unidentified'; Splat = @{ Unidentified = $true; Reason = 'r' } }
+        ) {
+            $Hit = InModuleScope $script:moduleName -Parameters @{ Splat = $Splat } {
+                Resolve-OERStructureRename -Section 'accessPackages' -Name 'AP-Main' @Splat
+            }
+            $Hit.Outcome | Should -BeExactly $Outcome
+        }
+        It 'throws an ArgumentException for <Outcome> in the <Section> section, registering nothing' -ForEach @(
+            foreach ($Section in @('administrativeUnits', 'catalogs', 'assignmentPolicies', 'accessReviews')) {
+                @{ Outcome = 'Identified'; Section = $Section; Splat = @{ Identified = $true; Id = 'aaaaaaaa-0000-0000-0000-00000000000a' } }
+                @{ Outcome = 'Unidentified'; Section = $Section; Splat = @{ Unidentified = $true; Reason = 'r' } }
+            }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Section = $Section; Splat = $Splat } {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                { Resolve-OERStructureRename -Section $Section -Name 'N' -AccessPackage 'AP' @Splat -RenameMap $Map } |
+                    Should -Throw -ExceptionType ([System.ArgumentException]) -ExpectedMessage '*registered for the accessPackages section only*'
+                $Map.Count | Should -Be 0
+            }
+        }
+        It 'throws an ArgumentException for -Identified with an id that is <Case>, registering nothing' -ForEach @(
+            @{ Case = 'empty'; Id = '' }
+            @{ Case = 'null'; Id = $null }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Id = $Id } {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                { Resolve-OERStructureRename -Section 'accessPackages' -Name 'N' -Identified -Id $Id -RenameMap $Map } |
+                    Should -Throw -ExceptionType ([System.ArgumentException]) -ExpectedMessage '*-Identified requires the id*'
+                $Map.Count | Should -Be 0
+            }
+        }
+        It 'refuses an empty reason for -Unidentified' {
+            InModuleScope $script:moduleName {
+                $Map = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                { Resolve-OERStructureRename -Section 'accessPackages' -Name 'N' -Unidentified -Reason '' -RenameMap $Map -ErrorAction Stop } | Should -Throw
+                $Map.Count | Should -Be 0
+            }
+        }
+        It 'takes no -PreviousName in either set, and needs none' {
+            $Sets = InModuleScope $script:moduleName {
+                @((Get-Command Resolve-OERStructureRename).ParameterSets | Where-Object { $_.Name -in 'Identified', 'Unidentified' } | ForEach-Object {
+                        [PSCustomObject]@{ Name = $_.Name; Names = @($_.Parameters.Name) }
+                    })
+            }
+            @($Sets.Name | Sort-Object) | Should -Be @('Identified', 'Unidentified')
+            foreach ($Set in $Sets) { $Set.Names | Should -Not -Contain 'PreviousName' }
+        }
+    }
+
     Context 'Parameter contract' {
         It 'refuses an empty reason for an undecided rename' {
             InModuleScope $script:moduleName {
@@ -772,7 +883,7 @@ Describe 'Resolve-OERStructureRename' {
             }
             $Hit.Outcome | Should -BeExactly 'Current'
         }
-        It 'takes -AccessPackage and -AccessPackageId as optional strings in both parameter sets' {
+        It 'takes -AccessPackage and -AccessPackageId as optional strings in every parameter set' {
             $Sets = InModuleScope $script:moduleName {
                 @((Get-Command Resolve-OERStructureRename).ParameterSets | ForEach-Object {
                         $Package = @($_.Parameters.Where({ $_.Name -in 'AccessPackage', 'AccessPackageId' }))
@@ -784,7 +895,7 @@ Describe 'Resolve-OERStructureRename' {
                         }
                     })
             }
-            @($Sets.Name | Sort-Object) | Should -Be @('Decide', 'Undecided')
+            @($Sets.Name | Sort-Object) | Should -Be @('Decide', 'Identified', 'Undecided', 'Unidentified')
             foreach ($Set in $Sets) {
                 @($Set.Names | Sort-Object) | Should -Be @('AccessPackage', 'AccessPackageId')
                 $Set.Mandatory | Should -HaveCount 0

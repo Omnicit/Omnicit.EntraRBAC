@@ -105,8 +105,21 @@ function Invoke-OERStructure {
     leaves the section out publishes no error record, only the Failed row, so -ErrorAction Stop and
     $? do not see it: check the rows. Test-OERStructure warns on a reference that still names a
     renamed object by its previous name, and refuses a document in which an access review names by
-    display name an access package that two or more accessPackages entries declare while one of them
-    is renamed (the map keys a package by its name alone): name that package by its object id.
+    display name an access package that two or more accessPackages entries declare, renamed or not
+    (the map keys a package by its name alone): name that package by its object id.
+
+    An access review and the access package the same document declares (BL-147): every accessPackages
+    entry, not only a rename, records its package in the run's rename map -- the id of the package it
+    found in its declared catalog or created there -- so an access review whose accessPackage names that
+    package by its display name reaches it by that id, and its name is never looked up in the whole
+    tenant, where a package of that name in another catalog would be found. Until the entry has that
+    id, the review is refused, Failed with nothing created, read or written for it, under -WhatIf too:
+    when the entry stops first (its catalog refused, a failed or ambiguous lookup, a failed create, or
+    a create that returned another catalog's package), when the -WhatIf plan would create the package
+    (the plan then reports the review Failed although a real run creates the package first and then
+    the review), and when -Include leaves out the AccessPackages section, whether or not the entry
+    renames. A review that names a package the document does not declare, or names it by object id,
+    is resolved as before.
 
     Per-item continuation: a handler error (thrown exception) is caught, written as a non-
     terminating error, recorded as a Failed StructureResult, and the engine continues to the next
@@ -622,7 +635,11 @@ function Invoke-OERStructure {
         # An access package's assignment policies are renamed by its entry too, so for a left-out
         # accessPackages section each policy that declares previousDisplayName is registered as well,
         # under the package's declared name (D4), whether or not the package itself is renamed. No read,
-        # no row, no write.
+        # no row, no write. BL-147 (R-8): every accessPackages entry registers its package in the map, so
+        # for a left-out accessPackages section an entry that renames nothing is registered refused too
+        # (Resolve-OERStructureRename -Unidentified), and a review that names its package by name is refused
+        # instead of being looked up in the whole tenant, where a package of that name in another catalog
+        # would be found. docs/development/rationale.md#review-package-in-the-same-run
         $UndecidedSection = @(
             [PSCustomObject]@{ IncludeName = 'AdministrativeUnits'; DocKey = 'administrativeUnits' }
             [PSCustomObject]@{ IncludeName = 'Catalogs'; DocKey = 'catalogs' }
@@ -640,6 +657,9 @@ function Invoke-OERStructure {
                     -not [string]::IsNullOrEmpty([string]$Entry.previousDisplayName)) {
                     $null = Resolve-OERStructureRename -Section $Undecided.DocKey -Name ([string]$Entry.displayName) `
                         -PreviousName ([string]$Entry.previousDisplayName) -Undecided -Reason $UndecidedReason -RenameMap $RenameMap
+                } elseif ($Undecided.DocKey -eq 'accessPackages') {
+                    $null = Resolve-OERStructureRename -Section 'accessPackages' -Name ([string]$Entry.displayName) -Unidentified `
+                        -Reason 'the accessPackages section is not selected by -Include' -RenameMap $RenameMap
                 }
                 if ($Undecided.DocKey -ne 'accessPackages') { continue }
                 if (-not (Test-OERDeclaredProperty -Node $Entry -Name 'assignmentPolicies')) { continue }

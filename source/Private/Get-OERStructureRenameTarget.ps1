@@ -18,6 +18,12 @@ function Get-OERStructureRenameTarget {
     looked up, or that the entry did not reach a decision). Readers print Reason in their Failed row.
     The key is '<section>|<name>' in lower case, built exactly as Resolve-OERStructureRename builds it.
 
+    An accessPackages entry that renames nothing is registered under the same key (BL-147, R-8;
+    docs/development/rationale.md#review-package-in-the-same-run), and its entry carries no previous
+    name (PreviousName $null): Refused false with the id of the package the entry found in its catalog or
+    created there, or Refused true with no ErrorId and a Reason saying why the entry has no id for it yet.
+    A reader tells it from a rename by the empty PreviousName, and words its rows without a rename.
+
     An assignment policy is registered per access package, so for the assignmentPolicies section the key
     is '<section>|<access package>|<name>' in lower case, and -AccessPackage is the package term: the
     package's display name as its accessPackages entry declares it, or its object id (the owner registers

@@ -41,7 +41,10 @@ function Sync-OERStructureAccessPackage {
     that one is left in place silently. With -RenameMap the decision is registered in the run's rename
     map, under 'accessPackages|<new name>', so a reference to the package's new name later in the same
     run, read through Get-OERStructureRenameTarget, reaches the package found under its previous name,
-    or is refused when its rename was; see .PARAMETER RenameMap.
+    or is refused when its rename was; see .PARAMETER RenameMap. An entry that renames nothing is
+    registered there too (BL-147): the package it found in its catalog, or created there, by its id, and
+    refused until then, so an access review in the same run that names the package by name reaches that
+    package, or is refused, and never one of that name in another catalog.
 
     A catalog the same document renames (a catalogs[] entry with previousDisplayName) is addressed
     through the run's rename map (-RenameMap): Microsoft Graph's name lookup may not find the
@@ -297,6 +300,22 @@ function Sync-OERStructureAccessPackage {
     returned another catalog's package -- is marked under the package's name only, so a reference
     that names a package by object id then looks the policy up by name within that package, as
     before this map existed. Without the map nothing is registered.
+    Every entry with a displayName that is not empty registers its package, not only a rename (BL-147,
+    R-8; docs/development/rationale.md#review-package-in-the-same-run). An entry that renames nothing
+    -- no previousDisplayName, or one that is empty -- is marked first of all, through
+    Resolve-OERStructureRename -Unidentified, as refused with no previous name and the reason "the
+    accessPackages entry did not find or create it; see that entry's rows". It registers the package's
+    id (-Identified) as soon as it has the package: the existing package found in the declared catalog,
+    before anything else is read or written for it (also after a Current rename outcome, which removed
+    the mark), or the package it created there, once the created package is shown not to be another
+    catalog's. A rename keeps its own registration. A stop before that -- the catalog refused, a failed
+    or ambiguous lookup, a refused rename, a failed create, a create that returned another catalog's
+    package -- leaves the refusal, and a failure after it (an update, the resource role bindings, the
+    assignment policies) does not take the id back. A package that the -WhatIf plan would create, or
+    whose creation a declined confirmation skipped, is registered refused with the reason "the
+    accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined
+    confirmation": it has no id yet, so a review of it is Failed in the plan where the real run creates
+    the package (an accepted limit).
 
     .EXAMPLE
     Sync-OERStructureAccessPackage -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
@@ -335,12 +354,19 @@ function Sync-OERStructureAccessPackage {
         # string, or a missing or null value) is not marked -- the package's displayName, its
         # previousDisplayName, a policy's displayName or its previousDisplayName: the validator refuses
         # such an entry, and the helper's parameter binding would otherwise end the item in this block.
+        # BL-147 (R-8): an entry that renames nothing is marked too, as refused with no previous name until
+        # it registers the id of the package it found or created (below), so a review that names the package
+        # by its name is refused instead of looking it up in the whole tenant, where a package of that name
+        # in another catalog would be found. docs/development/rationale.md#review-package-in-the-same-run
         if ($null -ne $RenameMap -and -not [string]::IsNullOrEmpty([string]$Name)) {
             $UndecidedReason = "the accessPackages entry did not reach a decision in this run; see that entry's rows"
             if ((Test-OERDeclaredProperty -Node $Item -Name 'previousDisplayName') -and
                 -not [string]::IsNullOrEmpty([string]$Item.previousDisplayName)) {
                 $null = Resolve-OERStructureRename -Section 'accessPackages' -Name ([string]$Name) `
                     -PreviousName ([string]$Item.previousDisplayName) -Undecided -Reason $UndecidedReason -RenameMap $RenameMap
+            } else {
+                $null = Resolve-OERStructureRename -Section 'accessPackages' -Name ([string]$Name) -Unidentified `
+                    -Reason "the accessPackages entry did not find or create it; see that entry's rows" -RenameMap $RenameMap
             }
             if (Test-OERDeclaredProperty -Node $Item -Name 'assignmentPolicies') {
                 foreach ($MarkPol in @($Item.assignmentPolicies)) {
@@ -544,6 +570,15 @@ function Sync-OERStructureAccessPackage {
                 # Under -WhatIf: emit Skipped for the AP and all declared children, then return.
                 ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Skipped' -Detail "would create access package $Name"
 
+                # BL-147 (R-8): the package the plan would create has no id yet, so a review that names it
+                # in this run is refused with that reason (in a plan where the real run creates it, an
+                # accepted limit), never looked up by name in the whole tenant.
+                if ($null -ne $RenameMap -and -not [string]::IsNullOrEmpty([string]$Name)) {
+                    $null = Resolve-OERStructureRename -Section 'accessPackages' -Name ([string]$Name) -Unidentified `
+                        -Reason 'the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation' `
+                        -RenameMap $RenameMap
+                }
+
                 if (Test-OERDeclaredProperty -Node $Item -Name 'resourceRoles') {
                     foreach ($Rr in @($Item.resourceRoles)) {
                         $RrRef = if (Test-OERDeclaredProperty -Node $Rr -Name 'resource') { $Rr.resource } else { '?' }
@@ -622,6 +657,11 @@ function Sync-OERStructureAccessPackage {
             }
 
             $ApId = $Created.Id
+            # BL-147 (R-8): the package created in the declared catalog is the one a review that names it in
+            # this run reaches, by this id. An answer with no id leaves the refusal in place.
+            if ($null -ne $RenameMap -and -not [string]::IsNullOrEmpty([string]$Name) -and -not [string]::IsNullOrEmpty([string]$ApId)) {
+                $null = Resolve-OERStructureRename -Section 'accessPackages' -Name ([string]$Name) -Identified -Id ([string]$ApId) -RenameMap $RenameMap
+            }
             ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Created' -Detail "created access package $Name ($ApId)"
 
             # After create: current resourceRoles and policies are empty
@@ -638,6 +678,14 @@ function Sync-OERStructureAccessPackage {
             # mark under both keys. A package this call creates needs no such mark: no document can name
             # its id, and its policies are decided under both keys after the create.
             Register-OERPolicyUndecidedMark -PackageId @([string]$ApId)
+
+            # BL-147 (R-8): the package found in the declared catalog -- also after a Current rename outcome,
+            # which removed the entry's mark -- is the one a review that names it in this run reaches, by its
+            # id, whatever fails for the entry after this point. A rename keeps its own registration, which
+            # names the package it renames from.
+            if ($null -ne $RenameMap -and -not $RenameFrom -and -not [string]::IsNullOrEmpty([string]$Name)) {
+                $null = Resolve-OERStructureRename -Section 'accessPackages' -Name ([string]$Name) -Identified -Id ([string]$ApId) -RenameMap $RenameMap
+            }
 
             # Access package exists -- diff mutable properties (description and the hidden flag;
             # catalog is creation-only and is never changed on an existing package). $ApId is already

@@ -4767,13 +4767,13 @@ Describe 'Test-OERStructureSchema renames of assignment policies (BL-128, Sprint
     }
 }
 
-Describe 'Test-OERStructureSchema refuses a review naming an access package that several entries declare while one renames it (Rule 15, Sprint 11 step 4b)' {
+Describe 'Test-OERStructureSchema refuses a review naming an access package that several entries declare (Rule 15, Sprint 11 step 4b, widened by BL-147)' {
     # The run's rename map keys a package, and the policies within it, by the package's name, without its
     # catalog, while the same name in two catalogs is two packages. A review that names such a name, not
-    # an object id, while one of the entries declaring it is renamed through previousDisplayName, could
-    # reach either package, so the document is refused offline with an Error at the review's
-    # accessPackage. Without a rename among those entries nothing is reported (the apply-time lookup
-    # refuses the ambiguous name).
+    # an object id, could reach either package, so the document is refused offline with an Error at the
+    # review's accessPackage. Since BL-147 every accessPackages entry registers its package in the map,
+    # not only a rename, so the Error stands whether or not one of those entries renames; the message
+    # says that one is renamed only when one is.
     BeforeAll {
         function Invoke-AmbValidation {
             param([object]$Doc)
@@ -4799,6 +4799,9 @@ Describe 'Test-OERStructureSchema refuses a review naming an access package that
         $script:AmbMessage = "Access review '{0}' at accessReviews[{1}] declares accessPackage '{2}', which {3} accessPackages entries declare as displayName " +
             'or previousDisplayName ({4}) while at least one of them is renamed through previousDisplayName, so the run cannot tell which access ' +
             'package the review means. Name the access package by its object id.'
+        $script:AmbMessageNoRename = "Access review '{0}' at accessReviews[{1}] declares accessPackage '{2}', which {3} accessPackages entries declare as " +
+            'displayName or previousDisplayName ({4}), so the run cannot tell which access package the review means. Name the access package by ' +
+            'its object id.'
     }
 
     It 'refuses two entries of different catalogs that share the displayName the review names, one of them renamed' {
@@ -4853,17 +4856,24 @@ Describe 'Test-OERStructureSchema refuses a review naming an access package that
         $Third[0].Message | Should -BeExactly ($script:AmbMessage -f 'rev_three', 2, 'ap-X', 3, 'accessPackages[0], accessPackages[2], accessPackages[3]')
     }
 
-    It 'does not report the shared name when no entry that declares it renames its package' {
+    It 'refuses two entries of different catalogs that share the displayName the review names when none of them renames (BL-147)' {
+        # Before BL-147 nothing was reported here; every entry now registers its package by its name.
         $V = Invoke-AmbValidation -Doc (New-AmbDoc -PackageJson @(
                 '{ "displayName": "ap-x", "catalog": "cat-x" }'
                 '{ "displayName": "ap-x", "catalog": "cat-y" }'
                 '{ "displayName": "ap-y", "previousDisplayName": "ap-old", "catalog": "cat-x" }'
             ))
-        @($V.Errors) | Should -BeNullOrEmpty
-        $V.Valid | Should -BeTrue
+        $Hit = @(Get-AmbFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Section | Should -BeExactly 'accessReviews'
+        $Hit[0].Item | Should -BeExactly 'rev_one'
+        $Hit[0].Severity | Should -BeExactly 'Error'
+        $Hit[0].Message | Should -BeExactly ($script:AmbMessageNoRename -f 'rev_one', 0, 'ap-x', 2, 'accessPackages[0], accessPackages[1]')
+        @($V.Errors).Count | Should -Be 1
+        $V.Valid | Should -BeFalse
     }
 
-    It 'does not report the shared name when the previousDisplayName of an entry that declares it renames nothing (<Case>)' -ForEach @(
+    It 'refuses the shared name without the rename clause when the previousDisplayName of an entry that declares it renames nothing (<Case>)' -ForEach @(
         @{ Case = 'it equals the displayName ignoring case'; Prev = '"AP-X"'; Finding = 'Warning' }
         @{ Case = 'it is not a non-empty string'; Prev = '5'; Finding = 'Error' }
     ) {
@@ -4871,12 +4881,25 @@ Describe 'Test-OERStructureSchema refuses a review naming an access package that
                 '{ "displayName": "ap-x", "previousDisplayName": ' + $Prev + ', "catalog": "cat-x" }'
                 '{ "displayName": "ap-x", "catalog": "cat-y" }'
             ))
-        @($V.Errors | Where-Object { $_.Path -eq 'accessReviews[0].accessPackage' }) | Should -BeNullOrEmpty
+        $Hit = @(Get-AmbFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Message | Should -BeExactly ($script:AmbMessageNoRename -f 'rev_one', 0, 'ap-x', 2, 'accessPackages[0], accessPackages[1]')
         # The finding of the previousDisplayName itself proves the entry was reached.
         $Own = @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].previousDisplayName' })
         $Own.Count | Should -Be 1
         $Own[0].Severity | Should -BeExactly $Finding
-        @($V.Errors).Count | Should -Be 1
+        @($V.Errors).Count | Should -Be 2
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'does not report two entries of one displayName that no review names' {
+        $V = Invoke-AmbValidation -Doc (New-AmbDoc -ReviewPackageJson '"ap-y"' -PackageJson @(
+                '{ "displayName": "ap-x", "catalog": "cat-x" }'
+                '{ "displayName": "ap-x", "catalog": "cat-y" }'
+                '{ "displayName": "ap-y", "catalog": "cat-x" }'
+            ))
+        @($V.Errors) | Should -BeNullOrEmpty
+        $V.Valid | Should -BeTrue
     }
 
     It 'does not report a review that names the package by its object id, even when two entries rename from that id' {
