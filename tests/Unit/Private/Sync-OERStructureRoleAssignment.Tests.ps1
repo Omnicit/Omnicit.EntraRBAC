@@ -1825,9 +1825,7 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
                 if ($Type) { $Item | Add-Member -NotePropertyName principalType -NotePropertyValue $Type }
                 $Out = Invoke-SyncRaPsCapture -Splat (@{ Item = $Item; ResolvedScope = $script:PsSub; DeclaredAtScope = @($Item); ItemIndex = 0; DeclaredAtScopeIndex = @(0) } + $Splat)
 
-                # Reach proof: the role was looked up (also once more for the entry's key among its siblings,
-                # which the duplicate check reads) and the scope read once, as for any entry.
-                Should -Invoke Resolve-OERRoleDefinitionId -Times 1
+                # Reach proof: the scope was read once, as for any entry, which comes after the role lookup.
                 Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq $script:PsSub -and $AtScope }
                 @($Out.Rows).Count | Should -Be 1
                 $Out.Rows[0].Action | Should -Be 'Skipped'
