@@ -5470,17 +5470,21 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
         # A scope whose per-scope read handed rows over and that is then skipped -- here its role management
         # policy list fails -- merges none of its rows, so it must add nothing to the warnings, the README or
         # IncompleteReads. The real Get-OERInventory runs; the lookup and the deleted items read are answered
-        # per principal. The scope that is read comes FIRST, so what it handed over must survive the skip of
-        # the scope after it. No id below is version-4 shaped.
+        # per principal. A scope that is read comes BEFORE the skipped one, so what it handed over must
+        # survive the skip, and one comes AFTER it, so an unread principal named later must still be read
+        # beside its own cause. No id below is version-4 shaped.
         BeforeAll {
             $script:FsOk = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'
             $script:FsSkip = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $script:FsLater = '/subscriptions/aaaa1111-0000-0000-0000-000000000003'
             $script:FsHash = "$($script:FsSkip)/resourceGroups/rg-one/providers/Microsoft.Sql/servers/srv1/databases/db#1"
             $script:FsKept = 'dddd7777-0000-0000-0000-000000000001'
             $script:FsGone = 'dddd7777-0000-0000-0000-000000000002'
             $script:FsStatusUnread = 'dddd7777-0000-0000-0000-000000000003'
             $script:FsFail = 'dddd7777-0000-0000-0000-000000000004'
             $script:FsUser = 'dddd7777-0000-0000-0000-000000000005'
+            $script:FsLaterFail = 'dddd7777-0000-0000-0000-000000000006'
+            $script:FsLaterEntry = "roleAssignments/Reader -> $($script:FsLaterFail) @ $($script:FsLater)/principal"
             $script:FsUndeclarableHeading = '## Role assignments at a scope no document can declare'
             function script:New-FsRa {
                 param([string]$Scope, [string]$Role, [string]$PrincipalId, [string]$Suffix)
@@ -5502,14 +5506,15 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
             Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
             Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
                 [PSCustomObject]@{
-                    Scopes    = @($script:FsOk, $script:FsSkip)
+                    Scopes    = @($script:FsOk, $script:FsSkip, $script:FsLater)
                     Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
                 }
             }
-            # The read with names: at the scope that is read, one assignment whose principal is among the
-            # deleted items; at the scope that is skipped, one of each kind a read hands over -- a principal
-            # among the deleted items, one whose deleted items read fails, one whose lookup fails, and an
-            # assignment at a scope no document can declare. The read at the scope (the selection's) is empty.
+            # The read with names: at the first scope, one assignment whose principal is among the deleted
+            # items; at the scope that is skipped, one of each kind a read hands over -- a principal among the
+            # deleted items, one whose deleted items read fails, one whose lookup fails, and an assignment at a
+            # scope no document can declare; at the last scope, one whose lookup fails with a cause of its own.
+            # The read at the scope (the selection's) is empty.
             Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
                 param($Scope, [switch]$AtScope, [switch]$ResolveNames)
                 if ($AtScope) { return }
@@ -5520,11 +5525,13 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
                     New-FsRa -Scope $script:FsSkip -Role 'Contributor' -PrincipalId $script:FsFail -Suffix '4'
                     New-FsRa -Scope $script:FsHash -Role 'Reader' -PrincipalId $script:FsUser -Suffix '5'
                 }
+                if ($Scope -eq $script:FsLater) { New-FsRa -Scope $script:FsLater -Role 'Reader' -PrincipalId $script:FsLaterFail -Suffix '6' }
             }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
                 param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
                 foreach ($One in @($Id)) {
                     if ($One -eq $script:FsFail) { [PSCustomObject]@{ Id = $One; Read = $false; Found = $false; Name = $null; ObjectType = $null; Cause = 'Too many requests (429)' } }
+                    elseif ($One -eq $script:FsLaterFail) { [PSCustomObject]@{ Id = $One; Read = $false; Found = $false; Name = $null; ObjectType = $null; Cause = 'Bad gateway (502)' } }
                     elseif ($One -eq $script:FsUser) { [PSCustomObject]@{ Id = $One; Read = $true; Found = $true; Name = 'person1@example.com'; ObjectType = 'user'; Cause = $null } }
                     else { [PSCustomObject]@{ Id = $One; Read = $true; Found = $false; Name = $null; ObjectType = $null; Cause = $null } }
                 }
@@ -5549,19 +5556,22 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
             InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
         }
 
-        It 'names none of the skipped scope''s rows in a warning, the README or IncompleteReads, and keeps what the scope before it handed over' {
+        It 'names none of the skipped scope''s rows in a warning, the README or IncompleteReads, and keeps what the scopes around it handed over' {
             $Run = Invoke-UpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'fs-skip'); Include = 'RoleAssignments', 'RoleManagementPolicies' }
-            # Reach proofs: both scopes were read with names, the skipped scope's read reached its deleted items
-            # reads (one answered, one failed), and its policy list failed, so the scope was skipped.
-            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 2 -Exactly -ParameterFilter { $ResolveNames }
+            # Reach proofs: the three scopes were read with names, the skipped scope's read reached its deleted
+            # items reads (one answered, one failed), and its policy list failed, so the scope was skipped.
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 3 -Exactly -ParameterFilter { $ResolveNames }
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:FsGone)" }
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:FsStatusUnread)" }
             Should -Invoke -ModuleName $script:moduleName Get-OERInventoryRolePolicy -Times 1 -Exactly -ParameterFilter { $Scope -eq $script:FsSkip }
             @($Run.Result.SkippedScopes) | Should -Be @($script:FsSkip)
-            # inventory.json holds the read scope's row alone.
+            # inventory.json holds the rows of the two scopes that were read, and none of the skipped one's.
             $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
-            @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)|$($_.principalStatus)" }) | Should -Be @("$($script:FsOk)|Reader|$($script:FsKept)|Deleted")
-            # The warnings: the read scope's row once, the skip, and nothing about the skipped scope's rows.
+            @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)|$($_.principalStatus)" } | Sort-Object) | Should -Be @(
+                "$($script:FsOk)|Reader|$($script:FsKept)|Deleted"
+                "$($script:FsLater)|Reader|$($script:FsLaterFail)|"
+            )
+            # The warnings: the first scope's row once, the skip, and nothing about the skipped scope's rows.
             $Run.Warnings | Should -Be @(
                 "Skipping scope '$($script:FsSkip)': policy list failed"
                 (Get-UpxExportWarning -Count 1)
@@ -5573,11 +5583,15 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
             $UndeclarableStart = $Readme.IndexOf($script:FsUndeclarableHeading)
             $UndeclarableStart | Should -BeGreaterOrEqual 0
             ($Readme.Substring($UndeclarableStart) -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. No role assignment this export read is at a scope a document cannot declare.'))
-            # No unread principal entry from the skipped scope: the scope itself is what is reported.
-            @($Run.Result.IncompleteReads).Count | Should -Be 0
+            # The only unread principal is the last scope's, with its own cause: the skipped scope's entries
+            # and causes are gone, and the scope itself is what is reported for them.
+            @($Run.Result.IncompleteReads) | Should -Be @($script:FsLaterEntry)
             $Run.Partial.Count | Should -Be 1
-            $Run.Partial[0].Exception.Message | Should -BeLike "*Skipped: $($script:FsSkip)*"
-            $Run.Partial[0].Exception.Message | Should -Not -BeLike '*role assignment principal read(s) failed*'
+            $Message = $Run.Partial[0].Exception.Message
+            $Message | Should -BeLike "*Skipped: $($script:FsSkip)*"
+            $Message | Should -BeLike "*1 role assignment principal read(s) failed, so each principal is written by its object id -- with no principalStatus where its lookup through directoryObjects/getByIds failed, and as Unresolved where only the read of the directory's deleted items failed: $($script:FsLaterEntry). Causes of the unread principal lookups: Could not look up the principal of a role assignment through directoryObjects/getByIds: Bad gateway (502).*"
+            $Message | Should -Not -BeLike '*Too many requests*'
+            $Message | Should -Not -BeLike '*Service unavailable*'
             $Readme | Should -Not -Match ([regex]::Escape($script:FsFail))
             $Readme | Should -Not -Match ([regex]::Escape($script:FsStatusUnread))
         }
