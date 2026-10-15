@@ -431,12 +431,14 @@ BeforeAll {
                 Directory.Read.All (or Directory.ReadWrite.All). A narrower one would pass for one type and
                 fail the read of another. Measured live on 2026-10-15 as the app-only test identity: an
                 unknown id answers 404 Request_ResourceNotFound, and the user, group and servicePrincipal
-                deleted items collections answer 200. No write is made there, so Write equals Read.
+                deleted items collections answer 200. The module makes no write there; Write asks for
+                Directory.ReadWrite.All anyway, so a future write (a restore, a permanent delete) cannot
+                pass the gate with a read permission.
             #>
             Endpoint = 'directory/deletedItems'
             Match    = 'v1.0/directory/deletedItems'
             Read     = '^Directory\.Read(Write)?\.All$'
-            Write    = '^Directory\.Read(Write)?\.All$'
+            Write    = '^Directory\.ReadWrite\.All$'
         }
     )
 
@@ -621,6 +623,21 @@ Describe 'Required scope table' -Tags 'helpQuality' {
                     $narrow | Should -Not -Match $pattern -Because (
                         'the type of a deleted principal is not known before the read, so {0}, which covers one type only, must not satisfy it; pattern {1}' -f $narrow, $pattern)
                 }
+            }
+        }
+
+        It 'Should hold a write to the deleted items to Directory.ReadWrite.All, which a read permission does not satisfy' {
+            # The module never writes there; a future write must not pass the gate with a read permission.
+            $patterns = @(Get-RequiredScopePattern -Uri 'v1.0/directory/deletedItems/$([uri]::EscapeDataString($Id))' -Write $true)
+
+            $patterns.Count | Should -Be 1 -Because (
+                'a write to directory/deletedItems must map to exactly one permission rule, its own; {0} matched' -f $patterns.Count)
+
+            foreach ($pattern in $patterns)
+            {
+                'Directory.ReadWrite.All' | Should -Match $pattern
+                'Directory.Read.All' | Should -Not -Match $pattern -Because (
+                    'a write needs the read-write permission, which the read permission does not satisfy; pattern {0}' -f $pattern)
             }
         }
     }
