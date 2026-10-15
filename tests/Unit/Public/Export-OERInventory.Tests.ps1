@@ -5117,14 +5117,14 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
     It 'states the rule in the help' {
         $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
         $Description | Should -Match ([regex]::Escape('ROLE ASSIGNMENTS WHOSE PRINCIPAL THE DIRECTORY DID NOT RETURN.'))
-        # Task 7 fix round 1: -Prune removes such an assignment only at a scope the document still declares.
+        # -Prune removes such an assignment only at a scope the document still declares.
         $Description | Should -Match ([regex]::Escape('Invoke-OERStructure never creates such an assignment, and removing its entry lets -Prune remove it, like any undeclared assignment, at a scope the document still declares.'))
         $Description | Should -Match ([regex]::Escape('in a section "Role assignments whose principal the directory did not return", directly after "Names two or more objects share"'))
         $Description | Should -Match ([regex]::Escape('The Azure scope is never skipped for either.'))
-        # Fix round 1 (F4): one read per principal for the whole export holds only for a read that succeeded.
+        # One read per principal for the whole export holds only for a read that succeeded.
         $Description | Should -Match ([regex]::Escape('A principal is looked for among the deleted items once for the whole export when that read succeeds, however many Azure scopes read the assignment; a read that fails is not kept, and is sent again by the next scope that needs it.'))
-        # Fix round 1 (F3): the README lists the principal entries under a label of their own. Sprint 11
-        # step 6, Task 7: they are IncompleteReads entries, and the help says so.
+        # The README lists the principal entries under a label of their own, and they are IncompleteReads
+        # entries, as the help says.
         $Description | Should -Match ([regex]::Escape('one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes entry -- among the IncompleteReads entries, those of a role assignment principal that could not be read and those of an Azure scope where role management policies could not be judged each under a label of its own -- or the statement that nothing was left unread'))
     }
 
@@ -5187,7 +5187,7 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
             @($Section -split '\r?\n' | Where-Object { $_ -like '- *' }) | Should -Be @(
                 "- ``Reader`` at ``$($script:UpxMg)`` for ``$($script:UpxGone)`` (User): ``Deleted``, found among the directory's deleted items"
                 # Row B's deleted items read failed (StatusRead false): the export hands the member to the
-                # README, which gives no reason as a fact (fix round 1, F1).
+                # README, which gives no reason as a fact.
                 "- ``Owner`` at ``$($script:UpxS1)`` for ``$($script:UpxNowhere)``: ``Unresolved``, not returned by the directory, and the read of its deleted items failed, so the reason is not known; that read is named under `"What this export could not read`""
             )
             # The rows stay in the document, and nothing about them is a partial read.
@@ -5314,8 +5314,8 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
             $Message | Should -BeLike "*1 role assignment principal read(s) failed, so each principal is written by its object id -- with no principalStatus where its lookup through directoryObjects/getByIds failed, and as Unresolved where only the read of the directory's deleted items failed: $Entry. Causes of the unread principal lookups: Could not look up the principal of a role assignment through directoryObjects/getByIds: Too many requests (429).*"
             # The Entra ID clause still counts the Entra ID entries only.
             $Message | Should -BeLike '*1 partial Entra ID read entry(ies) name*'
-            # The README names it under "What this export could not read", under a label of its own (fix
-            # round 1, F3), apart from the Entra ID entry.
+            # The README names it under "What this export could not read", under a label of its own,
+            # apart from the Entra ID entry.
             $Readme = Get-Content (Join-Path $Run.Result.BundlePath 'README.md') -Raw
             $Readme | Should -Match ([regex]::Escape("- Role assignment principal that could not be read: ``$Entry``"))
             $Readme | Should -Match ([regex]::Escape('- Entra ID: `groups/Team/members`'))
@@ -5332,6 +5332,254 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
             $Run.Partial.Count | Should -Be 1
             $Run.Partial[0].Exception.Message | Should -BeLike 'This inventory bundle is PARTIAL: 1 role assignment principal read(s) failed, so each principal is written by its object id*'
             $Run.Partial[0].Exception.Message | Should -Not -BeLike '*partial Entra ID read entry*'
+        }
+    }
+
+    Context 'an assignment several scopes read, whose principal lookup failed at one and did not return the principal at another' {
+        # The export merges an assignment several scopes read on scope, role and principal (no id without
+        # -IncludeId). A failed lookup and a lookup that succeeded without the principal both write the
+        # principal's object id, so the two rows share a key, and the row with principalStatus must be the one
+        # written whichever scope read it first; the failed lookup is then not unread. The real
+        # Get-OERInventory, Resolve-OERPrincipalName and Get-OERDeletedPrincipalStatus run: the getByIds
+        # request of each read named in FailOn throws, every other one answers with no object, and the
+        # principal is among the deleted items. The management group assignment (Reader) is inherited, so
+        # every read returns it; a Contributor assignment of the same principal below the management group is
+        # returned by the read of the second subscription only. No id below is version-4 shaped.
+        BeforeAll {
+            $script:FiS2 = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'
+            $script:FiContributorEntry = "roleAssignments/Contributor -> $($script:UpxGone) @ $($script:FiS2)/principal"
+            $script:FiReaderEntry = "roleAssignments/Reader -> $($script:UpxGone) @ $($script:UpxMg)/principal"
+        }
+
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+            # What the mocks read and count: an assignment inside a mock would not reach the test's scope.
+            $script:FiState = @{ GetByIds = 0; FailOn = @(); Scopes = @($script:UpxMg, $script:UpxS1) }
+            Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+            Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+            Mock -ModuleName $script:moduleName Get-OERGroup {}
+            Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+            Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+            Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+            Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+                [PSCustomObject]@{
+                    Scopes    = @($script:FiState.Scopes)
+                    Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+                }
+            }
+            Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
+                param($Scope, [switch]$AtScope, [switch]$ResolveNames)
+                [PSCustomObject]@{
+                    Scope = $script:UpxMg; RoleName = 'Reader'; RoleDefinitionId = "$($script:UpxMg)/providers/Microsoft.Authorization/roleDefinitions/rd-reader"
+                    PrincipalId = $script:UpxGone; PrincipalType = 'User'; PrincipalDisplayName = $null; RoleAssignmentId = $script:UpxIdA
+                }
+                if ($Scope -eq $script:FiS2) {
+                    [PSCustomObject]@{
+                        Scope = $script:FiS2; RoleName = 'Contributor'; RoleDefinitionId = "$($script:FiS2)/providers/Microsoft.Authorization/roleDefinitions/rd-contributor"
+                        PrincipalId = $script:UpxGone; PrincipalType = 'User'; PrincipalDisplayName = $null
+                        RoleAssignmentId = "$($script:FiS2)/providers/Microsoft.Authorization/roleAssignments/cccc9999-0000-0000-0000-000000000011"
+                    }
+                }
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected request: $Uri" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                $script:FiState.GetByIds++
+                if ($script:FiState.FailOn -contains $script:FiState.GetByIds) { throw "Too many requests (429) at read $($script:FiState.GetByIds)" }
+                @{ value = @() }
+            } -ParameterFilter { $Uri -ceq 'v1.0/directoryObjects/getByIds' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = $script:UpxGone; '@odata.type' = '#microsoft.graph.user' }
+            } -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:UpxGone)" }
+        }
+
+        AfterEach {
+            InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+        }
+
+        It 'writes the assignment once, with principalStatus, and names no failed lookup, when the read that failed is the <Which>' -ForEach @(
+            @{ Which = 'first'; FailOn = 1 }
+            @{ Which = 'second'; FailOn = 2 }
+        ) {
+            $script:FiState.FailOn = @($FailOn)
+            $Run = Invoke-UpxExport -Splat @{ OutputPath = (Join-Path $TestDrive "fi-merge-$FailOn"); Include = 'RoleAssignments' }
+            # Reach proofs: both scopes were read, each with one getByIds request, one of which failed, and the
+            # read that succeeded looked the principal up among the deleted items.
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 2 -Exactly -ParameterFilter { $ResolveNames }
+            $script:FiState.GetByIds | Should -Be 2
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:UpxGone)" }
+            @($Run.Result.SkippedScopes) | Should -BeNullOrEmpty
+            # The one row inventory.json and roleAssignments.json write carries principalStatus.
+            $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+            @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)|$($_.principalType)|$($_.principalStatus)" }) |
+                Should -Be @("$($script:UpxMg)|Reader|$($script:UpxGone)|User|Deleted")
+            $RaFile = @(Get-Content (Join-Path $Run.Result.BundlePath 'roleAssignments.json') -Raw | ConvertFrom-Json)
+            @($RaFile | ForEach-Object { "$($_.role)|$($_.principalStatus)" }) | Should -Be @('Reader|Deleted')
+            # Another scope read the principal, so its failed lookup is not unread: no IncompleteReads entry, no
+            # InventoryPartial, and the README names nothing under "What this export could not read".
+            @($Run.Result.IncompleteReads).Count | Should -Be 0
+            $Run.Partial.Count | Should -Be 0
+            $Readme = Get-Content (Join-Path $Run.Result.BundlePath 'README.md') -Raw
+            $Readme | Should -Not -Match ([regex]::Escape($script:FiReaderEntry))
+            # The row is named as the README and the warning say: in inventory.json, with its status.
+            $Run.Warnings | Should -Be @(Get-UpxExportWarning -Count 1)
+            @((Get-UpxReadmeSection -BundlePath $Run.Result.BundlePath) -split '\r?\n' | Where-Object { $_ -like '- *' }) | Should -Be @(
+                "- ``Reader`` at ``$($script:UpxMg)`` for ``$($script:UpxGone)`` (User): ``Deleted``, found among the directory's deleted items"
+            )
+        }
+
+        It 'leaves out only the failed lookup of the assignment another scope read, and its cause, and names the other one with its own cause' {
+            # Three reads: the management group's fails (both assignments it returns are unread), the first
+            # subscription's does not return the principal, and the second subscription's fails again, with a
+            # cause of its own. Reader is read at all three; Contributor only at the second subscription.
+            $script:FiState.Scopes = @($script:UpxMg, $script:UpxS1, $script:FiS2)
+            $script:FiState.FailOn = @(1, 3)
+            $Run = Invoke-UpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'fi-merge-three'); Include = 'RoleAssignments' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 3 -Exactly -ParameterFilter { $ResolveNames }
+            $script:FiState.GetByIds | Should -Be 3
+            $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+            @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)|$($_.principalType)|$($_.principalStatus)" } | Sort-Object) | Should -Be @(
+                "$($script:UpxMg)|Reader|$($script:UpxGone)|User|Deleted"
+                "$($script:FiS2)|Contributor|$($script:UpxGone)|User|"
+            )
+            # The Reader entry is left out (the first subscription read the principal); the Contributor entry,
+            # whose assignment no read looked up, stays. The decision is per assignment, not per principal.
+            @($Run.Result.IncompleteReads) | Should -Be @($script:FiContributorEntry)
+            $Run.Partial.Count | Should -Be 1
+            $Message = $Run.Partial[0].Exception.Message
+            $Message | Should -BeLike "*1 role assignment principal read(s) failed, so each principal is written by its object id -- with no principalStatus where its lookup through directoryObjects/getByIds failed, and as Unresolved where only the read of the directory's deleted items failed: $($script:FiContributorEntry). Causes of the unread principal lookups: Could not look up the principal of a role assignment through directoryObjects/getByIds: Too many requests (429) at read 3.*"
+            # The cause of the left-out entry goes with it: only the first read failed with it.
+            $Message | Should -Not -BeLike '*at read 1*'
+            $Run.Warnings | Should -Be @(Get-UpxExportWarning -Count 1)
+        }
+
+        It 'keeps the failed lookup unread, as before, when no read returned the assignment with principalStatus' {
+            $script:FiState.FailOn = @(1, 2)
+            $Run = Invoke-UpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'fi-merge-none'); Include = 'RoleAssignments' }
+            $script:FiState.GetByIds | Should -Be 2
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:UpxGone)" }
+            $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+            @($Inv.roleAssignments | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalType)|$($_.principalStatus)" }) | Should -Be @("Reader|$($script:UpxGone)|User|")
+            @($Run.Result.IncompleteReads) | Should -Be @($script:FiReaderEntry)
+            $Run.Partial.Count | Should -Be 1
+            $Run.Partial[0].Exception.Message | Should -BeLike "*: $($script:FiReaderEntry). Causes of the unread principal lookups: Could not look up the principal of a role assignment through directoryObjects/getByIds: Too many requests (429) at read 1*"
+            @($Run.Warnings | Where-Object { $_ -like '*name a principal*' }).Count | Should -Be 0
+        }
+    }
+
+    Context 'a scope the export skips after its read' {
+        # A scope whose per-scope read handed rows over and that is then skipped -- here its role management
+        # policy list fails -- merges none of its rows, so it must add nothing to the warnings, the README or
+        # IncompleteReads. The real Get-OERInventory runs; the lookup and the deleted items read are answered
+        # per principal. The scope that is read comes FIRST, so what it handed over must survive the skip of
+        # the scope after it. No id below is version-4 shaped.
+        BeforeAll {
+            $script:FsOk = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'
+            $script:FsSkip = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $script:FsHash = "$($script:FsSkip)/resourceGroups/rg-one/providers/Microsoft.Sql/servers/srv1/databases/db#1"
+            $script:FsKept = 'dddd7777-0000-0000-0000-000000000001'
+            $script:FsGone = 'dddd7777-0000-0000-0000-000000000002'
+            $script:FsStatusUnread = 'dddd7777-0000-0000-0000-000000000003'
+            $script:FsFail = 'dddd7777-0000-0000-0000-000000000004'
+            $script:FsUser = 'dddd7777-0000-0000-0000-000000000005'
+            $script:FsUndeclarableHeading = '## Role assignments at a scope no document can declare'
+            function script:New-FsRa {
+                param([string]$Scope, [string]$Role, [string]$PrincipalId, [string]$Suffix)
+                [PSCustomObject]@{
+                    Scope = $Scope; RoleName = $Role; RoleDefinitionId = "$Scope/providers/Microsoft.Authorization/roleDefinitions/rd-$Role"
+                    PrincipalId = $PrincipalId; PrincipalType = 'User'; PrincipalDisplayName = $null
+                    RoleAssignmentId = "$Scope/providers/Microsoft.Authorization/roleAssignments/cccc7777-0000-0000-0000-00000000000$Suffix"
+                }
+            }
+        }
+
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+            Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+            Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+            Mock -ModuleName $script:moduleName Get-OERGroup {}
+            Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+            Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+            Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+            Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+                [PSCustomObject]@{
+                    Scopes    = @($script:FsOk, $script:FsSkip)
+                    Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+                }
+            }
+            # The read with names: at the scope that is read, one assignment whose principal is among the
+            # deleted items; at the scope that is skipped, one of each kind a read hands over -- a principal
+            # among the deleted items, one whose deleted items read fails, one whose lookup fails, and an
+            # assignment at a scope no document can declare. The read at the scope (the selection's) is empty.
+            Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
+                param($Scope, [switch]$AtScope, [switch]$ResolveNames)
+                if ($AtScope) { return }
+                if ($Scope -eq $script:FsOk) { New-FsRa -Scope $script:FsOk -Role 'Reader' -PrincipalId $script:FsKept -Suffix '1' }
+                if ($Scope -eq $script:FsSkip) {
+                    New-FsRa -Scope $script:FsSkip -Role 'Reader' -PrincipalId $script:FsGone -Suffix '2'
+                    New-FsRa -Scope $script:FsSkip -Role 'Owner' -PrincipalId $script:FsStatusUnread -Suffix '3'
+                    New-FsRa -Scope $script:FsSkip -Role 'Contributor' -PrincipalId $script:FsFail -Suffix '4'
+                    New-FsRa -Scope $script:FsHash -Role 'Reader' -PrincipalId $script:FsUser -Suffix '5'
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+                foreach ($One in @($Id)) {
+                    if ($One -eq $script:FsFail) { [PSCustomObject]@{ Id = $One; Read = $false; Found = $false; Name = $null; ObjectType = $null; Cause = 'Too many requests (429)' } }
+                    elseif ($One -eq $script:FsUser) { [PSCustomObject]@{ Id = $One; Read = $true; Found = $true; Name = 'person1@example.com'; ObjectType = 'user'; Cause = $null } }
+                    else { [PSCustomObject]@{ Id = $One; Read = $true; Found = $false; Name = $null; ObjectType = $null; Cause = $null } }
+                }
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected request: $Uri" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = $script:FsKept; '@odata.type' = '#microsoft.graph.user' }
+            } -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:FsKept)" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = $script:FsGone; '@odata.type' = '#microsoft.graph.user' }
+            } -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:FsGone)" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw 'Service unavailable (503)'
+            } -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:FsStatusUnread)" }
+            Mock -ModuleName $script:moduleName Get-OERInventoryRolePolicy {
+                param($Scope)
+                if ($Scope -eq $script:FsSkip) { throw 'policy list failed' }
+            }
+        }
+
+        AfterEach {
+            InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+        }
+
+        It 'names none of the skipped scope''s rows in a warning, the README or IncompleteReads, and keeps what the scope before it handed over' {
+            $Run = Invoke-UpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'fs-skip'); Include = 'RoleAssignments', 'RoleManagementPolicies' }
+            # Reach proofs: both scopes were read with names, the skipped scope's read reached its deleted items
+            # reads (one answered, one failed), and its policy list failed, so the scope was skipped.
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 2 -Exactly -ParameterFilter { $ResolveNames }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:FsGone)" }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:FsStatusUnread)" }
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryRolePolicy -Times 1 -Exactly -ParameterFilter { $Scope -eq $script:FsSkip }
+            @($Run.Result.SkippedScopes) | Should -Be @($script:FsSkip)
+            # inventory.json holds the read scope's row alone.
+            $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+            @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)|$($_.principalStatus)" }) | Should -Be @("$($script:FsOk)|Reader|$($script:FsKept)|Deleted")
+            # The warnings: the read scope's row once, the skip, and nothing about the skipped scope's rows.
+            $Run.Warnings | Should -Be @(
+                "Skipping scope '$($script:FsSkip)': policy list failed"
+                (Get-UpxExportWarning -Count 1)
+            )
+            @((Get-UpxReadmeSection -BundlePath $Run.Result.BundlePath) -split '\r?\n' | Where-Object { $_ -like '- *' }) | Should -Be @(
+                "- ``Reader`` at ``$($script:FsOk)`` for ``$($script:FsKept)`` (User): ``Deleted``, found among the directory's deleted items"
+            )
+            $Readme = Get-Content (Join-Path $Run.Result.BundlePath 'README.md') -Raw
+            $UndeclarableStart = $Readme.IndexOf($script:FsUndeclarableHeading)
+            $UndeclarableStart | Should -BeGreaterOrEqual 0
+            ($Readme.Substring($UndeclarableStart) -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. No role assignment this export read is at a scope a document cannot declare.'))
+            # No unread principal entry from the skipped scope: the scope itself is what is reported.
+            @($Run.Result.IncompleteReads).Count | Should -Be 0
+            $Run.Partial.Count | Should -Be 1
+            $Run.Partial[0].Exception.Message | Should -BeLike "*Skipped: $($script:FsSkip)*"
+            $Run.Partial[0].Exception.Message | Should -Not -BeLike '*role assignment principal read(s) failed*'
+            $Readme | Should -Not -Match ([regex]::Escape($script:FsFail))
+            $Readme | Should -Not -Match ([regex]::Escape($script:FsStatusUnread))
         }
     }
 
@@ -5478,7 +5726,7 @@ Describe 'Export-OERInventory (role assignments at a scope no document can decla
         $Description | Should -Match ([regex]::Escape('inventory.json and roleAssignments.json never carry one'))
         $Description | Should -Match ([regex]::Escape('in a section "Role assignments at a scope no document can declare", directly after "Role assignments whose principal the directory did not return"'))
         $Description | Should -Match ([regex]::Escape('the warning on role assignments at a scope no document can declare'))
-        # Task 7 (Sprint 11 step 6): the help names where the rules are listed instead of repeating them,
+        # Sprint 11 step 6: the help names where the rules are listed instead of repeating them,
         # so a rule added to Get-OERScopeSpellingProblem cannot leave this text silently incomplete.
         $Description | Should -Match ([regex]::Escape('about_Omnicit.EntraRBAC lists the scope spelling rules under RENAMES, MAIL ALIASES AND SCOPE SPELLING'))
         $Description | Should -Not -Match ([regex]::Escape("a '.' or '..' segment, a '%', a '\', a '?' or a '#', a trailing or doubled '/'"))
@@ -5664,8 +5912,9 @@ Describe 'Export-OERInventory (role assignments at a scope no document can decla
 }
 
 Describe 'Export-OERInventory (groups using PIM for Groups in a restricted management unit, Sprint 11 step 6, BL-134)' {
-    # A group with PIM eligibility or a pimPolicy block that is a member of a restricted management unit may
-    # be out of reach for the identity that applies the document. inventory.json keeps it; the export warns
+    # Microsoft Learn states that PIM does not support a group in a restricted management administrative unit,
+    # so a group with PIM eligibility or a pimPolicy block that is a member of one is a finding to review.
+    # inventory.json keeps it; the export warns
     # ONCE before its ShouldProcess with the count, and the README names each group and its units. The
     # administrative units list a group member by its object id, which the export still holds before the id
     # strip, so the link is found with no request of its own. The warnings are counted on the warning STREAM

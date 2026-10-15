@@ -206,7 +206,12 @@ function Export-OERInventory {
     words -- or that the reason is not known, where the deleted items read failed -- or the statement
     that none was found. A principal whose lookup failed is written by its object id with no
     principalStatus and is named in IncompleteReads (below), and so is one whose deleted items read
-    failed, which is written as Unresolved. The Azure scope is never skipped for either.
+    failed, which is written as Unresolved. The Azure scope is never skipped for either. An assignment
+    that several Azure scopes read is written once: where one scope's lookup of its principal failed
+    and another scope's lookup did not return it, it is written with principalStatus, and the failed
+    lookup is not named. A scope that the export skips after reading it adds none of its assignments
+    to this warning, this README section or IncompleteReads, nor to the warning and README section of
+    the next paragraph, since none of its rows is written.
 
     ROLE ASSIGNMENTS AT A SCOPE NO DOCUMENT CAN DECLARE. Azure Resource Manager can return a role
     assignment at a scope whose spelling the validator refuses as an Error, for example the scope of a
@@ -598,12 +603,14 @@ function Export-OERInventory {
         # statement-terminating error inside it must keep skipping only its own statement.
         #
         # Sprint 11 step 6 (BL-133, A18): three more members for the role assignment principals. The
-        # per-scope calls read a principal the directory did not return among its deleted items once for the
-        # whole export, keeping each answer in PrincipalStatus (keyed without regard to letter case); and a
-        # principal whose lookup or deleted items read failed is named in UnreadPrincipal, with its cause in
-        # UnreadPrincipalCause, instead of in the call's own InventoryPartial, which the call's -ErrorAction
-        # Stop below would turn into a skip of the whole scope. The local reference keeps both lists after
-        # the context is cleared, for IncompleteReads and the partial message.
+        # per-scope calls keep every answer of the deleted items read that succeeded in PrincipalStatus (keyed
+        # without regard to letter case), so a principal the directory did not return is read there once for
+        # the whole export when that read succeeds; a read that fails is not kept, and the next scope that
+        # needs it reads again. A principal whose lookup or deleted items read failed is named in
+        # UnreadPrincipal, with its cause at the same index in UnreadPrincipalCause, instead of in the call's
+        # own InventoryPartial, which the call's -ErrorAction Stop below would turn into a skip of the whole
+        # scope. The local reference keeps both lists after the context is cleared, for IncompleteReads and
+        # the partial message.
         $RunContext = [PSCustomObject]@{
             Owner                = $MyInvocation
             GroupNameIndex       = $GroupNameIndex
@@ -798,8 +805,16 @@ function Export-OERInventory {
                 $SkippedEligibilityScopes.Add('<all Azure scopes: scope enumeration failed>')
             }
             if ($Tree) {
-                $SeenRa = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                # The merged role assignments' keys, each with the index of its row in $RoleAssignments, so a
+                # row that a later scope's read writes with principalStatus can take the place of the row an
+                # earlier read wrote without it (see the merge below).
+                $RaIndexByKey = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 $SeenRmp = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                # Shortens a list back to the count it had before a scope's reads (see the catch below).
+                $UndoScopeHandover = {
+                    param([System.Collections.IList]$List, [int]$Count)
+                    while ($List.Count -gt $Count) { $List.RemoveAt($List.Count - 1) }
+                }
                 $ScopeIndex = 0
                 try {
                     foreach ($S in @($Tree.Scopes)) {
@@ -809,6 +824,20 @@ function Export-OERInventory {
                         $ScopeCandidates = @()
                         $ScopeAssignments = @()
                         $ScopeAssignmentsUnread = $false
+                        # What this scope's call hands over beyond its rows -- the rows of its
+                        # Omnicit.EntraRBAC.UnresolvedPrincipal and Omnicit.EntraRBAC.UndeclarableScope notices,
+                        # and the principals it names unread in the run context -- counts only once the scope's
+                        # rows are merged below. A scope skipped after its call (a failed policy list, say) merges
+                        # no row, so the catch below takes those back to the counts noted here, and the README,
+                        # the warnings and IncompleteReads never name a row that only a skipped scope read --
+                        # the README and the warning say a row with principalStatus is in inventory.json. The
+                        # two run context lists are taken back together, so they stay index for index (each
+                        # unread principal beside its cause). The root notices still count from a skipped scope:
+                        # a root row is left out of the document whichever scope read it.
+                        $UnresolvedMark = $UnresolvedPrincipalRows.Count
+                        $UndeclarableMark = $UndeclarableScopeRows.Count
+                        $UnreadPrincipalMark = $RunContext.UnreadPrincipal.Count
+                        $UnreadPrincipalCauseMark = $RunContext.UnreadPrincipalCause.Count
                         try {
                             # Selecting, the call leaves RoleManagementPolicies (and -AllRolesAtScope)
                             # out and is not made at all when nothing is left; otherwise it is the call
@@ -892,13 +921,33 @@ function Export-OERInventory {
                             Remove-OERErrorRecord -Record $PSItem
                             Write-Warning "Skipping scope '$S': $($PSItem.Exception.Message)"
                             $SkippedScopes.Add([string]$S)
+                            # The skipped scope merges no row, so what its call handed over is taken back.
+                            & $UndoScopeHandover $UnresolvedPrincipalRows $UnresolvedMark
+                            & $UndoScopeHandover $UndeclarableScopeRows $UndeclarableMark
+                            & $UndoScopeHandover $RunContext.UnreadPrincipal $UnreadPrincipalMark
+                            & $UndoScopeHandover $RunContext.UnreadPrincipalCause $UnreadPrincipalCauseMark
                             continue
                         }
                         # $ScopeInv is $null when no call was made, and @($null.X) is a one-element
                         # array holding $null, so every read of it drops nulls.
+                        #
+                        # Sprint 11 step 6 (BL-133): an assignment several scopes read (an inherited one) is merged
+                        # once, on its id or, with none, on scope, role and principal. A principal is written by its
+                        # object id both where its lookup failed (no principalStatus) and where a lookup that
+                        # succeeded did not return it (principalStatus), so the two rows of one assignment share a
+                        # key. The row with principalStatus is the one kept, whichever scope read it first: a later
+                        # one takes the earlier row's place in the list, and an earlier one stays. That the lookup
+                        # failed at another scope is then no longer unread (see the unread principals after the
+                        # walk).
                         foreach ($Ra in @($ScopeInv.RoleAssignments | Where-Object { $null -ne $_ })) {
                             $Key = if ($Ra.PSObject.Properties.Name -contains 'id' -and $Ra.id) { [string]$Ra.id } else { '{0}|{1}|{2}' -f $Ra.scope, $Ra.role, $Ra.principal }
-                            if ($SeenRa.Add($Key)) { $RoleAssignments.Add($Ra) }
+                            if (-not $RaIndexByKey.ContainsKey($Key)) {
+                                $RaIndexByKey[$Key] = $RoleAssignments.Count
+                                $RoleAssignments.Add($Ra)
+                            } elseif (-not [string]::IsNullOrEmpty([string]$Ra.principalStatus) -and
+                                [string]::IsNullOrEmpty([string]$RoleAssignments[$RaIndexByKey[$Key]].principalStatus)) {
+                                $RoleAssignments[$RaIndexByKey[$Key]] = $Ra
+                            }
                         }
                         # Non-empty only under -AllRolePolicies: selecting, the call reads no policy.
                         foreach ($Rmp in @($ScopeInv.RoleManagementPolicies | Where-Object { $null -ne $_ })) {
@@ -1009,12 +1058,34 @@ function Export-OERInventory {
         # each entry once (an inherited assignment is read by several scopes), in the order first named. Kept
         # apart from the Entra ID entries in $IncompleteReads and appended after them, before the role policy
         # selection entries, so the Entra ID entries keep their documented order and own clause.
+        #
+        # A '<...>/principal' entry -- a failed lookup -- is left out, with its cause, where the merged row of
+        # its assignment carries principalStatus: another scope's lookup succeeded and did not return the
+        # principal, so the principal was read after all (see the merge in the walk). The entry is
+        # 'roleAssignments/<role> -> <principal id> @ <scope>/principal', and such a row's principal is that
+        # object id, so the row's own fields spell the entry. The run context's two lists stand index for index
+        # (each unread principal beside its cause), so an entry left out takes the cause at its index with it.
+        $StatusRowLookupEntries = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($MergedRa in $RoleAssignments) {
+            if (-not [string]::IsNullOrEmpty([string]$MergedRa.principalStatus)) {
+                [void]$StatusRowLookupEntries.Add("roleAssignments/$($MergedRa.role) -> $($MergedRa.principal) @ $($MergedRa.scope)/principal")
+            }
+        }
+        $UnreadPrincipalEntries = @($RunContext.UnreadPrincipal)
+        $LeftOutUnreadIndex = [System.Collections.Generic.HashSet[int]]::new()
+        for ($UnreadIndex = 0; $UnreadIndex -lt $UnreadPrincipalEntries.Count; $UnreadIndex++) {
+            if ($StatusRowLookupEntries.Contains([string]$UnreadPrincipalEntries[$UnreadIndex])) { [void]$LeftOutUnreadIndex.Add($UnreadIndex) }
+        }
         $UnreadPrincipalReads = [System.Collections.Generic.List[string]]::new()
         $SeenUnreadPrincipal = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        foreach ($UnreadPrincipal in @($RunContext.UnreadPrincipal)) {
-            if ([string]::IsNullOrWhiteSpace($UnreadPrincipal)) { continue }
+        for ($UnreadIndex = 0; $UnreadIndex -lt $UnreadPrincipalEntries.Count; $UnreadIndex++) {
+            $UnreadPrincipal = [string]$UnreadPrincipalEntries[$UnreadIndex]
+            if ([string]::IsNullOrWhiteSpace($UnreadPrincipal) -or $LeftOutUnreadIndex.Contains($UnreadIndex)) { continue }
             if ($SeenUnreadPrincipal.Add($UnreadPrincipal)) { $UnreadPrincipalReads.Add($UnreadPrincipal) }
         }
+        $UnreadPrincipalCauses = @(for ($CauseIndex = 0; $CauseIndex -lt $RunContext.UnreadPrincipalCause.Count; $CauseIndex++) {
+                if (-not $LeftOutUnreadIndex.Contains($CauseIndex)) { $RunContext.UnreadPrincipalCause[$CauseIndex] }
+            })
 
         # --- Group split: RBAC-relevant kept in inventory.json; unfiltered roster written separately ---
         # The whole if/else is wrapped in @(...) because an empty 'else' result (no RBAC-relevant
@@ -1436,7 +1507,7 @@ function Export-OERInventory {
                 $PrincipalPart = "$($UnreadPrincipalReads.Count) role assignment principal read(s) failed, so each principal is written by its object id -- " +
                     'with no principalStatus where its lookup through directoryObjects/getByIds failed, and as Unresolved where only the read of ' +
                     "the directory's deleted items failed: $($UnreadPrincipalReads -join '; ')"
-                $PrincipalCauseClause = Format-OERUnreadCauseClause -Cause @($RunContext.UnreadPrincipalCause) -Label 'Causes of the unread principal lookups'
+                $PrincipalCauseClause = Format-OERUnreadCauseClause -Cause $UnreadPrincipalCauses -Label 'Causes of the unread principal lookups'
                 if ($PrincipalCauseClause) { $PrincipalPart += '.' + $PrincipalCauseClause.TrimEnd('.') }
                 $PartialParts.Add($PrincipalPart)
             }
