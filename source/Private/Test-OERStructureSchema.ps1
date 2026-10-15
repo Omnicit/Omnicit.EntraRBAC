@@ -1777,9 +1777,16 @@ function Test-OERStructureSchema {
                 if (Test-HasProp -Node $RA -Name 'principalStatus') {
                     $ValidPrincipalStatuses = @(Resolve-OERStructureEnumCasing -EnumName 'principalStatus' -List)
                     if ($RA.principalStatus -isnot [string] -or $ValidPrincipalStatuses -inotcontains $RA.principalStatus) {
+                        # A value that is not a string is named by its type, as the principal rule below does,
+                        # so an array holding 'Deleted' is never shown as if it were the string 'Deleted'.
+                        $StatusFound = if ($RA.principalStatus -is [string]) {
+                            "'$($RA.principalStatus)'"
+                        } else {
+                            "a value that is not a string ($($RA.principalStatus.GetType().Name))"
+                        }
                         Add-Finding -Section 'roleAssignments' -Item $RAItem `
                             -Path "$RAPath.principalStatus" `
-                            -Message "'principalStatus' at $RAPath must be one of: $($ValidPrincipalStatuses -join ', '). Got: '$($RA.principalStatus)'."
+                            -Message "'principalStatus' at $RAPath must be one of: $($ValidPrincipalStatuses -join ', '). Got: $StatusFound."
                     } else {
                         Add-EnumCasingWarning -EnumName 'principalStatus' -Key 'principalStatus' -Value $RA.principalStatus `
                             -Section 'roleAssignments' -Item $RAItem -Path "$RAPath.principalStatus"

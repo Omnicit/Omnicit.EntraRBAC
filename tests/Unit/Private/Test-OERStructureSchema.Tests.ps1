@@ -6346,13 +6346,15 @@ Describe 'Test-OERStructureSchema roleAssignments principalStatus (A18, Sprint 1
         $V.Valid | Should -BeTrue
     }
 
+    # A string is shown quoted; a value that is not a string is named by its type, as the principal rule
+    # names one, so an array holding 'Deleted' never reads as the string 'Deleted'.
     It 'refuses principalStatus <Shown> as an Error at the key, naming the two values' -ForEach @(
-        @{ Shown = '"Gone"'; Text = 'Gone' }
-        @{ Shown = '"Active"'; Text = 'Active' }
-        @{ Shown = '""'; Text = '' }
-        @{ Shown = '1'; Text = '1' }
-        @{ Shown = 'true'; Text = 'True' }
-        @{ Shown = '["Deleted"]'; Text = 'Deleted' }
+        @{ Shown = '"Gone"'; Got = "'Gone'" }
+        @{ Shown = '"Active"'; Got = "'Active'" }
+        @{ Shown = '""'; Got = "''" }
+        @{ Shown = '1'; Got = 'a value that is not a string (Int64)' }
+        @{ Shown = 'true'; Got = 'a value that is not a string (Boolean)' }
+        @{ Shown = '["Deleted"]'; Got = 'a value that is not a string (Object[])' }
     ) {
         $V = Invoke-PsValidation -Json (Get-PsDocument -Principal ('"' + $script:PsGone + '"') -Extra (', "principalStatus": ' + $Shown))
         $Hit = @($V.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].principalStatus' })
@@ -6360,7 +6362,7 @@ Describe 'Test-OERStructureSchema roleAssignments principalStatus (A18, Sprint 1
         $Hit[0].Severity | Should -BeExactly 'Error'
         $Hit[0].Section | Should -BeExactly 'roleAssignments'
         $Hit[0].Item | Should -BeExactly 'Reader'
-        $Hit[0].Message | Should -BeExactly "'principalStatus' at roleAssignments[0] must be one of: Deleted, Unresolved. Got: '$Text'."
+        $Hit[0].Message | Should -BeExactly "'principalStatus' at roleAssignments[0] must be one of: Deleted, Unresolved. Got: $Got."
         $V.Valid | Should -BeFalse
     }
 
