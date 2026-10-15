@@ -5121,6 +5121,9 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
         $Description | Should -Match ([regex]::Escape('Invoke-OERStructure never creates such an assignment, and removing its entry lets -Prune remove it, like any undeclared assignment, at a scope the document still declares.'))
         $Description | Should -Match ([regex]::Escape('in a section "Role assignments whose principal the directory did not return", directly after "Names two or more objects share"'))
         $Description | Should -Match ([regex]::Escape('The Azure scope is never skipped for either.'))
+        # An assignment several scopes read is written with its status, and a skipped scope names nothing.
+        $Description | Should -Match ([regex]::Escape("An assignment that several Azure scopes read is written once: where one scope's lookup of its principal failed and another scope's lookup did not return it, it is written with principalStatus, and the failed lookup is not named."))
+        $Description | Should -Match ([regex]::Escape('A scope that the export skips after reading it adds none of its assignments to this warning, this README section or IncompleteReads, nor to the warning and README section of the next paragraph, since none of its rows is written.'))
         # One read per principal for the whole export holds only for a read that succeeded.
         $Description | Should -Match ([regex]::Escape('A principal is looked for among the deleted items once for the whole export when that read succeeds, however many Azure scopes read the assignment; a read that fails is not kept, and is sent again by the next scope that needs it.'))
         # The README lists the principal entries under a label of their own, and they are IncompleteReads
