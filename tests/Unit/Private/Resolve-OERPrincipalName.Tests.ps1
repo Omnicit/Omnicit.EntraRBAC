@@ -221,6 +221,34 @@ Describe 'Resolve-OERPrincipalName' {
             }
         }
 
+        It 'answers every id of a batch whose answer carries no value as not read, with the cause (<Case>)' -ForEach @(
+            @{ Case = 'an empty answer'; NoValueKey = $false }
+            @{ Case = 'an answer with no value'; NoValueKey = $true }
+        ) {
+            # Fix round 1 (F5): an answer with no value says nothing about the ids, so none of them is read
+            # as one the directory did not return. The default map is left exactly as it was.
+            InModuleScope $script:moduleName -Parameters @{ NoValueKey = $NoValueKey } {
+                param($NoValueKey)
+                if ($NoValueKey) { Mock Invoke-OERGraphRequest { @{ '@odata.context' = 'https://graph.microsoft.com/v1.0/$metadata#directoryObjects' } } }
+                else { Mock Invoke-OERGraphRequest { } }
+                $Result = @(Resolve-OERPrincipalName -Id @('u-1', 'g-1') -Detailed)
+                @($Result | ForEach-Object { "$($_.Id)|$($_.Read)|$($_.Found)|$($_.Name)|$($_.Cause)" }) | Should -Be @(
+                    'u-1|False|False||Microsoft Graph returned no value for directoryObjects/getByIds.'
+                    'g-1|False|False||Microsoft Graph returned no value for directoryObjects/getByIds.'
+                )
+                $Map = Resolve-OERPrincipalName -Id @('u-1')
+                $Map['u-1'] | Should -Be 'u-1'
+            }
+        }
+
+        It 'answers an id of a batch whose value is empty as read and not found' {
+            InModuleScope $script:moduleName {
+                Mock Invoke-OERGraphRequest { @{ value = @() } }
+                $Result = @(Resolve-OERPrincipalName -Id @('gone-1') -Detailed)
+                "$($Result[0].Read)|$($Result[0].Found)|$($Result[0].Cause)" | Should -Be 'True|False|'
+            }
+        }
+
         It 'returns nothing and makes no call for an empty input' {
             InModuleScope $script:moduleName {
                 Mock Invoke-OERGraphRequest { @{ value = @() } }

@@ -25,7 +25,8 @@ function Resolve-OERPrincipalName {
     does, so every directory object type is searched, and returns one object per distinct input id, in
     input order: Id, Read, Found, Name, ObjectType and Cause. Read is false for every id of a batch whose
     request failed, with the failure's message as Cause (the record is scrubbed first) -- the failure is
-    reported, never swallowed. Read true and Found true is an id the directory returned, with Name (a
+    reported, never swallowed -- and for every id of a batch whose answer carries no value collection,
+    which says nothing about them. Read true and Found true is an id the directory returned, with Name (a
     user's userPrincipalName, else the displayName, else the id) and ObjectType (the @odata.type without
     its '#microsoft.graph.' prefix, for example user, group, servicePrincipal or device). Read true and
     Found false is an id a successful batch did not return: deleted, or not readable. -Detailed and
@@ -116,6 +117,20 @@ function Resolve-OERPrincipalName {
                 $BatchCause = [string]$PSItem.Exception.Message
                 foreach ($Single in $Chunk) {
                     $Answers[$Single] = [PSCustomObject]@{ Id = $Single; Read = $false; Found = $false; Name = $null; ObjectType = $null; Cause = $BatchCause }
+                }
+            }
+            continue
+        }
+        # -Detailed only: an answer with no value (none at all, or one without a value collection) says
+        # nothing about the ids it was asked for, so none of them is read as an id the directory did not
+        # return -- each is answered as not read, as for a failed request. An empty value collection IS an
+        # answer: every id of the batch was not returned. No answer at all has no value either. The default
+        # map is left as it always was.
+        if ($Detailed -and $null -eq $Response.value) {
+            foreach ($Single in $Chunk) {
+                $Answers[$Single] = [PSCustomObject]@{
+                    Id = $Single; Read = $false; Found = $false; Name = $null; ObjectType = $null
+                    Cause = 'Microsoft Graph returned no value for directoryObjects/getByIds.'
                 }
             }
             continue
