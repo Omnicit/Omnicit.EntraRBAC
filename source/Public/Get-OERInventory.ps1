@@ -1395,8 +1395,9 @@ function Get-OERInventory {
                     # id with principalType Group, which Invoke-OERStructure resolves verbatim. Decided
                     # here, before the root-scope split and the collision pass below, which run on the
                     # name chosen here. A group written by its object id because it was not found, or
-                    # its lookup failed, needs no index: the id is already its reference.
-                    if ($PrincipalType -eq 'Group' -and $RaPrincipalId -and -not $PrincipalNotFound -and $null -eq $PrincipalLookupCause) {
+                    # its lookup failed, carries its id as the name, which Get-GroupPrincipalReference
+                    # returns as it is, with no index read.
+                    if ($PrincipalType -eq 'Group' -and $RaPrincipalId) {
                         $PrincipalName = Get-GroupPrincipalReference -Id $RaPrincipalId -Name ([string]$PrincipalName)
                     }
                     $Proj = [ordered]@{
