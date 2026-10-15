@@ -100,8 +100,8 @@ purged principal while Azure Resource Manager still lists their role assignments
 `directory/deletedItems` finds the one and not the other, that the exported document validates and applies
 with the two rows `Unchanged` and nothing created, that `-Prune` removes the two orphaned assignments once
 the rows are gone, that an access review of a package missing from its declared catalog is refused while a
-package of the same name exists in another catalog, and how many group listings an export of several scopes
-sends.
+package of the same name exists in another catalog, and how many group listings an export sends when two
+of its calls name a group.
 
 ## What this file does not check, and why
 
@@ -782,7 +782,7 @@ LEAK CHECK: psd1 values surviving redaction: 0
 
 ### 1.3. The exported document validates and applies: Unchanged, nothing created (G8)
 
-- [ ] **1.3** `Test-OERStructure` accepts the exported document; `Invoke-OERStructure -WhatIf` on it, and two real runs on its rows at `oer-s116-rg`, report the three rows `Unchanged` and write nothing.
+- [x] **1.3** `Test-OERStructure` accepts the exported document; `Invoke-OERStructure -WhatIf` on it, and two real runs on its rows at `oer-s116-rg`, report the three rows `Unchanged` and write nothing.
 
 An export at a resource group also reads the role assignments it inherits from the subscription, which are
 not this step's: the plan runs on the whole exported document, and the real runs on the same document
@@ -822,11 +822,55 @@ runs the three rows are `Unchanged`; `writes: 0` every time; no error in the rea
 assignments still listed.
 **Failure looks like:** a `Created` row or a write; a principal lookup failure for the two ids.
 
-Result:
+Result: 2026-10-15 10:49 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Test-OERStructure accepts the exported document (Valid True, no finding). The plan of the whole export reports the three rows at oer-s116-rg Unchanged -- the deleted user and the purged group by id with principalStatus, and oer-s116-keep -- and of the 12 rows the resource group inherits (not this step's, counted only) 6 Unchanged and 6 Failed where this identity may not read a management group's role assignments (AuthorizationFailed: reads refused, nothing written; measured in earlier steps); never Created. Both real runs on the step's own rows report the three Unchanged with no error. No write in any run (Microsoft Graph and Azure Resource Manager writes: 0, no token request), and the three assignments are still listed. An earlier attempt of this check is not recorded: it validated before the sign-in had loaded the module and printed the inherited rows in full; the block was corrected (only the step's rows printed) and re-run.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.3 ===
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] Valid: True; findings: 0; Errors: 0
+[oer-s116] Rows in the whole export: 15; at oer-s116-rg: 3
+[oer-s116] == WhatIf (whole export): token requests: 0; Microsoft Graph requests: 24 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 45, writes: 0
+[oer-s116] Row: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000006 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Row: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000007 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Row: roleAssignments | Reader -> oer-s116-keep @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Other rows (not this step's, not printed): 12 -- Failed 6, Unchanged 6
+[oer-s116] Errors: (no id) x12, AuthorizationFailed x36
+[oer-s116] == Real 1: token requests: 0; Microsoft Graph requests: 2 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 9, writes: 0
+[oer-s116] Row: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000006 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Row: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000007 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Row: roleAssignments | Reader -> oer-s116-keep @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Other rows (not this step's, not printed): 0
+[oer-s116] Errors: none
+[oer-s116] == Real 2: token requests: 0; Microsoft Graph requests: 2 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 9, writes: 0
+[oer-s116] Row: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000006 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Row: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000007 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Row: roleAssignments | Reader -> oer-s116-keep @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Other rows (not this step's, not printed): 0
+[oer-s116] Errors: none
+[oer-s116] Azure Resource Manager lists at oer-s116-rg: oer-s116-keep (by id), the deleted user (by id), the purged group (by id)
+RUNNER: check-1.3 exit code 0; started 2026-10-15T10:49:03Z; took 22 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.4. Without the two rows, -Prune removes the orphaned assignments (G8)
 
-- [ ] **1.4** The step's rows without the two orphaned ones: `-Prune -WhatIf` plans removing both, a real `-Prune` removes both, and a second real `-Prune` reports only `Unchanged`.
+- [x] **1.4** The step's rows without the two orphaned ones: `-Prune -WhatIf` plans removing both, a real `-Prune` removes both, and a second real `-Prune` reports only `Unchanged`.
 
 The document is the one 1.3 applied, limited to `oer-s116-rg`, without the two rows that carry
 `principalStatus`: `-Prune` then reaches only that resource group, the one scope the document declares.
@@ -859,11 +903,58 @@ second real run reports `oer-s116-keep` `Unchanged` and removes nothing (`writes
 then lists only `oer-s116-keep` at `oer-s116-rg`.
 **Failure looks like:** `oer-s116-keep` removed; a third removal; a write in the second run.
 
-Result:
+Result: 2026-10-15 10:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The document holds only the oer-s116-keep row at oer-s116-rg (one declared scope). The -Prune plan reports oer-s116-keep Unchanged and both orphaned assignments as would-remove rows (Skipped under -WhatIf, with a warning and a 'What if:' line each) and writes nothing; the first real -Prune removes exactly those two (two Azure Resource Manager DELETE requests at oer-s116-rg, nothing else written) and keeps oer-s116-keep Unchanged; the second real -Prune reports only oer-s116-keep Unchanged with no write (G8). Azure Resource Manager then lists only oer-s116-keep at oer-s116-rg.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.4 ===
+[oer-s116] Rows in the document: 1 (oer-s116-keep at oer-s116-rg); scopes declared: 1
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+WARNING: Sync-OERStructureRoleAssignment: would remove undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000003/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000019' for principal '00000000-0000-0000-0000-000000000006' at scope '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'.
+What if: Performing the operation "Remove undeclared role assignment '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000013'" on target "/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg".
+WARNING: Sync-OERStructureRoleAssignment: would remove undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000003/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000019' for principal '00000000-0000-0000-0000-000000000007' at scope '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'.
+What if: Performing the operation "Remove undeclared role assignment '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000014'" on target "/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg".
+[oer-s116] == WhatIf: token requests: 0; Microsoft Graph requests: 2 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 3, writes: 0
+[oer-s116] Row: roleAssignments | Reader -> oer-s116-keep @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Row: roleAssignments | 00000000-0000-0000-0000-000000000019 -> 00000000-0000-0000-0000-000000000006 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Skipped | would remove undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000003/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000019' for principal '00000000-0000-0000-0000-000000000006'
+[oer-s116] Row: roleAssignments | 00000000-0000-0000-0000-000000000019 -> 00000000-0000-0000-0000-000000000007 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Skipped | would remove undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000003/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000019' for principal '00000000-0000-0000-0000-000000000007'
+[oer-s116] Other rows (not this step's, not printed): 0
+[oer-s116] Errors: none
+WARNING: Sync-OERStructureRoleAssignment: removing undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000003/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000019' for principal '00000000-0000-0000-0000-000000000006' at scope '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'.
+WARNING: Sync-OERStructureRoleAssignment: removing undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000003/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000019' for principal '00000000-0000-0000-0000-000000000007' at scope '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'.
+[oer-s116] == Real 1: token requests: 0; Microsoft Graph requests: 2 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 5, writes: 2 (DELETE /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000013, DELETE /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000014)
+[oer-s116] Row: roleAssignments | Reader -> oer-s116-keep @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Row: roleAssignments | 00000000-0000-0000-0000-000000000019 -> 00000000-0000-0000-0000-000000000006 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Removed | removed undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000003/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000019' for principal '00000000-0000-0000-0000-000000000006'
+[oer-s116] Row: roleAssignments | 00000000-0000-0000-0000-000000000019 -> 00000000-0000-0000-0000-000000000007 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Removed | removed undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000003/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000019' for principal '00000000-0000-0000-0000-000000000007'
+[oer-s116] Other rows (not this step's, not printed): 0
+[oer-s116] Errors: none
+[oer-s116] == Real 2: token requests: 0; Microsoft Graph requests: 2 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 3, writes: 0
+[oer-s116] Row: roleAssignments | Reader -> oer-s116-keep @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Other rows (not this step's, not printed): 0
+[oer-s116] Errors: none
+[oer-s116] Azure Resource Manager lists at oer-s116-rg: oer-s116-keep (by id)
+RUNNER: check-1.4 exit code 0; started 2026-10-15T10:49:45Z; took 12 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.5. With the assignments gone, the rows with principalStatus are Skipped and nothing is created (A18)
 
-- [ ] **1.5** The document 1.3 applied, applied again after 1.4 removed the two orphaned assignments: the two rows with `principalStatus` are `Skipped` and never created, planned and run twice.
+- [x] **1.5** The document 1.3 applied, applied again after 1.4 removed the two orphaned assignments: the two rows with `principalStatus` are `Skipped` and never created, planned and run twice.
 
 ```powershell
 $OwnDoc = Join-Path $Raw 'docs\export-rg-own-rows.json'
@@ -889,13 +980,55 @@ Disconnect-OerLive
 `writes: 0` every time; Azure Resource Manager still lists only `oer-s116-keep` at `oer-s116-rg`.
 **Failure looks like:** a `Created` row, a role assignment `PUT`, or a principal lookup for the two ids.
 
-Result:
+Result: 2026-10-15 10:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (A18 held live). With the two orphaned assignments removed by 1.4, the document 1.3 applied gives, in the plan and in both real runs: oer-s116-keep Unchanged, and the two rows with principalStatus Skipped, their Detail starting principalStatus 'Deleted': and principalStatus 'Unresolved': and saying nothing was written; no 'What if:' line, no create request and no principal lookup (Microsoft Graph and Azure Resource Manager writes: 0); Azure Resource Manager still lists only oer-s116-keep. Finding for the report: the Detail says the principal 'could not be looked up when the document was exported', where the step's own wording is that the directory did not return it (P2 text).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.5 ===
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] == WhatIf: token requests: 0; Microsoft Graph requests: 2 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 9, writes: 0
+[oer-s116] Row: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000006 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Skipped | principalStatus 'Deleted': the principal '00000000-0000-0000-0000-000000000006' could not be looked up when the document was exported, so the apply engine never creates a role assignment for this entry. Nothing was written. Remove the entry, or name a principal that exists and remove principalStatus
+[oer-s116] Row: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000007 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Skipped | principalStatus 'Unresolved': the principal '00000000-0000-0000-0000-000000000007' could not be looked up when the document was exported, so the apply engine never creates a role assignment for this entry. Nothing was written. Remove the entry, or name a principal that exists and remove principalStatus
+[oer-s116] Row: roleAssignments | Reader -> oer-s116-keep @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Other rows (not this step's, not printed): 0
+[oer-s116] Errors: none
+[oer-s116] == Real 1: token requests: 0; Microsoft Graph requests: 2 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 9, writes: 0
+[oer-s116] Row: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000006 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Skipped | principalStatus 'Deleted': the principal '00000000-0000-0000-0000-000000000006' could not be looked up when the document was exported, so the apply engine never creates a role assignment for this entry. Nothing was written. Remove the entry, or name a principal that exists and remove principalStatus
+[oer-s116] Row: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000007 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Skipped | principalStatus 'Unresolved': the principal '00000000-0000-0000-0000-000000000007' could not be looked up when the document was exported, so the apply engine never creates a role assignment for this entry. Nothing was written. Remove the entry, or name a principal that exists and remove principalStatus
+[oer-s116] Row: roleAssignments | Reader -> oer-s116-keep @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Other rows (not this step's, not printed): 0
+[oer-s116] Errors: none
+[oer-s116] == Real 2: token requests: 0; Microsoft Graph requests: 2 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 9, writes: 0
+[oer-s116] Row: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000006 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Skipped | principalStatus 'Deleted': the principal '00000000-0000-0000-0000-000000000006' could not be looked up when the document was exported, so the apply engine never creates a role assignment for this entry. Nothing was written. Remove the entry, or name a principal that exists and remove principalStatus
+[oer-s116] Row: roleAssignments | Reader -> 00000000-0000-0000-0000-000000000007 @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Skipped | principalStatus 'Unresolved': the principal '00000000-0000-0000-0000-000000000007' could not be looked up when the document was exported, so the apply engine never creates a role assignment for this entry. Nothing was written. Remove the entry, or name a principal that exists and remove principalStatus
+[oer-s116] Row: roleAssignments | Reader -> oer-s116-keep @ /subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000003/resourceGroups/oer-s116-rg'
+[oer-s116] Other rows (not this step's, not printed): 0
+[oer-s116] Errors: none
+[oer-s116] Azure Resource Manager lists at oer-s116-rg: oer-s116-keep (by id)
+RUNNER: check-1.5 exit code 0; started 2026-10-15T10:50:13Z; took 13 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 2. An access review and the package its own entry resolves (BL-147)
 
 ### 2.1. The validator refuses a review of a name two package entries carry
 
-- [ ] **2.1** `Test-OERStructure` gives an Error for an access review whose package name two package entries carry, with no rename (offline).
+- [x] **2.1** `Test-OERStructure` gives an Error for an access review whose package name two package entries carry, with no rename (offline).
 
 ```powershell
 $Doc = [ordered]@{
@@ -919,11 +1052,41 @@ Disconnect-OerLive
 validation sends no request (the sign-in only loads the module).
 **Failure looks like:** `Valid: True`, or only a Warning.
 
-Result:
+Result: 2026-10-15 10:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Valid False: an Error at accessReviews[0].accessPackage saying that 2 accessPackages entries (accessPackages[0], accessPackages[1]) declare 'oer-s116-ap', so the run cannot tell which package the review means, and to name it by its object id -- with no rename in the document. The other four findings are Warnings the validator gives for any such hand-written entry (catalogs not declared, resourceRoles omitted). The validation sent no request.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] Valid: False; findings: 5
+[oer-s116] Finding: Warning accessPackages[0].catalog: Catalog 'oer-s116-cat-a' is not declared in this document. It may already exist in the tenant.
+[oer-s116] Finding: Warning accessPackages[1].catalog: Catalog 'oer-s116-cat-b' is not declared in this document. It may already exist in the tenant.
+[oer-s116] Finding: Warning accessPackages[0].resourceRoles: 'resourceRoles' is omitted at accessPackages[0]. An omitted resourceRoles key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+[oer-s116] Finding: Warning accessPackages[1].resourceRoles: 'resourceRoles' is omitted at accessPackages[1]. An omitted resourceRoles key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+[oer-s116] Finding: Error accessReviews[0].accessPackage: Access review 'oer-s116-rev' at accessReviews[0] declares accessPackage 'oer-s116-ap', which 2 accessPackages entries declare as displayName or previousDisplayName (accessPackages[0], accessPackages[1]), so the run cannot tell which access package the review means. Name the access package by its object id.
+[oer-s116] Requests during the validation: token requests: 0; Microsoft Graph requests: 0 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 0, writes: 0
+RUNNER: check-2.1 exit code 0; started 2026-10-15T10:50:40Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.2. A review of a package missing from its declared catalog is refused, and nothing is created
 
-- [ ] **2.2** `oer-s116-ap` declared in `oer-s116-cat-a` (where it does not exist; it exists in `oer-s116-cat-b`) and a review of it: the package entry is `Failed`, the review is `Failed`, no review is created, and nothing is written -- planned and run twice.
+- [x] **2.2** `oer-s116-ap` declared in `oer-s116-cat-a` (where it does not exist; it exists in `oer-s116-cat-b`) and a review of it: the package entry is `Failed`, the review is `Failed`, no review is created, and nothing is written -- planned and run twice.
 
 ```powershell
 $Doc = [ordered]@{
@@ -962,11 +1125,56 @@ every time; no access review definition carries the prefix.
 **Failure looks like:** a review row other than `Failed`; an access review request; a write; a definition
 with the prefix.
 
-Result:
+Result: 2026-10-15 10:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (BL-147 held live). Plan: the package entry would create oer-s116-ap in oer-s116-cat-a (the known -WhatIf residual) and the review is Failed, saying the package has no id in this run because the create was not carried out. Both real runs: the package entry Failed (a package of that name exists in another catalog and New-OERAccessPackage returned it; nothing written to it), and the review Failed, saying its accessPackages entry did not find or create the package; nothing created, read or written for it. No access review request in any run, no write (Microsoft Graph and Azure Resource Manager writes: 0), and no access review definition carries the prefix. The one request that names the package in a real run is the package handler's own lookup inside New-OERAccessPackage (step 5's guard), not a lookup by the review.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.2 ===
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Create access package" on target "oer-s116-ap".
+[oer-s116] == WhatIf: token requests: 0; Microsoft Graph requests: 2 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s116] Microsoft Graph requests that name oer-s116-ap: 0
+[oer-s116] Access review requests: 0
+[oer-s116] Row: accessPackages | oer-s116-ap | Skipped | would create access package oer-s116-ap
+[oer-s116] Row: accessReviews | oer-s116-rev | Failed | access package 'oer-s116-ap' has no id in this run (the accessPackages entry would create it, and the create was not carried out: -WhatIf, or a declined confirmation), so the access package this access review reviews cannot be identified; nothing was created, read or written for it
+[oer-s116] Errors: 
+[oer-s116] == Real 1: token requests: 0; Microsoft Graph requests: 6 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s116] Microsoft Graph requests that name oer-s116-ap: 1
+[oer-s116]   GET v1.0/identityGovernance/entitlementManagement/accessPackages?$filter=displayName eq 'oer-s116-ap'&$select=id,displayName
+[oer-s116] Access review requests: 0
+[oer-s116] Row: accessPackages | oer-s116-ap | Failed | access package 'oer-s116-ap' was not created in catalog 'oer-s116-cat-a': a package of that name already exists in another catalog (00000000-0000-0000-0000-000000000011), and New-OERAccessPackage returned it (00000000-0000-0000-0000-000000000012); nothing was written to it
+[oer-s116] Row: accessReviews | oer-s116-rev | Failed | access package 'oer-s116-ap' has no id in this run (the accessPackages entry did not find or create it; see that entry's rows), so the access package this access review reviews cannot be identified; nothing was created, read or written for it
+[oer-s116] Errors: 
+[oer-s116] == Real 2: token requests: 0; Microsoft Graph requests: 6 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s116] Microsoft Graph requests that name oer-s116-ap: 1
+[oer-s116]   GET v1.0/identityGovernance/entitlementManagement/accessPackages?$filter=displayName eq 'oer-s116-ap'&$select=id,displayName
+[oer-s116] Access review requests: 0
+[oer-s116] Row: accessPackages | oer-s116-ap | Failed | access package 'oer-s116-ap' was not created in catalog 'oer-s116-cat-a': a package of that name already exists in another catalog (00000000-0000-0000-0000-000000000011), and New-OERAccessPackage returned it (00000000-0000-0000-0000-000000000012); nothing was written to it
+[oer-s116] Row: accessReviews | oer-s116-rev | Failed | access package 'oer-s116-ap' has no id in this run (the accessPackages entry did not find or create it; see that entry's rows), so the access package this access review reviews cannot be identified; nothing was created, read or written for it
+[oer-s116] Errors: 
+[oer-s116] Access review definitions carrying the prefix: 0
+RUNNER: check-2.2 exit code 0; started 2026-10-15T10:51:00Z; took 9 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 2.3. A review of a package its entry finds in its catalog reaches that package (plan only)
 
-- [ ] **2.3** `oer-s116-ap` declared in `oer-s116-cat-b`, where it exists, and a review of it: the plan reads the review's package as the id the package entry resolved, writes nothing; with `-Include` leaving AccessPackages out, the review is refused.
+- [x] **2.3** `oer-s116-ap` declared in `oer-s116-cat-b`, where it exists, and a review of it: the plan reads the review's package as the id the package entry resolved, writes nothing; with `-Include` leaving AccessPackages out, the review is refused.
 
 ```powershell
 $Doc = [ordered]@{
@@ -982,6 +1190,12 @@ foreach ($Include in @(@('AccessPackages', 'AccessReviews'), @('AccessReviews'))
     $E = $null
     $Rows = Invoke-OERStructure -Path $Path -Include $Include -WhatIf -ErrorVariable E -ErrorAction SilentlyContinue
     Write-OerLiveStep "== -Include $($Include -join ','), -WhatIf: $(Get-S116Sent)"
+    # The package entry finds its package by listing its catalog, so a request that names the package is a
+    # lookup of the name across the tenant -- the one BL-147 forbids for the review.
+    $Named = @($global:S116GraphUri | Where-Object { $_ -match [regex]::Escape($Ap) })
+    Write-OerLiveStep "Microsoft Graph requests that name ${Ap}: $($Named.Count)"
+    foreach ($U in $Named) { Write-OerLiveStep "  $U" }
+    Write-OerLiveStep "Microsoft Graph requests (paths): $(@($global:S116Graph | Sort-Object -Unique) -join ' | ')"
     Stop-S116Count
     Show-S116Rows -Rows $Rows
     Show-S116Errors -Errors $E
@@ -989,58 +1203,123 @@ foreach ($Include in @(@('AccessPackages', 'AccessReviews'), @('AccessReviews'))
 Disconnect-OerLive
 ```
 
-**Expect:** with both sections, the package entry `Unchanged` and the review planned for creation, its detail
-naming the access package its accessPackages entry resolved in this run; with AccessReviews alone, the
-review `Failed`, saying the AccessPackages section was left out; `writes: 0` both times.
-**Failure looks like:** a review planned against a package found by name across the tenant; a write.
+**Expect:** with both sections, the package entry `Unchanged`, the review planned for creation, and NO
+Microsoft Graph request that names `oer-s116-ap` (the package entry lists its catalog, and the review reads
+the id its entry resolved; a request naming it would be a lookup across the tenant); with AccessReviews alone,
+the review `Failed`, saying the AccessPackages section was not selected; `writes: 0` both times.
+**Failure looks like:** a request that names the package; a review planned in the AccessReviews-only run; a
+write.
 
-Result:
+Result: 2026-10-15 10:52 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. With both sections: the package entry Unchanged (found in oer-s116-cat-b), the review planned for creation ('What if: Create access review definition'), and NO Microsoft Graph request that names oer-s116-ap -- the package is read by its id only (accessPackages/{id} and its resourceRoleScopes), so the review reached the id its entry resolved and no lookup of the name across the tenant was made. With AccessReviews alone: the review Failed, saying the accessPackages section is not selected by -Include, and no request was sent. No write either time. (The block was extended, before its recorded run, to print the requests that name the package: the plan row of a review to be created carries no note of the id it was read as; the note appears only on a target-mismatch row.)
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.3 ===
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Create access review definition" on target "oer-s116-rev".
+[oer-s116] == -Include AccessPackages,AccessReviews, -WhatIf: token requests: 0; Microsoft Graph requests: 7 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s116] Microsoft Graph requests that name oer-s116-ap: 0
+[oer-s116] Microsoft Graph requests (paths): GET v1.0/identityGovernance/accessReviews/definitions | GET v1.0/identityGovernance/entitlementManagement/accessPackages | GET v1.0/identityGovernance/entitlementManagement/accessPackages/00000000-0000-0000-0000-000000000012 | GET v1.0/identityGovernance/entitlementManagement/accessPackages/00000000-0000-0000-0000-000000000012/resourceRoleScopes | GET v1.0/identityGovernance/entitlementManagement/assignmentPolicies | GET v1.0/identityGovernance/entitlementManagement/catalogs
+[oer-s116] Row: accessPackages | oer-s116-ap | Unchanged | access package properties match
+[oer-s116] Row: accessReviews | oer-s116-rev | Skipped | would create access review 'oer-s116-rev'
+[oer-s116] Errors: 
+[oer-s116] == -Include AccessReviews, -WhatIf: token requests: 0; Microsoft Graph requests: 0 (getByIds reads sent as POST: 0), writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s116] Microsoft Graph requests that name oer-s116-ap: 0
+[oer-s116] Microsoft Graph requests (paths): 
+[oer-s116] Row: accessReviews | oer-s116-rev | Failed | access package 'oer-s116-ap' has no id in this run (the accessPackages section is not selected by -Include), so the access package this access review reviews cannot be identified; nothing was created, read or written for it
+[oer-s116] Errors:
+RUNNER: check-2.3 exit code 0; started 2026-10-15T10:52:07Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 3. One group listing per export (step 5, R-2)
 
-### 3.1. An export of the subscription lists every group's name once
+### 3.1. An export whose two calls both name a group lists every group's name once
 
-- [ ] **3.1** `Export-OERInventory -Include RoleAssignments -Scope` the test subscription walks several scopes, names `oer-s116-keep` by name at both resource groups, and lists every group's name exactly once.
+- [x] **3.1** `Export-OERInventory -Include DirectoryRoleAssignments, RoleAssignments -Scope` the step's resource group makes two `Get-OERInventory` calls that both name a group principal -- the Entra ID call (a directory role assignment the tenant holds names a group) and the call at `oer-s116-rg` (`oer-s116-keep`) -- and lists every group's name exactly once.
+
+This identity cannot list management groups and sees one subscription, so an export cannot be made to walk
+two Azure scopes here: with `-Scope` it makes one call for the Azure sections, whose rows may span several
+scopes. The two calls that both need the index are therefore the Entra ID call and the Azure call. The
+directory role assignment is the tenant's own, not this step's: it is read, counted, and never printed.
 
 ```powershell
 Connect-OerLive -Arm
 Start-S116NoPrompt
 Start-S116Count
-$Out = Join-Path $Raw 'export-sub'
+$Out = Join-Path $Raw 'export-two-calls'
 $null = New-Item -ItemType Directory -Path $Out -Force
 $W = $null; $E = $null
-$B = Export-OERInventory -OutputPath $Out -Include RoleAssignments -Scope $SubScope -WarningVariable W -ErrorVariable E -ErrorAction SilentlyContinue 3>$null
+$B = Export-OERInventory -OutputPath $Out -Include DirectoryRoleAssignments, RoleAssignments -Scope $RgScope -WarningVariable W -ErrorVariable E -ErrorAction SilentlyContinue 3>$null
 Write-OerLiveStep (Get-S116Sent)
 $Listings = @($global:S116GraphUri | Where-Object { $_ -match '^GET .*v1\.0/groups\?' -and $_ -match 'select=id,displayName' -and $_ -notmatch 'skiptoken' })
 Write-OerLiveStep "Group name listings (first pages): $($Listings.Count)"
-$AtScopes = @($global:S116Arm | Where-Object { $_ -like 'GET */providers/Microsoft.Authorization/roleAssignments' } | Sort-Object -Unique)
-Write-OerLiveStep "Distinct scopes whose role assignments were listed: $($AtScopes.Count)"
 Stop-S116Count
-foreach ($X in @($W)) { Write-OerLiveStep "Warning: $($X.Message)" }
-Show-S116Errors -Errors $E
+Show-S116ErrorCount -Errors $E
 $Inv = Get-Content -LiteralPath (Join-Path $B.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
-$Rows = @($Inv.roleAssignments | Where-Object { $null -ne $_ })
-Write-OerLiveStep "inventory.json roleAssignments: $($Rows.Count); distinct scopes: $(@($Rows | ForEach-Object { $_.scope } | Sort-Object -Unique).Count)"
-foreach ($S in @($RgScope, $Rg2Scope)) {
-    $At = @($Rows | Where-Object { $_.scope -eq $S })
-    Write-OerLiveStep "At $(if ($S -eq $RgScope) { $Rg } else { $Rg2 }): $(@($At | ForEach-Object { "$(Get-S116Who -Principal ([string]$_.principal)) ($($_.principalType))" }) -join ', ')"
-}
+$Dra = @($Inv.directoryRoleAssignments | Where-Object { $null -ne $_ })
+Write-OerLiveStep "directoryRoleAssignments: $($Dra.Count); with a group principal (not printed): $(@($Dra | Where-Object { [string]$_.principalType -eq 'Group' -or ([string]$_.principalType -eq '' -and [string]$_.principal -notmatch '@') }).Count); principalType values: $(@($Dra | ForEach-Object { [string]$_.principalType } | Sort-Object -Unique) -join ', ')"
+$At = @($Inv.roleAssignments | Where-Object { $null -ne $_ -and $_.scope -eq $RgScope })
+Write-OerLiveStep "At ${Rg}: $(@($At | ForEach-Object { "$(Get-S116Who -Principal ([string]$_.principal)) ($($_.principalType))" }) -join ', ')"
 Disconnect-OerLive
 ```
 
-**Expect:** `writes: 0`; `Group name listings (first pages): 1`; at least three distinct scopes listed (the
-subscription and the two resource groups); `oer-s116-keep` by name, `Group`, at `oer-s116-rg` and at
-`oer-s116-rg2`.
-**Failure looks like:** two or more listings (one per scope, the cost step 5 found); `oer-s116-keep` written
-by id.
+**Expect:** `writes: 0`; at least one `directoryRoleAssignments` entry with a group principal; `oer-s116-keep`
+by name, `Group`, at `oer-s116-rg`; `Group name listings (first pages): 1` -- one for the export, where each
+call listed on its own before this step (two here).
+**Failure looks like:** two listings; `oer-s116-keep` written by id; no directory role assignment with a group
+principal (then the check proves nothing about the reuse and is marked `[~]`).
 
-Result:
+Result: 2026-10-15 10:54 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The export made its Entra ID call, whose directoryRoleAssignments carry 3 entries with a group principal (the tenant's own, counted and not printed), and its call at oer-s116-rg, which names oer-s116-keep by name (Group); both needed the group name index, and every group's name was listed exactly once (Group name listings: 1), with no write and no error. Before this step each call kept its own index and listed once (two here). An earlier version of this check, an export with -Scope the test subscription, made one Get-OERInventory call for the Azure sections (one listing, rows across six scopes) and so could not show the reuse; this identity cannot list management groups and sees one subscription, so an export of several Azure scopes cannot be built here -- the check was rewritten to the two calls above before its recorded run.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.1 ===
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] token requests: 0; Microsoft Graph requests: 7 (getByIds reads sent as POST: 3), writes: 0; Azure Resource Manager requests: 7, writes: 0
+[oer-s116] Group name listings (first pages): 1
+[oer-s116] Errors: none
+[oer-s116] directoryRoleAssignments: 51; with a group principal (not printed): 3; principalType values: Group, ServicePrincipal, User
+[oer-s116] At oer-s116-rg: oer-s116-keep (Group)
+RUNNER: check-3.1 exit code 0; started 2026-10-15T10:54:06Z; took 10 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## T. Teardown
 
 ### T.1. Remove every oer-s116- object
 
-- [ ] **T.1** The prerequisite script's teardown removes the remaining role assignments, both resource groups and every other prefixed object, purges the deleted principals where allowed, and the sweep finds none.
+- [x] **T.1** The prerequisite script's teardown removes the remaining role assignments, both resource groups and every other prefixed object, purges the deleted principals where allowed, and the sweep finds none.
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS116Prereq.ps1'
@@ -1058,11 +1337,164 @@ deleted items (or says which are left there for their 30 days), the sweep finds 
 baseline, exit code 0.
 **Failure looks like:** a RESIDUE line (exit code 3): name it in the report.
 
-Result:
+Result: 2026-10-15 10:56 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, with one follow-up. The -WhatIf teardown removed nothing; the real one removed the remaining recorded Reader assignment at oer-s116-rg and the resource group, the one at oer-s116-rg2 and that resource group, found no prefixed access review, and removed the policy, the package, the two catalogs and the groups oer-s116-keep and oer-s116-req (removed 6, residue 0); it purged the deleted user (204, without User.DeleteRestore.All) and oer-s116-req (204 after one 404 retry). oer-s116-grp had been purged by 1.1. oer-s116-keep was not yet listed among the deleted items when the purge step read them (replication), and the last sweep still listed the two groups just deleted (the listing lag earlier steps measured), so the group count read 99 against 97; the run removed its recorded ids. Follow-up (below): the deleted items were listed by prefix, oer-s116-keep was purged (204), and a read-back finds no deleted group or user with the prefix. Exit code 0.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[oer-s116] === Initialize-OerS116Prereq.ps1 -Teardown -WhatIf ===
+[oer-s116] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s116] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s116] What if: Performing the operation "Start the redacted transcript" on target "raw\s116\teardown-20261015-105440Z.log".
+[oer-s116] [oer-s116] Mode: REMOVE. Prefix 'oer-s116-'. Objects (fixed): the user oer-s116-usr (disabled); the security groups oer-s116-grp, oer-s116-keep and oer-s116-req (no member); oer-s116-cat-a (empty); oer-s116-cat-b holding oer-s116-ap with the policy oer-s116-pol; oer-s116-rg (tagged) with Reader for oer-s116-usr, oer-s116-grp and oer-s116-keep; oer-s116-rg2 (tagged) with Reader for oer-s116-keep. OerLive 1.0.3.
+[oer-s116] [oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] [oer-s116] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s116] What if: Performing the operation "Remove a recorded Reader role assignment (Azure Resource Manager DELETE roleAssignments)" on target "oer-s116-rg".
+[oer-s116] What if: Performing the operation "Delete the resource group (Azure Resource Manager DELETE)" on target "oer-s116-rg".
+[oer-s116] What if: Performing the operation "Remove a recorded Reader role assignment (Azure Resource Manager DELETE roleAssignments)" on target "oer-s116-rg2".
+[oer-s116] What if: Performing the operation "Delete the resource group (Azure Resource Manager DELETE)" on target "oer-s116-rg2".
+[oer-s116] [oer-s116] Teardown B: access review definitions carrying the prefix: 0.
+[oer-s116] [oer-s116] Teardown of 'oer-s116-': users 0, groups 2, access packages 1, catalogs 2; administrative units 0 and app registrations 0 are reported only.
+[oer-s116] [oer-s116] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s116] [oer-s116] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s116] [oer-s116] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s116] What if: Performing the operation "Delete (Graph v1.0 DELETE assignmentPolicies)" on target "oer-s116-ap: assignment policy 'oer-s116-pol'".
+[oer-s116] What if: Performing the operation "Delete the access package (Graph v1.0 DELETE accessPackages)" on target "oer-s116-ap".
+[oer-s116] What if: Performing the operation "Delete the catalog (Graph v1.0 DELETE catalogs)" on target "oer-s116-cat-b".
+[oer-s116] What if: Performing the operation "Delete the catalog (Graph v1.0 DELETE catalogs)" on target "oer-s116-cat-a".
+[oer-s116] [oer-s116] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s116] [oer-s116] Teardown 5/6: the prefixed groups.
+[oer-s116] What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s116-keep".
+[oer-s116] What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s116-req".
+[oer-s116] [oer-s116] Teardown 6/6: the prefixed users.
+[oer-s116] [oer-s116] Teardown of 'oer-s116-': removed 0, residue 0, unreadable 0 (WhatIf: nothing was removed).
+[oer-s116] [oer-s116] WhatIf: nothing was created, removed or written.
+[oer-s116] [oer-s116] Done.
+[oer-s116] exit code: 0
+[oer-s116] === Initialize-OerS116Prereq.ps1 -Teardown -Unattended ===
+[oer-s116] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s116] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s116] [oer-s116] Transcript (redacted): raw\s116\teardown-20261015-105452Z.log; OerLive 1.0.3.
+[oer-s116] [oer-s116] Mode: REMOVE. Prefix 'oer-s116-'. Objects (fixed): the user oer-s116-usr (disabled); the security groups oer-s116-grp, oer-s116-keep and oer-s116-req (no member); oer-s116-cat-a (empty); oer-s116-cat-b holding oer-s116-ap with the policy oer-s116-pol; oer-s116-rg (tagged) with Reader for oer-s116-usr, oer-s116-grp and oer-s116-keep; oer-s116-rg2 (tagged) with Reader for oer-s116-keep. OerLive 1.0.3.
+[oer-s116] [oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] [oer-s116] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s116] [oer-s116] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s116] [oer-s116] Teardown A: removed a recorded Reader role assignment at oer-s116-rg.
+[oer-s116] [oer-s116] oer-s116-rg is gone: not yet (read 1, 0.2 s, likely replication delay) -- reading again in 2 s.
+[oer-s116] [oer-s116] oer-s116-rg is gone: converged after 2 read(s), 2.6 s.
+[oer-s116] [oer-s116] Teardown A: deleted oer-s116-rg.
+[oer-s116] [oer-s116] Teardown A: removed a recorded Reader role assignment at oer-s116-rg2.
+[oer-s116] [oer-s116] oer-s116-rg2 is gone: not yet (read 1, 0.4 s, likely replication delay) -- reading again in 2 s.
+[oer-s116] [oer-s116] oer-s116-rg2 is gone: converged after 2 read(s), 2.7 s.
+[oer-s116] [oer-s116] Teardown A: deleted oer-s116-rg2.
+[oer-s116] [oer-s116] Teardown B: access review definitions carrying the prefix: 0.
+[oer-s116] [oer-s116] Teardown of 'oer-s116-': users 0, groups 2, access packages 1, catalogs 2; administrative units 0 and app registrations 0 are reported only.
+[oer-s116] [oer-s116] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s116] [oer-s116] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s116] [oer-s116] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s116] [oer-s116] Deleted: oer-s116-ap: assignment policy 'oer-s116-pol' (204).
+[oer-s116] [oer-s116] Deleted: access package oer-s116-ap (204, 1 attempt(s)).
+[oer-s116] [oer-s116] Deleted: catalog oer-s116-cat-b (204, 1 attempt(s)).
+[oer-s116] [oer-s116] Deleted: catalog oer-s116-cat-a (204, 1 attempt(s)).
+[oer-s116] [oer-s116] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s116] [oer-s116] Teardown 5/6: the prefixed groups.
+[oer-s116] [oer-s116] Deleted: group oer-s116-keep (204).
+[oer-s116] [oer-s116] Deleted: group oer-s116-req (204).
+[oer-s116] [oer-s116] Teardown 6/6: the prefixed users.
+[oer-s116] [oer-s116] Teardown of 'oer-s116-': removed 6, residue 0, unreadable 0.
+[oer-s116] [oer-s116] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116-' is left.
+[oer-s116] [oer-s116] no 'oer-s116-' object is listed: converged after 1 read(s), 0.4 s.
+[oer-s116] [oer-s116] Teardown D: purge of usr: 204  after 1 attempt(s).
+[oer-s116] [oer-s116] Teardown D: grp is not among the deleted items.
+[oer-s116] [oer-s116] Teardown D: keep is not among the deleted items.
+[oer-s116] [oer-s116] Purging req answered 404 Request_ResourceNotFound (attempt 1 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s116] [oer-s116] Teardown D: purge of req: 204  after 2 attempt(s).
+[oer-s116] [oer-s116] Sweep: group 'oer-s116-keep' (00000000-0000-0000-0000-000000000008) carries the prefix.
+[oer-s116] [oer-s116] Sweep: group 'oer-s116-req' (00000000-0000-0000-0000-000000000009) carries the prefix.
+[oer-s116] [oer-s116] Resource group oer-s116-rg exists after the teardown: False; oer-s116-rg2 exists: False
+[oer-s116] [oer-s116] Counts: users now 22, at the baseline 22; equal: True
+[oer-s116] [oer-s116] Counts: groups now 99, at the baseline 97; equal: False
+[oer-s116] [oer-s116] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s116] [oer-s116] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s116] [oer-s116] Removed the recorded ids.
+[oer-s116] [oer-s116] Done.
+[oer-s116] exit code: 0
+RUNNER: check-T.1 exit code 0; started 2026-10-15T10:54:38Z; took 45 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Follow-up: purge what the teardown's purge step could not yet see ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK purge1 ===
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] Deleted groups carrying the prefix: 1 (oer-s116-keep)
+[oer-s116] Purged oer-s116-keep from the deleted items: 204 after 1 attempt(s).
+[oer-s116] Deleted users carrying the prefix: 0
+[oer-s116] After the purge, deleted groups carrying the prefix: 1 (status 200)
+[oer-s116] After the purge, deleted users carrying the prefix: 0 (status 200)
+RUNNER: check-purge1 exit code 0; started 2026-10-15T10:56:02Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+
+=== Follow-up: read back the deleted items (read-only) ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK purge2 ===
+[oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] no deleted group or user carries the prefix: converged after 1 read(s), 0.2 s.
+[oer-s116] Deleted groups and users carrying the prefix now: 0
+RUNNER: check-purge2 exit code 0; started 2026-10-15T10:56:20Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### T.2. Read back
 
-- [ ] **T.2** A read-only run finds no prefixed object, neither resource group, and the counts at the baseline.
+- [x] **T.2** A read-only run finds no prefixed object, neither resource group, and the counts at the baseline.
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS116Prereq.ps1'
@@ -1074,7 +1506,49 @@ Write-OerLiveStep "exit code: $LASTEXITCODE"
 the baseline; no residue row with this step's prefix.
 **Failure looks like:** anything left: name it in the report.
 
-Result:
+Result: 2026-10-15 10:56 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. No prefixed object is left, no collection is unread, neither resource group exists, and the users, groups, catalogs and access packages equal the baseline (22, 97, 5, 6). No residue row carries this step's prefix; the five rows listed belong to the earlier prefixes opim-s1- and opim-s2- and are not this step's (not touched).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.2 ===
+[oer-s116] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s116] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s116] [oer-s116] Transcript (redacted): raw\s116\readback-20261015-105540Z.log; OerLive 1.0.3.
+[oer-s116] [oer-s116] Mode: READ BACK. Prefix 'oer-s116-'. Objects (fixed): the user oer-s116-usr (disabled); the security groups oer-s116-grp, oer-s116-keep and oer-s116-req (no member); oer-s116-cat-a (empty); oer-s116-cat-b holding oer-s116-ap with the policy oer-s116-pol; oer-s116-rg (tagged) with Reader for oer-s116-usr, oer-s116-grp and oer-s116-keep; oer-s116-rg2 (tagged) with Reader for oer-s116-keep. OerLive 1.0.3.
+[oer-s116] [oer-s116] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6-c1\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116] [oer-s116] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116] [oer-s116] Residue: raw\residue.json holds 5 row(s), 0 with this step's prefix; rows of other prefixes are not touched by this script.
+[oer-s116] [oer-s116] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116-' is left.
+[oer-s116] [oer-s116] Read-back: resource group oer-s116-rg exists: False; oer-s116-rg2 exists: False
+[oer-s116] [oer-s116] Counts: users now 22, at the baseline 22; equal: True
+[oer-s116] [oer-s116] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s116] [oer-s116] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s116] [oer-s116] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s116] [oer-s116] Read-back: residue row: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:09Z, attempts 3: 404 SubjectNotFound The subject is not found.; read back: still listed -- OerLive: Residue: PIM for Groups eligibility 'opim-s1-grp: PIM for Groups owner eligibility of a principal': read back after the 'does not exist' answer -- not converged within budget (180 s, 10 reads).
+[oer-s116] [oer-s116] Read-back: residue row: PIM for Groups assignment 'opim-s1-grp: PIM for Groups owner assignment of a principal' (prefix opim-s1-), first refused 2026-10-08T18:43:12Z, attempts 3: 403 UnauthorizedAccessException {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup,PrivilegedAccess.ReadWrite.AzureADGroup,PrivilegedAssignmentSchedule.Remove.AzureADGroup.","instanceAnnotations":[]}
+[oer-s116] [oer-s116] Read-back: residue row: PIM for Groups eligibility 'opim-s2-grp: PIM for Groups member eligibility of a principal' (prefix opim-s2-), first refused 2026-10-10T23:39:01Z, attempts 1: 400 BadRequest {"error":{"code":"Request_BadRequest","message":"The source resource object or one of the objects being referenced do not exist.","innerError":{"date":"2026-10-10T23:39:01","request-id":"00000000-0000-0000-0000-000000000013","client-request-id":"00000000-0000-0000-0000-000000000014"}}}
+[oer-s116] [oer-s116] Read-back: residue row: user 'masked@example.com' (prefix opim-s2-), first refused 2026-10-10T23:39:02Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s116] [oer-s116] Read-back: residue row: user 'masked@example.com' (prefix opim-s2-), first refused 2026-10-11T14:55:13Z, attempts 1: 403 Authorization_RequestDenied Insufficient privileges to complete the operation.
+[oer-s116] [oer-s116] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 5, of them with this step's prefix: 0.
+[oer-s116] [oer-s116] Done.
+[oer-s116] exit code: 0
+RUNNER: check-T.2 exit code 0; started 2026-10-15T10:55:37Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## B. Proved offline only (class B)
 
@@ -1108,4 +1582,4 @@ tripwire installed) and runs in the full gate, `./build.ps1 -Tasks test`, on all
 
 - **C.1** An export of a tenant that holds a restricted management administrative unit with a group that uses
   PIM for Groups as a member: one warning naming the count, the README section naming the group and the
-  unit. Optional and non-blocking; Philip runs it against his own tenant after the merge.
+  unit. Optional and non-blocking: the operator runs it after the merge, against a tenant that holds such a unit.
