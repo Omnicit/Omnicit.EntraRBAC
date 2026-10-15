@@ -1481,8 +1481,8 @@ records it.
 
 **Mutation proofs.** Each mutation was applied to the source, the module built, the covering tests
 run and seen red, and the file restored, with `git status` clean after each; "N red" is the number of
-failed tests in that run. Tasks 1 and 2 of the step ran them; each row names the guard, the mutation,
-the first test that went red and the outcome.
+failed tests in that run. Tasks 1 and 2 of the step ran them, and the final fix wave the rows marked
+so; each row names the guard, the mutation, the first test that went red and the outcome.
 
 `Get-OERInventoryLighthouseDelegation`, in
 `tests/Unit/Private/Get-OERInventoryLighthouseDelegation.Tests.ps1`:
@@ -1553,6 +1553,10 @@ also turned export tests red):
 | The prefix's trailing space (lost) | keeps an entry that only resembles a Lighthouse entry under Entra ID (no space; a longer word) | 2 red |
 | The prefix compared ordinally (ignoring case) | the same test (another letter case) | 1 red |
 | The end of the partial prose passage (cut) | says in the partial prose what a Lighthouse entry names and how the scope and the role are written | 1 red |
+| Final fix wave: the mark compared without regard to letter case (`Ordinal`) | marks a bullet whose managing tenant is the tenant given to -TenantId, compared without regard to letter case (the two rows that differ in letter case) | 2 red |
+| Final fix wave: the mark's equality (dropped, so any non-blank `-TenantId` marks) | the same test (all three rows: the bullet of another managing tenant was marked) | 3 red |
+| Final fix wave: the blank `-TenantId` guard (removed) | marks no bullet when -TenantId is absent, empty, white space or null (four rows), and two rows of the "not given" test | 6 red |
+| Final fix wave: "not given" once for a tenant with neither a name nor an id (branch removed) | writes "not given" for a managing tenant name, a tenant id and an offer the row does not carry, and once for a tenant with neither (the two "neither" rows) | 2 red |
 
 `Export-OERInventory`, in `tests/Unit/Public/Export-OERInventory.Tests.ps1`:
 
@@ -1573,6 +1577,10 @@ also turned export tests red):
 | The reader's Unread entries appended (not), and their blank filter (removed) | five tests; leaves a blank entry and a null cause of the reader out of IncompleteReads, the count and the causes | 5 red; 1 red |
 | The reader's causes collected (not), the causes clause appended (not), and the Lighthouse clause added (not) | the exact message text of four, four and five tests | 4, 4 and 5 red |
 | The Lighthouse entries after the principal and role selection entries (moved before them) | names the failed reads LAST in IncompleteReads, after the Entra ID, principal and role selection entries | 1 red |
+| Final fix wave: the README handed the export's tenant (`-TenantId` dropped from the call) | hands the README the tenant inventory.json names, so a delegation this tenant manages is marked and another is not | 1 red |
+| Final fix wave: the subscription listing literal in the export (changed) | recognises the subscription listing failure by the literal the REAL scope tree writes, and names a subscription listing that failed before the entries of the reader | 2 red |
+| Final fix wave: the same literal in `Resolve-OERInventoryScopeTree` (changed) | recognises the subscription listing failure by the literal the REAL scope tree writes | 1 red |
+| Final fix wave: the Lighthouse warning (never written) | stops at its own warning under -WarningAction Stop, before the bundle is written, and 4 more | 5 red |
 
 **Equivalent mutants, each run and found green, and kept.**
 
