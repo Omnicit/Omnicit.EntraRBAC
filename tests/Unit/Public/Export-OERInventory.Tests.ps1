@@ -5300,5 +5300,18 @@ Describe 'Export-OERInventory (role assignments whose principal could not be loo
             # The README names it under "What this export could not read".
             (Get-Content (Join-Path $Run.Result.BundlePath 'README.md') -Raw) | Should -Match ([regex]::Escape("- Entra ID: ``$Entry``"))
         }
+
+        It 'raises InventoryPartial for a failed principal lookup alone, when nothing else was left unread' {
+            # RoleAssignments only: no group read, no Entra ID entry, no skipped scope. The principal entry is
+            # the one thing that makes the bundle partial.
+            $Run = Invoke-UpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'upx-alone'); Include = 'RoleAssignments' }
+            $Entry = "roleAssignments/Owner -> $($script:UpxFail) @ $($script:UpxMg)/principal"
+            @($Run.Result.IncompleteReads) | Should -Be @($Entry)
+            @($Run.Result.SkippedScopes) | Should -BeNullOrEmpty
+            @($Run.Result.SkippedEligibilityScopes) | Should -BeNullOrEmpty
+            $Run.Partial.Count | Should -Be 1
+            $Run.Partial[0].Exception.Message | Should -BeLike 'This inventory bundle is PARTIAL: 1 role assignment principal read(s) failed, so each principal is written by its object id*'
+            $Run.Partial[0].Exception.Message | Should -Not -BeLike '*partial Entra ID read entry*'
+        }
     }
 }
