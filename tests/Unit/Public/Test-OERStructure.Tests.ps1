@@ -89,7 +89,7 @@ Describe 'Test-OERStructure' {
         $V.Valid | Should -BeTrue
         @($V.Errors | Where-Object { $_.Severity -eq 'Warning' }).Count | Should -Be 0
     }
-    It 'validates a roleAssignments entry as the export writes a principal the directory did not return, and refuses one that names the principal by name (A18)' {
+    It 'validates a principalStatus entry as the export writes it, and refuses one that names the principal by name (A18)' {
         $Exported = '{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/x", "role": "Reader", "principal": "dddd9999-0000-0000-0000-000000000001", "principalType": "User", "principalStatus": "Deleted" }, { "scope": "/subscriptions/x", "role": "Owner", "principal": "dddd9999-0000-0000-0000-000000000002", "principalStatus": "Unresolved" } ] }'
         $V = Test-OERStructure -Json $Exported
         $V.Valid | Should -BeTrue
