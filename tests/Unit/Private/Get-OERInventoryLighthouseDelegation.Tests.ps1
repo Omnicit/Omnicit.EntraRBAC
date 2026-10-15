@@ -689,21 +689,21 @@ Describe 'Get-OERInventoryLighthouseDelegation' {
             $PathB = "/subscriptions/$($script:SubB)"
             $T1 = '33333333-3333-3333-3333-333333333333'
             $T2 = '99999999-9999-9999-9999-999999999999'
-            $DefAlphaT1 = New-LhDefinition -Sub $script:SubA -Guid '00000000-0000-0000-0000-00000000000a' -Offer 'Alpha' -Tenant $T1
-            $DefZetaT1 = New-LhDefinition -Sub $script:SubA -Guid '00000000-0000-0000-0000-00000000000b' -Offer 'Zeta' -Tenant $T1
-            $DefAlphaT2 = New-LhDefinition -Sub $script:SubA -Guid '00000000-0000-0000-0000-00000000000c' -Offer 'Alpha' -Tenant $T2
-            $DefBeta = New-LhDefinition -Sub $script:SubB -Guid '00000000-0000-0000-0000-00000000000d' -Offer 'Beta' -Tenant $T1
+            $DefAlphaT1 = New-LhDefinition -Sub $script:SubA -Guid '12121212-0000-0000-0000-00000000000a' -Offer 'Alpha' -Tenant $T1
+            $DefZetaT1 = New-LhDefinition -Sub $script:SubA -Guid '12121212-0000-0000-0000-00000000000b' -Offer 'Zeta' -Tenant $T1
+            $DefAlphaT2 = New-LhDefinition -Sub $script:SubA -Guid '12121212-0000-0000-0000-00000000000c' -Offer 'Alpha' -Tenant $T2
+            $DefBeta = New-LhDefinition -Sub $script:SubB -Guid '12121212-0000-0000-0000-00000000000d' -Offer 'Beta' -Tenant $T1
             $Rows = @(
                 # Handed over in an order that is none of the sort orders.
-                New-LhAssignment -At $PathA -Guid '00000000-0000-0000-0000-000000000005' -Definition $DefAlphaT2 -Expand
-                New-LhAssignment -At "$PathA/resourceGroups/rg1" -Guid '00000000-0000-0000-0000-000000000001' -Definition $DefAlphaT1 -Expand
-                New-LhAssignment -At $PathA -Guid '00000000-0000-0000-0000-000000000004' -Definition $DefZetaT1 -Expand
-                New-LhAssignment -At $PathA -Guid '00000000-0000-0000-0000-000000000003' -Definition $DefAlphaT1 -Expand
-                New-LhAssignment -At $PathA -Guid '00000000-0000-0000-0000-000000000002' -Definition $DefAlphaT1 -Expand
+                New-LhAssignment -At $PathA -Guid '12121212-0000-0000-0000-000000000005' -Definition $DefAlphaT2 -Expand
+                New-LhAssignment -At "$PathA/resourceGroups/rg1" -Guid '12121212-0000-0000-0000-000000000001' -Definition $DefAlphaT1 -Expand
+                New-LhAssignment -At $PathA -Guid '12121212-0000-0000-0000-000000000004' -Definition $DefZetaT1 -Expand
+                New-LhAssignment -At $PathA -Guid '12121212-0000-0000-0000-000000000003' -Definition $DefAlphaT1 -Expand
+                New-LhAssignment -At $PathA -Guid '12121212-0000-0000-0000-000000000002' -Definition $DefAlphaT1 -Expand
             )
             $script:Replies["$PathA$($script:AssignmentQuery)"] = New-LhList $Rows
             $script:Replies["$PathA$($script:DefinitionQuery)"] = New-LhList @($DefAlphaT1, $DefZetaT1, $DefAlphaT2)
-            $script:Replies["$PathB$($script:AssignmentQuery)"] = New-LhList @(New-LhAssignment -At $PathB -Guid '00000000-0000-0000-0000-000000000006' -Definition $DefBeta -Expand)
+            $script:Replies["$PathB$($script:AssignmentQuery)"] = New-LhList @(New-LhAssignment -At $PathB -Guid '12121212-0000-0000-0000-000000000006' -Definition $DefBeta -Expand)
             $script:Replies["$PathB$($script:DefinitionQuery)"] = New-LhList @($DefBeta)
             # Named in the reverse of the sort order, so the order of the scopes decides nothing. The first
             # row carries the role at SubB, so that is where its name is read.
