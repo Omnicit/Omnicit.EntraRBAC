@@ -5672,9 +5672,9 @@ Describe 'Export-OERInventory (groups using PIM for Groups in a restricted manag
         function script:Get-RuxExportWarning {
             param([int]$Count)
             "Export-OERInventory: $Count group(s) written to inventory.json use PIM for Groups (PIM eligibility or a pimPolicy block) " +
-            'and are members of a restricted management administrative unit. Microsoft Entra ID limits who can change an object in a ' +
-            "restricted management unit, so a tenant-level identity may not be able to manage these groups' PIM settings or eligibility, " +
-            'and Invoke-OERStructure could be refused when it applies them; how Microsoft Graph answers it has not been measured. ' +
+            'and are members of a restricted management administrative unit. Microsoft Learn states that Privileged Identity Management ' +
+            'does not support a group in a restricted management administrative unit. Invoke-OERStructure still sends the PIM settings ' +
+            'and eligibility a document declares for these groups; what Microsoft Graph answers to those writes has not been measured. ' +
             "README.md names each group and its units under 'Groups using PIM for Groups in a restricted management unit'; review them " +
             'as a finding. Nothing is left out of the export.'
         }
@@ -5753,9 +5753,10 @@ Describe 'Export-OERInventory (groups using PIM for Groups in a restricted manag
     It 'states the rule in the help' {
         $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
         $Description | Should -Match ([regex]::Escape('GROUPS USING PIM FOR GROUPS IN A RESTRICTED MANAGEMENT UNIT.'))
-        $Description | Should -Match ([regex]::Escape('a group with PIM eligibility or a pimPolicy block that is a member of a restricted management administrative unit'))
+        $Description | Should -Match ([regex]::Escape('Microsoft Learn states that Privileged Identity Management does not support a group in a restricted management administrative unit'))
         $Description | Should -Match ([regex]::Escape('in a section "Groups using PIM for Groups in a restricted management unit", directly after "Role assignments at a scope no document can declare"'))
-        $Description | Should -Match ([regex]::Escape('how Microsoft Graph answers a tenant-level identity has not been measured'))
+        $Description | Should -Match ([regex]::Escape('what Microsoft Graph answers to those writes has not been measured'))
+        $Description | Should -Match ([regex]::Escape('a unit left out of the document because another unit shares its name is not checked here'))
     }
 
     It 'warns once with the count, names each group and its units in the README, and keeps both groups and every unit in inventory.json' {
@@ -5808,7 +5809,8 @@ Describe 'Export-OERInventory (groups using PIM for Groups in a restricted manag
         @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_plain', 'role_sec_open', 'role_sec_unread')
         @($Run.Warnings | Where-Object { $_ -like '*restricted management*' }).Count | Should -Be 0
         $Section = Get-RuxReadmeSection -BundlePath $Run.Result.BundlePath
-        ($Section -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. No group that `inventory.json` writes with PIM eligibility or a `pimPolicy` block is a member of a restricted management unit whose members this export read.'))
+        ($Section -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. No group that `inventory.json` writes with PIM eligibility or a `pimPolicy` block is a member of a restricted management unit this export checked.'))
+        ($Section -replace '\s+', ' ') | Should -Match ([regex]::Escape('a unit left out of the document because another unit shares its name, were not checked, and each is named under "What this export could not read".'))
         @($Section -split '\r?\n' | Where-Object { $_ -like '- *' }).Count | Should -Be 0
     }
 

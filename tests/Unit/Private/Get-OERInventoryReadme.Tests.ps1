@@ -1135,10 +1135,10 @@ Describe 'Get-OERInventoryReadme (role assignments at a scope no document can de
 }
 
 Describe 'Get-OERInventoryReadme (groups using PIM for Groups in a restricted management unit, Sprint 11 step 6, BL-134)' {
-    # A group that uses PIM for Groups and sits in a restricted management unit may be out of reach for
-    # the identity that applies the document. inventory.json keeps it; the README names each such group
-    # and its units, in both states: "none" is a claim the reader needs to rely on as much as the list.
-    # Names only, never an id. No id below is version-4 shaped.
+    # Microsoft Learn states that Privileged Identity Management does not support a group in a restricted
+    # management administrative unit. inventory.json keeps such a group; the README names each one and its
+    # units, in both states: "none" is a claim the reader needs to rely on as much as the list, so it also
+    # says which units were not checked. Names only, never an id. No id below is version-4 shaped.
     BeforeAll {
         $script:RuHeading = '## Groups using PIM for Groups in a restricted management unit'
         function Get-RuReadme {
@@ -1167,8 +1167,8 @@ Describe 'Get-OERInventoryReadme (groups using PIM for Groups in a restricted ma
             param([string]$Group, [string[]]$Units)
             [PSCustomObject]@{ Group = $Group; Units = $Units }
         }
-        $script:RuProse = 'A group that uses PIM for Groups -- one with PIM eligibility or a `pimPolicy` block -- and is a member of a restricted management administrative unit may be out of reach for the identity that applies a document: Microsoft Entra ID limits who can change an object in a restricted management unit, so a tenant-level identity may not be able to manage the group''s PIM settings or eligibility there, and how Microsoft Graph answers it has not been measured. `inventory.json` keeps such a group, and `Invoke-OERStructure` still sends the PIM settings and eligibility a document declares for it, so an apply may be refused for it. Review each group below as a finding before applying a document that declares it. Only a group `inventory.json` writes is listed, against a unit whose members this export read. Listing a group changes nothing in the tenant and leaves nothing out of the export.'
-        $script:RuNone = 'None. No group that `inventory.json` writes with PIM eligibility or a `pimPolicy` block is a member of a restricted management unit whose members this export read. The check needs both `Groups` and `AdministrativeUnits` in the export, and a unit whose members could not be read is named under "What this export could not read".'
+        $script:RuProse = 'A group that uses PIM for Groups -- one with PIM eligibility or a `pimPolicy` block -- and is a member of a restricted management administrative unit is a case Microsoft documents as unsupported: Microsoft Learn states that Privileged Identity Management does not support a group in a restricted management administrative unit. `inventory.json` keeps such a group, and `Invoke-OERStructure` still sends the PIM settings and eligibility a document declares for it; what Microsoft Graph answers to those writes has not been measured. Review each group below as a finding before applying a document that declares it. Only a group `inventory.json` writes is listed, against a restricted unit whose members this export read and which it kept in the document: a unit left out of the document because another unit shares its name is not checked here, and is named under "Names two or more objects share" and "What this export could not read". Listing a group changes nothing in the tenant and leaves nothing out of the export.'
+        $script:RuNone = 'None. No group that `inventory.json` writes with PIM eligibility or a `pimPolicy` block is a member of a restricted management unit this export checked. The check needs both `Groups` and `AdministrativeUnits` in the export; a unit whose members could not be read, and a unit left out of the document because another unit shares its name, were not checked, and each is named under "What this export could not read".'
     }
 
     It 'says that none was found when the list is empty' {

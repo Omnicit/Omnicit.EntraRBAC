@@ -90,17 +90,19 @@ function Get-OERInventoryReadme {
     parameter is mandatory for the same reason as the seven above.
 
     Directly after it comes the section "Groups using PIM for Groups in a restricted management unit"
-    (Sprint 11 step 6, BL-134). It says that a group with PIM eligibility or a pimPolicy block that is a
-    member of a restricted management administrative unit may be out of reach for the identity that
-    applies a document, since Microsoft Entra ID limits who can change an object in such a unit and how
-    Microsoft Graph answers a tenant-level identity has not been measured, that inventory.json keeps the
-    group and Invoke-OERStructure still sends the PIM settings and eligibility a document declares for it,
-    and that listing a group changes nothing in the tenant. Then it gives the count and one bullet per
-    -RestrictedUnitPimGroups row, in the order given: the group and each of its units as code spans (the
-    same fence rule as the entries above), by display name. It never writes an object id. When
-    -RestrictedUnitPimGroups is empty it says that none was found, and that the check needs both Groups
-    and AdministrativeUnits in the export. That parameter is mandatory for the same reason as the eight
-    above.
+    (Sprint 11 step 6, BL-134). It says that Microsoft Learn states that Privileged Identity Management
+    does not support a group in a restricted management administrative unit, so a group with PIM
+    eligibility or a pimPolicy block that is a member of one is a finding to review; that inventory.json
+    keeps the group and Invoke-OERStructure still sends the PIM settings and eligibility a document
+    declares for it, and what Microsoft Graph answers to those writes has not been measured; that a unit
+    left out of the document because another unit shares its name is not checked, and is named under
+    "Names two or more objects share" and "What this export could not read"; and that listing a group
+    changes nothing in the tenant. Then it gives the count and one bullet per -RestrictedUnitPimGroups
+    row, in the order given: the group and each of its units as code spans (the same fence rule as the
+    entries above), by display name. It never writes an object id. When -RestrictedUnitPimGroups is
+    empty it says that none was found, that the check needs both Groups and AdministrativeUnits in the
+    export, and which units were not checked. That parameter is mandatory for the same reason as the
+    eight above.
 
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
@@ -502,19 +504,21 @@ changes nothing in the tenant.
 ## Groups using PIM for Groups in a restricted management unit
 
 A group that uses PIM for Groups -- one with PIM eligibility or a `pimPolicy` block -- and is a
-member of a restricted management administrative unit may be out of reach for the identity that
-applies a document: Microsoft Entra ID limits who can change an object in a restricted management
-unit, so a tenant-level identity may not be able to manage the group's PIM settings or eligibility
-there, and how Microsoft Graph answers it has not been measured. `inventory.json` keeps such a group,
-and `Invoke-OERStructure` still sends the PIM settings and eligibility a document declares for it, so
-an apply may be refused for it. Review each group below as a finding before applying a document that
-declares it. Only a group `inventory.json` writes is listed, against a unit whose members this export
-read. Listing a group changes nothing in the tenant and leaves nothing out of the export.
+member of a restricted management administrative unit is a case Microsoft documents as unsupported:
+Microsoft Learn states that Privileged Identity Management does not support a group in a restricted
+management administrative unit. `inventory.json` keeps such a group, and `Invoke-OERStructure` still
+sends the PIM settings and eligibility a document declares for it; what Microsoft Graph answers to
+those writes has not been measured. Review each group below as a finding before applying a document
+that declares it. Only a group `inventory.json` writes is listed, against a restricted unit whose
+members this export read and which it kept in the document: a unit left out of the document because
+another unit shares its name is not checked here, and is named under "Names two or more objects share"
+and "What this export could not read". Listing a group changes nothing in the tenant and leaves
+nothing out of the export.
 '@
     $RestrictedUnitSection = if ($RestrictedBullets.Count -gt 0) {
         $RestrictedIntro + "`n`n" + "This export found $($RestrictedBullets.Count) such group(s):" + "`n`n" + ($RestrictedBullets -join "`n")
     } else {
-        $RestrictedIntro + "`n`n" + "None. No group that ``inventory.json`` writes with PIM eligibility or a ``pimPolicy`` block is a member of a`nrestricted management unit whose members this export read. The check needs both ``Groups`` and`n``AdministrativeUnits`` in the export, and a unit whose members could not be read is named under`n`"What this export could not read`"."
+        $RestrictedIntro + "`n`n" + "None. No group that ``inventory.json`` writes with PIM eligibility or a ``pimPolicy`` block is a member of a`nrestricted management unit this export checked. The check needs both ``Groups`` and ``AdministrativeUnits`` in`nthe export; a unit whose members could not be read, and a unit left out of the document because another unit`nshares its name, were not checked, and each is named under `"What this export could not read`"."
     }
 
     $Readme = @'

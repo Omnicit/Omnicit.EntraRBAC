@@ -227,22 +227,24 @@ function Export-OERInventory {
     in IncompleteReads, and it makes no bundle partial. Leaving them out of the export changes nothing
     in the tenant.
 
-    GROUPS USING PIM FOR GROUPS IN A RESTRICTED MANAGEMENT UNIT. A group with PIM eligibility or a
-    pimPolicy block that is a member of a restricted management administrative unit may be out of reach
-    for the identity that applies a document: Microsoft Entra ID limits who can change an object in such
-    a unit, and how Microsoft Graph answers a tenant-level identity has not been measured. The group
-    stays in inventory.json and Invoke-OERStructure still sends the PIM settings and eligibility a
-    document declares for it, so an apply may be refused for it. When both Groups and AdministrativeUnits
-    are included, the export finds each group that inventory.json writes with a non-empty eligibility or
-    a pimPolicy and that a unit lists by the group's object id (compared without regard to letter case),
-    where the unit's restricted is true and its members were read, with no request of its own: a unit
-    whose members could not be read is named in IncompleteReads and lists nobody here. It writes ONE
-    warning that gives how many such groups it found, after the reads and before the bundle is written,
-    so -WhatIf shows it too, and under a Stop warning preference the export stops at that warning, before
-    it writes the bundle. The generated README.md lists them in a section "Groups using PIM for Groups
-    in a restricted management unit", directly after "Role assignments at a scope no document can
-    declare": each group and its units by display name, never an id -- or the statement that none was
-    found. Nothing is left out of the export, and listing a group changes nothing in the tenant.
+    GROUPS USING PIM FOR GROUPS IN A RESTRICTED MANAGEMENT UNIT. Microsoft Learn states that
+    Privileged Identity Management does not support a group in a restricted management administrative
+    unit, so a group with PIM eligibility or a pimPolicy block that is a member of one is a finding to
+    review. The group stays in inventory.json and Invoke-OERStructure still sends the PIM settings and
+    eligibility a document declares for it; what Microsoft Graph answers to those writes has not been
+    measured. When both Groups and AdministrativeUnits are included, the export finds each group that
+    inventory.json writes with a non-empty eligibility or a pimPolicy and that a unit lists by the
+    group's object id (compared without regard to letter case), where the unit's restricted is true and
+    its members were read, with no request of its own. A unit whose members could not be read is named
+    in IncompleteReads and lists nobody here, and a unit left out of the document because another unit
+    shares its name is not checked here: it is named in IncompleteReads and under "Names two or more
+    objects share" in README.md. The export writes ONE warning that gives how many such groups it found,
+    after the reads and before the bundle is written, so -WhatIf shows it too, and under a Stop warning
+    preference the export stops at that warning, before it writes the bundle. The generated README.md
+    lists them in a section "Groups using PIM for Groups in a restricted management unit", directly
+    after "Role assignments at a scope no document can declare": each group and its units by display
+    name, never an id -- or the statement that none was found. Nothing is left out of the export, and
+    listing a group changes nothing in the tenant.
 
     Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
     Groups read when it left anything unread, then one entry per partial report from
@@ -1097,12 +1099,16 @@ function Export-OERInventory {
         $ReadmePimLeftOut = @($PimLeftOut | Where-Object { $KeptGroupIds.ContainsKey([string]$_.GroupId) })
 
         # Sprint 11 step 6 (BL-134): the groups inventory.json writes with PIM eligibility or a pimPolicy block
-        # that are members of a restricted management unit, which the identity that applies the document may
-        # not be able to manage (docs/development/rationale.md#restricted-unit-pim). The administrative units
-        # list a group member by its object id (Get-OERInventory), and the groups still carry theirs here,
-        # before the strip below, so the link is found with no request. A unit counts when it is restricted
-        # (the boolean true) and its members were read: a unit whose members are an explicit null (unread) or
-        # absent (a dynamic unit) lists nobody, and is named in IncompleteReads when unread. The ids are
+        # that are members of a restricted management unit. Microsoft Learn states that Privileged Identity
+        # Management does not support a group in a restricted management administrative unit
+        # (docs/development/rationale.md#restricted-unit-pim); what Microsoft Graph answers when the apply
+        # engine sends such a group's eligibility or PIM policy writes is not measured. The administrative
+        # units list a group member by its object id (Get-OERInventory), and the groups still carry theirs
+        # here, before the strip below, so the link is found with no request. A unit counts when it is
+        # restricted (the boolean true) and its members were read: a unit whose members are an explicit null
+        # (unread) or absent (a dynamic unit) lists nobody, and is named in IncompleteReads when unread. A
+        # unit Get-OERInventory left out of the document because another unit shares its name is not in
+        # $Inv.AdministrativeUnits, so it is not checked here; it is named as a shared name. The ids are
         # compared without regard to letter case. Without Groups or without AdministrativeUnits in -Include
         # there are no groups or no units here, so nothing is found and nothing is read for it. One warning
         # counts the groups, here before the bundle's ShouldProcess, so -WhatIf shows it too; the README lists
@@ -1131,7 +1137,7 @@ function Export-OERInventory {
                 }
             })
         if ($RestrictedUnitPimGroups.Count -gt 0) {
-            Write-Warning "Export-OERInventory: $($RestrictedUnitPimGroups.Count) group(s) written to inventory.json use PIM for Groups (PIM eligibility or a pimPolicy block) and are members of a restricted management administrative unit. Microsoft Entra ID limits who can change an object in a restricted management unit, so a tenant-level identity may not be able to manage these groups' PIM settings or eligibility, and Invoke-OERStructure could be refused when it applies them; how Microsoft Graph answers it has not been measured. README.md names each group and its units under 'Groups using PIM for Groups in a restricted management unit'; review them as a finding. Nothing is left out of the export."
+            Write-Warning "Export-OERInventory: $($RestrictedUnitPimGroups.Count) group(s) written to inventory.json use PIM for Groups (PIM eligibility or a pimPolicy block) and are members of a restricted management administrative unit. Microsoft Learn states that Privileged Identity Management does not support a group in a restricted management administrative unit. Invoke-OERStructure still sends the PIM settings and eligibility a document declares for these groups; what Microsoft Graph answers to those writes has not been measured. README.md names each group and its units under 'Groups using PIM for Groups in a restricted management unit'; review them as a finding. Nothing is left out of the export."
         }
 
         # inventory.json staying id-free is a documented portability property of the export

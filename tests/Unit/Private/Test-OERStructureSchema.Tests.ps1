@@ -6440,9 +6440,10 @@ Describe 'Test-OERStructureSchema roleAssignments principalStatus (A18, Sprint 1
 }
 
 Describe 'Test-OERStructureSchema warns about PIM for Groups in a restricted management unit (Rule 16, Sprint 11 step 6, BL-134)' {
-    # Microsoft Entra ID limits who can change an object in a restricted management unit, so a group that
-    # uses PIM for Groups (a non-empty eligibility, or a pimPolicy) and sits in one may be out of reach for
-    # the identity that applies the document. The validator warns, never refuses, in two shapes: at
+    # Microsoft Learn states that Privileged Identity Management does not support a group in a restricted
+    # management administrative unit, so a group that uses PIM for Groups (a non-empty eligibility, or a
+    # pimPolicy) and sits in one is a finding. What Microsoft Graph answers to the writes the apply engine
+    # sends is not measured, so the validator warns, never refuses, in two shapes: at
     # groups[i].administrativeUnit when the group names a restricted unit, and at groups[i] when a restricted
     # unit's members list the group. A group raises each shape at most once for a unit. No id below is
     # version-4 shaped.
@@ -6450,7 +6451,7 @@ Describe 'Test-OERStructureSchema warns about PIM for Groups in a restricted man
         $script:RuUnitId = 'eeee5555-0000-0000-0000-0000000000a1'
         $script:RuGroupId = 'eeee5555-0000-0000-0000-0000000000a2'
         $script:RuEligibility = '"eligibility": [ { "principal": "person1@example.com", "accessType": "Member" } ]'
-        $script:RuRisk = "Microsoft Entra ID limits who can change an object in a restricted management unit, so a tenant-level identity may not be able to manage the group's PIM settings or eligibility there, and Invoke-OERStructure could be refused when it applies them; how Microsoft Graph answers it has not been measured. Review it before applying the document."
+        $script:RuRisk = 'Microsoft Learn states that Privileged Identity Management does not support a group in a restricted management administrative unit. Invoke-OERStructure still sends the PIM settings and eligibility the document declares for the group; what Microsoft Graph answers to those writes has not been measured. Review it before applying the document.'
         function Invoke-RuValidation {
             param([string]$Json)
             $Doc = $Json | ConvertFrom-Json
@@ -6681,6 +6682,7 @@ Describe 'Test-OERStructureSchema warns about PIM for Groups in a restricted man
         }
         $Description | Should -Match ([regex]::Escape('groups[] entry with a non-empty eligibility or a pimPolicy that names, by displayName (ignoring case) or by the id its entry declares, an administrativeUnits[] entry whose restricted is true'))
         $Description | Should -Match ([regex]::Escape('or that such a unit lists in its members by the group''s name or declared id, is a Warning'))
-        $Description | Should -Match ([regex]::Escape('how Microsoft Graph answers a tenant-level identity has not been measured'))
+        $Description | Should -Match ([regex]::Escape('Microsoft Learn states that Privileged Identity Management does not support a group in a restricted management administrative unit'))
+        $Description | Should -Match ([regex]::Escape('what Microsoft Graph answers to those writes has not been measured, so the finding is a Warning and never an Error'))
     }
 }

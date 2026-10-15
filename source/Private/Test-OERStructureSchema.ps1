@@ -271,15 +271,17 @@ function Test-OERStructureSchema {
     a unit lists in its members by the group's name or declared id, is a Warning, never an Error (Rule
     16, Sprint 11 step 6, BL-134): the Warning is raised at groups[i].administrativeUnit for the first
     shape and at groups[i] for the second, once for each such unit. A group uses PIM for Groups here when
-    it declares a pimPolicy (not null) or an eligibility array with at least one entry. Microsoft Entra ID
-    limits who can change an object in a restricted management administrative unit, so a tenant-level
-    identity may not be able to manage the group's PIM settings or eligibility there, and
-    Invoke-OERStructure could be refused when it applies them; how Microsoft Graph answers a tenant-level
-    identity has not been measured. The unit is matched as the administrativeUnit placement check above
-    matches it; the members name the group when they list its name (a template-based group's computed
-    name included) or its declared id, ignoring case. An exported document raises neither shape, since an
-    exported group carries no object id and no administrativeUnit and its units list a group member by
-    object id: Export-OERInventory names such groups in its own warning and README section. Returns a tagged Omnicit.EntraRBAC.StructureValidation object with a Valid flag and an
+    it declares a pimPolicy (not null) or an eligibility array with at least one entry. Microsoft Learn
+    states that Privileged Identity Management does not support a group in a restricted management
+    administrative unit; Invoke-OERStructure still sends the PIM settings and eligibility the document
+    declares for such a group, and what Microsoft Graph answers to those writes has not been measured,
+    so the finding is a Warning and never an Error. The unit is matched as the administrativeUnit
+    placement check above matches it; the members name the group when they list its name (a
+    template-based group's computed name included) or its declared id, ignoring case. An exported
+    document raises neither shape, since an exported group carries no object id and no
+    administrativeUnit and its units list a group member by object id: Export-OERInventory names such
+    groups in its own warning and README section. Returns a tagged
+    Omnicit.EntraRBAC.StructureValidation object with a Valid flag and an
     Errors collection of records carrying Section, Item, Path, Message, and Severity. No Graph or ARM
     calls are made and no authentication occurs.
     .PARAMETER Document
@@ -2549,10 +2551,10 @@ function Test-OERStructureSchema {
     }
 
     # Rule 16 (Sprint 11 step 6, BL-134): a group that uses PIM for Groups in a restricted management unit.
-    # Microsoft Entra ID limits who can change an object in a restricted management administrative unit
-    # (an administrativeUnits[] entry whose restricted is the boolean true), so the identity that applies
-    # the document may not be able to manage the PIM settings or the eligibility of a group inside one.
-    # How Microsoft Graph answers a tenant-level caller is not measured, so this is a risk, a Warning and
+    # Microsoft Learn states that Privileged Identity Management does not support a group in a restricted
+    # management administrative unit (an administrativeUnits[] entry whose restricted is the boolean true).
+    # Invoke-OERStructure still sends the PIM settings and eligibility a document declares for such a
+    # group, and what Microsoft Graph answers to those writes is not measured, so this is a Warning and
     # never an Error (docs/development/rationale.md#restricted-unit-pim). A group uses PIM for Groups when
     # it declares a pimPolicy (a present key that is not null) or an eligibility array with at least one
     # entry. Two shapes, each raised at most once per unit:
@@ -2577,9 +2579,9 @@ function Test-OERStructureSchema {
         ($Document.administrativeUnits -isnot [string])) {
         $RestrictedGroups = @($Document.groups)
         $RestrictedUnits = @($Document.administrativeUnits)
-        $RestrictedRisk = ("Microsoft Entra ID limits who can change an object in a restricted management unit, so a tenant-level identity may not be able to manage the group's " +
-            'PIM settings or eligibility there, and Invoke-OERStructure could be refused when it applies them; how Microsoft Graph answers it has not been measured. ' +
-            'Review it before applying the document.')
+        $RestrictedRisk = ('Microsoft Learn states that Privileged Identity Management does not support a group in a restricted management administrative unit. ' +
+            'Invoke-OERStructure still sends the PIM settings and eligibility the document declares for the group; what Microsoft Graph answers to those writes ' +
+            'has not been measured. Review it before applying the document.')
         for ($I = 0; $I -lt $RestrictedGroups.Count; $I++) {
             $RestrictedGroup = $RestrictedGroups[$I]
             $UsesPim = (Test-HasProp -Node $RestrictedGroup -Name 'pimPolicy') -or
