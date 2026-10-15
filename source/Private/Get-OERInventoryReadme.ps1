@@ -123,15 +123,24 @@ function Get-OERInventoryReadme {
     read-only context (the eligible, just-in-time authorizations apart), that a scope whose delegations
     could not be read is named under "What this export could not read" and its delegations are absent
     from the file, which does not mean it has none, and that listing a delegation changes nothing in
-    the tenant. Then it gives the count and one bullet per -LighthouseDelegations row, in the order
-    given: the scope, the managing tenant (name and id), the offer and the roles as code spans (the same
-    fence rule as the entries above), how many authorizations and eligible authorizations the row
-    holds, and 'not given' for a managing tenant name, tenant id or offer the row does not carry. The
+    the tenant. A second paragraph says that, when this tenant is itself a managing tenant, the Azure
+    walk also reaches the subscriptions other tenants delegated to it, and that a delegation naming
+    this tenant as the managing tenant (its managedByTenantId is the tenantId of inventory.json) is
+    marked whenever inventory.json carries a tenantId, as access this tenant holds over another tenant,
+    not the reverse (Ruling R-12). Then it gives the count and one bullet per -LighthouseDelegations
+    row, in the order given: the scope, the managing tenant (name and id), the offer and the roles as
+    code spans (the same fence rule as the entries above), how many authorizations and eligible
+    authorizations the row holds, and 'not given' for a managing tenant name, tenant id or offer the
+    row does not carry -- once, not twice, for a managing tenant with neither a name nor an id. The
     roles are the distinct role names (the role definition id for an authorization whose name is not
-    known) over both lists, in the order first met. It never writes a principal. When
-    -LighthouseDelegations is empty it says that none was read, and that delegations are read only when
-    the export includes an Azure section. That parameter is mandatory for the same reason as the nine
-    above.
+    known) over both lists, in the order first met. A bullet whose managedByTenantId equals -TenantId,
+    compared without regard to letter case, ends with the mark ' -- this tenant is the managing tenant:
+    access this tenant holds over another tenant's subscription or resource group'; a blank or absent
+    -TenantId marks no bullet. It never writes a principal. When -LighthouseDelegations is empty it
+    says that none was read, that delegations are read only when the export includes an Azure section,
+    at the subscriptions its Azure walk visits, and that a -Scope at a management group or the root
+    scope visits no subscription, so it reads no delegation. That parameter is mandatory for the same
+    reason as the nine above.
 
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
@@ -218,6 +227,13 @@ function Get-OERInventoryReadme {
     entry with roleName, which is null when the name is not known, and roleDefinitionId). Any other
     property, such as a principal, is not written. Pass an empty array when there are none.
 
+    .PARAMETER TenantId
+    The tenant the export read: the tenantId that inventory.json names, which Export-OERInventory
+    captures in its begin block (Ruling R-12). Optional: blank or absent when the tenant is not known,
+    and then no bullet is marked. A -LighthouseDelegations row whose managedByTenantId equals it,
+    compared without regard to letter case, is a delegation that names this tenant as the managing
+    tenant -- access this tenant holds over another tenant -- and its bullet is marked so.
+
     .EXAMPLE
     Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
     Returns the README Markdown as a single string. Its "What this export could not read" section
@@ -267,10 +283,11 @@ function Get-OERInventoryReadme {
     Groups in a restricted management unit": the group and the restricted units it is a member of.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @([PSCustomObject]@{ scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; managedByTenantId = '22222222-2222-2222-2222-222222222222'; managedByTenantName = 'Contoso Corp.'; offerName = 'Managed Services'; authorizations = @([PSCustomObject]@{ roleName = 'Contributor'; roleDefinitionId = '33333333-3333-3333-3333-333333333333' }); eligibleAuthorizations = @() })
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @([PSCustomObject]@{ scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; managedByTenantId = '22222222-2222-2222-2222-222222222222'; managedByTenantName = 'Contoso Corp.'; offerName = 'Managed Services'; authorizations = @([PSCustomObject]@{ roleName = 'Contributor'; roleDefinitionId = '33333333-3333-3333-3333-333333333333' }); eligibleAuthorizations = @() }) -TenantId '22222222-2222-2222-2222-222222222222'
     Returns the README Markdown with the count and one bullet per delegation under "Azure Lighthouse
     delegations (access from another tenant)": the scope, the managing tenant, the offer, how many
-    authorizations it holds and the roles.
+    authorizations it holds and the roles. The delegation names the tenant given to -TenantId as its
+    managing tenant, so its bullet ends with the mark that this tenant is the managing tenant.
     #>
     [OutputType([string])]
     [CmdletBinding()]
@@ -284,7 +301,8 @@ function Get-OERInventoryReadme {
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$UnresolvedPrincipalAssignments,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$UndeclarableScopeAssignments,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RestrictedUnitPimGroups,
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$LighthouseDelegations
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$LighthouseDelegations,
+        [string]$TenantId
     )
 
     # A text written as a Markdown code span, so '<all Azure scopes: scope enumeration failed>' is
@@ -592,10 +610,16 @@ nothing out of the export.
     # Sprint 11 step 6b (BL-133): the Azure Lighthouse delegations the export read, one bullet per row in
     # the order the export holds them (sorted there): the scope, the managing tenant (name and id), the
     # offer and the roles as code spans, how many authorizations and eligible authorizations the row
-    # holds, and 'not given' for a managing tenant name, tenant id or offer the row does not carry. The
-    # roles are the distinct role names (the role definition id for an authorization whose name is not
-    # known) over both lists in the order first met. Never a principal. The parameter is mandatory, so
-    # binding has already refused a null entry.
+    # holds, and 'not given' for a managing tenant name, tenant id or offer the row does not carry ('not
+    # given' once for a managing tenant with neither). The roles are the distinct role names (the role
+    # definition id for an authorization whose name is not known) over both lists in the order first met.
+    # Never a principal. The parameter is mandatory, so binding has already refused a null entry.
+    # Ruling R-12: when this tenant is itself a managing tenant, the walk also reaches the subscriptions
+    # other tenants delegated to it, and a delegation there may name THIS tenant as the managing tenant:
+    # access this tenant holds over another tenant, not the reverse. Such a bullet ends with the mark below,
+    # decided on managedByTenantId against -TenantId (the tenantId of inventory.json), letter case ignored.
+    # A blank -TenantId marks nothing, so a row with no managing tenant is never taken for this tenant's.
+    $LighthouseOwnTenantMark = " -- this tenant is the managing tenant: access this tenant holds over another tenant's subscription or resource group"
     $LighthouseBullets = [System.Collections.Generic.List[string]]::new()
     foreach ($Entry in @($LighthouseDelegations)) {
         $AuthorizationList = @($Entry.authorizations | Where-Object { $null -ne $_ })
@@ -605,11 +629,14 @@ nothing out of the export.
                 $RoleText = if (-not [string]::IsNullOrWhiteSpace([string]$Authorization.roleName)) { [string]$Authorization.roleName } else { [string]$Authorization.roleDefinitionId }
                 if (-not [string]::IsNullOrWhiteSpace($RoleText) -and $SeenRole.Add($RoleText)) { Format-CodeSpan -Text $RoleText }
             })
-        $TenantName = if (-not [string]::IsNullOrWhiteSpace([string]$Entry.managedByTenantName)) { Format-CodeSpan -Text ([string]$Entry.managedByTenantName) } else { 'not given' }
-        $TenantId = if (-not [string]::IsNullOrWhiteSpace([string]$Entry.managedByTenantId)) { Format-CodeSpan -Text ([string]$Entry.managedByTenantId) } else { 'not given' }
+        $TenantNameText = if (-not [string]::IsNullOrWhiteSpace([string]$Entry.managedByTenantName)) { Format-CodeSpan -Text ([string]$Entry.managedByTenantName) } else { 'not given' }
+        $TenantIdText = if (-not [string]::IsNullOrWhiteSpace([string]$Entry.managedByTenantId)) { Format-CodeSpan -Text ([string]$Entry.managedByTenantId) } else { 'not given' }
+        # Neither a name nor an id: 'not given' once, never 'not given (not given)'.
+        $TenantText = if ([string]::IsNullOrWhiteSpace([string]$Entry.managedByTenantName) -and [string]::IsNullOrWhiteSpace([string]$Entry.managedByTenantId)) { 'not given' } else { "$TenantNameText ($TenantIdText)" }
         $OfferText = if (-not [string]::IsNullOrWhiteSpace([string]$Entry.offerName)) { Format-CodeSpan -Text ([string]$Entry.offerName) } else { 'not given' }
         $RolesText = if ($RoleSpans.Count -gt 0) { $RoleSpans -join ', ' } else { 'none' }
-        $LighthouseBullets.Add("- $(Format-CodeSpan -Text ([string]$Entry.scope)) -- managing tenant $TenantName ($TenantId), offer $($OfferText): $($AuthorizationList.Count) authorization(s) and $($EligibleList.Count) eligible authorization(s), roles $RolesText")
+        $MarkText = if (-not [string]::IsNullOrWhiteSpace($TenantId) -and [string]::Equals([string]$Entry.managedByTenantId, $TenantId, [System.StringComparison]::OrdinalIgnoreCase)) { $LighthouseOwnTenantMark } else { '' }
+        $LighthouseBullets.Add("- $(Format-CodeSpan -Text ([string]$Entry.scope)) -- managing tenant $TenantText, offer $($OfferText): $($AuthorizationList.Count) authorization(s) and $($EligibleList.Count) eligible authorization(s), roles $RolesText$MarkText")
     }
     $LighthouseIntro = @'
 ## Azure Lighthouse delegations (access from another tenant)
@@ -624,11 +651,17 @@ eligible (just-in-time) ones apart. Review each delegation below as a finding. A
 delegations could not be read is named under "What this export could not read", and its delegations
 are absent from the file, which does not mean it has none. Listing a delegation changes nothing in
 the tenant.
+
+When this tenant is itself a managing tenant, the Azure walk also reaches the subscriptions other
+tenants delegated to it. A delegation that names this tenant as the managing tenant (its
+`managedByTenantId` is the `tenantId` of `inventory.json`) is marked below as "this tenant is the
+managing tenant" whenever `inventory.json` carries a `tenantId`: it is access this tenant holds over
+another tenant, not the reverse.
 '@
     $LighthouseSection = if ($LighthouseBullets.Count -gt 0) {
         $LighthouseIntro + "`n`n" + "This export read $($LighthouseBullets.Count) delegation(s):" + "`n`n" + ($LighthouseBullets -join "`n")
     } else {
-        $LighthouseIntro + "`n`n" + "None. This export read no Azure Lighthouse delegation. Delegations are read only when the export includes`n``RoleAssignments`` or ``RoleManagementPolicies``, at the subscriptions its Azure walk visits; a`nscope whose delegations could not be read is named under `"What this export could not read`"."
+        $LighthouseIntro + "`n`n" + "None. This export read no Azure Lighthouse delegation. Delegations are read only when the export`nincludes ``RoleAssignments`` or ``RoleManagementPolicies``, at the subscriptions its Azure walk visits;`na ``-Scope`` at a management group or the root scope visits no subscription, so it reads no delegation.`nA scope whose delegations could not be read is named under `"What this export could not read`"."
     }
 
     $Readme = @'
@@ -680,10 +713,11 @@ includes a predefined prompt that turns it into appliable improvement proposals.
   `scopeHierarchy.json`, written only when an Azure section (`RoleAssignments` or
   `RoleManagementPolicies`) is included. Read-only context, not an apply document -- see the
   eligible Azure PIM assignments under Coverage limits below.
-- `lighthouseDelegations.json` -- the Azure Lighthouse delegations at the subscriptions in
-  `scopeHierarchy.json`, written only when an Azure section is included: access that principals of
-  another tenant hold here, which is not listed as a role assignment. Read-only context, not an apply
-  document -- see "Azure Lighthouse delegations (access from another tenant)" above.
+- `lighthouseDelegations.json` -- the Azure Lighthouse delegations at the subscriptions the Azure
+  walk visits, written only when an Azure section is included: access that principals of a managing
+  tenant hold over a delegated subscription or resource group, which is not listed as a role
+  assignment there. Read-only context, not an apply document -- see "Azure Lighthouse delegations
+  (access from another tenant)" above.
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (for example with Test-Json).
 - `rbac-architect-prompt.md` -- the predefined prompt. Open it, optionally edit the

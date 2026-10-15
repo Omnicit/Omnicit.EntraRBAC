@@ -84,13 +84,15 @@ PowerShell module.
   scopes in scopeHierarchy.json. Use it to see who can already activate what; you cannot create or
   remove an eligibility through the document.
 - lighthouseDelegations.json -- read-only context, written when the export read the Azure sections:
-  one row per Azure Lighthouse delegation, which gives principals of another (managing) tenant Azure
-  roles over a subscription or resource group of this one, with the managing tenant, the offer, the
-  authorizations and the eligible (just-in-time) authorizations. That access is not a role
-  assignment of this tenant and not part of the apply document: never declare it in
-  roleAssignments[], and never propose to create or remove it through the document. Name each
-  delegation in your rationale as a finding: the managing tenant, its roles, and whether each
-  authorization is eligible or permanent.
+  one row per Azure Lighthouse delegation, which gives principals of a managing tenant Azure roles
+  over a delegated subscription or resource group, with the managing tenant, the offer, the
+  authorizations and the eligible (just-in-time) authorizations. Tell the direction from
+  managedByTenantId: a row whose managedByTenantId is the tenantId of inventory.json is access THIS
+  tenant holds, as the managing tenant, over another tenant's subscription or resource group (the
+  README marks it), not access another tenant holds here. That access is not a role assignment of
+  this tenant and not part of the apply document: never declare it in roleAssignments[], and never
+  propose to create or remove it through the document. Name each delegation in your rationale as a
+  finding: the managing tenant, its roles, and whether each authorization is eligible or permanent.
 - the per-area files (groups.json, catalogs.json, ...) are the same data split out for convenience.
 - schema.json -- a formal JSON Schema (draft-07) for the apply document. Validate every proposal
   you emit against it; it encodes the required fields, enums, and numeric ranges exactly.

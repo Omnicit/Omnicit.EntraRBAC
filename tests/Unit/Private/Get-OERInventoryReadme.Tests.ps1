@@ -1273,17 +1273,20 @@ Describe 'Get-OERInventoryReadme (groups using PIM for Groups in a restricted ma
 }
 
 Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6b, BL-133)' {
-    # Azure Lighthouse gives principals of another tenant Azure roles here, which no role assignment of
-    # this tenant shows. lighthouseDelegations.json holds them; the README names each delegation, in both
-    # states: "none" is a claim the reader needs to rely on as much as the list. Never a principal. No id
-    # below is version-4 shaped.
+    # Azure Lighthouse gives principals of a managing tenant Azure roles over a delegated scope, which no
+    # role assignment there shows. lighthouseDelegations.json holds them; the README names each delegation,
+    # in both states: "none" is a claim the reader needs to rely on as much as the list. Never a principal.
+    # A delegation whose managing tenant is the tenant the export read runs the other way and is marked
+    # (Ruling R-12). No id below is version-4 shaped.
     BeforeAll {
         $script:LhHeading = '## Azure Lighthouse delegations (access from another tenant)'
+        # -Extra carries optional parameters (-TenantId) as a splat, so a test can leave -TenantId absent,
+        # rather than pass it empty.
         function Get-LhReadme {
-            param([object[]]$Rows = @(), [string[]]$Incomplete = @())
-            InModuleScope $script:moduleName -Parameters @{ R = $Rows; I = $Incomplete } {
-                param($R, $I)
-                Get-OERInventoryReadme -IncompleteReads $I -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations $R
+            param([object[]]$Rows = @(), [string[]]$Incomplete = @(), [hashtable]$Extra = @{})
+            InModuleScope $script:moduleName -Parameters @{ R = $Rows; I = $Incomplete; E = $Extra } {
+                param($R, $I, $E)
+                Get-OERInventoryReadme -IncompleteReads $I -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations $R @E
             }
         }
         # The "What this export could not read" section, heading included, up to the next level 2 heading.
@@ -1338,7 +1341,11 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
             }
         }
         $script:LhProse = 'Azure Lighthouse lets another tenant -- a service provider, for example -- manage subscriptions or resource groups of this tenant: a delegation gives principals of that managing tenant Azure built-in roles over the delegated scope. That access is not listed as a role assignment of this tenant, so `roleAssignments.json` and `inventory.json` never show it, and `Invoke-OERStructure` never creates or removes it. `lighthouseDelegations.json` holds every delegation this export read, as read-only context: the delegated scope, the managing tenant, the offer and each authorization, with the eligible (just-in-time) ones apart. Review each delegation below as a finding. A scope whose delegations could not be read is named under "What this export could not read", and its delegations are absent from the file, which does not mean it has none. Listing a delegation changes nothing in the tenant.'
-        $script:LhNone = 'None. This export read no Azure Lighthouse delegation. Delegations are read only when the export includes `RoleAssignments` or `RoleManagementPolicies`, at the subscriptions its Azure walk visits; a scope whose delegations could not be read is named under "What this export could not read".'
+        $script:LhNone = 'None. This export read no Azure Lighthouse delegation. Delegations are read only when the export includes `RoleAssignments` or `RoleManagementPolicies`, at the subscriptions its Azure walk visits; a `-Scope` at a management group or the root scope visits no subscription, so it reads no delegation. A scope whose delegations could not be read is named under "What this export could not read".'
+        # Ruling R-12: the walk of a managing tenant also reaches the subscriptions other tenants delegated
+        # to it, so a delegation can run the other way; the section says so and marks such a bullet.
+        $script:LhDirection = 'When this tenant is itself a managing tenant, the Azure walk also reaches the subscriptions other tenants delegated to it. A delegation that names this tenant as the managing tenant (its `managedByTenantId` is the `tenantId` of `inventory.json`) is marked below as "this tenant is the managing tenant" whenever `inventory.json` carries a `tenantId`: it is access this tenant holds over another tenant, not the reverse.'
+        $script:LhMark = ' -- this tenant is the managing tenant: access this tenant holds over another tenant''s subscription or resource group'
     }
 
     It 'says that none was read when the list is empty' {
@@ -1349,6 +1356,17 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
         $Collapsed | Should -Match ([regex]::Escape($script:LhNone))
         @(Get-LhBullets -Section $Section).Count | Should -Be 0
         $Section | Should -Not -Match 'This export read \d+'
+    }
+
+    It 'says, between the prose and the list, that a delegation naming this tenant as the managing tenant runs the other way and is marked (<State>)' -ForEach @(
+        @{ State = 'none'; WithRow = $false; Next = 'None. This export read no Azure Lighthouse delegation.' }
+        @{ State = 'one row'; WithRow = $true; Next = 'This export read 1 delegation(s):' }
+    ) {
+        $Rows = @(if ($WithRow) { New-LhRow -Authorizations @((New-LhAuth -RoleName 'Contributor')) })
+        $Collapsed = (Get-LhSection -Readme (Get-LhReadme -Rows $Rows)) -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape($script:LhDirection))
+        $Collapsed.IndexOf('changes nothing in the tenant.') | Should -BeLessThan $Collapsed.IndexOf($script:LhDirection)
+        $Collapsed.IndexOf($script:LhDirection) | Should -BeLessThan $Collapsed.IndexOf($Next)
     }
 
     It 'writes the count line and one bullet per delegation, in the order given, with the roles of both lists' {
@@ -1397,10 +1415,66 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
         $Bullet = @(Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows @($Row))))[0]
         $Bullet | Should -BeExactly '- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Managed Services`: 2 authorization(s) and 1 eligible authorization(s), roles `Contributor`'
     }
-    It 'writes "not given" for a managing tenant name, a tenant id and an offer the row does not carry' {
-        $Row = New-LhRow -TenantName $null -TenantId '' -Offer ' ' -Authorizations @((New-LhAuth -RoleName 'Contributor'))
+    It 'writes "not given" for a managing tenant name, a tenant id and an offer the row does not carry, and once for a tenant with neither (<Name>)' -ForEach @(
+        @{ Name = 'no tenant name'; TenantName = $null; TenantId = '33333333-3333-3333-3333-333333333333'; Tenant = 'not given (`33333333-3333-3333-3333-333333333333`)' }
+        @{ Name = 'no tenant id'; TenantName = 'Contoso Corp.'; TenantId = ''; Tenant = '`Contoso Corp.` (not given)' }
+        @{ Name = 'neither, empty'; TenantName = ''; TenantId = ''; Tenant = 'not given' }
+        @{ Name = 'neither, white space'; TenantName = '  '; TenantId = ' '; Tenant = 'not given' }
+    ) {
+        $Row = New-LhRow -TenantName $TenantName -TenantId $TenantId -Offer ' ' -Authorizations @((New-LhAuth -RoleName 'Contributor'))
         $Bullets = Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows @($Row)))
-        $Bullets | Should -BeExactly '- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant not given (not given), offer not given: 1 authorization(s) and 0 eligible authorization(s), roles `Contributor`'
+        $Bullets | Should -BeExactly ('- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant ' + $Tenant + ', offer not given: 1 authorization(s) and 0 eligible authorization(s), roles `Contributor`')
+    }
+
+    It 'marks a bullet whose managing tenant is the tenant given to -TenantId, compared without regard to letter case (<Name>)' -ForEach @(
+        @{ Name = 'the same letter case'; RowTenant = 'cccccccc-cccc-cccc-cccc-cccccccccccc'; Given = 'cccccccc-cccc-cccc-cccc-cccccccccccc' }
+        @{ Name = 'the row in upper case'; RowTenant = 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC'; Given = 'cccccccc-cccc-cccc-cccc-cccccccccccc' }
+        @{ Name = '-TenantId in upper case'; RowTenant = 'cccccccc-cccc-cccc-cccc-cccccccccccc'; Given = 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' }
+    ) {
+        $Own = New-LhRow -TenantId $RowTenant -Authorizations @((New-LhAuth -RoleName 'Contributor'))
+        $Other = New-LhRow -Scope '/subscriptions/22222222-2222-2222-2222-222222222222' -TenantName 'Fabrikam Services' -TenantId '99999999-9999-9999-9999-999999999999' -Authorizations @((New-LhAuth -RoleName 'Reader'))
+        $Bullets = @(Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows @($Own, $Other) -Extra @{ TenantId = $Given })))
+        $Expected = @(
+            ('- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant `Contoso Corp.` (`' + $RowTenant + '`), offer `Managed Services`: 1 authorization(s) and 0 eligible authorization(s), roles `Contributor`' + $script:LhMark)
+            # Another managing tenant: no mark.
+            '- `/subscriptions/22222222-2222-2222-2222-222222222222` -- managing tenant `Fabrikam Services` (`99999999-9999-9999-9999-999999999999`), offer `Managed Services`: 1 authorization(s) and 0 eligible authorization(s), roles `Reader`'
+        )
+        ($Bullets -join "`n") | Should -BeExactly ($Expected -join "`n")
+    }
+
+    It 'marks no bullet when -TenantId is <Name>, not even one whose managing tenant is not given' -ForEach @(
+        @{ Name = 'absent'; Extra = @{} }
+        @{ Name = 'empty'; Extra = @{ TenantId = '' } }
+        @{ Name = 'white space'; Extra = @{ TenantId = '  ' } }
+        @{ Name = 'null'; Extra = @{ TenantId = $null } }
+    ) {
+        # A row with a null, an empty and a white space managing tenant id, each of which equals a blank
+        # -TenantId as a string, and one row with a real tenant id.
+        $NullId = New-LhRow -Authorizations @((New-LhAuth -RoleName 'Contributor'))
+        $NullId.managedByTenantId = $null
+        $Rows = @(
+            $NullId
+            (New-LhRow -Scope '/subscriptions/22222222-2222-2222-2222-222222222222' -TenantId '' -Authorizations @((New-LhAuth -RoleName 'Contributor')))
+            (New-LhRow -Scope '/subscriptions/44444444-4444-4444-4444-444444444444' -TenantId '  ' -Authorizations @((New-LhAuth -RoleName 'Contributor')))
+            (New-LhRow -Scope '/subscriptions/55555555-5555-5555-5555-555555555555' -Authorizations @((New-LhAuth -RoleName 'Contributor')))
+        )
+        $Bullets = @(Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows $Rows -Extra $Extra)))
+        # Reach proof: every row has its bullet.
+        $Bullets.Count | Should -Be 4
+        @($Bullets | Where-Object { $_.Contains('this tenant is the managing tenant') }).Count | Should -Be 0
+        $Bullets[0] | Should -BeExactly '- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant `Contoso Corp.` (not given), offer `Managed Services`: 1 authorization(s) and 0 eligible authorization(s), roles `Contributor`'
+    }
+
+    It 'declares TenantId an optional string, so a caller that does not know the tenant can leave it out' {
+        $Parameter = InModuleScope $script:moduleName {
+            $Meta = (Get-Command Get-OERInventoryReadme).Parameters['TenantId']
+            [PSCustomObject]@{
+                Type      = $Meta.ParameterType
+                Mandatory = @($Meta.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Where-Object { $_.Mandatory }).Count
+            }
+        }
+        $Parameter.Type | Should -Be ([string])
+        $Parameter.Mandatory | Should -Be 0
     }
 
     It 'writes a name that holds a backtick or an angle bracket as a code span with the fence rule of the other bullets, on one line' {
@@ -1426,7 +1500,7 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
 
     It 'lists lighthouseDelegations.json in the Files section, directly after azurePimEligibility.json' {
         $Collapsed = (Get-LhReadme) -replace '\s+', ' '
-        $Collapsed | Should -Match ([regex]::Escape('- `lighthouseDelegations.json` -- the Azure Lighthouse delegations at the subscriptions in `scopeHierarchy.json`, written only when an Azure section is included: access that principals of another tenant hold here, which is not listed as a role assignment. Read-only context, not an apply document -- see "Azure Lighthouse delegations (access from another tenant)" above. - `schema.json`'))
+        $Collapsed | Should -Match ([regex]::Escape('- `lighthouseDelegations.json` -- the Azure Lighthouse delegations at the subscriptions the Azure walk visits, written only when an Azure section is included: access that principals of a managing tenant hold over a delegated subscription or resource group, which is not listed as a role assignment there. Read-only context, not an apply document -- see "Azure Lighthouse delegations (access from another tenant)" above. - `schema.json`'))
         $Collapsed.IndexOf('- `azurePimEligibility.json`') | Should -BeGreaterThan 0
         $Collapsed.IndexOf('- `azurePimEligibility.json`') | Should -BeLessThan $Collapsed.IndexOf('- `lighthouseDelegations.json`')
     }

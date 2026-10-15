@@ -651,16 +651,19 @@ Describe 'Get-OERInventoryPromptTemplate unresolved principals, undeclarable sco
 }
 
 Describe 'Get-OERInventoryPromptTemplate Azure Lighthouse delegations (Sprint 11 step 6b, BL-133)' {
-    # The export writes lighthouseDelegations.json: access that principals of another tenant hold over this
-    # tenant's subscriptions and resource groups, which no role assignment of this tenant shows. A model
-    # that declared it in roleAssignments[] would propose a role assignment of this tenant that grants a
-    # principal of another tenant access, and one that proposed its removal would describe a change the
-    # apply engine cannot make. The prompt names the file as read-only context and the delegations as
-    # findings.
+    # The export writes lighthouseDelegations.json: access that principals of a managing tenant hold over a
+    # delegated subscription or resource group, which no role assignment there shows. A model that declared
+    # it in roleAssignments[] would propose a role assignment of this tenant that grants a principal of
+    # another tenant access, and one that proposed its removal would describe a change the apply engine
+    # cannot make. The prompt names the file as read-only context and the delegations as findings, and
+    # tells the model how to read a delegation's direction (Ruling R-12).
     It 'names lighthouseDelegations.json in the Files list as read-only context that is not part of the apply document' {
         InModuleScope $script:moduleName {
             $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
-            $T | Should -Match ([regex]::Escape('- lighthouseDelegations.json -- read-only context, written when the export read the Azure sections: one row per Azure Lighthouse delegation, which gives principals of another (managing) tenant Azure roles over a subscription or resource group of this one'))
+            $T | Should -Match ([regex]::Escape('- lighthouseDelegations.json -- read-only context, written when the export read the Azure sections: one row per Azure Lighthouse delegation, which gives principals of a managing tenant Azure roles over a delegated subscription or resource group'))
+            # How to tell the direction: a row naming this tenant as the managing tenant runs the other way.
+            $T | Should -Match ([regex]::Escape('Tell the direction from managedByTenantId: a row whose managedByTenantId is the tenantId of inventory.json is access THIS tenant holds, as the managing tenant, over another tenant''s subscription or resource group (the README marks it), not access another tenant holds here.'))
+            $T | Should -Not -Match ([regex]::Escape('another (managing) tenant'))
             $T | Should -Match ([regex]::Escape('That access is not a role assignment of this tenant and not part of the apply document: never declare it in roleAssignments[], and never propose to create or remove it through the document.'))
             $T | Should -Match ([regex]::Escape('Name each delegation in your rationale as a finding: the managing tenant, its roles, and whether each authorization is eligible or permanent.'))
             # The bullet stands directly after the azurePimEligibility.json bullet, among the Inputs.
