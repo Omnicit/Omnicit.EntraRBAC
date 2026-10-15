@@ -256,8 +256,8 @@ function Get-OERInventory {
     such as a device, which the document's principalType cannot name. Each principal is looked up in
     Microsoft Entra ID with one batched directoryObjects/getByIds request per call, over every
     directory object type. A principal it returns is written by its name -- a user by its user principal
-    name, a group by the rule above, anything else by its display name -- except a principal of
-    another type than a user, a group or a service principal, which is written by its object id. A
+    name, a group by the rule above and a service principal by its display name; a principal of any
+    other type, such as a device, is written by its object id. A
     principal the lookup does not return is written by its object id with principalStatus: Deleted
     when it is found among the directory's deleted items (one read of directory/deletedItems per
     principal, made once per call, and once per export under Export-OERInventory), Unresolved when it
@@ -268,7 +268,8 @@ function Get-OERInventory {
     One warning counts them, and an information record tagged Omnicit.EntraRBAC.UnresolvedPrincipal
     hands the caller the same rows (RoleAssignmentId, Scope, Role, Principal, PrincipalType and
     PrincipalStatus) and the warning's text; under the default $InformationPreference the record is
-    not displayed. When the lookup itself fails, the principal is written by its object id with no
+    not displayed. Under a Stop warning preference the command stops at that warning, before it
+    returns the inventory, as it does at the root scope warning. When the lookup itself fails, the principal is written by its object id with no
     principalStatus, and 'roleAssignments/<role> -> <principal id> @ <scope>/principal' is reported
     through the InventoryPartial error with its cause; when only the deleted items read fails, the
     principal is written as Unresolved and '.../principalStatus' is reported the same way. A role

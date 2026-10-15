@@ -7749,6 +7749,17 @@ Describe 'Get-OERInventory role assignment principals that could not be looked u
         (Get-UpPartial -Record @($InvErr)).Count | Should -Be 0
     }
 
+    It 'stops at its warning under -WarningAction Stop, before it returns the inventory' {
+        $script:UpRas = @(New-UpRa -PrincipalId $script:UpGone -PrincipalType 'User')
+        $script:UpAnswers = @{ $script:UpGone = New-UpNotFound -Id $script:UpGone }
+        $script:UpOut = $null
+        $Thrown = { $script:UpOut = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningAction Stop } | Should -Throw -PassThru
+        $Thrown.Exception.Message | Should -BeLike '*role assignment(s) name a principal that Microsoft Entra ID does not return*'
+        $null -eq $script:UpOut | Should -BeTrue
+        # Reach proof: the principal was looked for among the deleted items before the warning.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+    }
+
     It 'states the rule in the help' {
         $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
         $Help | Should -Match ([regex]::Escape('principalStatus'))
