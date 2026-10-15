@@ -988,10 +988,26 @@ or the policy has been changed (it carries a modification date or names who modi
 lists a policy for roles nobody uses there too. Deciding that costs one more paged role assignment
 list per scope; the policies are still read with one list per scope and nothing per policy. A
 policy the export cannot judge, because a read it needs failed or the list gives nothing to judge
-by, is kept, and its scope is named last in `IncompleteReads` as
+by, is kept, and its scope is named in `IncompleteReads` as
 `roleManagementPolicies/role selection at <scope>` and in `InventoryPartial`. `-AllRolePolicies`
 exports every policy at every scope, as earlier versions did. `Invoke-OERStructure` reads and writes
 only the policies a document declares, so a policy the export left out stays as it is.
+
+Azure Lighthouse lets another tenant, a service provider for example, manage subscriptions or
+resource groups of this one, and the role assignments of this tenant do not list the access it
+gives. With `RoleAssignments` or `RoleManagementPolicies` in `-Include`, `Export-OERInventory` also
+writes `lighthouseDelegations.json`: the delegations at the subscriptions its Azure walk visits and
+at their resource groups, each with the managing tenant, the offer, and the roles its principals
+hold, permanently or as eligible (just-in-time) authorizations. The file is read-only context like
+`azurePimEligibility.json`: written exactly when that file is, always a JSON array (`[]` when none
+was read), and never part of the apply document, so `Invoke-OERStructure` never creates or removes
+a delegation. The export warns once with the count, and its `README.md` lists each delegation under
+"Azure Lighthouse delegations (access from another tenant)", as a finding to review. A subscription
+whose delegations could not be read has no row in the file and is named in `IncompleteReads`
+(`lighthouseDelegations at <scope>`) and in `InventoryPartial`, and so is a role whose name could
+not be read (`lighthouseDelegations role <id>`, its `roleName` written `null`). The read costs two
+paged lists per subscription and one read per distinct role, plus a listing of the subscription's
+resource groups and one read per group only when a delegation may sit at one; `Reader` covers it.
 
 ---
 

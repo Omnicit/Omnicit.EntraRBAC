@@ -18,13 +18,16 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
 - `inventory.json` -- canonical, round-trippable inventory (all sections).
 - per-area JSON files (`groups.json`, `catalogs.json`, `directoryRoleManagementPolicies.json`,
   `directoryRoleAssignments.json`, ...).
-- `groupsRoster.json`, `scopeHierarchy.json`, `azurePimEligibility.json` -- read-only context.
+- `groupsRoster.json`, `scopeHierarchy.json`, `azurePimEligibility.json`,
+  `lighthouseDelegations.json` -- read-only context.
   `groupsRoster.json` lists every group in the tenant, of every type, one row per group with the
   keys `displayName`, `roleAssignable`, `dynamic`, `onPremisesSynced`, `memberCount`, `id`,
   `securityEnabled`, `mailEnabled`, `groupTypes`, `visibility` and `createdDateTime` (a UTC ISO 8601
   time); the `id` tells apart two groups that share a name.
   `azurePimEligibility.json` (the Azure PIM eligible role assignments at the walked scopes) is
-  written only when an Azure section (`RoleAssignments` or `RoleManagementPolicies`) is included.
+  written only when an Azure section (`RoleAssignments` or `RoleManagementPolicies`) is included,
+  and so is `lighthouseDelegations.json` (the Azure Lighthouse delegations at the walked
+  subscriptions; see "Azure Lighthouse delegations" below).
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (e.g. `Test-Json -Json (Get-Content proposal.json -Raw) -Schema (Get-Content schema.json -Raw)`).
 - `rbac-architect-prompt.md` -- the predefined prompt.
@@ -33,10 +36,10 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
   root scope (elevated access)" the role assignments at the Azure root scope the export left out
   (see below), lists under "Names two or more objects share" every name the export left out because
   two or more objects carry it (see below), lists under "Role assignments whose principal the
-  directory did not return", "Role assignments at a scope no document can declare" and "Groups using
-  PIM for Groups in a restricted management unit" the findings described below, and holds the next
-  steps. These lists are written into this file only, never into `inventory.json` or any other JSON
-  file.
+  directory did not return", "Role assignments at a scope no document can declare", "Groups using
+  PIM for Groups in a restricted management unit" and "Azure Lighthouse delegations (access from
+  another tenant)" the findings described below, and holds the next steps. These lists are written
+  into this file only, never into `inventory.json` or any other JSON file.
 
 By default the Entra sections -- including the Microsoft Entra directory role sections,
 `DirectoryRoleManagementPolicies` and `DirectoryRoleAssignments` -- plus tenant-wide
@@ -312,6 +315,33 @@ eligibility or a `pimPolicy` in a restricted unit the document declares: by the 
 `administrativeUnit`, or in the unit's `members`. An exported document raises neither warning, since
 its groups carry no object id and no `administrativeUnit`. `Invoke-OERStructure` still sends such a
 group's PIM settings and eligibility; what Microsoft Graph answers to them has not been measured.
+
+## Azure Lighthouse delegations
+
+Azure Lighthouse lets another tenant, a service provider for example, manage subscriptions or
+resource groups of this one: a delegation gives principals of that managing tenant Azure built-in
+roles over the delegated scope, and Microsoft Learn states that the role assignments of this tenant
+do not list that access. With an Azure section included, the export reads the delegations at the
+subscriptions its walk visits, and at their resource groups, into `lighthouseDelegations.json`: one
+row per delegation with its `scope`, the managing tenant (`managedByTenantId`,
+`managedByTenantName`), the offer (`offerName`), its `authorizations` and its
+`eligibleAuthorizations` (the just-in-time ones), each with the principal and the role. When it
+read any, it writes one warning with the count, and the bundle's `README.md` lists each delegation
+under "Azure Lighthouse delegations (access from another tenant)", by scope, managing tenant, offer
+and roles, never by principal.
+
+- **A finding, not an apply section.** The file is read-only context: no apply cmdlet reads it, and
+  `Invoke-OERStructure` never creates or removes a delegation. The prompt tells the model never to
+  declare one in `roleAssignments[]`, never to propose creating or removing one through the
+  document, and to name each in its rationale as a finding.
+- **A failed read is named.** A subscription is read whole or not at all. One whose delegations
+  could not be read has no row in the file, which can therefore be `[]` after a failed read, and is
+  named under "What this export could not read" as `lighthouseDelegations at <scope>`, labelled
+  "Azure Lighthouse read that failed"; a role whose name could not be read is named there as
+  `lighthouseDelegations role <id>`, and its `roleName` is `null`. A walk that could not start is
+  named as `lighthouseDelegations at <all Azure scopes: scope enumeration failed>`, and a
+  subscription listing that failed as `lighthouseDelegations at <subscriptions: the listing failed>`.
+  Each raises `InventoryPartial`.
 
 ## Renaming a group
 
@@ -846,7 +876,9 @@ or eligibility read failed, that is every policy of a role neither used nor chan
 `roleManagementPolicies.json` may hold policies of roles that are neither used nor changed at that
 scope, and such a policy is no evidence that its role is in use. The entry does not mean every
 policy at the scope was kept: when only one policy could not be judged, the other unused, unchanged
-ones are still left out. When nothing was left unread, that section says so. The list is in the
+ones are still left out. The Azure Lighthouse reads that failed follow those entries, labelled
+"Azure Lighthouse read that failed" (see "Azure Lighthouse delegations" above). When nothing was
+left unread, that section says so. The list is in the
 README alone: `inventory.json` and the other JSON files never carry it, so the apply document keeps
 exactly the shape the schema describes.
 

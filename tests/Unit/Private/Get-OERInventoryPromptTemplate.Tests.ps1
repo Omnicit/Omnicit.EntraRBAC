@@ -649,3 +649,33 @@ Describe 'Get-OERInventoryPromptTemplate unresolved principals, undeclarable sco
         }
     }
 }
+
+Describe 'Get-OERInventoryPromptTemplate Azure Lighthouse delegations (Sprint 11 step 6b, BL-133)' {
+    # The export writes lighthouseDelegations.json: access that principals of another tenant hold over this
+    # tenant's subscriptions and resource groups, which no role assignment of this tenant shows. A model
+    # that declared it in roleAssignments[] would propose a role assignment of this tenant that grants a
+    # principal of another tenant access, and one that proposed its removal would describe a change the
+    # apply engine cannot make. The prompt names the file as read-only context and the delegations as
+    # findings.
+    It 'names lighthouseDelegations.json in the Files list as read-only context that is not part of the apply document' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('- lighthouseDelegations.json -- read-only context, written when the export read the Azure sections: one row per Azure Lighthouse delegation, which gives principals of another (managing) tenant Azure roles over a subscription or resource group of this one'))
+            $T | Should -Match ([regex]::Escape('That access is not a role assignment of this tenant and not part of the apply document: never declare it in roleAssignments[], and never propose to create or remove it through the document.'))
+            $T | Should -Match ([regex]::Escape('Name each delegation in your rationale as a finding: the managing tenant, its roles, and whether each authorization is eligible or permanent.'))
+            # The bullet stands directly after the azurePimEligibility.json bullet, among the Inputs.
+            $T.IndexOf('- lighthouseDelegations.json --') | Should -BeGreaterThan $T.IndexOf('- azurePimEligibility.json --')
+            $T.IndexOf('- lighthouseDelegations.json --') | Should -BeLessThan $T.IndexOf('- the per-area files')
+        }
+    }
+
+    It 'names the README section and the label of a failed Lighthouse read in the README bullet' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('Four more of its sections are findings to review, each named in your rationale'))
+            $T | Should -Match ([regex]::Escape('and "Azure Lighthouse delegations (access from another tenant)" lists the delegations in lighthouseDelegations.json (see below).'))
+            $T | Should -Match ([regex]::Escape('an entry labelled "Azure Lighthouse read that failed" names a scope whose delegations could not be read (absent from lighthouseDelegations.json, which does not mean it has none) or a role whose name could not be read (its roleName is null)'))
+            $T.IndexOf('"Azure Lighthouse delegations (access from another tenant)" lists') | Should -BeLessThan $T.IndexOf('- inventory.json -- the current state')
+        }
+    }
+}

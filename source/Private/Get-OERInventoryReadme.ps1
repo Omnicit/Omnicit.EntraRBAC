@@ -27,7 +27,10 @@ function Get-OERInventoryReadme {
     <scope>', or a role whose name could not be read, as 'lighthouseDelegations role <id>' (Sprint 11
     step 6b, BL-133), and is listed under the label 'Azure Lighthouse read that failed'; the section's
     prose says that the delegations of such a scope are absent from lighthouseDelegations.json, which
-    does not mean it has none, and that the roleName of such a role is written null there.
+    does not mean it has none, that the roleName of such a role is written null there, and that the
+    entries 'lighthouseDelegations at <all Azure scopes: scope enumeration failed>' and
+    'lighthouseDelegations at <subscriptions: the listing failed>' name no single scope but a walk, or
+    a subscription listing, that failed, so no subscription's delegations were read.
 
     Directly after it comes the section "Members and owners left out as PIM for Groups access"
     (BL-125, A3). It says that inventory.json and groups.json write a group's standing members and
@@ -136,18 +139,19 @@ function Get-OERInventoryReadme {
     were left out because two or more live objects share a name. Then one entry per role assignment
     principal that could not be read, reading 'roleAssignments/<role> -> <principal id> @ <scope>'
     followed by '/principal' (its lookup failed) or '/principalStatus' (only its deleted items read
-    failed). Then, last, one entry per Azure scope where at least one role management policy could not
-    be judged, reading
+    failed). Then one entry per Azure scope where at least one role management policy could not be
+    judged, reading
     'roleManagementPolicies/role selection at <scope>': every policy there that could not be judged
     was kept, none of them left out (where the scope's role assignment read or eligibility read
     failed, that is every policy of a role neither used nor changed there), so
     roleManagementPolicies.json may hold policies of roles that are neither used nor changed there.
     Last of all, after those, one entry per Azure scope whose Azure Lighthouse delegations could not
     be read, reading 'lighthouseDelegations at <scope>' (for a walk with no scope tree,
-    'lighthouseDelegations at <all Azure scopes: scope enumeration failed>'), and one per role whose
-    name could not be read, reading 'lighthouseDelegations role <id>': the delegations of such a scope
-    are absent from lighthouseDelegations.json, which does not mean it has none, and the roleName of
-    such a role is written null there.
+    'lighthouseDelegations at <all Azure scopes: scope enumeration failed>', and for a subscription
+    listing that failed, 'lighthouseDelegations at <subscriptions: the listing failed>'), and one per
+    role whose name could not be read, reading 'lighthouseDelegations role <id>': the delegations of
+    such a scope are absent from lighthouseDelegations.json, which does not mean it has none, and the
+    roleName of such a role is written null there.
     Pass an empty array when there are none.
 
     .PARAMETER SkippedScopes
@@ -346,14 +350,15 @@ function Get-OERInventoryReadme {
 
 This bundle is PARTIAL: `Export-OERInventory` could not read, or could not write, everything it was
 asked to, so do not treat it as a full tenant snapshot. Apart from the entries labelled "Azure role
-management policies kept without being judged" and "Role assignment principal that could not be
-read", each entry below names collections or objects that could not be read, could not be written
-without an empty name, or were left out because two or more live objects share a name; none of them
-is stated as a fact in this bundle. An entry labelled "Role assignment principal that could not be
-read" names a row of `roleAssignments.json` as `roleAssignments/<role> -> <principal id> @ <scope>`,
-followed by `/principal` or `/principalStatus`. With `/principal`, the lookup of the principal
-failed: the row is written by the principal's object id with no `principalStatus`, so whether the
-directory holds the principal is not known. With `/principalStatus`, the directory did not return
+management policies kept without being judged", "Role assignment principal that could not be read"
+and "Azure Lighthouse read that failed", each entry below names collections or objects that could
+not be read, could not be written without an empty name, or were left out because two or more live
+objects share a name; none of them is stated as a fact in this bundle. An entry labelled "Role
+assignment principal that could not be read" names a row of `roleAssignments.json` as
+`roleAssignments/<role> -> <principal id> @ <scope>`, followed by `/principal` or `/principalStatus`.
+With `/principal`, the lookup of the principal failed: the row is written by the principal's object
+id with no `principalStatus`, so whether the directory holds the principal is not known. With
+`/principalStatus`, the directory did not return
 the principal and the read of its deleted items failed: the row is written with `principalStatus`
 `Unresolved`, and the reason is not known. "Unread collections"
 below says how an unread collection is written; an object left out for a shared name is absent from
@@ -369,7 +374,10 @@ other unused, unchanged policies there are still left out. An entry labelled "Az
 that failed" names either a scope, as `lighthouseDelegations at <scope>`, whose Azure Lighthouse
 delegations could not be read, so they are absent from `lighthouseDelegations.json`, which does not
 mean the scope has none, or a role, as `lighthouseDelegations role <id>`, whose name could not be
-read, so its `roleName` is written `null` there.
+read, so its `roleName` is written `null` there. Two such entries name no single scope:
+`lighthouseDelegations at <all Azure scopes: scope enumeration failed>` names a walk that could not
+start, and `lighthouseDelegations at <subscriptions: the listing failed>` a subscription listing
+that failed, so the delegations of no subscription were read.
 '@
         $Partial + "`n`n" + ($Bullets -join "`n")
     } else {

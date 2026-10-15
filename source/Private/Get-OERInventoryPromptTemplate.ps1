@@ -56,17 +56,21 @@ PowerShell module.
   left out of inventory.json: findings to review (see roleAssignments[] below). And it lists, under
   "Names two or more objects share", every name the export left out because two or more objects of
   one kind carry it, with how many: each object that carries one is absent from inventory.json (see
-  "An OBJECT ID where the document otherwise carries a name" below). Three more of its sections are
+  "An OBJECT ID where the document otherwise carries a name" below). Four more of its sections are
   findings to review, each named in your rationale: "Role assignments whose principal the directory
   did not return" lists the role assignments inventory.json writes with principalStatus (see
   roleAssignments[] below); "Role assignments at a scope no document can declare" lists the role
   assignments the export left out of inventory.json because the offline check refuses the spelling
-  of their scope; and "Groups using PIM for Groups in a restricted management unit" lists the groups
+  of their scope; "Groups using PIM for Groups in a restricted management unit" lists the groups
   inventory.json writes with PIM eligibility or a pimPolicy that are members of a restricted
-  management administrative unit (see groups[] below). Under "What this export could not read", an
-  entry labelled "Role assignment principal that could not be read" names a role assignment whose
-  principal could not be looked up (written by its object id with no principalStatus) or whose
-  deleted items could not be read (written with principalStatus Unresolved)
+  management administrative unit (see groups[] below); and "Azure Lighthouse delegations (access
+  from another tenant)" lists the delegations in lighthouseDelegations.json (see below). Under "What
+  this export could not read", an entry labelled "Role assignment principal that could not be read"
+  names a role assignment whose principal could not be looked up (written by its object id with no
+  principalStatus) or whose deleted items could not be read (written with principalStatus
+  Unresolved), and an entry labelled "Azure Lighthouse read that failed" names a scope whose
+  delegations could not be read (absent from lighthouseDelegations.json, which does not mean it has
+  none) or a role whose name could not be read (its roleName is null)
 - inventory.json -- the current state, within this document's coverage limits (see below), in the
   exact apply schema. Your proposals reshape this.
 - groupsRoster.json -- every group in the tenant, of every type: one row per group with its id,
@@ -79,6 +83,14 @@ PowerShell module.
 - azurePimEligibility.json -- read-only context: the Azure PIM eligible role assignments at the
   scopes in scopeHierarchy.json. Use it to see who can already activate what; you cannot create or
   remove an eligibility through the document.
+- lighthouseDelegations.json -- read-only context, written when the export read the Azure sections:
+  one row per Azure Lighthouse delegation, which gives principals of another (managing) tenant Azure
+  roles over a subscription or resource group of this one, with the managing tenant, the offer, the
+  authorizations and the eligible (just-in-time) authorizations. That access is not a role
+  assignment of this tenant and not part of the apply document: never declare it in
+  roleAssignments[], and never propose to create or remove it through the document. Name each
+  delegation in your rationale as a finding: the managing tenant, its roles, and whether each
+  authorization is eligible or permanent.
 - the per-area files (groups.json, catalogs.json, ...) are the same data split out for convenience.
 - schema.json -- a formal JSON Schema (draft-07) for the apply document. Validate every proposal
   you emit against it; it encodes the required fields, enums, and numeric ranges exactly.

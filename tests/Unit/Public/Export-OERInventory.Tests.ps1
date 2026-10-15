@@ -2557,10 +2557,14 @@ Describe 'Export-OERInventory (help documents the bundle nesting)' {
         # Sprint 11 step 6 (BL-133): the role assignment principals that could not be read stand between
         # the Entra ID entries and these.
         $Description | Should -Match ([regex]::Escape('After every Entra ID entry, IncompleteReads carries one entry per role assignment principal that could not be read'))
-        $Description | Should -Match ([regex]::Escape('Last, after those entries, IncompleteReads carries one entry per Azure scope where at least one role management policy could not be judged'))
+        $Description | Should -Match ([regex]::Escape('After those entries, IncompleteReads carries one entry per Azure scope where at least one role management policy could not be judged'))
+        # Sprint 11 step 6b (BL-133): the Azure Lighthouse entries now come after these, last of all, so the
+        # role selection entries are no longer called the last ones.
+        $Description | Should -Not -Match ([regex]::Escape('Last, after those entries, IncompleteReads carries one entry per Azure scope'))
+        $Description | Should -Match ([regex]::Escape('Last of all, IncompleteReads carries the Azure Lighthouse entries (see AZURE LIGHTHOUSE DELEGATIONS above)'))
         $Description | Should -Match ([regex]::Escape('It does not mean every policy at the scope was kept: when only one row could not be judged, the other unused, unchanged policies there are still left out.'))
         $Description | Should -Not -Match 'nothing is missing for it'
-        $Description | Should -Match ([regex]::Escape('plus one per such Azure scope, and not the number of unread collections'))
+        $Description | Should -Match ([regex]::Escape('plus one per Azure scope where a role management policy could not be judged, plus one per Azure Lighthouse entry, and not the number of unread collections'))
         $Description | Should -Match ([regex]::Escape('Invoke-OERStructure reads and writes only the policies a document declares'))
 
         $Param = @($script:ExportHelp.Parameters.Parameter) | Where-Object { $_.Name -eq 'AllRolePolicies' }
@@ -5138,7 +5142,7 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
         $Description | Should -Match ([regex]::Escape('A principal is looked for among the deleted items once for the whole export when that read succeeds, however many Azure scopes read the assignment; a read that fails is not kept, and is sent again by the next scope that needs it.'))
         # The README lists the principal entries under a label of their own, and they are IncompleteReads
         # entries, as the help says.
-        $Description | Should -Match ([regex]::Escape('one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes entry -- among the IncompleteReads entries, those of a role assignment principal that could not be read and those of an Azure scope where role management policies could not be judged each under a label of its own -- or the statement that nothing was left unread'))
+        $Description | Should -Match ([regex]::Escape('one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes entry -- among the IncompleteReads entries, those of a role assignment principal that could not be read, those of an Azure scope where role management policies could not be judged and those of an Azure Lighthouse read that failed each under a label of its own -- or the statement that nothing was left unread'))
     }
 
     Context 'the rows the per-scope calls hand over' {
@@ -6322,6 +6326,20 @@ Describe 'Export-OERInventory (Azure Lighthouse delegations, Sprint 11 step 6b, 
         InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
     }
 
+    It 'states the rule in the help' {
+        $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('read-only context (scopeHierarchy.json, groupsRoster.json, azurePimEligibility.json, lighthouseDelegations.json)'))
+        $Description | Should -Match ([regex]::Escape('AZURE LIGHTHOUSE DELEGATIONS.'))
+        $Description | Should -Match ([regex]::Escape('The file is written exactly when azurePimEligibility.json is'))
+        $Description | Should -Match ([regex]::Escape('It is always a JSON array, [] when no delegation was read.'))
+        $Description | Should -Match ([regex]::Escape('it is never an apply-document section, no apply cmdlet reads it back, and Invoke-OERStructure never creates or removes a delegation.'))
+        $Description | Should -Match ([regex]::Escape('a -Scope at a management group or the root scope reads no delegation'))
+        $Description | Should -Match ([regex]::Escape('in a section "Azure Lighthouse delegations (access from another tenant)", directly after "Groups using PIM for Groups in a restricted management unit"'))
+        $Description | Should -Match ([regex]::Escape("A read that fails is never left unnamed: each scope of a subscription whose delegations could not be read is named in IncompleteReads as 'lighthouseDelegations at <scope>' and has no row in the file"))
+        # azurePimEligibility.json is no longer the only bundle file that is sometimes not written.
+        $Description | Should -Not -Match 'the one bundle file that is sometimes not written'
+    }
+
     It 'writes lighthouseDelegations.json as an array of the rows the reader returned, every field kept, and lists it in Files' {
         $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-file'); Include = @('RoleAssignments') }
         $Path = Join-Path $Run.Result.BundlePath 'lighthouseDelegations.json'
@@ -6450,10 +6468,11 @@ Describe 'Export-OERInventory (Azure Lighthouse delegations, Sprint 11 step 6b, 
         $Readme | Should -Not -Match $script:LhxPrincipalTwo
     }
 
-    # A failed read is named, never left as an empty list: a subscription whose delegations could not be
-    # read has no row in lighthouseDelegations.json, so the entries below say so in IncompleteReads, in the
-    # InventoryPartial message (with the causes) and in the README, and make the export partial. The reader
-    # is mocked (its own suite proves what it names); these tests prove what the export does with it.
+    # A failed read is named, never left unnamed: a subscription whose delegations could not be read has no
+    # row in lighthouseDelegations.json, which can be [] after it, so the entries below say so in
+    # IncompleteReads, in the InventoryPartial message (with the causes) and in the README, and make the
+    # export partial. The reader is mocked (its own suite proves what it names); these tests prove what the
+    # export does with it.
     Context 'a failed Azure Lighthouse read is named in IncompleteReads and makes the export partial (Scope item 2)' {
         BeforeAll {
             $script:LhxRoleEntry = 'lighthouseDelegations role dddddddd-dddd-dddd-dddd-dddddddddddd'

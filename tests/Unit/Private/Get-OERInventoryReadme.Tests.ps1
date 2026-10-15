@@ -267,7 +267,7 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
         # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
         $Collapsed = $Section -replace '\s+', ' '
         $Collapsed | Should -Match ([regex]::Escape('This bundle is PARTIAL: `Export-OERInventory` could not read, or could not write, everything it was asked to, so do not treat it as a full tenant snapshot.'))
-        $Collapsed | Should -Match ([regex]::Escape('Apart from the entries labelled "Azure role management policies kept without being judged" and "Role assignment principal that could not be read", each entry below names collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name; none of them is stated as a fact in this bundle.'))
+        $Collapsed | Should -Match ([regex]::Escape('Apart from the entries labelled "Azure role management policies kept without being judged", "Role assignment principal that could not be read" and "Azure Lighthouse read that failed", each entry below names collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name; none of them is stated as a fact in this bundle.'))
         # Sprint 11 step 6 (BL-133): a role assignment principal entry names a row that IS written, so the
         # intro says how each kind of it is written instead of counting it among the facts left out.
         $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Role assignment principal that could not be read" names a row of `roleAssignments.json` as `roleAssignments/<role> -> <principal id> @ <scope>`, followed by `/principal` or `/principalStatus`. With `/principal`, the lookup of the principal failed: the row is written by the principal''s object id with no `principalStatus`, so whether the directory holds the principal is not known. With `/principalStatus`, the directory did not return the principal and the read of its deleted items failed: the row is written with `principalStatus` `Unresolved`, and the reason is not known.'))
@@ -1488,6 +1488,9 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
         $Section = Get-LhCouldNotRead -Readme (Get-LhReadme -Incomplete @('lighthouseDelegations at /subscriptions/11111111-1111-1111-1111-111111111111'))
         $Collapsed = $Section -replace '\s+', ' '
         $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Azure Lighthouse read that failed" names either a scope, as `lighthouseDelegations at <scope>`, whose Azure Lighthouse delegations could not be read, so they are absent from `lighthouseDelegations.json`, which does not mean the scope has none, or a role, as `lighthouseDelegations role <id>`, whose name could not be read, so its `roleName` is written `null` there.'))
+        # The two entries the export adds for a walk that could not start and a subscription listing that
+        # failed name no single scope, and the prose says so.
+        $Collapsed | Should -Match ([regex]::Escape('Two such entries name no single scope: `lighthouseDelegations at <all Azure scopes: scope enumeration failed>` names a walk that could not start, and `lighthouseDelegations at <subscriptions: the listing failed>` a subscription listing that failed, so the delegations of no subscription were read.'))
         # Outside its code spans the section holds no angle bracket: Markdown would read it as a tag.
         ($Collapsed -replace '`[^`]*`', '') | Should -Not -Match '<'
     }
