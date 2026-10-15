@@ -8,8 +8,26 @@ function Resolve-OERInventoryScopeTree {
     Get-OERManagementGroup -Name for one branch) and Get-OERSubscription into a flat list of ARM
     scope strings (every management group id and every subscription id) plus a nested hierarchy
     object used for the scopeHierarchy.json context file. -ManagementGroup narrows to a single branch;
-    -Scope returns exactly that one raw scope without enumerating. Authentication (with ARM) is
-    ensured at entry.
+    -Scope returns exactly that one raw scope without enumerating, when it may be walked (see below).
+    Authentication (with ARM) is ensured at entry.
+
+    The walk enters only the subscriptions of this tenant (BL-150, decision A19): every listed
+    subscription goes through Get-OERSubscriptionHomeTenant -Subscription, which compares the tenantId
+    the subscription list returned for it with the tenant the session's Microsoft Graph token was issued
+    for, with no request of its own. A subscription whose home tenant is that tenant is walked as
+    before. One whose home tenant is another tenant -- a customer subscription another tenant delegated
+    to this one through Azure Lighthouse, for example -- is named in the output's ForeignSubscriptions
+    (SubscriptionId, DisplayName, HomeTenantId, Scope) and nowhere else. One whose home tenant could not
+    be decided (no tenantId that is a GUID, or a session whose token names no tenant ID) is named in
+    UndecidedSubscriptions (SubscriptionId, Scope, Reason) and nowhere else. Neither is added to Scopes
+    or to the hierarchy, so scopeHierarchy.json never lists it. Both lists are always arrays, empty when
+    there is none. The tree writes ONE warning per call that names every undecided subscription with its
+    reason; it writes none for a foreign one, which the caller reports. With -Scope, the subscription the
+    scope lies in is decided by one read of it (Get-OERSubscriptionHomeTenant -Scope): a scope in the
+    tenant's own subscription, or at a management group or the root scope, which lie in no subscription
+    and are not read, is returned verbatim as before; a scope in a foreign subscription is named in
+    ForeignSubscriptions, and one whose subscription could not be decided -- its read failed, too -- in
+    UndecidedSubscriptions, each with the scope as given, and Scopes is then empty.
 
     A listing that fails is never read as an empty level. For the full tree, a management-group or
     subscription listing that is refused or fails is caught, warned about, and named in the output's
@@ -26,14 +44,17 @@ function Resolve-OERInventoryScopeTree {
     A management group name or display name to narrow enumeration to one branch.
 
     .PARAMETER Scope
-    A single raw ARM scope. When given, that scope is returned verbatim and no enumeration occurs.
+    A single raw ARM scope. When given, no enumeration occurs: the scope is returned verbatim when it
+    lies in no subscription or in one of this tenant's own, and Scopes is empty otherwise (see above).
 
     .PARAMETER TenantId
     Optional tenant id or domain forwarded to Initialize-OERAuth.
 
     .EXAMPLE
     Resolve-OERInventoryScopeTree
-    Returns all management group and subscription scopes plus the hierarchy.
+    Returns every management group scope and the scope of each of this tenant's own subscriptions, plus
+    the hierarchy, and names the subscriptions it left out in ForeignSubscriptions and
+    UndecidedSubscriptions.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
@@ -55,16 +76,49 @@ function Resolve-OERInventoryScopeTree {
     # InventoryPartial). Measured live 2026-09-30: app-only, the management-group listing answers
     # AuthorizationFailed, and the walk used to read that as "no management groups".
     $SkippedScopes = [System.Collections.Generic.List[string]]::new()
+    # BL-150 (A19): the subscriptions the walk leaves out, since their home tenant is another tenant, or
+    # could not be decided. Get-OERSubscriptionHomeTenant decides it; neither list is walked.
+    $ForeignSubscriptions = [System.Collections.Generic.List[object]]::new()
+    $UndecidedSubscriptions = [System.Collections.Generic.List[object]]::new()
+    # ONE warning per call names every undecided subscription with its reason. A foreign one is named by
+    # the caller (Export-OERInventory writes one warning for them), not here.
+    $WarnUndecided = {
+        if ($UndecidedSubscriptions.Count -gt 0) {
+            $List = ($UndecidedSubscriptions | ForEach-Object { "'$($_.Scope)' ($($_.Reason))" }) -join '; '
+            Write-Warning "Could not tell whether $($UndecidedSubscriptions.Count) subscription(s) belong to this tenant, so none of them is walked: $List"
+        }
+    }
 
     if ($Scope) {
-        $Scopes.Add($Scope)
+        # One read of the subscription the scope lies in decides it; a scope at a management group or the
+        # root scope lies in none and is not read. The scope is kept VERBATIM when it may be walked.
+        $Verdict = Get-OERSubscriptionHomeTenant -Scope $Scope
+        if ($Verdict.Verdict -eq 'Foreign') {
+            $ForeignSubscriptions.Add([PSCustomObject]@{
+                    SubscriptionId = $Verdict.SubscriptionId
+                    DisplayName    = $Verdict.DisplayName
+                    HomeTenantId   = $Verdict.HomeTenantId
+                    Scope          = $Scope
+                })
+        } elseif ($Verdict.Verdict -eq 'Undecided') {
+            $UndecidedSubscriptions.Add([PSCustomObject]@{
+                    SubscriptionId = $Verdict.SubscriptionId
+                    Scope          = $Scope
+                    Reason         = $Verdict.Reason
+                })
+        } else {
+            $Scopes.Add($Scope)
+        }
+        & $WarnUndecided
         $Out = [PSCustomObject]@{
             Scopes    = $Scopes.ToArray()
             Hierarchy = [PSCustomObject]@{
                 managementGroups = @()
                 subscriptions    = @()
             }
-            SkippedScopes = @()
+            SkippedScopes          = @()
+            ForeignSubscriptions   = $ForeignSubscriptions.ToArray()
+            UndecidedSubscriptions = $UndecidedSubscriptions.ToArray()
         }
         return $Out
     }
@@ -106,6 +160,26 @@ function Resolve-OERInventoryScopeTree {
         }
     }
     foreach ($Sub in $Subscriptions) {
+        # BL-150 (A19): decided from the tenantId the list returned, with no request. Only the tenant's own
+        # subscription is walked and enters the hierarchy.
+        $Verdict = Get-OERSubscriptionHomeTenant -Subscription $Sub
+        if ($Verdict.Verdict -eq 'Foreign') {
+            $ForeignSubscriptions.Add([PSCustomObject]@{
+                    SubscriptionId = $Verdict.SubscriptionId
+                    DisplayName    = $Verdict.DisplayName
+                    HomeTenantId   = $Verdict.HomeTenantId
+                    Scope          = $Verdict.Scope
+                })
+            continue
+        }
+        if ($Verdict.Verdict -ne 'Home') {
+            $UndecidedSubscriptions.Add([PSCustomObject]@{
+                    SubscriptionId = $Verdict.SubscriptionId
+                    Scope          = $Verdict.Scope
+                    Reason         = $Verdict.Reason
+                })
+            continue
+        }
         if ($Sub.ResourceId) { $Scopes.Add([string]$Sub.ResourceId) }
         $SubNodes.Add([PSCustomObject]@{
             subscriptionId = [string]$Sub.SubscriptionId
@@ -121,7 +195,10 @@ function Resolve-OERInventoryScopeTree {
             managementGroups = $MgNodes.ToArray()
             subscriptions    = $SubNodes.ToArray()
         }
-        SkippedScopes = $SkippedScopes.ToArray()
+        SkippedScopes          = $SkippedScopes.ToArray()
+        ForeignSubscriptions   = $ForeignSubscriptions.ToArray()
+        UndecidedSubscriptions = $UndecidedSubscriptions.ToArray()
     }
+    & $WarnUndecided
     $Out
 }
