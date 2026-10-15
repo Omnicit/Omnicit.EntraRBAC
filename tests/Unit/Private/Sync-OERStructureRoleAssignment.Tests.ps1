@@ -1833,6 +1833,8 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
                 $Out.Rows[0].Item | Should -BeExactly "Reader -> $($script:PsGone) @ $($script:PsSub)"
                 $Out.Rows[0].Detail | Should -BeExactly (Get-PsSkippedDetail -Status $Status -Principal $script:PsGone)
                 $Out.Warnings.Count | Should -Be 0
+                # These three cannot fail for an object id, which Resolve-OERStructurePrincipal returns unread; 'reports Failed, with no
+                # lookup, read or write, ...' and 'resolves the key of a principalStatus sibling that is not an object id ...' prove no lookup.
                 Should -Invoke Resolve-OERUserId -Times 0
                 Should -Invoke Resolve-OERGroupId -Times 0
                 Should -Invoke Resolve-OERApplicationId -Times 0

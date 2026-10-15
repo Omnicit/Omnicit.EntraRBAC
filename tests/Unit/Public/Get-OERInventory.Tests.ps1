@@ -96,7 +96,7 @@ Describe 'Get-OERInventory' {
         # Sprint 11 step 6 (BL-133): a role assignment principal the directory did not return is looked for
         # among its deleted items. No fixture in this Describe means that: a principal its name map does not
         # hold fails here, loudly, rather than through the transport. The Describe 'Get-OERInventory role
-        # assignment principals that could not be looked up' drives the real read.
+        # assignment principals the directory did not return, or whose lookup failed' drives the real read.
         Mock -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus { throw "unexpected deleted items read: $Id" }
     }
 
@@ -3445,7 +3445,7 @@ Describe 'Get-OERInventory' {
             $Help | Should -Match ([regex]::Escape('The root scope is decided first, so a role assignment at the root scope whose spelling is refused too is named only as described above'))
             $Help | Should -Match ([regex]::Escape('(RoleAssignmentId, Scope, Role, Principal, PrincipalType and Reason, which names the rules the scope breaks in words)'))
             $Help | Should -Match ([regex]::Escape('it is not looked for among the deleted items, a failed lookup of it is not reported, and it never changes how another role assignment is named'))
-            # Task 7 (Sprint 11 step 6): the help names where the rules are listed instead of repeating them,
+            # Sprint 11 step 6: the help names where the rules are listed instead of repeating them,
             # so a rule added to Get-OERScopeSpellingProblem cannot leave this text silently incomplete.
             $Help | Should -Match ([regex]::Escape('(Test-OERStructure refuses such a scope as an Error; about_Omnicit.EntraRBAC lists the rules under RENAMES, MAIL ALIASES AND SCOPE SPELLING)'))
             $Help | Should -Not -Match ([regex]::Escape("a '.' or '..' segment, a '%', a '\', a '?' or a '#', a trailing or doubled '/'"))
@@ -7663,7 +7663,7 @@ Describe 'Get-OERInventory' {
     }
 }
 
-Describe 'Get-OERInventory role assignment principals that could not be looked up (Sprint 11 step 6, BL-133, A18)' {
+Describe 'Get-OERInventory role assignment principals the directory did not return, or whose lookup failed (Sprint 11 step 6, BL-133, A18)' {
     # A role assignment can name a principal the directory does not return. The section looks every
     # principal up with Resolve-OERPrincipalName -Detailed and tells three cases apart: a principal it
     # returned (written by its name), one a successful lookup did not return (written by its object id
@@ -7826,7 +7826,7 @@ Describe 'Get-OERInventory role assignment principals that could not be looked u
         @($Rows[0].PSObject.Properties.Name) | Should -Be @('RoleAssignmentId', 'Scope', 'Role', 'Principal', 'PrincipalType', 'PrincipalStatus', 'StatusRead')
         "$($Rows[0].RoleAssignmentId)|$($Rows[0].Scope)|$($Rows[0].Role)|$($Rows[0].Principal)|$($Rows[0].PrincipalType)|$($Rows[0].PrincipalStatus)" |
             Should -Be "$($script:UpSub)/providers/Microsoft.Authorization/roleAssignments/$($script:UpGone)-Reader|$($script:UpSub)|Reader|$($script:UpGone)|User|Deleted"
-        # A Deleted status was read (fix round 1, F1).
+        # A Deleted status was read.
         $Rows[0].StatusRead | Should -BeOfType ([bool])
         $Rows[0].StatusRead | Should -BeTrue
         (Get-UpPartial -Record @($InvErr)).Count | Should -Be 0
@@ -7898,7 +7898,7 @@ Describe 'Get-OERInventory role assignment principals that could not be looked u
         [string]$Partial[0].TargetObject | Should -BeExactly "roleAssignments/Reader -> $($script:UpDenied) @ $($script:UpSub)/principalStatus"
         $Partial[0].Exception.Message | Should -BeLike "*Could not read whether the principal of a role assignment is among the directory's deleted items: Insufficient privileges to complete the operation.*"
         [string]$W[0].Message | Should -BeExactly (Get-UpWarningText -Count 1)
-        # The record says the status was not read, so no reason is given for it as a fact (fix round 1, F1).
+        # The record says the status was not read, so no reason is given for it as a fact.
         $Row = @(@($Info | Where-Object { $_.Tags -contains $script:UpTag })[0].MessageData.Assignments)[0]
         "$($Row.PrincipalStatus)|$($Row.StatusRead)" | Should -Be 'Unresolved|False'
         $Row.StatusRead | Should -BeOfType ([bool])
@@ -8018,12 +8018,12 @@ Describe 'Get-OERInventory role assignment principals that could not be looked u
         $Help | Should -Match ([regex]::Escape('principalStatus'))
         $Help | Should -Match ([regex]::Escape('Omnicit.EntraRBAC.UnresolvedPrincipal'))
         $Help | Should -Match ([regex]::Escape('principalType is written for every role assignment whose principal type is a user, a group (a ForeignGroup included) or a service principal'))
-        # Fix round 1: the case is named for what it is (F2), and the read counts claim no more than holds (F4).
+        # The case is named for what it is, and the read counts claim no more than holds.
         $Help | Should -Match ([regex]::Escape('A principal the directory did not return is written by its object id with principalStatus'))
         $Help | Should -Match ([regex]::Escape('in batches of up to 1000 ids, one request per batch'))
         $Help | Should -Match ([regex]::Escape('an answer that was read is kept for the rest of the call, and under Export-OERInventory for the rest of the export, while a read that fails is not kept and is sent again for the next role assignment that needs it'))
         $Help | Should -Match ([regex]::Escape('its principal is looked up like any other, which is how the root list names it, but it is not looked for among the deleted items, and a failed lookup of it is not reported'))
-        # Task 7 fix round 1: -Prune removes such an assignment only at a scope the document still declares.
+        # -Prune removes such an assignment only at a scope the document still declares.
         $Help | Should -Match ([regex]::Escape('Invoke-OERStructure never creates it, and removing the entry lets -Prune remove it, like any undeclared assignment, at a scope the document still declares.'))
         $Help | Should -Not -Match ([regex]::Escape('nothing about its principal is read'))
         $Help | Should -Not -Match ([regex]::Escape('one batched directoryObjects/getByIds request per call'))

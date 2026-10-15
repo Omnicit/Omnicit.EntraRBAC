@@ -873,7 +873,7 @@ Describe 'Get-OERInventoryReadme (role assignments whose principal the directory
             @($Section -split '\r?\n' | Where-Object { $_ -like '- *' })
         }
         # The row shape of the Omnicit.EntraRBAC.UnresolvedPrincipal notice; StatusRead says whether the
-        # deleted items read behind PrincipalStatus succeeded (fix round 1, F1).
+        # deleted items read behind PrincipalStatus succeeded.
         function New-UpRow {
             param([string]$Scope, [string]$Role, [string]$Principal, [string]$PrincipalType, [string]$PrincipalStatus, [bool]$StatusRead = $true, [string]$RoleAssignmentId = '')
             [PSCustomObject]@{
@@ -888,7 +888,7 @@ Describe 'Get-OERInventoryReadme (role assignments whose principal the directory
         $script:UpUnknownReason = 'not returned by the directory, and the read of its deleted items failed, so the reason is not known; that read is named under "What this export could not read"'
     }
 
-    It 'gives an Unresolved row whose deleted items read failed no reason as a fact, and says why (F1)' {
+    It 'gives an Unresolved row whose deleted items read failed no reason as a fact, and says why' {
         $Section = Get-UpSection -Readme (Get-UpReadme -Rows @(
                 (New-UpRow -Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -Role 'Reader' -Principal 'dddd7777-0000-0000-0000-000000000021' -PrincipalType 'User' -PrincipalStatus 'Unresolved' -StatusRead $false)
                 (New-UpRow -Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -Role 'Owner' -Principal 'dddd7777-0000-0000-0000-000000000022' -PrincipalType 'User' -PrincipalStatus 'Unresolved' -StatusRead $true)
@@ -1032,7 +1032,7 @@ Describe 'Get-OERInventoryReadme (role assignments at a scope no document can de
                 PrincipalType = $PrincipalType; Reason = $Reason
             }
         }
-        # Task 7 (Sprint 11 step 6): the prose gives an example and leaves the rules to the owner
+        # Sprint 11 step 6: the prose gives an example and leaves the rules to the owner
         # (Get-OERScopeSpellingProblem) and to each row's reason, so a new rule cannot leave it incomplete.
         $script:UdProse = 'Azure Resource Manager can return a role assignment at a scope whose spelling the validator (`Test-OERStructure`, which `Invoke-OERStructure` runs first) refuses, for example the scope of a resource whose name holds a `#` or a `%`. Where this section lists an assignment, its entry names the rules its scope breaks. No document can declare such a scope, and a document that carried one would be refused as a whole, so `inventory.json` and `roleAssignments.json` leave the assignment out. `Invoke-OERStructure` never creates a role assignment at such a scope, and never removes one, since it prunes only at a scope a document declares. A role assignment at the root scope is listed under "Role assignments at the root scope (elevated access)" only. Leaving them out of the export changes nothing in the tenant.'
         $script:UdNone = 'None. No role assignment this export read is at a scope a document cannot declare. Role assignments are read only when the export includes `RoleAssignments`.'

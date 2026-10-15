@@ -605,7 +605,7 @@ Describe 'Get-OERInventoryPromptTemplate unresolved principals, undeclarable sco
             $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
             $T | Should -Match ([regex]::Escape('Invoke-OERStructure looks no principal up for such an entry and never creates the assignment'))
             $T | Should -Match ([regex]::Escape('Never invent, guess or substitute a principal for it, never remove principalStatus from it, and never write principalStatus on an entry yourself'))
-            # Fix round 1: the reasons for an id without a status are hedged, not a closed list.
+            # The reasons for an id without a status are hedged, not a closed list.
             $T | Should -Match ([regex]::Escape('a principal written as an object id WITHOUT principalStatus is one the export did not, or could not, write by name -- among other reasons a group whose name another group shares, a principal whose lookup failed'))
             $T | Should -Match ([regex]::Escape('or a principal that is not a user, group or service principal: keep it as it is.'))
         }

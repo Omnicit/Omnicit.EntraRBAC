@@ -290,9 +290,9 @@ function Get-OERInventory {
     a document that carried it would be refused as a whole. Invoke-OERStructure never creates a role
     assignment at such a scope, and never removes one, since it prunes only at a scope a document
     declares. The root scope is decided first, so a role assignment at the root scope whose spelling
-    is refused too is named only as described above. One warning counts such
-    assignments, and an information record tagged Omnicit.EntraRBAC.UndeclarableScope hands the caller
-    the rows (RoleAssignmentId, Scope, Role, Principal, PrincipalType and Reason, which names the rules
+    is refused too is named only as described above. One warning counts such assignments, and an
+    information record tagged Omnicit.EntraRBAC.UndeclarableScope hands the caller the rows
+    (RoleAssignmentId, Scope, Role, Principal, PrincipalType and Reason, which names the rules
     the scope breaks in words) and the warning's text; under the default $InformationPreference the
     record is not displayed. Under a Stop warning preference the command stops at that warning, before
     it returns the inventory. Such a role assignment's principal is looked up like any other, which is
@@ -591,9 +591,10 @@ function Get-OERInventory {
             }
         }
         # Sprint 11 step 6 (BL-133, A18): where the RoleAssignments section keeps what it learns about a
-        # principal the directory did not return. The answers of the deleted items read are kept per
-        # principal, under the export's run context in its PrincipalStatus dictionary (one read per
-        # principal for the whole export), and otherwise in this invocation's own dictionary. A principal
+        # principal the directory did not return. The answers of the deleted items read that succeeded are
+        # kept per principal, under the export's run context in its PrincipalStatus dictionary (one read per
+        # principal for the whole export while that read succeeds), and otherwise in this invocation's own
+        # dictionary; a read that fails is not kept, so the next row that needs it reads again. A principal
         # whose lookup or deleted items read failed is named unread: under a run context in the context's
         # UnreadPrincipal and UnreadPrincipalCause lists, which Export-OERInventory names in its
         # IncompleteReads and its own InventoryPartial -- the export calls this command per Azure scope
@@ -1527,9 +1528,10 @@ function Get-OERInventory {
                 # collision pass, so the role and principal named here are the ones written.
                 #   - A failed lookup: the row keeps its object id and principalType, carries no
                 #     principalStatus, and is named unread as '<...>/principal' with its cause.
-                #   - Not found: the principal is looked for once among the directory's deleted items
-                #     (Get-OERDeletedPrincipalStatus; once per export under a run context, once per call
-                #     otherwise), and principalStatus says Deleted or Unresolved, directly after
+                #   - Not found: the principal is looked for among the directory's deleted items
+                #     (Get-OERDeletedPrincipalStatus; a read that succeeds is kept, for the whole export under
+                #     a run context and for the call otherwise, and a read that fails is sent again by the next
+                #     row that needs it), and principalStatus says Deleted or Unresolved, directly after
                 #     principalType (after principal when there is none). When that read fails the row
                 #     is Unresolved -- the lookup succeeded and did not return the principal, so it is
                 #     certainly not a live object the engine could create an assignment for; only the
@@ -1553,8 +1555,8 @@ function Get-OERInventory {
                             -Cause "Could not read whether the principal of a role assignment is among the directory's deleted items: $($StatusAnswer.Cause)" `
                             -Target ([string]$Row.Ra.PrincipalId)
                     }
-                    # StatusRead (fix round 1, F1): whether the deleted items read behind the status
-                    # succeeded, so a reader never takes the reason of an unread Unresolved as a fact.
+                    # StatusRead: whether the deleted items read behind the status succeeded, so a reader
+                    # never takes the reason of an unread Unresolved as a fact.
                     $RaStatusRows.Add([PSCustomObject]@{ Row = $Row; StatusRead = ($StatusAnswer.Read -eq $true) })
                 }
                 foreach ($Row in $RaProjected) { $RoleAssignments.Add([PSCustomObject]$Row.Proj) }

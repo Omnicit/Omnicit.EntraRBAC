@@ -4390,7 +4390,7 @@ Describe 'Invoke-OERStructure never creates a role assignment for a principalSta
         $Help = Get-Help Invoke-OERStructure -Full
         $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
         $Description | Should -Match ([regex]::Escape('A roleAssignments entry that declares principalStatus (Deleted or Unresolved), which Get-OERInventory and Export-OERInventory write for a role assignment whose principal the directory did not return, names its principal by object id and is never created: no principal is looked up for it, and where the entry would create the assignment it is reported Skipped, with a Detail starting "principalStatus ''<value>'':", with no ShouldProcess prompt and nothing written, so -WhatIf and a real run report the same row.'))
-        # Task 7 (Sprint 11 step 6): the advice is the Skipped Detail's -- keep or remove the entry, or name a
+        # Sprint 11 step 6: the advice is the Skipped Detail's -- keep or remove the entry, or name a
         # principal that exists and remove principalStatus to have the assignment created.
         $Description | Should -Match ([regex]::Escape('The same document without the entry lets -Prune remove that assignment like any undeclared one. Such an entry is kept as the export wrote it, or removed; to have the assignment created, name a principal that exists and remove principalStatus, as the Skipped row says.'))
         $Description | Should -Not -Match ([regex]::Escape('To apply such an entry, remove it'))

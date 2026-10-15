@@ -29,8 +29,9 @@ function Get-OERDeletedPrincipalStatus {
 
     .PARAMETER Cache
     A dictionary that keeps the answers read, keyed on the lower-cased id. Export-OERInventory hands its
-    run context's PrincipalStatus dictionary here, so an id is read once per export; Get-OERInventory
-    alone hands one that lives for its own invocation. Without it every call reads.
+    run context's PrincipalStatus dictionary here, so an id whose read succeeds is read once per export;
+    Get-OERInventory alone hands one that lives for its own invocation. A read that fails is not kept,
+    so the next call for that id reads again. Without it every call reads.
 
     .EXAMPLE
     Get-OERDeletedPrincipalStatus -Id '11111111-1111-1111-1111-111111111111' -Cache $Cache

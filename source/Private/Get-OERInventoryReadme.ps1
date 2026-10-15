@@ -432,8 +432,8 @@ export changes nothing in the tenant.
     foreach ($Entry in @($UnresolvedPrincipalAssignments)) {
         $UnresolvedType = [string]$Entry.PrincipalType
         $UnresolvedStatus = [string]$Entry.PrincipalStatus
-        # Fix round 1 (F1): an Unresolved status whose deleted items read failed was never searched for, so
-        # its reason is not stated as a fact. Only an explicit StatusRead true counts as read.
+        # An Unresolved status whose deleted items read failed was never searched for, so its reason is not
+        # stated as a fact. Only an explicit StatusRead true counts as read.
         $UnresolvedReason = if ($UnresolvedStatus -eq 'Deleted') {
             'found among the directory''s deleted items'
         } elseif ($Entry.StatusRead -ne $true) {

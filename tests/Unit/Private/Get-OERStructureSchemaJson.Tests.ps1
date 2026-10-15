@@ -134,7 +134,7 @@ Describe 'Get-OERStructureSchemaJson' {
             $Prop.description | Should -Match 'object id'
             $Prop.description | Should -Match 'never creates'
             $Prop.description | Should -Match 'Skipped'
-            # Task 7 (Sprint 11 step 6): a live assignment is matched as for any entry (Updated on declared
+            # Sprint 11 step 6: a live assignment is matched as for any entry (Updated on declared
             # drift, Skipped when inherited), and the advice is the engine's Skipped Detail's.
             $Prop.description | Should -Match ([regex]::Escape('is matched as for any entry -- Unchanged, or Updated when the declared description, condition or conditionVersion differ -- and kept by -Prune while the entry is declared; one inherited from an ancestor scope is reported Skipped'))
             $Prop.description | Should -Match ([regex]::Escape('Keep such an entry as exported, or remove it; to have the assignment created, name a principal that exists and remove principalStatus'))
@@ -1308,7 +1308,7 @@ Describe 'Get-OERStructureSchemaJson renames of administrative units, catalogs a
             # The section description keeps what it said about the update and the match key, and adds the rename.
             $Reviews.description | Should -Match ([regex]::Escape('displayName is the match key: an existing review is updated in place only when it reviews the declared accessPackage and assignmentPolicy; otherwise the entry fails and nothing is written.'))
             $Reviews.description | Should -Match ([regex]::Escape('To rename a review, declare its new name as displayName and its current name (or object id) as previousDisplayName: the name is looked up tenant-wide, as displayName is, and the review found under either name must review the declared accessPackage and assignmentPolicy, or the entry fails and nothing is written. When the same document renames the access package or the policy, name it by its new name (or object id) here.'))
-            # BL-147 (Sprint 11 step 6, Task 7): a package the same document declares is reached through its entry.
+            # BL-147 (Sprint 11 step 6): a package the same document declares is reached through its entry.
             $Reviews.description | Should -Match ([regex]::Escape('An accessPackage named by the displayName of an accessPackages entry of the same document is the package that entry found in its catalog or created there, never one of that name in another catalog'))
             $Reviews.description | Should -Match ([regex]::Escape('When two or more accessPackages entries declare that name, as displayName or previousDisplayName, the offline validator refuses the document: name the access package by its object id.'))
         }

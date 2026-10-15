@@ -225,7 +225,7 @@ Describe 'Resolve-OERPrincipalName' {
             @{ Case = 'an empty answer'; NoValueKey = $false }
             @{ Case = 'an answer with no value'; NoValueKey = $true }
         ) {
-            # Fix round 1 (F5): an answer with no value says nothing about the ids, so none of them is read
+            # An answer with no value says nothing about the ids, so none of them is read
             # as one the directory did not return. The default map is left exactly as it was.
             InModuleScope $script:moduleName -Parameters @{ NoValueKey = $NoValueKey } {
                 param($NoValueKey)
