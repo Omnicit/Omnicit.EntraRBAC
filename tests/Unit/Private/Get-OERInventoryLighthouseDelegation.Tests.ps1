@@ -694,12 +694,15 @@ Describe 'Get-OERInventoryLighthouseDelegation' {
             $DefAlphaT2 = New-LhDefinition -Sub $script:SubA -Guid '12121212-0000-0000-0000-00000000000c' -Offer 'Alpha' -Tenant $T2
             $DefBeta = New-LhDefinition -Sub $script:SubB -Guid '12121212-0000-0000-0000-00000000000d' -Offer 'Beta' -Tenant $T1
             $Rows = @(
-                # Handed over in an order that is none of the sort orders.
+                # Handed over in an order that is none of the sort orders. Each of the four keys decides one
+                # pair: the group's row differs from the others in scope only, the 99 tenant in tenant only,
+                # Zeta against Alpha in offer only (its id is the lowest), and the two Alpha rows in id only
+                # (handed over highest first).
                 New-LhAssignment -At $PathA -Guid '12121212-0000-0000-0000-000000000005' -Definition $DefAlphaT2 -Expand
                 New-LhAssignment -At "$PathA/resourceGroups/rg1" -Guid '12121212-0000-0000-0000-000000000001' -Definition $DefAlphaT1 -Expand
-                New-LhAssignment -At $PathA -Guid '12121212-0000-0000-0000-000000000004' -Definition $DefZetaT1 -Expand
+                New-LhAssignment -At $PathA -Guid '12121212-0000-0000-0000-000000000002' -Definition $DefZetaT1 -Expand
+                New-LhAssignment -At $PathA -Guid '12121212-0000-0000-0000-000000000004' -Definition $DefAlphaT1 -Expand
                 New-LhAssignment -At $PathA -Guid '12121212-0000-0000-0000-000000000003' -Definition $DefAlphaT1 -Expand
-                New-LhAssignment -At $PathA -Guid '12121212-0000-0000-0000-000000000002' -Definition $DefAlphaT1 -Expand
             )
             $script:Replies["$PathA$($script:AssignmentQuery)"] = New-LhList $Rows
             $script:Replies["$PathA$($script:DefinitionQuery)"] = New-LhList @($DefAlphaT1, $DefZetaT1, $DefAlphaT2)
@@ -718,9 +721,9 @@ Describe 'Get-OERInventoryLighthouseDelegation' {
                     '{0}|{1}|{2}|{3}' -f $_.scope.Replace($script:SubA, 'A').Replace($script:SubB, 'B'), $_.managedByTenantId.Substring(0, 2), $_.offerName, $_.registrationAssignmentId.Substring($_.registrationAssignmentId.Length - 2)
                 })
             $Order | Should -Be @(
-                '/subscriptions/A|33|Alpha|02'
                 '/subscriptions/A|33|Alpha|03'
-                '/subscriptions/A|33|Zeta|04'
+                '/subscriptions/A|33|Alpha|04'
+                '/subscriptions/A|33|Zeta|02'
                 '/subscriptions/A|99|Alpha|05'
                 '/subscriptions/A/resourceGroups/rg1|33|Alpha|01'
                 '/subscriptions/B|33|Beta|06'
