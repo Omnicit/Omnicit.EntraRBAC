@@ -103,10 +103,11 @@ function Invoke-OERStructure {
     above), existing ones included -- even when the rename was done in an earlier run: include the
     section, or remove previousDisplayName once the new name resolves. Leaving out the accessPackages
     section refuses, besides, every access review that names an access package the document declares
-    by its display name, whether or not that entry renames (see the next paragraph). A refusal because -Include
-    leaves the section out publishes no error record, only the Failed row, so -ErrorAction Stop and
-    $? do not see it: check the rows. Test-OERStructure warns on a reference that still names a
-    renamed object by its previous name, and refuses a document in which an access review names by
+    by its display name, whether or not that entry renames (see the next paragraph). A refusal
+    because -Include leaves the section out publishes no error record, only the Failed row, so
+    -ErrorAction Stop and $? do not see it: check the rows. Test-OERStructure warns on a reference
+    that still names a renamed object by its previous name, and refuses a document in which an access
+    review names by
     display name an access package that two or more accessPackages entries declare, renamed or not
     (the map keys a package by its name alone): name that package by its object id.
 
@@ -269,8 +270,9 @@ function Invoke-OERStructure {
     Unchanged (Updated when the declared condition, conditionVersion or description differ, and an
     assignment inherited from an ancestor scope is Skipped as before), and -Prune keeps it while the
     entry is declared. The same document without the entry lets -Prune remove that assignment like any
-    undeclared one. To apply such an entry, remove it, or name a principal that exists and remove
-    principalStatus. A principalStatus entry whose principal is not an object id fails validation.
+    undeclared one. Such an entry is kept as the export wrote it, or removed; to have the assignment
+    created, name a principal that exists and remove principalStatus, as the Skipped row says. A
+    principalStatus entry whose principal is not an object id fails validation.
 
     An access package that has to be created in the catalog it declares while a package of that name
     exists in another catalog is reported Failed, with nothing written to that package or for the

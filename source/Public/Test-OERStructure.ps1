@@ -69,6 +69,18 @@ function Test-OERStructure {
     and the policies within it, by the package's name, without its catalog, so the run cannot tell
     which package the review means. Name the access package by its object id.
 
+    A groups entry that uses PIM for Groups -- it declares a pimPolicy, or an eligibility with at least
+    one entry -- in a restricted management administrative unit the same document declares (an
+    administrativeUnits entry whose restricted is true) is a Warning, never an Error: at the group's
+    administrativeUnit when it names such a unit, by display name or by the id the unit's entry
+    declares, and at the group when such a unit lists the group in its members, by its name or its
+    declared id. Microsoft Learn states that Privileged Identity Management does not support a group in
+    a restricted management administrative unit; Invoke-OERStructure still sends the PIM settings and
+    eligibility the document declares for such a group, and what Microsoft Graph answers to those
+    writes has not been measured. A document Export-OERInventory writes raises neither Warning, since
+    its groups carry no object id and no administrativeUnit; the export names such groups in its own
+    warning and in its README.md instead.
+
     A top-level tenantId, when present, must be a string holding a canonical GUID (an explicit null, a
     value that is not a string, such as an array, or any other value is an Error; a document without
     the key is valid). The check is offline: Test-OERStructure does not compare tenantId with any

@@ -282,10 +282,10 @@ function Get-OERInventory {
     for among the deleted items, and a failed lookup of it is not reported -- the root list names it
     by its object id.
 
-    A role assignment whose scope breaks a scope spelling rule the validator applies -- a '.' or '..'
-    segment, a '%', a '\', a '?' or a '#', a trailing or doubled '/', or white space at the start or
-    end of the scope or of a segment, white space other than a space, or a control character, as the
-    name of a resource can hold -- is left out of the RoleAssignments section too: no document can
+    A role assignment whose scope breaks a scope spelling rule the validator applies, as the scope of
+    a resource whose name holds a '#' or a '%' does for example (Test-OERStructure refuses such a scope
+    as an Error; about_Omnicit.EntraRBAC lists the rules under RENAMES, MAIL ALIASES AND SCOPE
+    SPELLING), is left out of the RoleAssignments section too: no document can
     declare that scope, so a document that carried it would be refused as a whole. Invoke-OERStructure
     never creates a role assignment at such a scope, and never removes one, since it prunes only at a
     scope a document declares. The root scope is decided first, so a role assignment at the root scope

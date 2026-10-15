@@ -77,8 +77,10 @@ function Get-OERInventoryReadme {
     found. That parameter is mandatory for the same reason as the six above.
 
     Directly after it comes the section "Role assignments at a scope no document can declare" (A13,
-    A15). It says which scope spellings the validator refuses, that no document can declare such a
-    scope and a document that carried one would be refused as a whole, so inventory.json and
+    A15). It says that the validator refuses the spelling of such a scope, with a resource name that
+    holds a '#' or a '%' as its example and without listing the rules (Get-OERScopeSpellingProblem
+    owns them, and each row's Reason names the ones its scope breaks), that no document can declare
+    such a scope and a document that carried one would be refused as a whole, so inventory.json and
     roleAssignments.json leave the assignment out, that Invoke-OERStructure never creates a role
     assignment at such a scope and never removes one, since it prunes only at a scope a document
     declares, that a role assignment at the root scope is listed in the root scope section only, and
@@ -475,12 +477,11 @@ principal is listed here as `Unresolved` with the reason not known, and that rea
 ## Role assignments at a scope no document can declare
 
 Azure Resource Manager can return a role assignment at a scope whose spelling the validator
-(`Test-OERStructure`, which `Invoke-OERStructure` runs first) refuses: a scope with a `.` or `..`
-segment, a `%`, a `\`, a `?` or a `#`, a trailing or doubled `/`, or white space at the start or end
-of the scope or of a segment, white space other than a space, or a control character -- the name of
-a resource can hold one of these. No document can declare such a scope, and a document that carried
-one would be refused as a whole, so `inventory.json` and `roleAssignments.json` leave the assignment
-out. `Invoke-OERStructure` never creates a role assignment at such a scope, and never removes one,
+(`Test-OERStructure`, which `Invoke-OERStructure` runs first) refuses, for example the scope of a
+resource whose name holds a `#` or a `%`; each entry below names the rules its scope breaks. No
+document can declare such a scope, and a document that carried one would be refused as a whole, so
+`inventory.json` and `roleAssignments.json` leave the assignment out. `Invoke-OERStructure` never
+creates a role assignment at such a scope, and never removes one,
 since it prunes only at a scope a document declares. A role assignment at the root scope is listed
 under "Role assignments at the root scope (elevated access)" only. Leaving them out of the export
 changes nothing in the tenant.

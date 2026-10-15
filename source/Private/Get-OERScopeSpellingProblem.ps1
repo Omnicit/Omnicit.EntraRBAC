@@ -30,6 +30,13 @@ function Get-OERScopeSpellingProblem {
     ConvertTo-OERScopeSplat owns that syntax, so the exemption asks it: only a scope it returns as
     @{ Scope = ... } is checked.
 
+    This help is the one list of the rules in the module's code. The help of Get-OERInventory and
+    Export-OERInventory and the bundle README Get-OERInventoryReadme writes give an example and do not
+    repeat them; README.md, the about topic and the scope descriptions of Get-OERStructureSchemaJson
+    list them for their readers, and a rule added here is added there too, and to the words
+    Get-OERInventory gives each Rule in the Reason of its UndeclarableScope record (a Rule it has no
+    words for is named there by its Rule name).
+
     Returns one PSCustomObject per broken rule, in the order the validator reports them -- Slash, then
     DotSegment, Escape, Backslash, QueryOrFragment and WhiteSpace -- with Rule (one of those six names)
     and Message (the validator's exact message for the scope at -Path). Returns nothing for a scope that

@@ -42,12 +42,14 @@ function Sync-OERStructureRoleAssignment {
     the matching live assignment, and a document without the entry lets -Prune remove that assignment
     like any undeclared one.
 
-    Per-item processing:
+    Per-item processing (after the root scope check above):
     1. Resolve the principal object id via Resolve-OERStructurePrincipal (returns $null -> Failed + return).
        When the document item has an optional 'principalType' property (User, Group, or ServicePrincipal),
        the type hint is forwarded to Resolve-OERStructurePrincipal via -Type. Without principalType the
        existing heuristic applies: an '@'-containing value triggers a user lookup; anything else triggers
-       a group-then-user lookup.
+       a group-then-user lookup. An entry that declares principalStatus is the exception: its principal
+       is taken as the object id it names, with no lookup, and one that is not an object id is Failed +
+       return, with no lookup and no error record.
     2. Resolve the full ARM role definition id via Resolve-OERRoleDefinitionId (throws -> Failed + return).
     3. Read current at-scope assignments via Get-OERRoleAssignment -AtScope -ErrorAction Stop (fails ->
        Failed + return, so a failed read is never taken as an empty list and no prune pass runs).
@@ -70,8 +72,10 @@ function Sync-OERStructureRoleAssignment {
        the ancestor one. It is reported as a Skipped record naming the ancestor scope and the assignment
        id, with a warning. A current assignment carrying no Scope value at all counts as at-scope, the
        same convention the prune pass below uses.
-    5. Otherwise (no assignment for this principal+role anywhere at or above the scope) gate via
-       $Caller.ShouldProcess:
+    5. Otherwise (no assignment for this principal+role anywhere at or above the scope), an entry that
+       declares principalStatus is reported Skipped with its "principalStatus '<value>':" Detail (5a),
+       with no ShouldProcess and no New-OERRoleAssignment, the same row under -WhatIf and in a real run;
+       any other entry is gated via $Caller.ShouldProcess:
        - Under -WhatIf (returns $false): emit Skipped with planned-action Detail.
        - Otherwise: call New-OERRoleAssignment (throws -> Failed; succeeds -> Created inside try),
          forwarding the declared description, condition and conditionVersion (conditionVersion
@@ -83,7 +87,8 @@ function Sync-OERStructureRoleAssignment {
 
     Scope-wide prune pass (only when -ReconcileScope is set):
     After reconciling this item the handler resolves the principal and role of every sibling in
-    $DeclaredAtScope into a declared '<principal object id>|<role definition GUID>' key set, then
+    $DeclaredAtScope (the principal of a sibling that declares principalStatus is taken as written, as
+    in step 1, with no lookup) into a declared '<principal object id>|<role definition GUID>' key set, then
     iterates $Current and compares each assignment against it. The key holds the role definition's
     GUID (the last segment of its id), compared without regard to letter case, never the whole path,
     for the reason step 4 gives. Only assignments DEFINED at this scope are
@@ -102,7 +107,8 @@ function Sync-OERStructureRoleAssignment {
     - Otherwise, without -Prune: emit Extra (informational).
 
     A sibling in $DeclaredAtScope whose principal or role lookup gives nothing, or throws, carries no
-    key, so the pass cannot tell which live assignment it names -- its own live counterpart would look
+    key (and so does one that declares principalStatus with a principal that is not an object id), so
+    the pass cannot tell which live assignment it names -- its own live counterpart would look
     undeclared. Such a sibling therefore withholds the prune for the WHOLE scope: every undeclared
     candidate at this scope is reported Skipped, with a Detail that starts
     "prune withheld: declared entry '<role> -> <principal> @ <scope>' could not be resolved"

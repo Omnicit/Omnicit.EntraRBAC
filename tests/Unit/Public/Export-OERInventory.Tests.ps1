@@ -4761,6 +4761,10 @@ Describe 'Export-OERInventory (names two or more objects share, BL-131)' {
         $Help | Should -Match ([regex]::Escape('Groups are counted over every group in the tenant, the roster''s unfiltered listing, so a security group that shares its name with a Microsoft 365 group or a distribution group is left out too; when the roster could not be read, they are counted among the security-enabled groups the export reads.'))
         $Help | Should -Match ([regex]::Escape('The export writes ONE warning that gives how many names were left out and how many objects carry them in all.'))
         $Help | Should -Match ([regex]::Escape('in a section "Names two or more objects share", directly after "Role assignments at the root scope (elevated access)"'))
+        # Sprint 11 step 6 (R-1): the group name index is built once per export, and the sentence that says
+        # so names its own subject (the earlier "That index" had no antecedent).
+        $Help | Should -Match ([regex]::Escape('Whether a group named as the principal of a role assignment or a directory role assignment is written by its display name or by its object id is decided over an index of every group''s display name, which the export builds once for the whole export -- from the roster when it was read, otherwise with one listing of every group -- and never once per Azure scope.'))
+        $Help | Should -Not -Match 'That index of every group'
     }
 }
 
@@ -5118,8 +5122,9 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
         $Description | Should -Match ([regex]::Escape('The Azure scope is never skipped for either.'))
         # Fix round 1 (F4): one read per principal for the whole export holds only for a read that succeeded.
         $Description | Should -Match ([regex]::Escape('A principal is looked for among the deleted items once for the whole export when that read succeeds, however many Azure scopes read the assignment; a read that fails is not kept, and is sent again by the next scope that needs it.'))
-        # Fix round 1 (F3): the README lists the principal entries under a label of their own.
-        $Description | Should -Match ([regex]::Escape('a role assignment principal that could not be read and an Azure scope where role management policies could not be judged, each under a label of its own'))
+        # Fix round 1 (F3): the README lists the principal entries under a label of their own. Sprint 11
+        # step 6, Task 7: they are IncompleteReads entries, and the help says so.
+        $Description | Should -Match ([regex]::Escape('one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes entry -- among the IncompleteReads entries, those of a role assignment principal that could not be read and those of an Azure scope where role management policies could not be judged each under a label of its own -- or the statement that nothing was left unread'))
     }
 
     Context 'the rows the per-scope calls hand over' {
@@ -5472,6 +5477,10 @@ Describe 'Export-OERInventory (role assignments at a scope no document can decla
         $Description | Should -Match ([regex]::Escape('inventory.json and roleAssignments.json never carry one'))
         $Description | Should -Match ([regex]::Escape('in a section "Role assignments at a scope no document can declare", directly after "Role assignments whose principal the directory did not return"'))
         $Description | Should -Match ([regex]::Escape('the warning on role assignments at a scope no document can declare'))
+        # Task 7 (Sprint 11 step 6): the help names where the rules are listed instead of repeating them,
+        # so a rule added to Get-OERScopeSpellingProblem cannot leave this text silently incomplete.
+        $Description | Should -Match ([regex]::Escape('about_Omnicit.EntraRBAC lists the scope spelling rules under RENAMES, MAIL ALIASES AND SCOPE SPELLING'))
+        $Description | Should -Not -Match ([regex]::Escape("a '.' or '..' segment, a '%', a '\', a '?' or a '#', a trailing or doubled '/'"))
     }
 
     Context 'the rows the per-scope calls hand over' {

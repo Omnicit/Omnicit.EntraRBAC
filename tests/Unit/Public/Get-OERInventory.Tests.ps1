@@ -3445,6 +3445,10 @@ Describe 'Get-OERInventory' {
             $Help | Should -Match ([regex]::Escape('The root scope is decided first, so a role assignment at the root scope whose spelling is refused too is named only as described above'))
             $Help | Should -Match ([regex]::Escape('(RoleAssignmentId, Scope, Role, Principal, PrincipalType and Reason, which names the rules the scope breaks in words)'))
             $Help | Should -Match ([regex]::Escape('it is not looked for among the deleted items, a failed lookup of it is not reported, and it never changes how another role assignment is named'))
+            # Task 7 (Sprint 11 step 6): the help names where the rules are listed instead of repeating them,
+            # so a rule added to Get-OERScopeSpellingProblem cannot leave this text silently incomplete.
+            $Help | Should -Match ([regex]::Escape('(Test-OERStructure refuses such a scope as an Error; about_Omnicit.EntraRBAC lists the rules under RENAMES, MAIL ALIASES AND SCOPE SPELLING)'))
+            $Help | Should -Not -Match ([regex]::Escape("a '.' or '..' segment, a '%', a '\', a '?' or a '#', a trailing or doubled '/'"))
         }
     }
 

@@ -56,7 +56,17 @@ PowerShell module.
   left out of inventory.json: findings to review (see roleAssignments[] below). And it lists, under
   "Names two or more objects share", every name the export left out because two or more objects of
   one kind carry it, with how many: each object that carries one is absent from inventory.json (see
-  "An OBJECT ID where the document otherwise carries a name" below)
+  "An OBJECT ID where the document otherwise carries a name" below). Three more of its sections are
+  findings to review, each named in your rationale: "Role assignments whose principal the directory
+  did not return" lists the role assignments inventory.json writes with principalStatus (see
+  roleAssignments[] below); "Role assignments at a scope no document can declare" lists the role
+  assignments the export left out of inventory.json because the offline check refuses the spelling
+  of their scope; and "Groups using PIM for Groups in a restricted management unit" lists the groups
+  inventory.json writes with PIM eligibility or a pimPolicy that are members of a restricted
+  management administrative unit (see groups[] below). Under "What this export could not read", an
+  entry labelled "Role assignment principal that could not be read" names a role assignment whose
+  principal could not be looked up (written by its object id with no principalStatus) or whose
+  deleted items could not be read (written with principalStatus Unresolved)
 - inventory.json -- the current state, within this document's coverage limits (see below), in the
   exact apply schema. Your proposals reshape this.
 - groupsRoster.json -- every group in the tenant, of every type: one row per group with its id,
@@ -296,6 +306,14 @@ document. Declare each assignment policy once per access package, the same way.
     no pimPolicy in inventory.json was not found to use it. Adding or changing a pimPolicy on a
     group that does not use PIM for Groups yet ONBOARDS it, which cannot be undone -- propose that
     only deliberately, and say so in the rationale.
+  - Microsoft Learn states that Privileged Identity Management does not support a group in a
+    restricted management administrative unit (an administrativeUnits[] entry with restricted true).
+    README.md lists, under "Groups using PIM for Groups in a restricted management unit", the groups
+    inventory.json writes with PIM eligibility or a pimPolicy that are members of one: findings to
+    review. Do not propose eligibility or a pimPolicy for a group in a restricted unit, and do not
+    place a group that uses PIM for Groups in one (by its administrativeUnit or in the unit's
+    members); Test-OERStructure warns on either. Invoke-OERStructure still sends such writes, and
+    what Microsoft Graph answers to them has not been measured.
 - administrativeUnits[]: { displayName (required), previousDisplayName (rename only -- the unit's
   current display name or object id when displayName declares a new one; NOT captured by
   inventory), description, restricted (bool; immutable once the
@@ -430,6 +448,14 @@ document. Declare each assignment policy once per access package, the same way.
     An access package name is not unique in the tenant, nor an assignment policy name in its access
     package, and a name shared that way is refused: keep an accessPackage or assignmentPolicy that
     inventory.json gives as an id as that id, and give a shared name by id.
+  - an accessPackage that gives, by name, the displayName of an accessPackages[] entry of the same
+    document is the package that entry finds in its catalog or creates there -- never one of that
+    name in another catalog. While that entry has no package id in the run (it failed first, a
+    -WhatIf plan would create the package, or the run leaves the accessPackages section out with
+    -Include), the review is refused and nothing is written for it; a real run that creates the
+    package creates the review after it. When two or more accessPackages[] entries declare one name,
+    as displayName or previousDisplayName (the same name in two catalogs, say), the offline check
+    refuses a review that gives that name: give the access package by its object id there.
   - "reviewers": [] is a declared EMPTY list and means a SELF review, on both the create and the
     update path. It is NOT the same as omitting reviewers, which defaults to the requestor's manager
     and then REQUIRES fallbackReviewers; an explicit null counts as omitted.
@@ -451,7 +477,23 @@ document. Declare each assignment policy once per access package, the same way.
     assignments are never removed.
   - prefer Eligible over Active for privileged roles.
 - roleAssignments[]: { scope (required), role (required), principal (required),
-  principalType (User | Group | ServicePrincipal) }
+  principalType (User | Group | ServicePrincipal), principalStatus (Deleted | Unresolved; written by
+  the export only, see below) }
+  - principalStatus marks a role assignment whose principal Microsoft Entra ID did not return when
+    the inventory was read, and its principal is then the object id. Deleted: the principal was found
+    among the directory's deleted items. Unresolved: it was found neither in the directory nor among
+    its deleted items (deleted beyond the retention period, a principal of another tenant, for example
+    through Azure Lighthouse, or not readable), or the read of its deleted items failed, which README.md
+    names under "What this export could not read". Invoke-OERStructure looks no principal up for such
+    an entry and never creates the assignment: a live one is matched and kept as for any entry, and a
+    missing one is reported Skipped. Keep such an entry exactly as exported, or leave it out of a
+    proposal (under -Prune the live assignment is then removed like any undeclared one at a scope the
+    proposal declares), and name it in your rationale as a finding. Never invent, guess or substitute a principal for it, never remove principalStatus from
+    it, and never write principalStatus on an entry yourself; to grant the role to a principal that
+    exists, declare a new entry for that principal.
+  - a principal written as an object id WITHOUT principalStatus and without principalType Group can
+    be one whose lookup failed (README.md names it under "What this export could not read") or one
+    that is not a user, group or service principal: keep it as it is.
   - Optional per assignment: description, condition (ABAC), conditionVersion ("2.0"). Azure permits
     editing only those three fields, and the apply engine updates them IN PLACE on the existing
     assignment (it never deletes and re-creates a live grant). Everything else -- scope, role,
@@ -466,7 +508,12 @@ document. Declare each assignment policy once per access package, the same way.
     apply engine resolves the scope and compares scopes without regard to letter case, so two
     spellings of one scope are ONE scope -- the entries that name it share one prune pass.
   - write a scope without a trailing / and without //: the offline check reports either as an Error,
-    and the whole document is refused before anything is written.
+    and the whole document is refused before anything is written. A scope written as a path must also
+    follow the other spelling rules the scope description in schema.json states. The name of an Azure
+    resource can break one (a # or a % in it, for example): a role assignment at such a scope cannot
+    be declared, so the export leaves it out of inventory.json and lists it in README.md under "Role
+    assignments at a scope no document can declare". Name it in your rationale as a finding; never
+    declare it, and never rewrite its scope into another spelling.
   - the Azure root scope / (above every management group and subscription in the tenant) is never
     the scope of a roleAssignments entry. A role assignment there is elevated access: the export
     leaves it out of inventory.json and lists it in README.md under "Role assignments at the root

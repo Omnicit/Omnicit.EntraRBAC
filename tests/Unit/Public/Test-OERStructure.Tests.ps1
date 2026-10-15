@@ -218,6 +218,19 @@ Describe 'Test-OERStructure help documents principalStatus (A18)' {
     }
 }
 
+Describe 'Test-OERStructure help documents the restricted-unit PIM warning (Rule 16, Sprint 11 step 6, BL-134)' {
+    It 'says a group that uses PIM for Groups in a restricted unit the document declares is a Warning, never an Error, and that an export raises none' {
+        # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+        $Help = Get-Help Test-OERStructure -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+
+        $Description | Should -Match ([regex]::Escape('in a restricted management administrative unit the same document declares (an administrativeUnits entry whose restricted is true) is a Warning, never an Error'))
+        $Description | Should -Match ([regex]::Escape('Microsoft Learn states that Privileged Identity Management does not support a group in a restricted management administrative unit'))
+        $Description | Should -Match ([regex]::Escape('what Microsoft Graph answers to those writes has not been measured'))
+        $Description | Should -Match ([regex]::Escape('A document Export-OERInventory writes raises neither Warning'))
+    }
+}
+
 Describe 'Test-OERStructure help documents the tenantId (BL-88, A14)' {
     It 'says tenantId must be a string holding a canonical GUID and that only Invoke-OERStructure compares it with a session' {
         # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.

@@ -174,11 +174,12 @@ function Export-OERInventory {
     Groups are counted over every group in the tenant, the roster's unfiltered listing, so a security
     group that shares its name with a Microsoft 365 group or a distribution group is left out too;
     when the roster could not be read, they are counted among the security-enabled groups the export
-    reads. That index of every group's name, which also names the group principals of the role
-    assignments, is built once for the whole export -- from the roster when it was read, otherwise by
-    one listing of every group -- and never once per Azure scope. The export writes ONE warning that
-    gives how many names were left out and how many objects
-    carry them in all. It writes it before the bundle is written, so -WhatIf shows it too, and under a
+    reads. Whether a group named as the principal of a role assignment or a directory role assignment
+    is written by its display name or by its object id is decided over an index of every group's
+    display name, which the export builds once for the whole export -- from the roster when it was
+    read, otherwise with one listing of every group -- and never once per Azure scope. The export
+    writes ONE warning that gives how many names were left out and how many objects carry them in
+    all. It writes it before the bundle is written, so -WhatIf shows it too, and under a
     Stop warning preference (-WarningAction Stop, or $WarningPreference set to 'Stop') the export
     stops at that warning, before it writes the bundle. The generated README.md lists each name, with
     how many objects carry it and its section, in a section "Names two or more objects share",
@@ -208,11 +209,11 @@ function Export-OERInventory {
     Unresolved. The Azure scope is never skipped for either.
 
     ROLE ASSIGNMENTS AT A SCOPE NO DOCUMENT CAN DECLARE. Azure Resource Manager can return a role
-    assignment at a scope whose spelling the validator refuses -- a '.' or '..' segment, a '%', a '\',
-    a '?' or a '#', a trailing or doubled '/', or white space at the start or end of the scope or of a
-    segment, white space other than a space, or a control character, as the name of a resource can
-    hold. No document can declare such a scope, and a document that carried one would be refused as a
-    whole, so inventory.json and roleAssignments.json never carry one: Get-OERInventory leaves it out
+    assignment at a scope whose spelling the validator refuses as an Error, for example the scope of a
+    resource whose name holds a '#' or a '%' (about_Omnicit.EntraRBAC lists the scope spelling rules
+    under RENAMES, MAIL ALIASES AND SCOPE SPELLING). No document can declare such a scope, and a
+    document that carried one would be refused as a whole, so inventory.json and roleAssignments.json
+    never carry one: Get-OERInventory leaves it out
     of every scope's read (the Get-OERInventory help describes the rule). Invoke-OERStructure never
     creates a role assignment at such a scope, and never removes one, since it prunes only at a scope
     a document declares. A role assignment at the root scope whose spelling is refused too is named
@@ -279,7 +280,8 @@ function Export-OERInventory {
     (Get-OERInventory's own InventoryPartial gives those of the other sections). The part of that
     message that counts partial Entra ID read entries counts the Entra ID entries only; the role
     assignment principals that could not be read have a clause of their own, which names each of them
-    and gives the causes, and so have the Azure scopes where policies could not be judged. A members, scopedRoles, resources or resourceRoles collection that
+    and gives the causes, and so have the Azure scopes where policies could not be judged. A members,
+    scopedRoles, resources or resourceRoles collection that
     could not be read, or that has an entry the export could name by nothing the apply engine
     accepts, is NOT written into inventory.json as an empty one or with an empty name: its key is an
     explicit null, which the apply engine reads as "leave untouched" (so is the members key of a group
@@ -292,9 +294,9 @@ function Export-OERInventory {
 
     The bundle says so itself. The generated README.md carries a section named "What this export
     could not read": one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes
-    entry, a role assignment principal that could not be read and an Azure scope where role management
-    policies could not be judged, each under a label of its own, or the statement that nothing was
-    left unread, so whoever receives the bundle
+    entry -- among the IncompleteReads entries, those of a role assignment principal that could not be
+    read and those of an Azure scope where role management policies could not be judged each under a
+    label of its own -- or the statement that nothing was left unread, so whoever receives the bundle
     (an LLM, say) can tell a collection that was not read from one that is empty. The lists go into
     README.md only, never into inventory.json or any other file that is validated or applied.
 
