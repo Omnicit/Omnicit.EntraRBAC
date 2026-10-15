@@ -12,6 +12,13 @@ BeforeAll {
     Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment {
         [PSCustomObject]@{ Read = $true; Value = @(); Message = $null; Exception = $null }
     }
+    # Sprint 11 step 6b (BL-133): where a test reaches the REAL Azure Lighthouse reader, it answers as a
+    # successful read that finds no delegation, so every existing Azure test keeps its meaning (the file
+    # lighthouseDelegations.json is then written as [] beside azurePimEligibility.json, and no warning is
+    # added). A test about the delegations overrides it.
+    Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation {
+        [PSCustomObject]@{ Delegations = @(); Unread = @(); Causes = @() }
+    }
 
     # Sprint 11 step 6 (BL-133, A18): where a test reaches the REAL Get-OERInventory RoleAssignments
     # section, its principals are looked up with Resolve-OERPrincipalName -Detailed (one answer per id:
@@ -792,7 +799,10 @@ Describe 'Export-OERInventory (Azure walk)' {
 
         $Section = Get-ReadmeCouldNotReadSection -BundlePath $Result.BundlePath
         $Section | Should -Not -BeNullOrEmpty
+        # Sprint 11 step 6b (BL-133): the delegations of the subscriptions that walk would have visited were not
+        # read either, which the README names first, under the label of the failed Lighthouse reads.
         $Expected = @(
+            '- Azure Lighthouse read that failed: `lighthouseDelegations at <all Azure scopes: scope enumeration failed>`'
             '- Azure scope, absent from `roleAssignments.json` and `roleManagementPolicies.json`: `<all Azure scopes: scope enumeration failed>`'
             '- Azure scope, absent from `azurePimEligibility.json`: `<all Azure scopes: scope enumeration failed>`'
         )
@@ -2547,10 +2557,14 @@ Describe 'Export-OERInventory (help documents the bundle nesting)' {
         # Sprint 11 step 6 (BL-133): the role assignment principals that could not be read stand between
         # the Entra ID entries and these.
         $Description | Should -Match ([regex]::Escape('After every Entra ID entry, IncompleteReads carries one entry per role assignment principal that could not be read'))
-        $Description | Should -Match ([regex]::Escape('Last, after those entries, IncompleteReads carries one entry per Azure scope where at least one role management policy could not be judged'))
+        $Description | Should -Match ([regex]::Escape('After those entries, IncompleteReads carries one entry per Azure scope where at least one role management policy could not be judged'))
+        # Sprint 11 step 6b (BL-133): the Azure Lighthouse entries now come after these, last of all, so the
+        # role selection entries are no longer called the last ones.
+        $Description | Should -Not -Match ([regex]::Escape('Last, after those entries, IncompleteReads carries one entry per Azure scope'))
+        $Description | Should -Match ([regex]::Escape('Last of all, IncompleteReads carries the Azure Lighthouse entries (see AZURE LIGHTHOUSE DELEGATIONS above)'))
         $Description | Should -Match ([regex]::Escape('It does not mean every policy at the scope was kept: when only one row could not be judged, the other unused, unchanged policies there are still left out.'))
         $Description | Should -Not -Match 'nothing is missing for it'
-        $Description | Should -Match ([regex]::Escape('plus one per such Azure scope, and not the number of unread collections'))
+        $Description | Should -Match ([regex]::Escape('plus one per Azure scope where a role management policy could not be judged, plus one per Azure Lighthouse entry, and not the number of unread collections'))
         $Description | Should -Match ([regex]::Escape('Invoke-OERStructure reads and writes only the policies a document declares'))
 
         $Param = @($script:ExportHelp.Parameters.Parameter) | Where-Object { $_.Name -eq 'AllRolePolicies' }
@@ -5128,7 +5142,7 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
         $Description | Should -Match ([regex]::Escape('A principal is looked for among the deleted items once for the whole export when that read succeeds, however many Azure scopes read the assignment; a read that fails is not kept, and is sent again by the next scope that needs it.'))
         # The README lists the principal entries under a label of their own, and they are IncompleteReads
         # entries, as the help says.
-        $Description | Should -Match ([regex]::Escape('one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes entry -- among the IncompleteReads entries, those of a role assignment principal that could not be read and those of an Azure scope where role management policies could not be judged each under a label of its own -- or the statement that nothing was left unread'))
+        $Description | Should -Match ([regex]::Escape('one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes entry -- among the IncompleteReads entries, those of a role assignment principal that could not be read, those of an Azure scope where role management policies could not be judged and those of an Azure Lighthouse read that failed each under a label of its own -- or the statement that nothing was left unread'))
     }
 
     Context 'the rows the per-scope calls hand over' {
@@ -6197,6 +6211,556 @@ Describe 'Export-OERInventory (groups using PIM for Groups in a restricted manag
             $script:RuxSelfChecks[0].Valid | Should -BeTrue
             @($script:RuxSelfChecks[0].Errors | Where-Object { $_.Message -like '*restricted management*' }).Count | Should -Be 0
             @($Run.Warnings | Where-Object { $_ -like '*did not pass apply-schema validation*' }).Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'Export-OERInventory (Azure Lighthouse delegations, Sprint 11 step 6b, BL-133)' {
+    # Azure Lighthouse gives principals of ANOTHER tenant Azure roles over subscriptions or resource groups of
+    # this one, and no role assignment of this tenant shows it. The export reads the delegations at the
+    # subscriptions of its Azure walk (Get-OERInventoryLighthouseDelegation, mocked here: the reader has its
+    # own suite), writes them to lighthouseDelegations.json beside azurePimEligibility.json, warns ONCE before
+    # its ShouldProcess, and lists them in the README. inventory.json is not touched. The warnings are counted
+    # on the warning STREAM (3>&1), what the caller is shown. No id below is version-4 shaped.
+    BeforeAll {
+        $script:LhxHeading = '## Azure Lighthouse delegations (access from another tenant)'
+        $script:LhxPrincipalOne = 'aaaaaaaa-1111-1111-1111-111111111111'
+        $script:LhxPrincipalTwo = 'bbbbbbbb-2222-2222-2222-222222222222'
+        $script:LhxPrincipalThree = 'cccccccc-3333-3333-3333-333333333333'
+        # The warning names no direction (Ruling R-12): a delegation can give another tenant access here, or
+        # give this tenant access over another tenant's subscription, which the walk of a managing tenant reaches.
+        function script:Get-LhxWarning {
+            param([int]$Count)
+            "Export-OERInventory: read $Count Azure Lighthouse delegation(s): access that principals of a managing tenant hold over a delegated subscription or resource group, " +
+            'which is not listed as a role assignment there. lighthouseDelegations.json holds them as read-only context, and README.md lists them under ' +
+            "'Azure Lighthouse delegations (access from another tenant)', marking each one whose managing tenant is the tenant inventory.json names; review them as a finding."
+        }
+        # The real scope tree, taken before any test mocks it, so a mock can call through to it.
+        $script:LhxRealScopeTree = InModuleScope $script:moduleName { Get-Command Resolve-OERInventoryScopeTree -CommandType Function }
+        $script:LhxMark = ' -- this tenant is the managing tenant: access this tenant holds over another tenant''s subscription or resource group'
+        # The two rows the reader hands over: a delegation at a subscription with two authorizations and one
+        # eligible authorization, and one at a resource group.
+        function script:New-LhxRows {
+            @(
+                [PSCustomObject][ordered]@{
+                    scope                    = '/subscriptions/s1'
+                    subscriptionId           = 's1'
+                    resourceGroup            = $null
+                    managedByTenantId        = '33333333-3333-3333-3333-333333333333'
+                    managedByTenantName      = 'Contoso Corp.'
+                    offerName                = 'Contoso Managed Services'
+                    registrationAssignmentId = '/subscriptions/s1/providers/Microsoft.ManagedServices/registrationAssignments/66666666-6666-6666-6666-666666666666'
+                    registrationDefinitionId = '/subscriptions/s1/providers/Microsoft.ManagedServices/registrationDefinitions/55555555-5555-5555-5555-555555555555'
+                    authorizations           = @(
+                        [PSCustomObject][ordered]@{ principalId = $script:LhxPrincipalOne; principalDisplayName = 'Support User'; roleDefinitionId = 'dddddddd-dddd-dddd-dddd-dddddddddddd'; roleName = 'Contributor'; delegatedRoleDefinitionIds = @() }
+                        [PSCustomObject][ordered]@{ principalId = $script:LhxPrincipalTwo; principalDisplayName = 'Access Administrators'; roleDefinitionId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'; roleName = 'User Access Administrator'; delegatedRoleDefinitionIds = @('dddddddd-dddd-dddd-dddd-dddddddddddd') }
+                    )
+                    eligibleAuthorizations   = @(
+                        [PSCustomObject][ordered]@{ principalId = $script:LhxPrincipalThree; principalDisplayName = $null; roleDefinitionId = 'dddddddd-dddd-dddd-dddd-dddddddddddd'; roleName = 'Contributor' }
+                    )
+                }
+                [PSCustomObject][ordered]@{
+                    scope                    = '/subscriptions/s2/resourceGroups/rg-app'
+                    subscriptionId           = 's2'
+                    resourceGroup            = 'rg-app'
+                    managedByTenantId        = '99999999-9999-9999-9999-999999999999'
+                    managedByTenantName      = $null
+                    offerName                = 'Operations'
+                    registrationAssignmentId = '/subscriptions/s2/resourceGroups/rg-app/providers/Microsoft.ManagedServices/registrationAssignments/77777777-7777-7777-7777-777777777777'
+                    registrationDefinitionId = '/subscriptions/s2/providers/Microsoft.ManagedServices/registrationDefinitions/88888888-8888-8888-8888-888888888888'
+                    authorizations           = @(
+                        [PSCustomObject][ordered]@{ principalId = $script:LhxPrincipalOne; principalDisplayName = 'Support User'; roleDefinitionId = 'ffffffff-ffff-ffff-ffff-ffffffffffff'; roleName = $null; delegatedRoleDefinitionIds = @() }
+                    )
+                    eligibleAuthorizations   = @()
+                }
+            )
+        }
+        # One export, its result, the text of every warning that reached the caller's stream, and its errors.
+        function script:Invoke-LhxExport {
+            param([hashtable]$Splat)
+            $ExErr = $null
+            $All = @(Export-OERInventory @Splat -WarningAction Continue -ErrorAction SilentlyContinue -ErrorVariable ExErr 3>&1)
+            [PSCustomObject]@{
+                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                Errors   = @($ExErr)
+            }
+        }
+        function script:Get-LhxReadmeSection {
+            param([string]$BundlePath)
+            $Readme = Get-Content (Join-Path $BundlePath 'README.md') -Raw
+            $Start = $Readme.IndexOf($script:LhxHeading)
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        $script:LhxRows = New-LhxRows
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @('/subscriptions/s1', '/subscriptions/s2')
+                Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @(); RoleScopes = @() }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation {
+            [PSCustomObject]@{ Delegations = @($script:LhxRows); Unread = @(); Causes = @() }
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'states the rule in the help' {
+        $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('read-only context (scopeHierarchy.json, groupsRoster.json, azurePimEligibility.json, lighthouseDelegations.json)'))
+        $Description | Should -Match ([regex]::Escape('AZURE LIGHTHOUSE DELEGATIONS.'))
+        $Description | Should -Match ([regex]::Escape('The file is written exactly when azurePimEligibility.json is'))
+        $Description | Should -Match ([regex]::Escape('It is always a JSON array, [] when no delegation was read.'))
+        $Description | Should -Match ([regex]::Escape('it is never an apply-document section, no apply cmdlet reads it back, and Invoke-OERStructure never creates or removes a delegation.'))
+        $Description | Should -Match ([regex]::Escape('a -Scope at a management group or the root scope reads no delegation'))
+        $Description | Should -Match ([regex]::Escape('in a section "Azure Lighthouse delegations (access from another tenant)", directly after "Groups using PIM for Groups in a restricted management unit"'))
+        $Description | Should -Match ([regex]::Escape("A read that fails is never left unnamed: each scope of a subscription whose delegations could not be read is named in IncompleteReads as 'lighthouseDelegations at <scope>' and has no row in the file"))
+        # Ruling R-12: the direction of a delegation, and the README's mark.
+        $Description | Should -Match ([regex]::Escape("When this tenant is itself a managing tenant, the walk also reaches the subscriptions other tenants delegated to it, and a row whose managedByTenantId is the tenantId of inventory.json is access this tenant holds over another tenant's subscription or resource group, not the reverse."))
+        $Description | Should -Match ([regex]::Escape('and it marks each whose managedByTenantId is the tenantId of inventory.json (compared without regard to letter case; nothing is marked when inventory.json names no tenant)'))
+        # azurePimEligibility.json is no longer the only bundle file that is sometimes not written.
+        $Description | Should -Not -Match 'the one bundle file that is sometimes not written'
+    }
+
+    It 'writes lighthouseDelegations.json as an array of the rows the reader returned, every field kept, and lists it in Files' {
+        $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-file'); Include = @('RoleAssignments') }
+        $Path = Join-Path $Run.Result.BundlePath 'lighthouseDelegations.json'
+        Test-Path $Path | Should -BeTrue
+        $Run.Result.Files | Should -Contain 'lighthouseDelegations.json'
+        # Directly after azurePimEligibility.json, where the Azure files stand.
+        [array]::IndexOf($Run.Result.Files, 'lighthouseDelegations.json') | Should -Be ([array]::IndexOf($Run.Result.Files, 'azurePimEligibility.json') + 1)
+        (Get-Content $Path -Raw).TrimStart() | Should -Match '^\['
+        $Data = @(Get-Content $Path -Raw | ConvertFrom-Json)
+        $Data.Count | Should -Be 2
+        ($Data[0].PSObject.Properties.Name -join ',') | Should -BeExactly 'scope,subscriptionId,resourceGroup,managedByTenantId,managedByTenantName,offerName,registrationAssignmentId,registrationDefinitionId,authorizations,eligibleAuthorizations'
+        $Data[0].scope | Should -BeExactly '/subscriptions/s1'
+        $Data[0].resourceGroup | Should -BeNullOrEmpty
+        $Data[0].managedByTenantName | Should -BeExactly 'Contoso Corp.'
+        $Data[0].offerName | Should -BeExactly 'Contoso Managed Services'
+        @($Data[0].authorizations).Count | Should -Be 2
+        $Data[0].authorizations[1].principalId | Should -BeExactly $script:LhxPrincipalTwo
+        $Data[0].authorizations[1].roleName | Should -BeExactly 'User Access Administrator'
+        @($Data[0].authorizations[1].delegatedRoleDefinitionIds) | Should -Be @('dddddddd-dddd-dddd-dddd-dddddddddddd')
+        @($Data[0].eligibleAuthorizations).Count | Should -Be 1
+        $Data[0].eligibleAuthorizations[0].principalId | Should -BeExactly $script:LhxPrincipalThree
+        $Data[1].scope | Should -BeExactly '/subscriptions/s2/resourceGroups/rg-app'
+        $Data[1].resourceGroup | Should -BeExactly 'rg-app'
+        $Data[1].managedByTenantName | Should -BeNullOrEmpty
+        # An empty list is still an array of nothing in the row: [] on disk, not null.
+        (Get-Content $Path -Raw) | Should -Match '"eligibleAuthorizations":\s*\[\s*\]'
+        # The reader was called once, with the tree's scopes.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly -ParameterFilter {
+            @($Scope).Count -eq 2 -and $Scope -contains '/subscriptions/s1' -and $Scope -contains '/subscriptions/s2'
+        }
+    }
+
+    It 'writes [] on disk, lists the file and warns nothing when no delegation was read' {
+        Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation {
+            [PSCustomObject]@{ Delegations = @(); Unread = @(); Causes = @() }
+        }
+        $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-empty'); Include = @('RoleAssignments') }
+        $Path = Join-Path $Run.Result.BundlePath 'lighthouseDelegations.json'
+        Test-Path $Path | Should -BeTrue
+        (Get-Content $Path -Raw).Trim() | Should -BeExactly '[]'
+        $Run.Result.Files | Should -Contain 'lighthouseDelegations.json'
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly
+        @($Run.Warnings | Where-Object { $_ -like '*Lighthouse*' }).Count | Should -Be 0
+        $Section = Get-LhxReadmeSection -BundlePath $Run.Result.BundlePath
+        ($Section -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. This export read no Azure Lighthouse delegation.'))
+    }
+
+    It 'treats a reader result whose delegations are a single null, or null, as none: no warning, [] on disk' -ForEach @(
+        @{ Name = 'a single null'; Delegations = @($null) }
+        @{ Name = 'null'; Delegations = $null }
+    ) {
+        $script:LhxNullDelegations = $Delegations
+        Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation {
+            [PSCustomObject]@{ Delegations = $script:LhxNullDelegations; Unread = @(); Causes = @() }
+        }
+        $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive "lhx-null-$($Name -replace ' ', '-')"); Include = @('RoleAssignments') }
+        (Get-Content (Join-Path $Run.Result.BundlePath 'lighthouseDelegations.json') -Raw).Trim() | Should -BeExactly '[]'
+        @($Run.Warnings | Where-Object { $_ -like '*Lighthouse*' }).Count | Should -Be 0
+    }
+
+    It 'writes no file, lists none and never calls the reader for a pure-Entra -Include' {
+        $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-entra'); Include = @('Groups') }
+        Test-Path (Join-Path $Run.Result.BundlePath 'lighthouseDelegations.json') | Should -BeFalse
+        $Run.Result.Files | Should -Not -Contain 'lighthouseDelegations.json'
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 0
+        @($Run.Warnings | Where-Object { $_ -like '*Lighthouse*' }).Count | Should -Be 0
+    }
+
+    It 'writes the file for RoleManagementPolicies alone, as it writes azurePimEligibility.json' {
+        $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-rmp'); Include = @('RoleManagementPolicies') }
+        Test-Path (Join-Path $Run.Result.BundlePath 'lighthouseDelegations.json') | Should -BeTrue
+        Test-Path (Join-Path $Run.Result.BundlePath 'azurePimEligibility.json') | Should -BeTrue
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly
+    }
+
+    It 'does not call the reader when the scope tree could not be enumerated, and still writes the file as an array' {
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree { throw 'cannot read management groups' }
+        $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-notree'); Include = @('RoleAssignments') }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 0
+        (Get-Content (Join-Path $Run.Result.BundlePath 'lighthouseDelegations.json') -Raw).Trim() | Should -BeExactly '[]'
+        @($Run.Warnings | Where-Object { $_ -like '*Lighthouse*' }).Count | Should -Be 0
+    }
+
+    It 'warns exactly once with the count of delegations when there are some' {
+        $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-warn'); Include = @('RoleAssignments') }
+        @($Run.Warnings | Where-Object { $_ -like '*Lighthouse*' }) | Should -Be @(Get-LhxWarning -Count 2)
+        $Run.Warnings.Count | Should -Be 1 -Because 'the delegations are the only finding in this fixture'
+    }
+
+    It 'warns once under -WhatIf too, and writes no file' {
+        $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-whatif'); Include = @('RoleAssignments'); WhatIf = $true }
+        @($Run.Warnings | Where-Object { $_ -like '*Lighthouse*' }) | Should -Be @(Get-LhxWarning -Count 2)
+        Test-Path $Run.Result.BundlePath | Should -BeFalse
+        # Under -WhatIf the Files list is the plan.
+        $Run.Result.Files | Should -Contain 'lighthouseDelegations.json'
+    }
+
+    It 'stops at its own warning under -WarningAction Stop, before the bundle is written' {
+        $Out = Join-Path $TestDrive 'lhx-stop'
+        $Thrown = { Export-OERInventory -OutputPath $Out -Include RoleAssignments -WarningAction Stop } | Should -Throw -PassThru
+        $Thrown.Exception.Message | Should -Match ([regex]::Escape((Get-LhxWarning -Count 2)))
+        # Reach proof: the delegations were read, and the warning stopped the export before any file.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly
+        Test-Path -LiteralPath $Out | Should -BeFalse
+    }
+
+    It 'leaves inventory.json and every other JSON file without a delegation value, with inventory.json keeping its ten keys' {
+        $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-stays-out'); Include = @('RoleAssignments') }
+        $Others = @(Get-ChildItem -Path $Run.Result.BundlePath -Filter '*.json' | Where-Object { $_.Name -ne 'lighthouseDelegations.json' })
+        $Others.Count | Should -BeGreaterThan 10 -Because 'inventory.json and the per-area files were all written'
+        foreach ($File in $Others) {
+            $Raw = Get-Content $File.FullName -Raw
+            foreach ($Value in @($script:LhxPrincipalOne, $script:LhxPrincipalTwo, $script:LhxPrincipalThree, 'Contoso Managed Services', 'Operations', 'Contoso Corp.', 'registrationAssignments')) {
+                $Raw | Should -Not -Match ([regex]::Escape($Value)) -Because "$($File.Name) must not carry '$Value'"
+            }
+        }
+        $Inventory = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        ($Inventory.PSObject.Properties.Name -join ',') | Should -BeExactly ($script:InventoryTopLevelKeys -join ',')
+        # The output object keeps its properties: nothing is added for the delegations.
+        ($Run.Result.PSObject.Properties.Name -join ',') | Should -BeExactly 'BundlePath,TenantId,Generated,Groups,AdministrativeUnits,Catalogs,AccessPackages,AccessReviews,DirectoryRoleManagementPolicies,DirectoryRoleAssignments,RoleAssignments,RoleManagementPolicies,RosterCount,ScopeCount,ScopesEnumerated,SkippedScopes,AzurePimEligibility,SkippedEligibilityScopes,IncompleteReads,Files'
+    }
+
+    It 'lists both delegations in the README section, names the file, and writes no principal there' {
+        $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-readme'); Include = @('RoleAssignments') }
+        $Section = Get-LhxReadmeSection -BundlePath $Run.Result.BundlePath
+        $Section | Should -Not -BeNullOrEmpty
+        $Section | Should -Match '(?m)^This export read 2 delegation\(s\):\r?$'
+        $Bullets = @($Section -split '\r?\n' | Where-Object { $_ -like '- *' })
+        $Bullets.Count | Should -Be 2
+        $Bullets[0] | Should -BeExactly '- `/subscriptions/s1` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Contoso Managed Services`: 2 authorization(s) and 1 eligible authorization(s), roles `Contributor`, `User Access Administrator`'
+        $Bullets[1] | Should -BeExactly '- `/subscriptions/s2/resourceGroups/rg-app` -- managing tenant not given (`99999999-9999-9999-9999-999999999999`), offer `Operations`: 1 authorization(s) and 0 eligible authorization(s), roles `ffffffff-ffff-ffff-ffff-ffffffffffff`'
+        $Readme = Get-Content (Join-Path $Run.Result.BundlePath 'README.md') -Raw
+        ($Readme -replace '\s+', ' ') | Should -Match ([regex]::Escape('- `lighthouseDelegations.json` -- the Azure Lighthouse delegations at the subscriptions the Azure walk visits'))
+        $Readme | Should -Not -Match $script:LhxPrincipalOne
+        $Readme | Should -Not -Match $script:LhxPrincipalTwo
+    }
+
+    It 'hands the README the tenant inventory.json names, so a delegation this tenant manages is marked and another is not' {
+        # The session's Graph token was issued for the managing tenant of the first row: this tenant manages
+        # that subscription for another tenant (Ruling R-12).
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState = @{
+                    TenantId      = 'contoso.onmicrosoft.com'
+                    TokenTenantId = '33333333-3333-3333-3333-333333333333'
+                }
+            }
+        }
+        $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-own-tenant'); Include = @('RoleAssignments') }
+        # The tenant inventory.json names is the one the README compared with.
+        (Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json).tenantId | Should -BeExactly '33333333-3333-3333-3333-333333333333'
+        $Bullets = @((Get-LhxReadmeSection -BundlePath $Run.Result.BundlePath) -split '\r?\n' | Where-Object { $_ -like '- *' })
+        $Bullets.Count | Should -Be 2
+        $Bullets[0] | Should -BeExactly ('- `/subscriptions/s1` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Contoso Managed Services`: 2 authorization(s) and 1 eligible authorization(s), roles `Contributor`, `User Access Administrator`' + $script:LhxMark)
+        $Bullets[1] | Should -BeExactly '- `/subscriptions/s2/resourceGroups/rg-app` -- managing tenant not given (`99999999-9999-9999-9999-999999999999`), offer `Operations`: 1 authorization(s) and 0 eligible authorization(s), roles `ffffffff-ffff-ffff-ffff-ffffffffffff`'
+        # The warning is the same either way: it names no direction.
+        @($Run.Warnings | Where-Object { $_ -like '*Lighthouse*' }) | Should -Be @(Get-LhxWarning -Count 2)
+    }
+
+    # A failed read is named, never left unnamed: a subscription whose delegations could not be read has no
+    # row in lighthouseDelegations.json, which can be [] after it, so the entries below say so in
+    # IncompleteReads, in the InventoryPartial message (with the causes) and in the README, and make the
+    # export partial. The reader is mocked (its own suite proves what it names); these tests prove what the
+    # export does with it.
+    Context 'a failed Azure Lighthouse read is named in IncompleteReads and makes the export partial (Scope item 2)' {
+        BeforeAll {
+            $script:LhxRoleEntry = 'lighthouseDelegations role dddddddd-dddd-dddd-dddd-dddddddddddd'
+            $script:LhxScopeEntry = 'lighthouseDelegations at /subscriptions/s2'
+            $script:LhxTreeEntry = 'lighthouseDelegations at <all Azure scopes: scope enumeration failed>'
+            $script:LhxListingEntry = 'lighthouseDelegations at <subscriptions: the listing failed>'
+            $script:LhxPartialTail = '. Do not treat it as a full tenant snapshot.'
+            $script:LhxScopeCause = [PSCustomObject]@{ Cause = 'Service unavailable (503) reading the registration assignments of /subscriptions/s2'; Target = '/subscriptions/s2' }
+            $script:LhxRoleCause = [PSCustomObject]@{ Cause = 'Forbidden (403) reading the role definition dddddddd-dddd-dddd-dddd-dddddddddddd'; Target = 'dddddddd-dddd-dddd-dddd-dddddddddddd' }
+            function script:Get-LhxPartial {
+                param($Run)
+                @($Run.Errors | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+            }
+            function script:Get-LhxBullet {
+                param([string]$BundlePath)
+                @((Get-ReadmeCouldNotReadSection -BundlePath $BundlePath) -split '\r?\n' | Where-Object { $_ -like '- *' })
+            }
+        }
+
+        It 'names the failed reads LAST in IncompleteReads, after the Entra ID, principal and role selection entries, and gives them a clause and their causes' {
+            $script:LhxReaderResult = [PSCustomObject]@{
+                Delegations = @($script:LhxRows[0])
+                Unread      = @($script:LhxScopeEntry, $script:LhxRoleEntry)
+                Causes      = @($script:LhxScopeCause, $script:LhxRoleCause)
+            }
+            Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation { $script:LhxReaderResult }
+            # The Entra ID entry: the group roster cannot be read.
+            Mock -ModuleName $script:moduleName Get-OERGroup { throw 'the group roster could not be read (503)' }
+            # The principal entry: one lookup the s1 read could not make, named to the run context as the real read does.
+            Mock -ModuleName $script:moduleName Get-OERInventory {
+                param($Include, $Scope, $AllRolesAtScope, $ErrorAction)
+                if ($Scope -eq '/subscriptions/s1') {
+                    # A mock body does not see the module's script scope, so the context is read through the module.
+                    $Context = & (Get-Module Omnicit.EntraRBAC) { $script:_OERInventoryRunContext }
+                    $Context.UnreadPrincipal.Add('roleAssignments/Owner -> bbbbbbbb-2222-2222-2222-222222222222 @ /subscriptions/s1/principal')
+                    $Context.UnreadPrincipalCause.Add([PSCustomObject]@{ Cause = 'Too many requests (429) looking up a principal'; Target = 'bbbbbbbb-2222-2222-2222-222222222222' })
+                }
+                $Inv = [PSCustomObject]@{
+                    Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                    AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                }
+                $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+                $Inv
+            }
+            # The role selection entry: one scope whose policies could not be judged.
+            Mock -ModuleName $script:moduleName Get-OERRoleAssignment {}
+            Mock -ModuleName $script:moduleName Get-OERInventoryRolePolicy {}
+            Mock -ModuleName $script:moduleName Select-OERInventoryRolePolicy { [PSCustomObject]@{ Kept = @(); UnjudgedScopes = @('/subscriptions/s1') } }
+
+            $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-order'); Include = @('Groups', 'RoleAssignments', 'RoleManagementPolicies') }
+
+            # Reach proofs: the reader and the selection ran, and the summary object reached the caller.
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Select-OERInventoryRolePolicy -Times 1 -Exactly
+            $Run.Result.BundlePath | Should -Not -BeNullOrEmpty
+            $Expected = @(
+                'groupsRoster'
+                'roleAssignments/Owner -> bbbbbbbb-2222-2222-2222-222222222222 @ /subscriptions/s1/principal'
+                'roleManagementPolicies/role selection at /subscriptions/s1'
+                $script:LhxScopeEntry
+                $script:LhxRoleEntry
+            )
+            (@($Run.Result.IncompleteReads) -join '|') | Should -BeExactly ($Expected -join '|')
+
+            $Partial = Get-LhxPartial -Run $Run
+            $Partial.Count | Should -Be 1
+            $Message = $Partial[0].Exception.Message
+            # The Entra ID clause still counts the Entra ID entries only.
+            $Message | Should -BeLike '*1 partial Entra ID read entry(ies) name collections*: groupsRoster. A members*'
+            $Clause = '2 Azure Lighthouse read(s) failed, so lighthouseDelegations.json holds no delegation of a scope named here and writes the name of a role named here as null: ' +
+                "$script:LhxScopeEntry; $script:LhxRoleEntry. Causes of the unread Azure Lighthouse reads: $($script:LhxScopeCause.Cause); $($script:LhxRoleCause.Cause)"
+            $Message | Should -MatchExactly ('(?s)' + [regex]::Escape($Clause + $script:LhxPartialTail) + '$')
+            # The clause follows the role policy selection one.
+            $Message.IndexOf('at 1 Azure scope(s) every role management policy that could not be judged') | Should -BeGreaterThan -1
+            $Message.IndexOf('at 1 Azure scope(s) every role management policy that could not be judged') | Should -BeLessThan $Message.IndexOf('2 Azure Lighthouse read(s) failed')
+
+            # The README names each entry under a label of its own, last, and the JSON files carry none of it.
+            $Bullets = @(
+                '- Entra ID: `groupsRoster`'
+                '- Role assignment principal that could not be read: `roleAssignments/Owner -> bbbbbbbb-2222-2222-2222-222222222222 @ /subscriptions/s1/principal`'
+                '- Azure role management policies kept without being judged: `roleManagementPolicies/role selection at /subscriptions/s1`'
+                ('- Azure Lighthouse read that failed: `' + $script:LhxScopeEntry + '`')
+                ('- Azure Lighthouse read that failed: `' + $script:LhxRoleEntry + '`')
+            )
+            ((Get-LhxBullet -BundlePath $Run.Result.BundlePath) -join "`n") | Should -BeExactly ($Bullets -join "`n")
+            Assert-ListStaysOutOfJson -BundlePath $Run.Result.BundlePath -Forbidden $Bullets
+        }
+
+        It 'raises InventoryPartial for the Lighthouse list alone, after the summary object, and the file stays [] although a read failed' {
+            $script:LhxReaderResult = [PSCustomObject]@{ Delegations = @(); Unread = @($script:LhxScopeEntry); Causes = @($script:LhxScopeCause) }
+            Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation { $script:LhxReaderResult }
+            $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-alone'); Include = @('RoleAssignments') }
+
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly
+            # Nothing else is unread: no skipped scope, no Entra ID entry, no eligibility scope.
+            @($Run.Result.SkippedScopes).Count | Should -Be 0
+            @($Run.Result.SkippedEligibilityScopes).Count | Should -Be 0
+            @($Run.Result.IncompleteReads) | Should -Be @($script:LhxScopeEntry)
+            # The summary object came first, and the error is non-terminating.
+            $Run.Result.BundlePath | Should -Not -BeNullOrEmpty
+            $Partial = Get-LhxPartial -Run $Run
+            $Partial.Count | Should -Be 1
+            $Partial[0].CategoryInfo.Category | Should -Be 'LimitsExceeded'
+            $Partial[0].TargetObject | Should -BeExactly $Run.Result.BundlePath
+            $Partial[0].Exception.Message | Should -BeExactly ("This inventory bundle is PARTIAL: 1 Azure Lighthouse read(s) failed, so lighthouseDelegations.json holds no delegation of a scope named here and writes the name of a role named here as null: $script:LhxScopeEntry. Causes of the unread Azure Lighthouse reads: $($script:LhxScopeCause.Cause)" + $script:LhxPartialTail)
+            # The Entra ID clause is not raised for it, and nobody counts it among the Entra ID entries.
+            $Partial[0].Exception.Message | Should -Not -BeLike '*partial Entra ID read entry*'
+            # The failed read is not written as an empty list WITHOUT a name: the file is [], and it is named.
+            (Get-Content (Join-Path $Run.Result.BundlePath 'lighthouseDelegations.json') -Raw).Trim() | Should -BeExactly '[]'
+            (Get-LhxBullet -BundlePath $Run.Result.BundlePath) | Should -Be @('- Azure Lighthouse read that failed: `' + $script:LhxScopeEntry + '`')
+        }
+
+        It 'still writes, counts and lists the delegations the reader did return when another subscription failed' {
+            $script:LhxReaderResult = [PSCustomObject]@{ Delegations = @($script:LhxRows[0]); Unread = @($script:LhxScopeEntry); Causes = @($script:LhxScopeCause) }
+            Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation { $script:LhxReaderResult }
+            $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-mixed'); Include = @('RoleAssignments') }
+
+            $Data = @(Get-Content (Join-Path $Run.Result.BundlePath 'lighthouseDelegations.json') -Raw | ConvertFrom-Json)
+            $Data.Count | Should -Be 1
+            $Data[0].scope | Should -BeExactly '/subscriptions/s1'
+            (Get-Content (Join-Path $Run.Result.BundlePath 'lighthouseDelegations.json') -Raw) | Should -Not -Match ([regex]::Escape('/subscriptions/s2'))
+            # One warning, for the delegation that was read.
+            @($Run.Warnings | Where-Object { $_ -like '*Lighthouse*' }) | Should -Be @(Get-LhxWarning -Count 1)
+            $Section = Get-LhxReadmeSection -BundlePath $Run.Result.BundlePath
+            $Section | Should -Match '(?m)^This export read 1 delegation\(s\):\r?$'
+            @(Get-LhxBullet -BundlePath $Run.Result.BundlePath) | Should -Be @('- Azure Lighthouse read that failed: `' + $script:LhxScopeEntry + '`')
+            @($Run.Result.IncompleteReads) | Should -Be @($script:LhxScopeEntry)
+            (Get-LhxPartial -Run $Run).Count | Should -Be 1
+        }
+
+        It 'names a scope enumeration failure, reads nothing, and writes the file as an array' {
+            Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree { throw 'cannot read management groups' }
+            $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-enum'); Include = @('RoleAssignments') }
+
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 0
+            @($Run.Result.IncompleteReads) | Should -Be @($script:LhxTreeEntry)
+            (Get-Content (Join-Path $Run.Result.BundlePath 'lighthouseDelegations.json') -Raw).Trim() | Should -BeExactly '[]'
+            $Partial = Get-LhxPartial -Run $Run
+            $Partial.Count | Should -Be 1
+            # The clause names the entry and has no causes to give: the walk's own warning already did.
+            $Partial[0].Exception.Message | Should -BeLike "*1 Azure Lighthouse read(s) failed, so lighthouseDelegations.json holds no delegation of a scope named here and writes the name of a role named here as null: $script:LhxTreeEntry. Do not treat it as a full tenant snapshot.*"
+            $Partial[0].Exception.Message | Should -Not -BeLike '*Causes of the unread Azure Lighthouse reads*'
+            $Partial[0].Exception.Message | Should -Not -BeLike '*partial Entra ID read entry*'
+            # The README names it under the label of its own, before the two lists of scopes the walk skipped.
+            ((Get-LhxBullet -BundlePath $Run.Result.BundlePath) -join "`n") | Should -BeExactly (@(
+                    '- Azure Lighthouse read that failed: `' + $script:LhxTreeEntry + '`'
+                    '- Azure scope, absent from `roleAssignments.json` and `roleManagementPolicies.json`: `<all Azure scopes: scope enumeration failed>`'
+                    '- Azure scope, absent from `azurePimEligibility.json`: `<all Azure scopes: scope enumeration failed>`'
+                ) -join "`n")
+        }
+
+        It 'names a subscription listing that failed before the entries of the reader, and still asks the reader about the scopes that were listed' {
+            Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+                [PSCustomObject]@{
+                    Scopes        = @('/providers/Microsoft.Management/managementGroups/mg1')
+                    Hierarchy     = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+                    SkippedScopes = @('<subscriptions: the listing failed>')
+                }
+            }
+            $script:LhxReaderResult = [PSCustomObject]@{ Delegations = @(); Unread = @($script:LhxRoleEntry); Causes = @($script:LhxRoleCause) }
+            Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation { $script:LhxReaderResult }
+            $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-sublist'); Include = @('RoleAssignments') }
+
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly -ParameterFilter {
+                @($Scope).Count -eq 1 -and $Scope[0] -ceq '/providers/Microsoft.Management/managementGroups/mg1'
+            }
+            (@($Run.Result.IncompleteReads) -join '|') | Should -BeExactly "$script:LhxListingEntry|$script:LhxRoleEntry"
+            $Run.Result.SkippedScopes | Should -Contain '<subscriptions: the listing failed>'
+            $Partial = Get-LhxPartial -Run $Run
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -BeLike "*2 Azure Lighthouse read(s) failed, so lighthouseDelegations.json holds no delegation of a scope named here and writes the name of a role named here as null: $script:LhxListingEntry; $script:LhxRoleEntry. Causes of the unread Azure Lighthouse reads: $($script:LhxRoleCause.Cause).*"
+            ((Get-LhxBullet -BundlePath $Run.Result.BundlePath) -join "`n") | Should -BeExactly (@(
+                    '- Azure Lighthouse read that failed: `' + $script:LhxListingEntry + '`'
+                    '- Azure Lighthouse read that failed: `' + $script:LhxRoleEntry + '`'
+                    '- Azure scope, absent from `roleAssignments.json` and `roleManagementPolicies.json`: `<subscriptions: the listing failed>`'
+                    '- Azure scope, absent from `azurePimEligibility.json`: `<subscriptions: the listing failed>`'
+                ) -join "`n")
+        }
+
+        It 'recognises the subscription listing failure by the literal the REAL scope tree writes' {
+            # The export matches '<subscriptions: the listing failed>', which Resolve-OERInventoryScopeTree
+            # writes; the real tree runs here, so a change to the literal on either side turns this red. The
+            # management group listing succeeds with no group, and the subscription listing fails.
+            Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree { & $script:LhxRealScopeTree @PesterBoundParameters }
+            Mock -ModuleName $script:moduleName Get-OERManagementGroupList { }
+            Mock -ModuleName $script:moduleName Get-OERSubscription { throw 'Forbidden (403) listing the subscriptions' }
+            Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation { [PSCustomObject]@{ Delegations = @(); Unread = @(); Causes = @() } }
+            $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-real-tree'); Include = @('RoleAssignments') }
+
+            # Reach proofs: the real tree listed the management groups and failed on the subscriptions.
+            Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroupList -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERSubscription -Times 1 -Exactly
+            $Run.Result.SkippedScopes | Should -Contain '<subscriptions: the listing failed>'
+            @($Run.Result.IncompleteReads) | Should -Be @($script:LhxListingEntry)
+            ((Get-LhxBullet -BundlePath $Run.Result.BundlePath) | Where-Object { $_ -like '*Lighthouse*' }) | Should -Be @('- Azure Lighthouse read that failed: `' + $script:LhxListingEntry + '`')
+        }
+
+        It 'names nothing for a management group listing that failed: no delegation lives at a management group' {
+            Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+                [PSCustomObject]@{
+                    Scopes        = @('/subscriptions/s1', '/subscriptions/s2')
+                    Hierarchy     = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+                    SkippedScopes = @('<management groups: the listing failed>')
+                }
+            }
+            $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-mglist'); Include = @('RoleAssignments') }
+
+            # Reach proofs: the level is named as skipped, so the export is partial, and the reader ran.
+            $Run.Result.SkippedScopes | Should -Contain '<management groups: the listing failed>'
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly
+            (Get-LhxPartial -Run $Run).Count | Should -Be 1
+            @($Run.Result.IncompleteReads).Count | Should -Be 0
+            (Get-LhxPartial -Run $Run)[0].Exception.Message | Should -Not -BeLike '*Azure Lighthouse read(s) failed*'
+            @(Get-LhxBullet -BundlePath $Run.Result.BundlePath | Where-Object { $_ -like '*Lighthouse*' }).Count | Should -Be 0
+        }
+
+        It 'leaves a blank entry and a null cause of the reader out of IncompleteReads, the count and the causes' {
+            $script:LhxReaderResult = [PSCustomObject]@{
+                Delegations = @()
+                Unread      = @('', '   ', $null, $script:LhxScopeEntry)
+                Causes      = @($null, $script:LhxScopeCause)
+            }
+            Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation { $script:LhxReaderResult }
+            $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-blank'); Include = @('RoleAssignments') }
+
+            @($Run.Result.IncompleteReads) | Should -Be @($script:LhxScopeEntry)
+            $Message = (Get-LhxPartial -Run $Run)[0].Exception.Message
+            $Message | Should -BeLike '*PARTIAL: 1 Azure Lighthouse read(s) failed, so*'
+            $Message | Should -BeLike "*: $script:LhxScopeEntry. Causes of the unread Azure Lighthouse reads: $($script:LhxScopeCause.Cause). Do not treat*"
+        }
+
+        It 'raises nothing and names nothing when every Lighthouse read succeeded (<Name>)' -ForEach @(
+            @{ Name = 'rows read'; Result = 'rows' }
+            @{ Name = 'no delegation'; Result = 'empty' }
+            @{ Name = 'a reader that returned nothing'; Result = 'null' }
+        ) {
+            $script:LhxReaderResult = switch ($Result) {
+                'rows' { [PSCustomObject]@{ Delegations = @($script:LhxRows); Unread = @(); Causes = @() } }
+                'empty' { [PSCustomObject]@{ Delegations = @(); Unread = @(); Causes = @() } }
+                default { $null }
+            }
+            Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation { $script:LhxReaderResult }
+            $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive "lhx-ok-$($Name -replace ' ', '-')"); Include = @('RoleAssignments') }
+
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly
+            @($Run.Result.IncompleteReads).Count | Should -Be 0
+            (Get-LhxPartial -Run $Run).Count | Should -Be 0
+            @(Get-LhxBullet -BundlePath $Run.Result.BundlePath).Count | Should -Be 0
+            (Get-ReadmeCouldNotReadSection -BundlePath $Run.Result.BundlePath) | Should -Match 'Nothing\.'
         }
     }
 }

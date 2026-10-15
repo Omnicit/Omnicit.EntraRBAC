@@ -51,6 +51,10 @@ an undeclarable scope. Exports flag PIM groups in restricted units. Reviews reac
 package via its entry, failing if `-Include` lacks `AccessPackages` (or use the id) or `-WhatIf`
 plans it as new.
 
+`Export-OERInventory` writes `lighthouseDelegations.json`: Azure Lighthouse delegations at the
+subscriptions it reads, access a managing tenant holds that no role assignment shows, as read-only
+findings the README lists. A failed read makes it partial.
+
 ## [1.2.0] - 2026-10-11
 
 A permanent group eligibility grant refused after `Add-OERGroupEligibility` opened the group's PIM

@@ -13,15 +13,15 @@ AfterAll {
 Describe 'Get-OERInventoryReadme' {
     It 'returns markdown that names every bundle file and the next-step cmdlets' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             $Md | Should -BeOfType ([string])
             # Every file Export-OERInventory writes, the two directory role area files included.
             foreach ($File in @('inventory.json', 'groups.json', 'administrativeUnits.json',
                     'catalogs.json', 'accessPackages.json', 'accessReviews.json',
                     'directoryRoleManagementPolicies.json', 'directoryRoleAssignments.json',
                     'groupsRoster.json', 'scopeHierarchy.json', 'azurePimEligibility.json',
-                    'roleAssignments.json', 'roleManagementPolicies.json', 'schema.json',
-                    'rbac-architect-prompt.md')) {
+                    'lighthouseDelegations.json', 'roleAssignments.json', 'roleManagementPolicies.json',
+                    'schema.json', 'rbac-architect-prompt.md')) {
                 $Md | Should -Match ([regex]::Escape($File))
             }
             # No cross-reference to a heading the README does not have.
@@ -33,7 +33,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'states where the bundle stops covering the tenant' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             # An operator must not read the bundle as a complete picture: all four areas below are
             # absent entirely -- none of them is captured lossily (a multi-stage review used to be
             # fabricated as a lossy single-stage self review; it is skipped instead).
@@ -52,7 +52,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'states eligible Azure PIM assignments are read-only context in azurePimEligibility.json' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             # Regression guard for a stale claim: eligible Azure PIM assignments used to be entirely
             # uncaptured; Export-OERInventory now writes them into azurePimEligibility.json as
             # read-only context, so the README must say so rather than repeat the old blanket claim.
@@ -64,7 +64,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'states a multi-stage review is skipped rather than fabricated as a lossy self review' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             # Regression guard for a stale claim: Get-OERInventory no longer fabricates a
             # single-stage self review out of a multi-stage one (commit 611f241) -- it skips the
             # review entirely with a warning, so the README must not claim otherwise.
@@ -76,7 +76,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'names the access-package-scope carve-out as its own coverage limit' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             # Regression guard: a group/application/directory-role review is excluded regardless
             # of stage count -- a different cause from the multi-stage skip above, so it needs its
             # own bullet rather than being folded into that one.
@@ -86,7 +86,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'says in the file roster that groupsRoster.json carries onPremisesSynced among its flags (A15)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             $Flat = $Md -replace '\s+', ' '
             $Flat | Should -Match ([regex]::Escape('and flags, including `onPremisesSynced`.'))
         }
@@ -94,7 +94,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'says in the file roster that each groupsRoster.json row carries the group''s id and type (BL-131)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             $Bullet = (($Md -split '(?m)^- `groupsRoster\.json` ')[1] -split '(?m)^- ')[0] -replace '\s+', ' '
             $Bullet | Should -Match ([regex]::Escape('-- a lightweight roster of EVERY group in the tenant, of every group type, read unfiltered: one row per group with its `id` and `displayName`, its type (`securityEnabled`, `mailEnabled` and `groupTypes`), `visibility`, `createdDateTime` and flags, including `onPremisesSynced`. The `id` tells apart two groups that share a name.'))
             # The roster used to be described as names and flags alone, which its rows no longer are.
@@ -104,7 +104,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'says in the file roster that memberCount is null for a group the export did not read in full, and why (R3)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             # The groupsRoster.json bullet alone: from its own marker to the next bullet, whitespace
             # collapsed so the assertion does not depend on where the line wraps.
             $Md | Should -Match '(?m)^- `groupsRoster\.json` '
@@ -122,7 +122,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'explains in "Which groups are covered" that a synchronized group is detailed only on request and is never written by the apply (A15)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             $Md | Should -Match '(?m)^## Which groups are covered\r?$'
             $Section = (($Md -split '(?m)^## Which groups are covered\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
             $Section | Should -Match ([regex]::Escape('A group synchronized from on-premises Active Directory (`onPremisesSynced` true in `groupsRoster.json`) is managed there and read-only in the cloud: it cannot be role-assignable or managed in PIM for Groups, so `inventory.json` details it only when the export ran with `-IncludeSyncedGroups` or `-AllGroupsDetailed`, and there it carries `onPremisesSynced: true`. `Invoke-OERStructure` writes nothing to such a group.'))
@@ -133,7 +133,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'explains in "Which groups are covered" how the export chose the groups it detailed, and that -GroupFilter only narrows (A13)' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             $Section = (($Md -split '(?m)^## Which groups are covered\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
             # Which groups are detailed, and that a group found not relevant was never read in full.
             $Section | Should -Match ([regex]::Escape('Unless the export ran with `-AllGroupsDetailed`, `inventory.json` details only the RBAC-relevant security groups: role-assignable ones, ones with PIM eligibility, ones found to use PIM for Groups (written with a `pimPolicy` block), and synchronized ones when the export ran with `-IncludeSyncedGroups`.'))
@@ -151,7 +151,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'warns that an unread members, scopedRoles, resources or resourceRoles collection is written as null and must never be changed to []' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             $Md | Should -Match '(?m)^## Unread collections\r?$'
             # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
             $Section = (($Md -split '(?m)^## Unread collections\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
@@ -192,7 +192,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'tells the reader in Next steps that a proposal keeping tenantId is applied only in the tenant the export came from' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
             $Section = ($Md -split '(?m)^## Next steps\r?$')[1] -replace '\s+', ' '
             $Section | Should -Match ([regex]::Escape('A proposal that keeps the `tenantId` of `inventory.json` is applied only in the tenant this export came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in another tenant, change or remove `tenantId` first.'))
@@ -203,7 +203,7 @@ Describe 'Get-OERInventoryReadme' {
 
     It 'contains only ASCII characters' {
         InModuleScope $script:moduleName {
-            $Bytes = [System.Text.Encoding]::UTF8.GetBytes((Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()))
+            $Bytes = [System.Text.Encoding]::UTF8.GetBytes((Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()))
             ($Bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
         }
     }
@@ -221,7 +221,7 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
             param([string[]]$IncompleteReads = @(), [string[]]$SkippedScopes = @(), [string[]]$SkippedEligibilityScopes = @(), [object[]]$PimLeftOut = @())
             InModuleScope $script:moduleName -Parameters @{ A = $IncompleteReads; B = $SkippedScopes; C = $SkippedEligibilityScopes; D = $PimLeftOut } {
                 param($A, $B, $C, $D)
-                Get-OERInventoryReadme -IncompleteReads $A -SkippedScopes $B -SkippedEligibilityScopes $C -PimLeftOut $D -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+                Get-OERInventoryReadme -IncompleteReads $A -SkippedScopes $B -SkippedEligibilityScopes $C -PimLeftOut $D -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             }
         }
         # The section, heading included, up to the next level 2 heading.
@@ -267,7 +267,7 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
         # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
         $Collapsed = $Section -replace '\s+', ' '
         $Collapsed | Should -Match ([regex]::Escape('This bundle is PARTIAL: `Export-OERInventory` could not read, or could not write, everything it was asked to, so do not treat it as a full tenant snapshot.'))
-        $Collapsed | Should -Match ([regex]::Escape('Apart from the entries labelled "Azure role management policies kept without being judged" and "Role assignment principal that could not be read", each entry below names collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name; none of them is stated as a fact in this bundle.'))
+        $Collapsed | Should -Match ([regex]::Escape('Apart from the entries labelled "Azure role management policies kept without being judged", "Role assignment principal that could not be read" and "Azure Lighthouse read that failed", each entry below names collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name; none of them is stated as a fact in this bundle.'))
         # Sprint 11 step 6 (BL-133): a role assignment principal entry names a row that IS written, so the
         # intro says how each kind of it is written instead of counting it among the facts left out.
         $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Role assignment principal that could not be read" names a row of `roleAssignments.json` as `roleAssignments/<role> -> <principal id> @ <scope>`, followed by `/principal` or `/principalStatus`. With `/principal`, the lookup of the principal failed: the row is written by the principal''s object id with no `principalStatus`, so whether the directory holds the principal is not known. With `/principalStatus`, the directory did not return the principal and the read of its deleted items failed: the row is written with `principalStatus` `Unresolved`, and the reason is not known.'))
@@ -443,7 +443,7 @@ Describe 'Get-OERInventoryReadme (members and owners left out as PIM for Groups 
             param([object[]]$PimLeftOut = @(), [string[]]$IncompleteReads = @())
             InModuleScope $script:moduleName -Parameters @{ P = $PimLeftOut; I = $IncompleteReads } {
                 param($P, $I)
-                Get-OERInventoryReadme -IncompleteReads $I -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $P -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+                Get-OERInventoryReadme -IncompleteReads $I -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $P -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             }
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -489,13 +489,15 @@ Describe 'Get-OERInventoryReadme (members and owners left out as PIM for Groups 
         # BL-126: the root scope section follows this one; BL-131: the shared names section follows
         # that; Sprint 11 step 6 (BL-133): the unresolved principals section follows that; A13, A15: the
         # undeclarable scope section follows that; BL-134: the restricted management unit section follows
-        # that, and ## Files follows it.
+        # that; Sprint 11 step 6b (BL-133): the Azure Lighthouse delegations section follows that, and ## Files
+        # follows it.
         $Headings[$Index + 2] | Should -BeExactly '## Role assignments at the root scope (elevated access)'
         $Headings[$Index + 3] | Should -BeExactly '## Names two or more objects share'
         $Headings[$Index + 4] | Should -BeExactly '## Role assignments whose principal the directory did not return'
         $Headings[$Index + 5] | Should -BeExactly '## Role assignments at a scope no document can declare'
         $Headings[$Index + 6] | Should -BeExactly '## Groups using PIM for Groups in a restricted management unit'
-        $Headings[$Index + 7] | Should -BeExactly '## Files'
+        $Headings[$Index + 7] | Should -BeExactly '## Azure Lighthouse delegations (access from another tenant)'
+        $Headings[$Index + 8] | Should -BeExactly '## Files'
     }
 
     It 'says that none was left out when the list is empty' {
@@ -589,7 +591,7 @@ Describe 'Get-OERInventoryReadme (role assignments at the root scope, BL-126)' {
             param([object[]]$Rows = @())
             InModuleScope $script:moduleName -Parameters @{ R = $Rows } {
                 param($R)
-                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments $R -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments $R -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             }
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -660,12 +662,14 @@ Describe 'Get-OERInventoryReadme (role assignments at the root scope, BL-126)' {
         $Headings[$Index - 1] | Should -BeExactly '## Members and owners left out as PIM for Groups access'
         # BL-131: the shared names section comes directly after this one; Sprint 11 step 6 (BL-133): the
         # unresolved principals section after that; A13, A15: the undeclarable scope section after that;
-        # BL-134: the restricted management unit section after that, ahead of ## Files.
+        # BL-134: the restricted management unit section after that; Sprint 11 step 6b (BL-133): the Azure
+        # Lighthouse delegations section after that, ahead of ## Files.
         $Headings[$Index + 1] | Should -BeExactly '## Names two or more objects share'
         $Headings[$Index + 2] | Should -BeExactly '## Role assignments whose principal the directory did not return'
         $Headings[$Index + 3] | Should -BeExactly '## Role assignments at a scope no document can declare'
         $Headings[$Index + 4] | Should -BeExactly '## Groups using PIM for Groups in a restricted management unit'
-        $Headings[$Index + 5] | Should -BeExactly '## Files'
+        $Headings[$Index + 5] | Should -BeExactly '## Azure Lighthouse delegations (access from another tenant)'
+        $Headings[$Index + 6] | Should -BeExactly '## Files'
     }
 
     It 'names roles and principals only, never the role assignment id' {
@@ -713,7 +717,7 @@ Describe 'Get-OERInventoryReadme (names two or more objects share, BL-131)' {
             param([object[]]$Names = @())
             InModuleScope $script:moduleName -Parameters @{ S = $Names } {
                 param($S)
-                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames $S -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames $S -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             }
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -810,11 +814,13 @@ Describe 'Get-OERInventoryReadme (names two or more objects share, BL-131)' {
         $Headings[$Index - 1] | Should -BeExactly '## Role assignments at the root scope (elevated access)'
         # Sprint 11 step 6 (BL-133): the section on role assignment principals that could not be looked
         # up comes directly after this one; A13, A15: the undeclarable scope section after that; BL-134: the
-        # restricted management unit section after that, ahead of ## Files.
+        # restricted management unit section after that; Sprint 11 step 6b (BL-133): the Azure Lighthouse
+        # delegations section after that, ahead of ## Files.
         $Headings[$Index + 1] | Should -BeExactly '## Role assignments whose principal the directory did not return'
         $Headings[$Index + 2] | Should -BeExactly '## Role assignments at a scope no document can declare'
         $Headings[$Index + 3] | Should -BeExactly '## Groups using PIM for Groups in a restricted management unit'
-        $Headings[$Index + 4] | Should -BeExactly '## Files'
+        $Headings[$Index + 4] | Should -BeExactly '## Azure Lighthouse delegations (access from another tenant)'
+        $Headings[$Index + 5] | Should -BeExactly '## Files'
     }
 
     It 'leaves the other sections exactly as they were' {
@@ -856,7 +862,7 @@ Describe 'Get-OERInventoryReadme (role assignments whose principal the directory
             param([object[]]$Rows = @())
             InModuleScope $script:moduleName -Parameters @{ U = $Rows } {
                 param($U)
-                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments $U -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments $U -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             }
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -1008,7 +1014,7 @@ Describe 'Get-OERInventoryReadme (role assignments at a scope no document can de
             param([object[]]$Rows = @())
             InModuleScope $script:moduleName -Parameters @{ D = $Rows } {
                 param($D)
-                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments $D -RestrictedUnitPimGroups @()
+                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments $D -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             }
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -1147,7 +1153,7 @@ Describe 'Get-OERInventoryReadme (groups using PIM for Groups in a restricted ma
             param([object[]]$Rows = @())
             InModuleScope $script:moduleName -Parameters @{ R = $Rows } {
                 param($R)
-                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups $R
+                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups $R -LighthouseDelegations @()
             }
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
@@ -1215,7 +1221,7 @@ Describe 'Get-OERInventoryReadme (groups using PIM for Groups in a restricted ma
         ((Get-RuBullets -Section $Section)[0] -replace '`[^`]*`', '') | Should -Not -Match '<'
     }
 
-    It 'places the section directly after "Role assignments at a scope no document can declare" and ahead of ## Files (<State>)' -ForEach @(
+    It 'places the section directly after "Role assignments at a scope no document can declare" and ahead of the Azure Lighthouse delegations section and ## Files (<State>)' -ForEach @(
         @{ State = 'none'; Rows = @() }
         @{ State = 'one row'; Rows = @([PSCustomObject]@{ Group = 'role_sec_pim'; Units = @('Restricted AU') }) }
     ) {
@@ -1225,7 +1231,9 @@ Describe 'Get-OERInventoryReadme (groups using PIM for Groups in a restricted ma
         $Index = [array]::IndexOf($Headings, $script:RuHeading)
         $Index | Should -BeGreaterThan 0
         $Headings[$Index - 1] | Should -BeExactly '## Role assignments at a scope no document can declare'
-        $Headings[$Index + 1] | Should -BeExactly '## Files'
+        # Sprint 11 step 6b (BL-133): the Azure Lighthouse delegations section follows this one.
+        $Headings[$Index + 1] | Should -BeExactly '## Azure Lighthouse delegations (access from another tenant)'
+        $Headings[$Index + 2] | Should -BeExactly '## Files'
     }
 
     It 'names groups and units only, never an id or any other property of a row' {
@@ -1264,12 +1272,336 @@ Describe 'Get-OERInventoryReadme (groups using PIM for Groups in a restricted ma
     }
 }
 
+Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6b, BL-133)' {
+    # Azure Lighthouse gives principals of a managing tenant Azure roles over a delegated scope, which no
+    # role assignment there shows. lighthouseDelegations.json holds them; the README names each delegation,
+    # in both states: "none" is a claim the reader needs to rely on as much as the list. Never a principal.
+    # A delegation whose managing tenant is the tenant the export read runs the other way and is marked
+    # (Ruling R-12). No id below is version-4 shaped.
+    BeforeAll {
+        $script:LhHeading = '## Azure Lighthouse delegations (access from another tenant)'
+        # -Extra carries optional parameters (-TenantId) as a splat, so a test can leave -TenantId absent,
+        # rather than pass it empty.
+        function Get-LhReadme {
+            param([object[]]$Rows = @(), [string[]]$Incomplete = @(), [hashtable]$Extra = @{})
+            InModuleScope $script:moduleName -Parameters @{ R = $Rows; I = $Incomplete; E = $Extra } {
+                param($R, $I, $E)
+                Get-OERInventoryReadme -IncompleteReads $I -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations $R @E
+            }
+        }
+        # The "What this export could not read" section, heading included, up to the next level 2 heading.
+        function Get-LhCouldNotRead {
+            param([string]$Readme)
+            $Start = $Readme.IndexOf('## What this export could not read')
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
+        }
+        # The section, heading included, up to the next level 2 heading; $null when it is missing.
+        function Get-LhSection {
+            param([string]$Readme)
+            $Start = $Readme.IndexOf($script:LhHeading)
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
+        }
+        function Get-LhBullets {
+            param([string]$Section)
+            @($Section -split '\r?\n' | Where-Object { $_ -like '- *' })
+        }
+        # The row shape Export-OERInventory writes to lighthouseDelegations.json (what the README reads of it).
+        function New-LhRow {
+            param(
+                [string]$Scope = '/subscriptions/11111111-1111-1111-1111-111111111111',
+                [string]$TenantName = 'Contoso Corp.',
+                [string]$TenantId = '33333333-3333-3333-3333-333333333333',
+                [string]$Offer = 'Managed Services',
+                [object[]]$Authorizations = @(),
+                [object[]]$Eligible = @()
+            )
+            [PSCustomObject]@{
+                scope                    = $Scope
+                managedByTenantId        = $TenantId
+                managedByTenantName      = $TenantName
+                offerName                = $Offer
+                registrationAssignmentId = 'assignment-id-must-not-be-written'
+                authorizations           = $Authorizations
+                eligibleAuthorizations   = $Eligible
+            }
+        }
+        function New-LhAuth {
+            param([string]$RoleName, [string]$RoleId = 'dddddddd-dddd-dddd-dddd-dddddddddddd')
+            [PSCustomObject]@{
+                principalId          = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+                principalDisplayName = 'Support User'
+                roleDefinitionId     = $RoleId
+                roleName             = $RoleName
+            }
+        }
+        $script:LhProse = 'Azure Lighthouse lets another tenant -- a service provider, for example -- manage subscriptions or resource groups of this tenant: a delegation gives principals of that managing tenant Azure built-in roles over the delegated scope. That access is not listed as a role assignment of this tenant, so `roleAssignments.json` and `inventory.json` never show it, and `Invoke-OERStructure` never creates or removes it. `lighthouseDelegations.json` holds every delegation this export read, as read-only context: the delegated scope, the managing tenant, the offer and each authorization, with the eligible (just-in-time) ones apart. Review each delegation below as a finding. A scope whose delegations could not be read is named under "What this export could not read", and its delegations are absent from the file, which does not mean it has none. Listing a delegation changes nothing in the tenant.'
+        $script:LhNone = 'None. This export read no Azure Lighthouse delegation. Delegations are read only when the export includes `RoleAssignments` or `RoleManagementPolicies`, at the subscriptions its Azure walk visits; a `-Scope` at a management group or the root scope visits no subscription, so it reads no delegation. A scope whose delegations could not be read is named under "What this export could not read".'
+        # Ruling R-12: the walk of a managing tenant also reaches the subscriptions other tenants delegated
+        # to it, so a delegation can run the other way; the section says so and marks such a bullet.
+        $script:LhDirection = 'When this tenant is itself a managing tenant, the Azure walk also reaches the subscriptions other tenants delegated to it. A delegation that names this tenant as the managing tenant (its `managedByTenantId` is the `tenantId` of `inventory.json`) is marked below as "this tenant is the managing tenant" whenever `inventory.json` carries a `tenantId`: it is access this tenant holds over another tenant, not the reverse.'
+        $script:LhMark = ' -- this tenant is the managing tenant: access this tenant holds over another tenant''s subscription or resource group'
+    }
+
+    It 'says that none was read when the list is empty' {
+        $Section = Get-LhSection -Readme (Get-LhReadme)
+        $Section | Should -Not -BeNullOrEmpty
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape($script:LhProse))
+        $Collapsed | Should -Match ([regex]::Escape($script:LhNone))
+        @(Get-LhBullets -Section $Section).Count | Should -Be 0
+        $Section | Should -Not -Match 'This export read \d+'
+    }
+
+    It 'says, between the prose and the list, that a delegation naming this tenant as the managing tenant runs the other way and is marked (<State>)' -ForEach @(
+        @{ State = 'none'; WithRow = $false; Next = 'None. This export read no Azure Lighthouse delegation.' }
+        @{ State = 'one row'; WithRow = $true; Next = 'This export read 1 delegation(s):' }
+    ) {
+        $Rows = @(if ($WithRow) { New-LhRow -Authorizations @((New-LhAuth -RoleName 'Contributor')) })
+        $Collapsed = (Get-LhSection -Readme (Get-LhReadme -Rows $Rows)) -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape($script:LhDirection))
+        $Collapsed.IndexOf('changes nothing in the tenant.') | Should -BeLessThan $Collapsed.IndexOf($script:LhDirection)
+        $Collapsed.IndexOf($script:LhDirection) | Should -BeLessThan $Collapsed.IndexOf($Next)
+    }
+
+    It 'writes the count line and one bullet per delegation, in the order given, with the roles of both lists' {
+        $First = New-LhRow -Authorizations @((New-LhAuth -RoleName 'Contributor'), (New-LhAuth -RoleName 'User Access Administrator' -RoleId 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee')) `
+            -Eligible @((New-LhAuth -RoleName 'Contributor'))
+        $Second = New-LhRow -Scope '/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-app' -TenantName 'Fabrikam Services' -TenantId '99999999-9999-9999-9999-999999999999' -Offer 'Operations' `
+            -Authorizations @((New-LhAuth -RoleName 'Reader' -RoleId 'ffffffff-ffff-ffff-ffff-ffffffffffff'))
+        $Section = Get-LhSection -Readme (Get-LhReadme -Rows @($First, $Second))
+        ($Section -replace '\s+', ' ') | Should -Match ([regex]::Escape($script:LhProse))
+        $Section | Should -Match '(?m)^This export read 2 delegation\(s\):\r?$'
+        $Expected = @(
+            '- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Managed Services`: 2 authorization(s) and 1 eligible authorization(s), roles `Contributor`, `User Access Administrator`'
+            '- `/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-app` -- managing tenant `Fabrikam Services` (`99999999-9999-9999-9999-999999999999`), offer `Operations`: 1 authorization(s) and 0 eligible authorization(s), roles `Reader`'
+        )
+        ((Get-LhBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
+        # The count line stands between the prose and the bullets.
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed.IndexOf('changes nothing in the tenant.') | Should -BeGreaterThan 0
+        $Collapsed.IndexOf('changes nothing in the tenant.') | Should -BeLessThan $Collapsed.IndexOf('This export read 2')
+        $Collapsed.IndexOf('This export read 2') | Should -BeLessThan $Collapsed.IndexOf('- `/subscriptions/1111')
+        $Section | Should -Not -Match '(?m)^None\.'
+    }
+
+    It 'names the role definition id for a role whose name is not known, once, and says "roles none" without any' {
+        $WithIds = New-LhRow -Authorizations @((New-LhAuth -RoleName $null), (New-LhAuth -RoleName '')) -Eligible @((New-LhAuth -RoleName $null -RoleId 'ffffffff-ffff-ffff-ffff-ffffffffffff'))
+        $Without = New-LhRow -Scope '/subscriptions/22222222-2222-2222-2222-222222222222'
+        $Bullets = @(Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows @($WithIds, $Without))))
+        $Bullets[0] | Should -BeExactly '- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Managed Services`: 2 authorization(s) and 1 eligible authorization(s), roles `dddddddd-dddd-dddd-dddd-dddddddddddd`, `ffffffff-ffff-ffff-ffff-ffffffffffff`'
+        $Bullets[1] | Should -BeExactly '- `/subscriptions/22222222-2222-2222-2222-222222222222` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Managed Services`: 0 authorization(s) and 0 eligible authorization(s), roles none'
+    }
+
+    It 'counts only the authorizations a row holds: a null entry in a list, or a list the row does not carry, is none' {
+        $Row = [PSCustomObject]@{
+            scope                    = '/subscriptions/11111111-1111-1111-1111-111111111111'
+            managedByTenantId        = '33333333-3333-3333-3333-333333333333'
+            managedByTenantName      = 'Contoso Corp.'
+            offerName                = 'Managed Services'
+            authorizations           = @($null, (New-LhAuth -RoleName 'Contributor'))
+        }
+        $Bullet = @(Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows @($Row))))[0]
+        $Bullet | Should -BeExactly '- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Managed Services`: 1 authorization(s) and 0 eligible authorization(s), roles `Contributor`'
+    }
+
+    It 'writes no empty code span for an authorization whose role has neither a name nor a definition id' {
+        $Row = New-LhRow -Authorizations @((New-LhAuth -RoleName '' -RoleId ''), (New-LhAuth -RoleName 'Contributor')) -Eligible @((New-LhAuth -RoleName $null -RoleId ' '))
+        $Bullet = @(Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows @($Row))))[0]
+        $Bullet | Should -BeExactly '- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Managed Services`: 2 authorization(s) and 1 eligible authorization(s), roles `Contributor`'
+    }
+    It 'writes "not given" for a managing tenant name, a tenant id and an offer the row does not carry, and once for a tenant with neither (<Name>)' -ForEach @(
+        @{ Name = 'no tenant name'; TenantName = $null; TenantId = '33333333-3333-3333-3333-333333333333'; Tenant = 'not given (`33333333-3333-3333-3333-333333333333`)' }
+        @{ Name = 'no tenant id'; TenantName = 'Contoso Corp.'; TenantId = ''; Tenant = '`Contoso Corp.` (not given)' }
+        @{ Name = 'neither, empty'; TenantName = ''; TenantId = ''; Tenant = 'not given' }
+        @{ Name = 'neither, white space'; TenantName = '  '; TenantId = ' '; Tenant = 'not given' }
+    ) {
+        $Row = New-LhRow -TenantName $TenantName -TenantId $TenantId -Offer ' ' -Authorizations @((New-LhAuth -RoleName 'Contributor'))
+        $Bullets = Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows @($Row)))
+        $Bullets | Should -BeExactly ('- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant ' + $Tenant + ', offer not given: 1 authorization(s) and 0 eligible authorization(s), roles `Contributor`')
+    }
+
+    It 'marks a bullet whose managing tenant is the tenant given to -TenantId, compared without regard to letter case (<Name>)' -ForEach @(
+        @{ Name = 'the same letter case'; RowTenant = 'cccccccc-cccc-cccc-cccc-cccccccccccc'; Given = 'cccccccc-cccc-cccc-cccc-cccccccccccc' }
+        @{ Name = 'the row in upper case'; RowTenant = 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC'; Given = 'cccccccc-cccc-cccc-cccc-cccccccccccc' }
+        @{ Name = '-TenantId in upper case'; RowTenant = 'cccccccc-cccc-cccc-cccc-cccccccccccc'; Given = 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' }
+    ) {
+        $Own = New-LhRow -TenantId $RowTenant -Authorizations @((New-LhAuth -RoleName 'Contributor'))
+        $Other = New-LhRow -Scope '/subscriptions/22222222-2222-2222-2222-222222222222' -TenantName 'Fabrikam Services' -TenantId '99999999-9999-9999-9999-999999999999' -Authorizations @((New-LhAuth -RoleName 'Reader'))
+        $Bullets = @(Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows @($Own, $Other) -Extra @{ TenantId = $Given })))
+        $Expected = @(
+            ('- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant `Contoso Corp.` (`' + $RowTenant + '`), offer `Managed Services`: 1 authorization(s) and 0 eligible authorization(s), roles `Contributor`' + $script:LhMark)
+            # Another managing tenant: no mark.
+            '- `/subscriptions/22222222-2222-2222-2222-222222222222` -- managing tenant `Fabrikam Services` (`99999999-9999-9999-9999-999999999999`), offer `Managed Services`: 1 authorization(s) and 0 eligible authorization(s), roles `Reader`'
+        )
+        ($Bullets -join "`n") | Should -BeExactly ($Expected -join "`n")
+    }
+
+    It 'marks no bullet when -TenantId is <Name>, not even one whose managing tenant is not given' -ForEach @(
+        @{ Name = 'absent'; Extra = @{} }
+        @{ Name = 'empty'; Extra = @{ TenantId = '' } }
+        @{ Name = 'white space'; Extra = @{ TenantId = '  ' } }
+        @{ Name = 'null'; Extra = @{ TenantId = $null } }
+    ) {
+        # A row with a null, an empty and a white space managing tenant id, each of which equals a blank
+        # -TenantId as a string, and one row with a real tenant id.
+        $NullId = New-LhRow -Authorizations @((New-LhAuth -RoleName 'Contributor'))
+        $NullId.managedByTenantId = $null
+        $Rows = @(
+            $NullId
+            (New-LhRow -Scope '/subscriptions/22222222-2222-2222-2222-222222222222' -TenantId '' -Authorizations @((New-LhAuth -RoleName 'Contributor')))
+            (New-LhRow -Scope '/subscriptions/44444444-4444-4444-4444-444444444444' -TenantId '  ' -Authorizations @((New-LhAuth -RoleName 'Contributor')))
+            (New-LhRow -Scope '/subscriptions/55555555-5555-5555-5555-555555555555' -Authorizations @((New-LhAuth -RoleName 'Contributor')))
+        )
+        $Bullets = @(Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows $Rows -Extra $Extra)))
+        # Reach proof: every row has its bullet.
+        $Bullets.Count | Should -Be 4
+        @($Bullets | Where-Object { $_.Contains('this tenant is the managing tenant') }).Count | Should -Be 0
+        $Bullets[0] | Should -BeExactly '- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant `Contoso Corp.` (not given), offer `Managed Services`: 1 authorization(s) and 0 eligible authorization(s), roles `Contributor`'
+    }
+
+    It 'declares TenantId an optional string, so a caller that does not know the tenant can leave it out' {
+        $Parameter = InModuleScope $script:moduleName {
+            $Meta = (Get-Command Get-OERInventoryReadme).Parameters['TenantId']
+            [PSCustomObject]@{
+                Type      = $Meta.ParameterType
+                Mandatory = @($Meta.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Where-Object { $_.Mandatory }).Count
+            }
+        }
+        $Parameter.Type | Should -Be ([string])
+        $Parameter.Mandatory | Should -Be 0
+    }
+
+    It 'writes a name that holds a backtick or an angle bracket as a code span with the fence rule of the other bullets, on one line' {
+        $Row = New-LhRow -TenantName 'Odd`Tenant' -Offer "<offer`nnew>" -Authorizations @((New-LhAuth -RoleName 'Contributor'))
+        $Bullet = @(Get-LhBullets -Section (Get-LhSection -Readme (Get-LhReadme -Rows @($Row))))[0]
+        $Bullet | Should -BeExactly '- `/subscriptions/11111111-1111-1111-1111-111111111111` -- managing tenant `` Odd`Tenant `` (`33333333-3333-3333-3333-333333333333`), offer `<offer new>`: 1 authorization(s) and 0 eligible authorization(s), roles `Contributor`'
+        # Outside its code spans the bullet holds no angle bracket: Markdown would read it as a tag.
+        ($Bullet -replace '(`+).+?\1', '') | Should -Not -Match '<'
+    }
+
+    It 'places the section directly after the restricted management unit section and ahead of ## Files (<State>)' -ForEach @(
+        @{ State = 'none'; Rows = @() }
+        @{ State = 'one row'; Rows = @([PSCustomObject]@{ scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; managedByTenantId = '33333333-3333-3333-3333-333333333333'; managedByTenantName = 'Contoso Corp.'; offerName = 'Managed Services'; authorizations = @(); eligibleAuthorizations = @() }) }
+    ) {
+        $Md = Get-LhReadme -Rows $Rows
+        ([regex]::Matches($Md, '(?m)^## Azure Lighthouse delegations \(access from another tenant\)\r?$')).Count | Should -Be 1
+        $Headings = @([regex]::Matches($Md, '(?m)^## .*$') | ForEach-Object { $_.Value.TrimEnd("`r") })
+        $Index = [array]::IndexOf($Headings, $script:LhHeading)
+        $Index | Should -BeGreaterThan 0
+        $Headings[$Index - 1] | Should -BeExactly '## Groups using PIM for Groups in a restricted management unit'
+        $Headings[$Index + 1] | Should -BeExactly '## Files'
+    }
+
+    It 'lists lighthouseDelegations.json in the Files section, directly after azurePimEligibility.json' {
+        $Collapsed = (Get-LhReadme) -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape('- `lighthouseDelegations.json` -- the Azure Lighthouse delegations at the subscriptions the Azure walk visits, written only when an Azure section is included: access that principals of a managing tenant hold over a delegated subscription or resource group, which is not listed as a role assignment there. Read-only context, not an apply document -- see "Azure Lighthouse delegations (access from another tenant)" above. - `schema.json`'))
+        $Collapsed.IndexOf('- `azurePimEligibility.json`') | Should -BeGreaterThan 0
+        $Collapsed.IndexOf('- `azurePimEligibility.json`') | Should -BeLessThan $Collapsed.IndexOf('- `lighthouseDelegations.json`')
+    }
+
+    It 'names scopes, tenants, offers and roles only, never a principal or an id of the assignment' {
+        $Row = New-LhRow -Authorizations @((New-LhAuth -RoleName 'Contributor')) -Eligible @((New-LhAuth -RoleName 'Contributor'))
+        $Md = Get-LhReadme -Rows @($Row)
+        (Get-LhSection -Readme $Md) | Should -Match ([regex]::Escape('`Contributor`'))
+        $Md | Should -Not -Match 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        $Md | Should -Not -Match 'Support User'
+        $Md | Should -Not -Match 'assignment-id-must-not-be-written'
+    }
+
+    It 'leaves the other sections exactly as they were' {
+        $Without = Get-LhReadme
+        $With = Get-LhReadme -Rows @((New-LhRow -Authorizations @((New-LhAuth -RoleName 'Contributor'))))
+        $Cut = { param($Md) $S = $Md.IndexOf($script:LhHeading); $Md.Remove($S, $Md.IndexOf("`n## ", $S) - $S) }
+        (& $Cut $With) | Should -BeExactly (& $Cut $Without)
+    }
+
+    It 'lists an IncompleteReads entry that starts with lighthouseDelegations under the label Azure Lighthouse read that failed, in the order given, last among the entries' {
+        # The export appends the failed Lighthouse reads after every other IncompleteReads entry and keeps them
+        # apart from the Entra ID entries, the principal entries and the role selection entries.
+        $Section = Get-LhCouldNotRead -Readme (Get-LhReadme -Incomplete @(
+                'groupsRoster'
+                'roleAssignments/Owner -> bbbbbbbb-2222-2222-2222-222222222222 @ /subscriptions/11111111-1111-1111-1111-111111111111/principal'
+                'roleManagementPolicies/role selection at /subscriptions/11111111-1111-1111-1111-111111111111'
+                'lighthouseDelegations at /subscriptions/11111111-1111-1111-1111-111111111111'
+                'lighthouseDelegations role dddddddd-dddd-dddd-dddd-dddddddddddd'
+                'lighthouseDelegations at <all Azure scopes: scope enumeration failed>'
+                'lighthouseDelegations at <subscriptions: the listing failed>'
+            ))
+        $Expected = @(
+            '- Entra ID: `groupsRoster`'
+            '- Role assignment principal that could not be read: `roleAssignments/Owner -> bbbbbbbb-2222-2222-2222-222222222222 @ /subscriptions/11111111-1111-1111-1111-111111111111/principal`'
+            '- Azure role management policies kept without being judged: `roleManagementPolicies/role selection at /subscriptions/11111111-1111-1111-1111-111111111111`'
+            '- Azure Lighthouse read that failed: `lighthouseDelegations at /subscriptions/11111111-1111-1111-1111-111111111111`'
+            '- Azure Lighthouse read that failed: `lighthouseDelegations role dddddddd-dddd-dddd-dddd-dddddddddddd`'
+            '- Azure Lighthouse read that failed: `lighthouseDelegations at <all Azure scopes: scope enumeration failed>`'
+            '- Azure Lighthouse read that failed: `lighthouseDelegations at <subscriptions: the listing failed>`'
+        )
+        # One string, so a failure prints the whole list rather than the first element that differs.
+        (@($Section -split '\r?\n' | Where-Object { $_ -like '- *' }) -join "`n") | Should -BeExactly ($Expected -join "`n")
+        $Section | Should -Match 'This bundle is PARTIAL'
+        $Section | Should -Not -Match 'Nothing\.'
+    }
+
+    It 'keeps an entry that only resembles a Lighthouse entry under Entra ID: it must start with lighthouseDelegations and a space, in that letter case (<Name>)' -ForEach @(
+        @{ Name = 'no space'; Entry = 'lighthouseDelegations' }
+        @{ Name = 'a longer word'; Entry = 'lighthouseDelegationsX at /subscriptions/11111111-1111-1111-1111-111111111111' }
+        @{ Name = 'another letter case'; Entry = 'LighthouseDelegations at /subscriptions/11111111-1111-1111-1111-111111111111' }
+        @{ Name = 'not at the start'; Entry = 'groups/lighthouseDelegations at /subscriptions/11111111-1111-1111-1111-111111111111' }
+    ) {
+        $Section = Get-LhCouldNotRead -Readme (Get-LhReadme -Incomplete @($Entry))
+        (@($Section -split '\r?\n' | Where-Object { $_ -like '- *' }) -join "`n") | Should -BeExactly ('- Entra ID: `' + $Entry + '`')
+    }
+
+    It 'says in the partial prose what a Lighthouse entry names and how the scope and the role are written, with every angle bracket inside a code span' {
+        $Section = Get-LhCouldNotRead -Readme (Get-LhReadme -Incomplete @('lighthouseDelegations at /subscriptions/11111111-1111-1111-1111-111111111111'))
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Azure Lighthouse read that failed" names either a scope, as `lighthouseDelegations at <scope>`, whose Azure Lighthouse delegations could not be read, so they are absent from `lighthouseDelegations.json`, which does not mean the scope has none, or a role, as `lighthouseDelegations role <id>`, whose name could not be read, so its `roleName` is written `null` there.'))
+        # The two entries the export adds for a walk that could not start and a subscription listing that
+        # failed name no single scope, and the prose says so.
+        $Collapsed | Should -Match ([regex]::Escape('Two such entries name no single scope: `lighthouseDelegations at <all Azure scopes: scope enumeration failed>` names a walk that could not start, and `lighthouseDelegations at <subscriptions: the listing failed>` a subscription listing that failed, so the delegations of no subscription were read.'))
+        # Outside its code spans the section holds no angle bracket: Markdown would read it as a tag.
+        ($Collapsed -replace '`[^`]*`', '') | Should -Not -Match '<'
+    }
+
+    It 'writes nothing about a failed Lighthouse read when none failed' {
+        $Section = Get-LhCouldNotRead -Readme (Get-LhReadme -Rows @((New-LhRow -Authorizations @((New-LhAuth -RoleName 'Contributor')))))
+        $Section | Should -Match 'Nothing\.'
+        $Section | Should -Not -Match 'Azure Lighthouse read that failed'
+        $Section | Should -Not -Match 'lighthouseDelegations at'
+    }
+
+    It 'declares LighthouseDelegations Mandatory, so a caller cannot forget it and write a README that claims none was read' {
+        $Parameter = InModuleScope $script:moduleName {
+            $Meta = (Get-Command Get-OERInventoryReadme).Parameters['LighthouseDelegations']
+            [PSCustomObject]@{
+                Type           = $Meta.ParameterType
+                Mandatory      = @($Meta.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Where-Object { $_.Mandatory }).Count
+                AllowsEmptyArr = @($Meta.Attributes | Where-Object { $_ -is [System.Management.Automation.AllowEmptyCollectionAttribute] }).Count
+            }
+        }
+        $Parameter.Type | Should -Be ([object[]])
+        $Parameter.Mandatory | Should -Be 1
+        $Parameter.AllowsEmptyArr | Should -Be 1
+    }
+
+    It 'contains only ASCII characters with rows' {
+        $Md = Get-LhReadme -Rows @((New-LhRow -Authorizations @((New-LhAuth -RoleName 'Contributor'))))
+        $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Md)
+        ($Bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
+    }
+}
 Describe 'Get-OERInventoryReadme apply-document section list' {
     # The coverage paragraph counts and lists the apply-document sections. Tie both to the sections
     # schema.json declares, so a section added to the schema cannot leave the README claiming fewer.
     It 'counts and names every section schema.json declares, and names both directory role sections as captured' {
         InModuleScope $script:moduleName {
-            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @()
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
             $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
                     Where-Object { $_ -notin @('version', 'tenantId', 'tenantAlias') })
             $Word = @{ 7 = 'seven'; 8 = 'eight'; 9 = 'nine'; 10 = 'ten' }[$Sections.Count]
