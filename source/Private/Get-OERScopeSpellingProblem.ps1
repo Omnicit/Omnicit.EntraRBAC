@@ -30,12 +30,15 @@ function Get-OERScopeSpellingProblem {
     ConvertTo-OERScopeSplat owns that syntax, so the exemption asks it: only a scope it returns as
     @{ Scope = ... } is checked.
 
-    This help is the one list of the rules in the module's code. The help of Get-OERInventory and
-    Export-OERInventory and the bundle README Get-OERInventoryReadme writes give an example and do not
-    repeat them; README.md, the about topic and the scope descriptions of Get-OERStructureSchemaJson
-    list them for their readers, and a rule added here is added there too, and to the words
-    Get-OERInventory gives each Rule in the Reason of its UndeclarableScope record (a Rule it has no
-    words for is named there by its Rule name).
+    This help is the reference list of the rules. The help of Test-OERStructureSchema,
+    Get-OERStructureSchemaJson, Get-OERInventory and Export-OERInventory, the bundle README
+    Get-OERInventoryReadme writes, the prompt and docs/inventory-to-llm/README.md point at it (or at
+    schema.json) or give an example, and hold no full list. Five texts do list them for their readers,
+    and a rule added here is added to each: README.md, the about topic (RENAMES, MAIL ALIASES AND
+    SCOPE SPELLING), the two scope descriptions in the JSON Get-OERStructureSchemaJson returns, the
+    ConvertTo-OERCanonicalScope bullet of CLAUDE.md, and the words Get-OERInventory gives each Rule in
+    the Reason of its UndeclarableScope record (a Rule it has no words for is named there by its Rule
+    name). docs/development/rationale.md records why each rule exists.
 
     Returns one PSCustomObject per broken rule, in the order the validator reports them -- Slash, then
     DotSegment, Escape, Backslash, QueryOrFragment and WhiteSpace -- with Rule (one of those six names)

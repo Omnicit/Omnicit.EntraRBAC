@@ -267,9 +267,9 @@ function Get-OERInventory {
     Export-OERInventory for the rest of the export, while a read that fails is not kept and is sent
     again for the next role assignment that needs it. principalStatus stands directly after
     principalType, or after principal when there is none. Such an assignment stays in the document:
-    Invoke-OERStructure never creates it, and removing the entry lets -Prune remove it. One warning
-    counts them, and an information record tagged Omnicit.EntraRBAC.UnresolvedPrincipal hands the
-    caller the same rows (RoleAssignmentId, Scope, Role, Principal, PrincipalType, PrincipalStatus and
+    Invoke-OERStructure never creates it, and removing the entry lets -Prune remove it, like any
+    undeclared assignment, at a scope the document still declares. One warning counts them, and an
+    information record tagged Omnicit.EntraRBAC.UnresolvedPrincipal hands the caller the same rows (RoleAssignmentId, Scope, Role, Principal, PrincipalType, PrincipalStatus and
     StatusRead, which is false where the deleted items read failed) and the warning's text; under the
     default $InformationPreference the record is not displayed. Under a Stop warning preference the
     command stops at that warning, before it returns the inventory, as it does at the root scope

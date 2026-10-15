@@ -812,22 +812,24 @@ directory's deleted items, `Unresolved` when it is found neither there nor in th
 beyond the retention period, a principal of another tenant, or not readable) or when its deleted
 items could not be read. Each warns once with the count, and the export's `README.md` lists them
 under "Role assignments whose principal the directory did not return", as a finding to review. A
-principal whose lookup failed is written by its object id without `principalStatus`, and it is named
-in `IncompleteReads` and `InventoryPartial`, as a failed read of the deleted items is. The read of the
-deleted items needs no permission beyond `Directory.Read.All`, which the inventory already needs.
-`Test-OERStructure` refuses a `principalStatus` other than `Deleted` or `Unresolved`, and one beside a
-principal that is not an object id. `Invoke-OERStructure` looks no principal up for such an entry and
-never creates the assignment: where it would, the entry is reported `Skipped`, also under `-WhatIf`. A
-live assignment is matched and kept like any other, and a document without the entry lets `-Prune`
-remove it like any undeclared assignment at a scope the document declares. This covers the
-`roleAssignments` section only.
+principal whose lookup failed is written by its object id without `principalStatus`;
+`Get-OERInventory` names it in its `InventoryPartial` error, and `Export-OERInventory` in
+`IncompleteReads` and its own `InventoryPartial`, as each does a failed read of the deleted items. The
+read of the deleted items needs no permission beyond `Directory.Read.All`, which the inventory already
+needs. `Test-OERStructure` refuses a `principalStatus` that is neither `Deleted` nor `Unresolved` in
+any letter case (another letter case is a `Warning`, and `Invoke-OERStructure` reads it in the
+canonical case), and one beside a principal that is not an object id. `Invoke-OERStructure` looks no
+principal up for such an entry and never creates the assignment: where it would, the entry is
+reported `Skipped`, also under `-WhatIf`. A live assignment is matched and kept like any other, and a
+document without the entry lets `-Prune` remove it like any undeclared assignment at a scope the
+document declares. This covers the `roleAssignments` section only.
 
 A role assignment at a scope whose spelling the validator refuses (see the scope spelling rule
 below), as the name of a resource of a few types can make it, cannot be declared, so
 `Get-OERInventory` and `Export-OERInventory` leave it out of `roleAssignments`, each with one warning
 that counts them, and the export's `README.md` lists them under "Role assignments at a scope no
-document can declare", with the rules each scope breaks. `Invoke-OERStructure` never creates or removes a role assignment at such a scope,
-since it prunes only at a scope a document declares.
+document can declare", with the rules each scope breaks. `Invoke-OERStructure` never creates or
+removes a role assignment at such a scope, since it prunes only at a scope a document declares.
 
 Microsoft Learn states that Privileged Identity Management does not support a group in a restricted
 management administrative unit. With `Groups` and `AdministrativeUnits` included,

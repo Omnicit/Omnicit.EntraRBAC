@@ -240,12 +240,15 @@ ROLE ASSIGNMENTS WHOSE PRINCIPAL IS NOT RETURNED
     Each warns once with the count, and the export README lists them under
     "Role assignments whose principal the directory did not return", as a
     finding to review. A principal whose lookup failed is written by its
-    object id without principalStatus, and it is named in IncompleteReads and
-    InventoryPartial, as a failed read of the deleted items is. The read of
-    the deleted items needs no permission beyond Directory.Read.All, which the
-    inventory already needs. Test-OERStructure refuses a principalStatus other
-    than Deleted or Unresolved, and one beside a principal that is not an
-    object id. Invoke-OERStructure looks no principal up for such an entry and
+    object id without principalStatus; Get-OERInventory names it in its
+    InventoryPartial error, and Export-OERInventory in IncompleteReads and its
+    own InventoryPartial, as each does a failed read of the deleted items. The
+    read of the deleted items needs no permission beyond Directory.Read.All,
+    which the inventory already needs. Test-OERStructure refuses a
+    principalStatus that is neither Deleted nor Unresolved in any letter case
+    (another letter case is a Warning, and Invoke-OERStructure reads it in the
+    canonical case), and one beside a principal that is not an object id.
+    Invoke-OERStructure looks no principal up for such an entry and
     never creates the assignment: where it would, the entry is reported
     Skipped, also under -WhatIf. A live assignment is matched and kept like
     any other, and a document without the entry lets -Prune remove it like

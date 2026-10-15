@@ -1037,9 +1037,10 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Add-ScopeSegmentFinding` add one Error per problem it returns and decide no spelling, and
   `Get-OERInventory` leaves a role assignment at a scope with any problem out of the document (one
   warning and one `Omnicit.EntraRBAC.UndeclarableScope` record per call), which the engine never
-  prunes. Never decide a scope spelling anywhere else. A new rule goes into the owner, whose help is
-  the one list in code, and into the texts that list the rules for their readers (README, the about
-  topic, the schema's scope descriptions); the export's help and the bundle README give an example.
+  prunes. Never decide a scope spelling anywhere else. The owner's help is the reference list of the
+  rules and names every text that must follow a new one: README.md, the about topic, the two scope
+  descriptions in the schema JSON, this bullet, and `Get-OERInventory`'s words for each rule in the
+  Reason. Every other help, the bundle README and the prompt point at a list or give an example.
   `Why: docs/development/rationale.md#role-assignment-key`,
   `docs/development/rationale.md#undeclarable-scope`
 - **`Resolve-OERPimActivationConflict` is the single owner of the MFA / authentication-context
@@ -1193,17 +1194,19 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   reviewer, a catalog resource or a resource role is outside it and keeps its display name (R-6).
   Never re-implement either inline.
   `Why: docs/development/rationale.md#roster-identity-and-shared-names`
-- **`Export-OERInventory` is the only writer of the export run context
+- **`Export-OERInventory` is the only command that sets and clears the export run context
   (`$script:_OERInventoryRunContext`)**, the one object its `Get-OERInventory` calls share (the group
-  name index, the deleted items answers, the role assignment principals that could not be read). It
-  creates it in ONE place, directly before its Entra ID `Get-OERInventory` call, with `Owner` set to
-  its own `$MyInvocation`, and sets it back to `$null` with a plain statement directly after the Azure
-  walk -- never in a `finally`, which turns a statement-terminating error into a skip of the rest of
-  the walk. `Get-OERInventory` reads it once per invocation and uses it only while its `Owner` is the
-  `InvocationInfo` of a frame of the current call stack (`Microsoft.PowerShell.Utility\Get-PSCallStack`,
-  compared by reference), and behaves standalone otherwise, so a context a stopped export left behind
-  is ignored. Never read or write it anywhere else, never replace it by a public parameter (A9), and add
-  a member to it rather than a second module variable.
+  name index, the deleted items answers, the role assignment principals that could not be read);
+  `Get-OERInventory` fills its members, `Get-OERDeletedPrincipalStatus` through the `PrincipalStatus`
+  dictionary it is handed. Export creates it in ONE place, directly before its Entra ID
+  `Get-OERInventory` call, with `Owner` set to its own `$MyInvocation`, and sets it back to `$null`
+  with a plain statement directly after the Azure walk -- never in a `finally`, which turns a
+  statement-terminating error into a skip of the rest of the walk. `Get-OERInventory` reads it once
+  per invocation and uses it only while its `Owner` is the `InvocationInfo` of a frame of the current
+  call stack (`Microsoft.PowerShell.Utility\Get-PSCallStack`, compared by reference), and behaves
+  standalone otherwise, so a context a stopped export left behind is ignored. Never read or write it
+  anywhere else, never replace it by a public parameter (A9), and add a member to it rather than a
+  second module variable.
   `Why: docs/development/rationale.md#export-run-context`
 - **`Get-OERDeletedPrincipalStatus` is the single read of `directory/deletedItems`, and
   `Resolve-OERPrincipalName -Detailed` the lookup that tells a principal the directory returned from

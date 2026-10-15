@@ -480,20 +480,23 @@ document. Declare each assignment policy once per access package, the same way.
   principalType (User | Group | ServicePrincipal), principalStatus (Deleted | Unresolved; written by
   the export only, see below) }
   - principalStatus marks a role assignment whose principal Microsoft Entra ID did not return when
-    the inventory was read, and its principal is then the object id. Deleted: the principal was found
-    among the directory's deleted items. Unresolved: it was found neither in the directory nor among
-    its deleted items (deleted beyond the retention period, a principal of another tenant, for example
-    through Azure Lighthouse, or not readable), or the read of its deleted items failed, which README.md
-    names under "What this export could not read". Invoke-OERStructure looks no principal up for such
-    an entry and never creates the assignment: a live one is matched and kept as for any entry, and a
-    missing one is reported Skipped. Keep such an entry exactly as exported, or leave it out of a
-    proposal (under -Prune the live assignment is then removed like any undeclared one at a scope the
-    proposal declares), and name it in your rationale as a finding. Never invent, guess or substitute a principal for it, never remove principalStatus from
-    it, and never write principalStatus on an entry yourself; to grant the role to a principal that
-    exists, declare a new entry for that principal.
-  - a principal written as an object id WITHOUT principalStatus and without principalType Group can
-    be one whose lookup failed (README.md names it under "What this export could not read") or one
-    that is not a user, group or service principal: keep it as it is.
+    the inventory was read, and its principal is then the object id. Deleted: the principal was
+    found among the directory's deleted items. Unresolved: it was found neither in the directory nor
+    among its deleted items (deleted beyond the retention period, a principal of another tenant, for
+    example through Azure Lighthouse, or not readable), or the read of its deleted items failed,
+    which README.md names under "What this export could not read". Invoke-OERStructure looks no
+    principal up for such an entry and never creates the assignment: a live one is matched and kept
+    as for any entry, and a missing one is reported Skipped. Keep such an entry exactly as exported,
+    or leave it out of a proposal (under -Prune the live assignment is then removed like any
+    undeclared one at a scope the proposal declares), and name it in your rationale as a finding.
+    Never invent, guess or substitute a principal for it, never remove principalStatus from it, and
+    never write principalStatus on an entry yourself; to grant the role to a principal that exists,
+    declare a new entry for that principal.
+  - a principal written as an object id WITHOUT principalStatus is one the export did not, or could
+    not, write by name -- among other reasons a group whose name another group shares, a principal
+    whose lookup failed (README.md names it under "What this export could not read"), two rows whose
+    names would have collided, or a principal that is not a user, group or service principal: keep
+    it as it is.
   - Optional per assignment: description, condition (ABAC), conditionVersion ("2.0"). Azure permits
     editing only those three fields, and the apply engine updates them IN PLACE on the existing
     assignment (it never deletes and re-creates a live grant). Everything else -- scope, role,

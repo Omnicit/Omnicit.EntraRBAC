@@ -193,12 +193,13 @@ function Export-OERInventory {
     principal's object id with principalStatus Deleted, when the principal is among the directory's
     deleted items, or Unresolved, when it is found neither there nor in the directory or its deleted
     items could not be read (the Get-OERInventory help describes the rule). Invoke-OERStructure never
-    creates such an assignment, and removing its entry lets -Prune remove it. A principal is looked for
-    among the deleted items once for the whole export when that read succeeds, however many Azure
-    scopes read the assignment; a read that fails is not kept, and is sent again by the next scope
-    that needs it. The export writes ONE warning that
-    gives how many such assignments it read, each counted once. It writes it after the walk and before
-    the bundle is written, so -WhatIf shows it too, and under a Stop warning preference the export
+    creates such an assignment, and removing its entry lets -Prune remove it, like any undeclared
+    assignment, at a scope the document still declares. A principal is looked for among the deleted
+    items once for the whole export when that read succeeds, however many Azure scopes read the
+    assignment; a read that fails is not kept, and is sent again by the next scope that needs it. The
+    export writes ONE warning that gives how many such assignments it read, each counted once. It
+    writes it after the walk and before the bundle is written, so -WhatIf shows it too, and under a
+    Stop warning preference the export
     stops at that warning, before it writes the bundle. The generated README.md lists them, with their
     count, in a section "Role assignments whose principal the directory did not return", directly
     after "Names two or more objects share": each by role, scope, principal and, when it is known, the

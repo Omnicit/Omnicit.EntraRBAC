@@ -8023,6 +8023,8 @@ Describe 'Get-OERInventory role assignment principals that could not be looked u
         $Help | Should -Match ([regex]::Escape('in batches of up to 1000 ids, one request per batch'))
         $Help | Should -Match ([regex]::Escape('an answer that was read is kept for the rest of the call, and under Export-OERInventory for the rest of the export, while a read that fails is not kept and is sent again for the next role assignment that needs it'))
         $Help | Should -Match ([regex]::Escape('its principal is looked up like any other, which is how the root list names it, but it is not looked for among the deleted items, and a failed lookup of it is not reported'))
+        # Task 7 fix round 1: -Prune removes such an assignment only at a scope the document still declares.
+        $Help | Should -Match ([regex]::Escape('Invoke-OERStructure never creates it, and removing the entry lets -Prune remove it, like any undeclared assignment, at a scope the document still declares.'))
         $Help | Should -Not -Match ([regex]::Escape('nothing about its principal is read'))
         $Help | Should -Not -Match ([regex]::Escape('one batched directoryObjects/getByIds request per call'))
     }

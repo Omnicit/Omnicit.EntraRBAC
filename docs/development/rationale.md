@@ -9096,9 +9096,11 @@ later export's included, which overwrites it.
 error (`$X = Thrower`, where `Thrower` calls `ThrowTerminatingError`) skips that statement and the
 function carries on; inside `try { } finally { }` it skips the REST of the `try` body -- here the
 whole Azure walk -- runs the `finally` and carries on after it. So the `finally` would have changed the
-export's control flow, and the owner check replaced it. A test in a runspace with no `try` (Pester's own
-frames stand in one) holds that a statement-terminating error in the Entra ID call still skips only
-that statement, and that the walk runs and the bundle is written.
+export's control flow, and the owner check replaced it. A test holds that a statement-terminating
+error in the Entra ID call still skips only that statement, and that the walk runs and the bundle is
+written. It runs the export in a runspace of its own, from a script with no `try`, because every test
+body runs inside a `try` that Pester itself wraps around it, and there such an error would be caught
+by Pester's `try` up the call stack instead of skipping only its own statement.
 
 **Known limits.** (a) A stopped export's context keeps its `InvocationInfo`, and with it the export's
 bound parameters, a tenant among them, until the next export overwrites it or the module is removed.
@@ -9256,10 +9258,15 @@ with the validator's exact message for the path given; the `mg:`, `sub:` and `su
 exempt from the segment rules, decided by `ConvertTo-OERScopeSplat`. It is pure. The validator's two
 functions add one Error per problem and decide no spelling themselves: every validator test passed
 unchanged, which is the refactor's proof, and an agreement test holds the validator, the owner and the
-export's filter to one answer over seventeen scopes. Its help is the one list of the rules in the
-module's code: the help of `Get-OERInventory` and `Export-OERInventory` and the bundle README give an
-example and point at the list, while README.md, the about topic and the schema's scope descriptions
-list the rules for their readers. Cost if wrong: two copies of a rule that only a test keeps in step.
+export's filter to one answer over seventeen scopes. Its help is the reference list of the rules (Task
+7 of this step, and its fix round, took the copies out of the help of `Test-OERStructureSchema`,
+`Get-OERStructureSchemaJson`, `Get-OERInventory` and `Export-OERInventory`, the validator's source
+comments and the bundle README, which now point at a list or give an example). Five texts still list
+the rules for their readers, and a new rule must reach each: README.md, the about topic, the two scope
+descriptions in the schema JSON (the list a model validates against), the CLAUDE.md bullet of
+`ConvertTo-OERCanonicalScope`, and `Get-OERInventory`'s words for each rule in the Reason; no gate
+holds them, so the owner's help names them. Cost if wrong: two copies of a rule that only a test
+keeps in step.
 
 **The export leaves the row out.** `Get-OERInventory` calls the owner on each projected role
 assignment's scope after the root split and before the collision pass and the principal status step:
@@ -9414,4 +9421,7 @@ its object id.
 longer reached by a review that names the package by name, since the package's refusal is read first;
 they are kept, and matter again only if that order or that key ever changes. (b) The `-WhatIf` residual
 above. (c) Rule 15 refuses offline a document it accepted before (two same-named packages in two
-catalogs and a review naming that name), a behaviour change the release note states.
+catalogs and a review naming that name). The release note does not list it (the controller's ruling on
+Task 7's review): only a hand-written document with two `accessPackages` entries of one name reaches
+it, an export never writes two, and the refusal names the entries and says to name the package by its
+object id.

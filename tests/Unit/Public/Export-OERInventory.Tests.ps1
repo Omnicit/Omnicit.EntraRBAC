@@ -5117,7 +5117,8 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
     It 'states the rule in the help' {
         $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
         $Description | Should -Match ([regex]::Escape('ROLE ASSIGNMENTS WHOSE PRINCIPAL THE DIRECTORY DID NOT RETURN.'))
-        $Description | Should -Match ([regex]::Escape('Invoke-OERStructure never creates such an assignment, and removing its entry lets -Prune remove it.'))
+        # Task 7 fix round 1: -Prune removes such an assignment only at a scope the document still declares.
+        $Description | Should -Match ([regex]::Escape('Invoke-OERStructure never creates such an assignment, and removing its entry lets -Prune remove it, like any undeclared assignment, at a scope the document still declares.'))
         $Description | Should -Match ([regex]::Escape('in a section "Role assignments whose principal the directory did not return", directly after "Names two or more objects share"'))
         $Description | Should -Match ([regex]::Escape('The Azure scope is never skipped for either.'))
         # Fix round 1 (F4): one read per principal for the whole export holds only for a read that succeeded.

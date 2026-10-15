@@ -63,7 +63,8 @@ function Get-OERInventoryReadme {
     return" (Sprint 11 step 6, BL-133). It says that such an assignment stays in inventory.json and
     roleAssignments.json, written by the principal's object id with principalStatus, that
     Invoke-OERStructure never creates one and that removing its entry from the document lets -Prune
-    remove it, and that a principal whose lookup failed is named under "What this export could not
+    remove it at a scope the document still declares, and that a principal whose lookup failed is
+    named under "What this export could not
     read" instead. Then it gives the count and one bullet per -UnresolvedPrincipalAssignments row, in
     the order given: the role, the scope and the principal as code spans (the same fence rule as the
     entries above), the principal type in parentheses when it is known, and the status as a code span
@@ -450,11 +451,13 @@ export changes nothing in the tenant.
 A role assignment can name a principal that Microsoft Entra ID does not return: one that was
 deleted, or one this directory cannot read. Such an assignment stays in `inventory.json` and
 `roleAssignments.json`, with its principal written as the object id and `principalStatus` saying
-why: `Deleted` or `Unresolved`, as each entry below explains. `Invoke-OERStructure` never creates
-such an assignment, and removing its entry from the document lets `-Prune` remove it. A principal
-whose lookup failed is not listed here: it is written by its object id without `principalStatus`
-and named under "What this export could not read". Where the read of its deleted items failed, the
-principal is listed here as `Unresolved` with the reason not known, and that read is named there too.
+why: `Deleted` or `Unresolved`. Where this section lists an assignment, its entry says what its
+status means. `Invoke-OERStructure` never creates such an assignment, and removing its entry from the
+document lets `-Prune` remove it, like any undeclared assignment, at a scope the document still
+declares. A principal whose lookup failed is not listed here: it is written by its object id
+without `principalStatus` and named under "What this export could not read". Where the read of its
+deleted items failed, the principal is listed here as `Unresolved` with the reason not known, and
+that read is named there too.
 '@
     $UnresolvedPrincipalSection = if ($UnresolvedBullets.Count -gt 0) {
         $UnresolvedIntro + "`n`n" + "This export read $($UnresolvedBullets.Count) such role assignment(s):" + "`n`n" + ($UnresolvedBullets -join "`n")
@@ -478,13 +481,13 @@ principal is listed here as `Unresolved` with the reason not known, and that rea
 
 Azure Resource Manager can return a role assignment at a scope whose spelling the validator
 (`Test-OERStructure`, which `Invoke-OERStructure` runs first) refuses, for example the scope of a
-resource whose name holds a `#` or a `%`; each entry below names the rules its scope breaks. No
-document can declare such a scope, and a document that carried one would be refused as a whole, so
-`inventory.json` and `roleAssignments.json` leave the assignment out. `Invoke-OERStructure` never
-creates a role assignment at such a scope, and never removes one,
-since it prunes only at a scope a document declares. A role assignment at the root scope is listed
-under "Role assignments at the root scope (elevated access)" only. Leaving them out of the export
-changes nothing in the tenant.
+resource whose name holds a `#` or a `%`. Where this section lists an assignment, its entry names the
+rules its scope breaks. No document can declare such a scope, and a document that carried one would
+be refused as a whole, so `inventory.json` and `roleAssignments.json` leave the assignment out.
+`Invoke-OERStructure` never creates a role assignment at such a scope, and never removes one, since
+it prunes only at a scope a document declares. A role assignment at the root scope is listed under
+"Role assignments at the root scope (elevated access)" only. Leaving them out of the export changes
+nothing in the tenant.
 '@
     $UndeclarableScopeSection = if ($UndeclarableBullets.Count -gt 0) {
         $UndeclarableIntro + "`n`n" + "This export read $($UndeclarableBullets.Count) such role assignment(s):" + "`n`n" + ($UndeclarableBullets -join "`n")

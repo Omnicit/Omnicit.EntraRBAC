@@ -107,9 +107,8 @@ function Invoke-OERStructure {
     because -Include leaves the section out publishes no error record, only the Failed row, so
     -ErrorAction Stop and $? do not see it: check the rows. Test-OERStructure warns on a reference
     that still names a renamed object by its previous name, and refuses a document in which an access
-    review names by
-    display name an access package that two or more accessPackages entries declare, renamed or not
-    (the map keys a package by its name alone): name that package by its object id.
+    review names by display name an access package that two or more accessPackages entries declare,
+    renamed or not (the map keys a package by its name alone): name that package by its object id.
 
     An access review and the access package the same document declares (BL-147): every accessPackages
     entry, not only a rename, records its package in the run's rename map -- the id of the package it

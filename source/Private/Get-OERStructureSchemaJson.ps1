@@ -98,12 +98,11 @@ function Get-OERStructureSchemaJson {
     measured to refuse and what the validator refuses beyond it, and says the alias is not derived
     again on a rename; the characters themselves are checked by the offline validator alone, since
     the schema carries no regular-expression pattern for them. The scope descriptions of
-    roleAssignments and roleManagementPolicies state the spellings the validator refuses: a trailing
-    or doubled '/', and in a path a '.' or '..' segment, a '%', a '\', a '?' or a '#', white space at
-    the start or end of the scope or of a segment, white space other than a space, or a control
-    character; and they say that a space between other characters of a segment is accepted.
-    Get-OERScopeSpellingProblem owns those rules, so a rule added there is added to both descriptions
-    too. The roleAssignments one adds that the export leaves a role assignment at such a scope out.
+    roleAssignments and roleManagementPolicies list the spellings the validator refuses, the two scope
+    spelling rules whose reference list is Get-OERScopeSpellingProblem's help, and say that a space
+    between other characters of a segment is accepted; a rule added there is added to both
+    descriptions too. The roleAssignments one adds that the export leaves a role assignment at such a
+    scope out.
     Exactly five keys are typed [ "array", "null" ] rather than "array": groups[].members,
     administrativeUnits[].members, administrativeUnits[].scopedRoles, catalogs[].resources and
     accessPackages[].resourceRoles. For those five an omitted key still reconciles and still PRUNES,

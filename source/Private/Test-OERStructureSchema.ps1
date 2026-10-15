@@ -220,26 +220,19 @@ function Test-OERStructureSchema {
     engine shares, so sub: and subscription: with an id, and mg:, are spellings of the scope's path;
     the comparison never resolves a scope online. A role or principal is compared as written. An
     entry missing a key part is not compared. directoryRoleAssignments keeps its own check, described
-    above. A roleAssignments or roleManagementPolicies scope that ends with '/' (other than the root
-    '/' itself) or contains '//' is an Error at the entry's scope path: the canonical form would merge
-    it with the scope written without the stray '/', so a scope written only that way would start to
-    be pruned and '//' would become the root, and the document is refused instead. A roleAssignments
-    or roleManagementPolicies scope that is written as an Azure path is an Error at the entry's scope
-    path, once for each rule it breaks (A13, BL-141), when it holds a '.' or '..' segment (split at
-    '/' and at '\'), a '%', a '\', a '?' or a '#', white space at the start or end of the scope or of
-    a segment, white space other than a space (U+0020), or a control character. The request URI
-    removes a dot segment, reads '\' as '/', ends the path at a '?' or '#', and decodes an escape of an
-    unreserved character (such as %2e), so such a spelling names another scope than the text says,
-    while the engine groups entries on the text's canonical form, and two spellings of one scope would
-    each prune what the other declares. Every '%' is refused, whatever it escapes. Microsoft Learn's
-    naming rules exclude '%', '\', '?' and '#' for most resource types but not all, so a role assignment
-    at a resource whose name holds one cannot be declared, and the message says to remove the entry.
-    One or more spaces between other characters of a segment are accepted: an Azure resource name can
-    hold them (a Microsoft.Kusto or a Microsoft.Sql database, for instance, per Microsoft Learn's naming
-    rules), so a role assignment at such a resource, as Get-OERInventory exports it, is valid.
-    A scope in the mg:, sub: or subscription: form is exempt, as ConvertTo-OERScopeSplat reads the
-    form: it names a management group or subscription by id, name or display name (a display name may
-    contain spaces), a lookup resolves it, and it is never sent as written. A roleAssignments
+    above. A roleAssignments or roleManagementPolicies scope that breaks one of the two scope spelling
+    rules -- the trailing or doubled '/' rule (A15) and, for a scope written as an Azure path, the
+    segment rules (A13, BL-141) -- is an Error at the entry's scope path, once for each rule it breaks,
+    with the message Get-OERScopeSpellingProblem gives for it. That helper owns the rules, their order
+    and their texts; its help is the reference list and says why each rule exists
+    (docs/development/rationale.md#role-assignment-key). This validator decides no spelling itself:
+    Add-ScopeSlashFinding and Add-ScopeSegmentFinding add one Error per problem the helper returns. The
+    slash rule applies to every scope; a scope in the mg:, sub: or subscription: form is exempt from
+    the segment rules, as the helper decides through ConvertTo-OERScopeSplat, since a lookup resolves it
+    and it is never sent as written. A role assignment at a resource whose name breaks a rule cannot be
+    declared, and the message says to remove the entry; one or more spaces between other characters of
+    a segment are accepted, since an Azure resource name can hold them, so a role assignment at such a
+    resource, as Get-OERInventory exports it, is valid. A roleAssignments
     scope that is the Azure root scope '/' (Test-OERAzureRootScope decides, so '//' is reported this
     way too, beside its Error, and so is a spelling the Azure Resource Manager transport sends to the
     root, such as '/.' or '/%2e', beside its A13 Error) is a Warning at the entry's scope path (BL-126): a role assignment
@@ -1685,14 +1678,10 @@ function Test-OERStructureSchema {
     # assignment it reads too, leaving one at a scope that breaks either rule out of the document
     # (docs/development/rationale.md#undeclarable-scope). The two functions below add one Error at the
     # entry's scope path per problem the owner returns for that rule, and never decide a spelling
-    # themselves.
-    # The first rule (A15): a scope that ends with '/' (other than the root '/' itself) or contains '//'
-    # anywhere. ConvertTo-OERCanonicalScope strips every trailing '/', so such a spelling would be merged
-    # with the scope written without it: a scope written ONLY with the stray '/' would start to be
-    # pruned, and '//' would become the root '/'. Before the engine grouped on the canonical scope,
-    # neither was ever pruned, and a refusal removes nothing. Azure Resource Manager never returns a
-    # scope carrying either spelling, so an exported document is not hit. Add-ScopeSegmentFinding,
-    # below, is the second spelling rule (A13).
+    # themselves. The owner's help is the reference list of the rules and says why each exists
+    # (docs/development/rationale.md#role-assignment-key); this file keeps no copy of it.
+    # Add-ScopeSlashFinding reports the first rule (A15, the trailing or doubled '/'), every problem
+    # whose Rule is Slash.
     function Add-ScopeSlashFinding {
         param([object]$Node, [string]$Section, [string]$Item, [string]$Path)
         if (-not (Test-HasProp -Node $Node -Name 'scope')) { return }
@@ -1702,38 +1691,10 @@ function Test-OERStructureSchema {
         }
     }
 
-    # A13 (BL-141, narrowed 2026-10-14): a scope written as an Azure Resource Manager path is sent as
-    # written, as part of a System.Uri, while the engine groups entries on the text's canonical form. A
-    # spelling the request reads as another scope would let two spellings of one scope form two groups,
-    # and each prune pass could remove what the other declares (the mechanism of BL-01). Each check below
-    # is an Error at the entry's scope path, in the form of the slash rule above, and they are
-    # independent, so one scope can draw several:
-    # - a '.' or '..' segment, with '/' or '\' as the separator: System.Uri removes it;
-    # - a '%': an escape can let two spellings reach one resource (System.Uri decodes an escape of an
-    #   unreserved character such as %2e and keeps one such as %2f), so every '%' is refused, whatever it
-    #   escapes;
-    # - a '\': System.Uri reads it as '/', so the text is a second spelling of the path written with '/';
-    # - a '?' or a '#': either ends the path of the request URI, so the rest of the scope never reaches
-    #   it as a path;
-    # - white space at the start or end of the scope or of a segment, white space other than a space
-    #   (U+0020) anywhere, and a control character. The first segment starts where the scope starts and
-    #   the last ends where it ends, so the segment test covers the scope's own start and end too. One
-    #   or more spaces BETWEEN other characters of a segment are accepted: an Azure resource name can
-    #   hold them (Microsoft Learn, "Naming rules and restrictions for Azure resources": Microsoft.Kusto
-    #   databases, and by its exclusion lists Microsoft.Sql servers/databases and elasticPools and
-    #   Microsoft.Insights components), the request sends each one as %20, and the export writes the
-    #   scope as Azure Resource Manager returns it, so a role assignment at such a resource, as
-    #   Get-OERInventory exports it, is valid (docs/development/rationale.md#role-assignment-key).
-    # The same page excludes '%', '\', '?' and '#' for most resource types, though not for all (a few
-    # allow '%', '\' or '?', and several allow '#', which it says not to use since it interferes with
-    # Azure Resource Manager requests), and not every type excludes a leading space: a role assignment
-    # at such a resource cannot be declared, and each message says to remove the entry.
-    # The mg:, sub: and subscription: forms are exempt: they name a management group or subscription by
-    # id, name or display name (a display name may contain spaces) and are resolved by a lookup, never
-    # sent as written. ConvertTo-OERScopeSplat owns that syntax, so the exemption asks it: only a scope it
-    # returns as @{ Scope = ... } is the text that is sent as written, and the prefix pattern is never
-    # repeated here. Get-OERScopeSpellingProblem owns these checks too, in this order: DotSegment,
-    # Escape, Backslash, QueryOrFragment, WhiteSpace.
+    # Add-ScopeSegmentFinding reports the second rule (A13, BL-141, narrowed 2026-10-14), every problem
+    # whose Rule is not Slash, in the order the owner returns them; one scope can draw several. The
+    # owner exempts the mg:, sub: and subscription: forms from it through ConvertTo-OERScopeSplat, so
+    # the prefix pattern is never repeated here.
     function Add-ScopeSegmentFinding {
         param([object]$Node, [string]$Section, [string]$Item, [string]$Path)
         if (-not (Test-HasProp -Node $Node -Name 'scope')) { return }
