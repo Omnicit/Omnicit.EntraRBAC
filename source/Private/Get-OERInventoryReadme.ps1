@@ -22,6 +22,12 @@ function Get-OERInventoryReadme {
     that could not be read'; the section's prose says how such a row is written: by the principal's
     object id with no principalStatus where its lookup failed ('/principal'), and with principalStatus
     Unresolved, its reason not known, where only its deleted items read failed ('/principalStatus').
+    An IncompleteReads entry that starts with 'lighthouseDelegations ' (compared ordinally) names an
+    Azure scope whose Azure Lighthouse delegations could not be read, as 'lighthouseDelegations at
+    <scope>', or a role whose name could not be read, as 'lighthouseDelegations role <id>' (Sprint 11
+    step 6b, BL-133), and is listed under the label 'Azure Lighthouse read that failed'; the section's
+    prose says that the delegations of such a scope are absent from lighthouseDelegations.json, which
+    does not mean it has none, and that the roleName of such a role is written null there.
 
     Directly after it comes the section "Members and owners left out as PIM for Groups access"
     (BL-125, A3). It says that inventory.json and groups.json write a group's standing members and
@@ -136,6 +142,12 @@ function Get-OERInventoryReadme {
     was kept, none of them left out (where the scope's role assignment read or eligibility read
     failed, that is every policy of a role neither used nor changed there), so
     roleManagementPolicies.json may hold policies of roles that are neither used nor changed there.
+    Last of all, after those, one entry per Azure scope whose Azure Lighthouse delegations could not
+    be read, reading 'lighthouseDelegations at <scope>' (for a walk with no scope tree,
+    'lighthouseDelegations at <all Azure scopes: scope enumeration failed>'), and one per role whose
+    name could not be read, reading 'lighthouseDelegations role <id>': the delegations of such a scope
+    are absent from lighthouseDelegations.json, which does not mean it has none, and the roleName of
+    such a role is written null there.
     Pass an empty array when there are none.
 
     .PARAMETER SkippedScopes
@@ -304,6 +316,13 @@ function Get-OERInventoryReadme {
     # and its InventoryPartial, so it gets its own label too.
     $PrincipalPrefix = 'roleAssignments/'
     $PrincipalLabel = 'Role assignment principal that could not be read'
+    # Sprint 11 step 6b (BL-133): an IncompleteReads entry that starts with 'lighthouseDelegations ' is not an
+    # Entra ID entry either: it names an Azure scope whose Azure Lighthouse delegations could not be read
+    # ('lighthouseDelegations at <scope>') or a role whose name could not be read ('lighthouseDelegations
+    # role <id>'), which Export-OERInventory appends last and keeps apart in its help and its
+    # InventoryPartial, so it gets its own label too.
+    $LighthouseReadPrefix = 'lighthouseDelegations '
+    $LighthouseReadLabel = 'Azure Lighthouse read that failed'
     # The two scope lists never hold such an entry: theirs start with '/' or '<'.
     $Lists = @(
         @{ Label = 'Entra ID'; Entries = $IncompleteReads }
@@ -316,6 +335,7 @@ function Get-OERInventoryReadme {
             $Label = $List.Label
             if ($Entry.StartsWith($AzurePolicyPrefix, [System.StringComparison]::Ordinal)) { $Label = $AzurePolicyLabel }
             elseif ($Entry.StartsWith($PrincipalPrefix, [System.StringComparison]::Ordinal)) { $Label = $PrincipalLabel }
+            elseif ($Entry.StartsWith($LighthouseReadPrefix, [System.StringComparison]::Ordinal)) { $Label = $LighthouseReadLabel }
             $Bullets.Add("- $($Label): $(Format-CodeSpan -Text $Entry)")
         }
     }
@@ -345,7 +365,11 @@ there that it could not judge was kept, none of them left out -- where a role as
 eligibility read failed, that is every policy of a role neither used nor changed at the scope -- so
 `roleManagementPolicies.json` may hold policies of roles that are neither used nor changed there. It
 does not mean every policy at the scope was kept: when only one policy could not be judged, the
-other unused, unchanged policies there are still left out.
+other unused, unchanged policies there are still left out. An entry labelled "Azure Lighthouse read
+that failed" names either a scope, as `lighthouseDelegations at <scope>`, whose Azure Lighthouse
+delegations could not be read, so they are absent from `lighthouseDelegations.json`, which does not
+mean the scope has none, or a role, as `lighthouseDelegations role <id>`, whose name could not be
+read, so its `roleName` is written `null` there.
 '@
         $Partial + "`n`n" + ($Bullets -join "`n")
     } else {

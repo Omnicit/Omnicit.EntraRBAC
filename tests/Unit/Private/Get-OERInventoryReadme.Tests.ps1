@@ -20,8 +20,8 @@ Describe 'Get-OERInventoryReadme' {
                     'catalogs.json', 'accessPackages.json', 'accessReviews.json',
                     'directoryRoleManagementPolicies.json', 'directoryRoleAssignments.json',
                     'groupsRoster.json', 'scopeHierarchy.json', 'azurePimEligibility.json',
-                    'roleAssignments.json', 'roleManagementPolicies.json', 'schema.json',
-                    'rbac-architect-prompt.md')) {
+                    'lighthouseDelegations.json', 'roleAssignments.json', 'roleManagementPolicies.json',
+                    'schema.json', 'rbac-architect-prompt.md')) {
                 $Md | Should -Match ([regex]::Escape($File))
             }
             # No cross-reference to a heading the README does not have.
@@ -1280,11 +1280,20 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
     BeforeAll {
         $script:LhHeading = '## Azure Lighthouse delegations (access from another tenant)'
         function Get-LhReadme {
-            param([object[]]$Rows = @())
-            InModuleScope $script:moduleName -Parameters @{ R = $Rows } {
-                param($R)
-                Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations $R
+            param([object[]]$Rows = @(), [string[]]$Incomplete = @())
+            InModuleScope $script:moduleName -Parameters @{ R = $Rows; I = $Incomplete } {
+                param($R, $I)
+                Get-OERInventoryReadme -IncompleteReads $I -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations $R
             }
+        }
+        # The "What this export could not read" section, heading included, up to the next level 2 heading.
+        function Get-LhCouldNotRead {
+            param([string]$Readme)
+            $Start = $Readme.IndexOf('## What this export could not read')
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
         }
         # The section, heading included, up to the next level 2 heading; $null when it is missing.
         function Get-LhSection {
@@ -1436,6 +1445,58 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
         $With = Get-LhReadme -Rows @((New-LhRow -Authorizations @((New-LhAuth -RoleName 'Contributor'))))
         $Cut = { param($Md) $S = $Md.IndexOf($script:LhHeading); $Md.Remove($S, $Md.IndexOf("`n## ", $S) - $S) }
         (& $Cut $With) | Should -BeExactly (& $Cut $Without)
+    }
+
+    It 'lists an IncompleteReads entry that starts with lighthouseDelegations under the label Azure Lighthouse read that failed, in the order given, last among the entries' {
+        # The export appends the failed Lighthouse reads after every other IncompleteReads entry and keeps them
+        # apart from the Entra ID entries, the principal entries and the role selection entries.
+        $Section = Get-LhCouldNotRead -Readme (Get-LhReadme -Incomplete @(
+                'groupsRoster'
+                'roleAssignments/Owner -> bbbbbbbb-2222-2222-2222-222222222222 @ /subscriptions/11111111-1111-1111-1111-111111111111/principal'
+                'roleManagementPolicies/role selection at /subscriptions/11111111-1111-1111-1111-111111111111'
+                'lighthouseDelegations at /subscriptions/11111111-1111-1111-1111-111111111111'
+                'lighthouseDelegations role dddddddd-dddd-dddd-dddd-dddddddddddd'
+                'lighthouseDelegations at <all Azure scopes: scope enumeration failed>'
+                'lighthouseDelegations at <subscriptions: the listing failed>'
+            ))
+        $Expected = @(
+            '- Entra ID: `groupsRoster`'
+            '- Role assignment principal that could not be read: `roleAssignments/Owner -> bbbbbbbb-2222-2222-2222-222222222222 @ /subscriptions/11111111-1111-1111-1111-111111111111/principal`'
+            '- Azure role management policies kept without being judged: `roleManagementPolicies/role selection at /subscriptions/11111111-1111-1111-1111-111111111111`'
+            '- Azure Lighthouse read that failed: `lighthouseDelegations at /subscriptions/11111111-1111-1111-1111-111111111111`'
+            '- Azure Lighthouse read that failed: `lighthouseDelegations role dddddddd-dddd-dddd-dddd-dddddddddddd`'
+            '- Azure Lighthouse read that failed: `lighthouseDelegations at <all Azure scopes: scope enumeration failed>`'
+            '- Azure Lighthouse read that failed: `lighthouseDelegations at <subscriptions: the listing failed>`'
+        )
+        # One string, so a failure prints the whole list rather than the first element that differs.
+        (@($Section -split '\r?\n' | Where-Object { $_ -like '- *' }) -join "`n") | Should -BeExactly ($Expected -join "`n")
+        $Section | Should -Match 'This bundle is PARTIAL'
+        $Section | Should -Not -Match 'Nothing\.'
+    }
+
+    It 'keeps an entry that only resembles a Lighthouse entry under Entra ID: it must start with lighthouseDelegations and a space, in that letter case (<Name>)' -ForEach @(
+        @{ Name = 'no space'; Entry = 'lighthouseDelegations' }
+        @{ Name = 'a longer word'; Entry = 'lighthouseDelegationsX at /subscriptions/11111111-1111-1111-1111-111111111111' }
+        @{ Name = 'another letter case'; Entry = 'LighthouseDelegations at /subscriptions/11111111-1111-1111-1111-111111111111' }
+        @{ Name = 'not at the start'; Entry = 'groups/lighthouseDelegations at /subscriptions/11111111-1111-1111-1111-111111111111' }
+    ) {
+        $Section = Get-LhCouldNotRead -Readme (Get-LhReadme -Incomplete @($Entry))
+        (@($Section -split '\r?\n' | Where-Object { $_ -like '- *' }) -join "`n") | Should -BeExactly ('- Entra ID: `' + $Entry + '`')
+    }
+
+    It 'says in the partial prose what a Lighthouse entry names and how the scope and the role are written, with every angle bracket inside a code span' {
+        $Section = Get-LhCouldNotRead -Readme (Get-LhReadme -Incomplete @('lighthouseDelegations at /subscriptions/11111111-1111-1111-1111-111111111111'))
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Azure Lighthouse read that failed" names either a scope, as `lighthouseDelegations at <scope>`, whose Azure Lighthouse delegations could not be read, so they are absent from `lighthouseDelegations.json`, which does not mean the scope has none, or a role, as `lighthouseDelegations role <id>`, whose name could not be read, so its `roleName` is written `null` there.'))
+        # Outside its code spans the section holds no angle bracket: Markdown would read it as a tag.
+        ($Collapsed -replace '`[^`]*`', '') | Should -Not -Match '<'
+    }
+
+    It 'writes nothing about a failed Lighthouse read when none failed' {
+        $Section = Get-LhCouldNotRead -Readme (Get-LhReadme -Rows @((New-LhRow -Authorizations @((New-LhAuth -RoleName 'Contributor')))))
+        $Section | Should -Match 'Nothing\.'
+        $Section | Should -Not -Match 'Azure Lighthouse read that failed'
+        $Section | Should -Not -Match 'lighthouseDelegations at'
     }
 
     It 'declares LighthouseDelegations Mandatory, so a caller cannot forget it and write a README that claims none was read' {

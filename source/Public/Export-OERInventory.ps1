@@ -742,6 +742,14 @@ function Export-OERInventory {
         # object stays in $LighthouseRead, null when no read was made (no Azure section, or no scope tree).
         $LighthouseRead = $null
         $LighthouseDelegations = @()
+        # What the Lighthouse read could not read, in two lists kept apart from the Entra ID entries in
+        # $IncompleteReads and appended LAST in the output object and the README call: the
+        # 'lighthouseDelegations at <scope>' and 'lighthouseDelegations role <id>' entries the reader returns
+        # (and two of this cmdlet's own: one for a scope enumeration that failed, one for a subscription
+        # listing that failed), and the causes the reader names for them. Both are filled below and read
+        # only by the output object, the README call and the InventoryPartial message.
+        $LighthouseUnread = [System.Collections.Generic.List[string]]::new()
+        $LighthouseCauses = [System.Collections.Generic.List[object]]::new()
         $SkippedEligibilityScopes = [System.Collections.Generic.List[string]]::new()
 
         # BL-107: without -AllRolePolicies the RoleManagementPolicies section keeps a role's policy at a
@@ -794,6 +802,13 @@ function Export-OERInventory {
                     if (-not $TreeSkip) { continue }
                     $SkippedScopes.Add([string]$TreeSkip)
                     $SkippedEligibilityScopes.Add([string]$TreeSkip)
+                    # Sprint 11 step 6b (BL-133): subscriptions that could not be LISTED are subscriptions whose
+                    # delegations were never read, and the reader is not asked about them. A management group
+                    # listing that failed adds nothing: no delegation lives at a management group, and the
+                    # subscriptions are listed apart.
+                    if ([string]$TreeSkip -ceq '<subscriptions: the listing failed>') {
+                        $LighthouseUnread.Add('lighthouseDelegations at <subscriptions: the listing failed>')
+                    }
                 }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
@@ -807,6 +822,9 @@ function Export-OERInventory {
                 # for azurePimEligibility.json either, and the gap must be named rather than silently
                 # written as an empty (and therefore misleadingly "complete") file.
                 $SkippedEligibilityScopes.Add('<all Azure scopes: scope enumeration failed>')
+                # Sprint 11 step 6b (BL-133): and the delegations of the subscriptions that walk would have
+                # visited were not read either, which is named, not left as an empty lighthouseDelegations.json.
+                $LighthouseUnread.Add('lighthouseDelegations at <all Azure scopes: scope enumeration failed>')
             }
             if ($Tree) {
                 # The merged role assignments' keys, each with the index of its row in $RoleAssignments, so a
@@ -986,6 +1004,16 @@ function Export-OERInventory {
                 # Causes); the delegations are read from it with a null-filter, since @($null) is one element.
                 $LighthouseRead = Get-OERInventoryLighthouseDelegation -Scope @($Tree.Scopes)
                 $LighthouseDelegations = @($LighthouseRead.Delegations | Where-Object { $null -ne $_ })
+                # What the reader could not read, appended after the tree's own entries above: a blank entry
+                # would make an IncompleteReads count assertion pass on nothing, and a null cause is no cause.
+                if ($null -ne $LighthouseRead) {
+                    foreach ($LighthouseUnreadEntry in @($LighthouseRead.Unread)) {
+                        if (-not [string]::IsNullOrWhiteSpace([string]$LighthouseUnreadEntry)) { $LighthouseUnread.Add([string]$LighthouseUnreadEntry) }
+                    }
+                    foreach ($LighthouseCause in @($LighthouseRead.Causes)) {
+                        if ($null -ne $LighthouseCause) { $LighthouseCauses.Add($LighthouseCause) }
+                    }
+                }
 
                 # BL-107: the selection, now that the eligibilities are read. A scope whose role
                 # assignment read or eligibility read failed cannot be judged: its policies that are not
@@ -1359,8 +1387,10 @@ function Export-OERInventory {
         if ($AzureSections.Count -gt 0) {
             Write-OERBundleJson -Name 'azurePimEligibility.json' -Data @($AzureEligibilities)
             # Sprint 11 step 6b (BL-133): written exactly when azurePimEligibility.json is, and always as an
-            # array, [] when none was read. A subscription whose delegations could not be read is named in
-            # the README, never written here as an empty list.
+            # array, [] when none was read. The file can be [] although a read failed: a subscription whose
+            # delegations could not be read has no row here, and that is never silent -- it is named in
+            # IncompleteReads and in the InventoryPartial message, and in the README, so an empty or short
+            # file is never mistaken for a tenant with no delegation.
             Write-OERBundleJson -Name 'lighthouseDelegations.json' -Data @($LighthouseDelegations)
         }
 
@@ -1389,9 +1419,9 @@ function Export-OERInventory {
             # principalStatus (BL-133), and the role assignments at a scope no document can declare (A13,
             # A15), and the groups that use PIM for Groups in a restricted management unit (BL-134), and the
             # Azure Lighthouse delegations (Sprint 11 step 6b, BL-133). The role assignment principals that could
-            # not be read follow the Entra ID entries and precede the role policy selection's, as in the output
-            # object.
-            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments -SharedNames $SharedNames -UnresolvedPrincipalAssignments $UnresolvedPrincipalAssignments -UndeclarableScopeAssignments $UndeclarableScopeAssignments -RestrictedUnitPimGroups $RestrictedUnitPimGroups -LighthouseDelegations $LighthouseDelegations) |
+            # not be read follow the Entra ID entries and precede the role policy selection's, and the Azure
+            # Lighthouse reads that failed come last of all, as in the output object.
+            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads) + @($LighthouseUnread)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments -SharedNames $SharedNames -UnresolvedPrincipalAssignments $UnresolvedPrincipalAssignments -UndeclarableScopeAssignments $UndeclarableScopeAssignments -RestrictedUnitPimGroups $RestrictedUnitPimGroups -LighthouseDelegations $LighthouseDelegations) |
                 Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
         }
         $WrittenFiles.Add('README.md')
@@ -1442,8 +1472,9 @@ function Export-OERInventory {
             SkippedEligibilityScopes = @($SkippedEligibilityScopes)
             # The Entra ID entries first, in their documented order, then the role assignment principals
             # that could not be read (BL-133), then the scopes where role management policies that could
-            # not be judged were kept (BL-107).
-            IncompleteReads        = @($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads)
+            # not be judged were kept (BL-107), and last the Azure Lighthouse reads that failed (Sprint 11
+            # step 6b, BL-133).
+            IncompleteReads        = @($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads) + @($LighthouseUnread)
             Files                  = $WrittenFiles.ToArray()
         }
         $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.InventoryBundle')
@@ -1453,7 +1484,7 @@ function Export-OERInventory {
         # then learns the coverage is incomplete. A warning alone left $? true, -ErrorAction Stop
         # inert and a try/catch seeing success, which is how a heavily truncated bundle reached the
         # LLM -> Invoke-OERStructure workflow looking exactly like a full tenant snapshot.
-        if ($SkippedScopes.Count -gt 0 -or $SkippedEligibilityScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0 -or $UnreadPrincipalReads.Count -gt 0 -or $RolePolicySelectionReads.Count -gt 0) {
+        if ($SkippedScopes.Count -gt 0 -or $SkippedEligibilityScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0 -or $UnreadPrincipalReads.Count -gt 0 -or $RolePolicySelectionReads.Count -gt 0 -or $LighthouseUnread.Count -gt 0) {
             $PartialParts = [System.Collections.Generic.List[string]]::new()
             # A '<...>' entry is not a scope that failed to READ: it names the whole walk that could not
             # start, or a level of the tree (management groups, subscriptions) that could not be LISTED,
@@ -1551,6 +1582,19 @@ function Export-OERInventory {
                     'eligibility read failed, that is every policy of a role neither used nor changed there -- so ' +
                     'roleManagementPolicies.json may hold policies of roles that are neither used nor changed at those scopes: ' +
                     ($RolePolicySelectionReads -join '; '))
+            }
+            if ($LighthouseUnread.Count -gt 0) {
+                # A clause of its own (Sprint 11 step 6b, BL-133), after the role policy selection one and not
+                # folded into the Entra ID one, whose count and wording stay over the Entra ID entries only:
+                # these are Azure scopes and roles of lighthouseDelegations.json. A subscription is read whole or
+                # not at all, so a scope named here has no delegation in the file, which does not mean it has
+                # none; a role named here has its roleName written as null wherever it appears. The causes are
+                # the ones the reader returned; Format-OERUnreadCauseClause owns their wording, deduplication
+                # and cap, and its trailing period is trimmed, as above, because the parts are joined with one.
+                $LighthousePart = "$($LighthouseUnread.Count) Azure Lighthouse read(s) failed, so lighthouseDelegations.json holds no delegation of a scope named here and writes the name of a role named here as null: $($LighthouseUnread -join '; ')"
+                $LighthouseCauseClause = Format-OERUnreadCauseClause -Cause $LighthouseCauses.ToArray() -Label 'Causes of the unread Azure Lighthouse reads'
+                if ($LighthouseCauseClause) { $LighthousePart += '.' + $LighthouseCauseClause.TrimEnd('.') }
+                $PartialParts.Add($LighthousePart)
             }
             Write-CmdletError `
                 -Message ([System.Exception]::new(

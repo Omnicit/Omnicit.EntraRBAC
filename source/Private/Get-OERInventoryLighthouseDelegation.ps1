@@ -41,11 +41,12 @@ function Get-OERInventoryLighthouseDelegation {
     (Sprint 11 step 6b).
 
     A subscription is read whole or not at all: a failed read of any of its lists, or an assignment
-    whose definition is neither expanded nor listed, leaves it with no row. The failure is never
-    written as an empty list. It is returned in Unread (one entry per scope of the subscription, as
-    'lighthouseDelegations at <scope>'), in Causes (the message and the subscription), and written as
-    ONE warning. A resource provider that is not registered does not fail a list: it answers an empty
-    one (measured).
+    whose definition is neither expanded nor listed, leaves it with no row. The Delegations of a
+    result can therefore be empty although a read failed, so the failure is never left unnamed: it is
+    returned in Unread (one entry per scope of the subscription, as 'lighthouseDelegations at
+    <scope>'), in Causes (the message and the subscription), and written as ONE warning, and the
+    caller names it in the export's IncompleteReads, its InventoryPartial message and its README. A
+    resource provider that is not registered does not fail a list: it answers an empty one (measured).
 
     The role names are read after every subscription, one request per distinct role GUID, at the
     subscription of the first row that carries it (api-version 2022-04-01, no paging). A role that
