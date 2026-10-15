@@ -54,6 +54,20 @@ function Get-OERInventoryReadme {
     that no two objects the export read share a name. That parameter is mandatory for the same
     reason as the five above.
 
+    Directly after it comes the section "Role assignments whose principal could not be looked up"
+    (Sprint 11 step 6, BL-133). It says that such an assignment stays in inventory.json and
+    roleAssignments.json, written by the principal's object id with principalStatus, that
+    Invoke-OERStructure never creates one and that removing its entry from the document lets -Prune
+    remove it, and that a principal whose lookup failed is named under "What this export could not
+    read" instead. Then it gives the count and one bullet per -UnresolvedPrincipalAssignments row, in
+    the order given: the role, the scope and the principal as code spans (the same fence rule as the
+    entries above), the principal type in parentheses when it is known, and the status as a code span
+    with its reason in words -- Deleted, found among the directory's deleted items; Unresolved, found
+    neither in the directory nor among its deleted items (deleted beyond the retention period, a
+    principal of another tenant, for example through Azure Lighthouse, or not readable). It never
+    writes the role assignment id. When -UnresolvedPrincipalAssignments is empty it says that none was
+    found. That parameter is mandatory for the same reason as the six above.
+
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
     collections or objects that could not be read, could not be written without an empty name, or
@@ -96,32 +110,48 @@ function Get-OERInventoryReadme {
     object per name with Section (the document section, 'groups' for instance), Name (the name as
     reported) and Count (how many live objects carry it). Pass an empty array when there are none.
 
+    .PARAMETER UnresolvedPrincipalAssignments
+    The role assignments whose principal the directory did not return (Sprint 11 step 6, BL-133),
+    written into inventory.json and roleAssignments.json by the principal's object id with
+    principalStatus, and deduplicated by Export-OERInventory from the information records tagged
+    Omnicit.EntraRBAC.UnresolvedPrincipal that Get-OERInventory writes: one object per assignment with
+    Scope, Role, Principal (the object id), PrincipalType (the principal type, or an empty string when
+    unknown) and PrincipalStatus (Deleted or Unresolved). Any other property, such as RoleAssignmentId,
+    is not written. Pass an empty array when there are none.
+
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @()
     Returns the README Markdown as a single string. Its "What this export could not read" section
     says that nothing was left unread, its "Members and owners left out as PIM for Groups access"
     section that none was left out, its "Role assignments at the root scope (elevated access)"
-    section that none was read, and its "Names two or more objects share" section that no two
-    objects share a name.
+    section that none was read, its "Names two or more objects share" section that no two objects
+    share a name, and its "Role assignments whose principal could not be looked up" section that none
+    was found.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @() -RootScopeAssignments @() -SharedNames @()
+    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @()
     Returns the README Markdown with one bullet per entry under "What this export could not read".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut -RootScopeAssignments @() -SharedNames @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @()
     Returns the README Markdown with one bullet per group under "Members and owners left out as PIM
     for Groups access".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @([PSCustomObject]@{ Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' }) -SharedNames @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @([PSCustomObject]@{ Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' }) -SharedNames @() -UnresolvedPrincipalAssignments @()
     Returns the README Markdown with the count and one bullet per role assignment under "Role
     assignments at the root scope (elevated access)".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @('groups/Admins') -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @([PSCustomObject]@{ Section = 'groups'; Name = 'Admins'; Count = 2 })
+    Get-OERInventoryReadme -IncompleteReads @('groups/Admins') -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @([PSCustomObject]@{ Section = 'groups'; Name = 'Admins'; Count = 2 }) -UnresolvedPrincipalAssignments @()
     Returns the README Markdown with one bullet per name under "Names two or more objects share":
     the name, how many objects carry it and its section.
+
+    .EXAMPLE
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; Role = 'Reader'; Principal = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'User'; PrincipalStatus = 'Deleted' })
+    Returns the README Markdown with the count and one bullet per role assignment under "Role
+    assignments whose principal could not be looked up": the role, the scope, the principal, its type
+    and the status with its reason.
     #>
     [OutputType([string])]
     [CmdletBinding()]
@@ -131,7 +161,8 @@ function Get-OERInventoryReadme {
         [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$SkippedEligibilityScopes,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$PimLeftOut,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RootScopeAssignments,
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$SharedNames
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$SharedNames,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$UnresolvedPrincipalAssignments
     )
 
     # A text written as a Markdown code span, so '<all Azure scopes: scope enumeration failed>' is
@@ -305,6 +336,41 @@ export changes nothing in the tenant.
         $SharedIntro + "`n`n" + 'None. No two objects this export read share a name.'
     }
 
+    # Sprint 11 step 6 (BL-133, A18): the role assignments whose principal the directory did not return,
+    # one bullet per row in the order the export holds them (deduplicated there): the role, the scope and
+    # the principal as code spans, the type in parentheses when it is known, and the status as a code span
+    # with its reason in words. Never the role assignment id. The parameter is mandatory, so binding has
+    # already refused a null entry.
+    $UnresolvedBullets = [System.Collections.Generic.List[string]]::new()
+    foreach ($Entry in @($UnresolvedPrincipalAssignments)) {
+        $UnresolvedType = [string]$Entry.PrincipalType
+        $UnresolvedStatus = [string]$Entry.PrincipalStatus
+        $UnresolvedReason = if ($UnresolvedStatus -eq 'Deleted') {
+            'found among the directory''s deleted items'
+        } else {
+            'found neither in the directory nor among its deleted items (deleted beyond the retention period, a principal of another tenant, for example through Azure Lighthouse, or not readable)'
+        }
+        $UnresolvedBullets.Add("- $(Format-CodeSpan -Text ([string]$Entry.Role)) at $(Format-CodeSpan -Text ([string]$Entry.Scope)) for $(Format-CodeSpan -Text ([string]$Entry.Principal))" +
+            $(if ($UnresolvedType) { " ($UnresolvedType)" } else { '' }) + ": $(Format-CodeSpan -Text $UnresolvedStatus), $UnresolvedReason")
+    }
+    $UnresolvedIntro = @'
+## Role assignments whose principal could not be looked up
+
+A role assignment can name a principal that Microsoft Entra ID does not return: one that was
+deleted, or one this directory cannot read. Such an assignment stays in `inventory.json` and
+`roleAssignments.json`, with its principal written as the object id and `principalStatus` saying
+why: `Deleted` or `Unresolved`, as each entry below explains. `Invoke-OERStructure` never creates
+such an assignment, and removing its entry from the document lets `-Prune` remove it. A principal
+whose lookup failed is not listed here: it is written by its object id without `principalStatus`
+and named under "What this export could not read". Where only the read of the deleted items failed,
+the principal is listed here as `Unresolved` and that read is named there too.
+'@
+    $UnresolvedPrincipalSection = if ($UnresolvedBullets.Count -gt 0) {
+        $UnresolvedIntro + "`n`n" + "This export read $($UnresolvedBullets.Count) such role assignment(s):" + "`n`n" + ($UnresolvedBullets -join "`n")
+    } else {
+        $UnresolvedIntro + "`n`n" + "None. No role assignment this export read names a principal that the directory did not return, apart`nfrom any whose lookup failed, which are named under `"What this export could not read`". Role`nassignments are read only when the export includes ``RoleAssignments``."
+    }
+
     $Readme = @'
 # OER RBAC Inventory Bundle
 
@@ -319,6 +385,8 @@ includes a predefined prompt that turns it into appliable improvement proposals.
 @@ROOT-SCOPE@@
 
 @@SHARED-NAMES@@
+
+@@UNRESOLVED-PRINCIPALS@@
 
 ## Files
 
@@ -458,5 +526,5 @@ came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in anothe
 remove `tenantId` first.
 '@
 
-    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection).Replace('@@SHARED-NAMES@@', $SharedNameSection)
+    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection).Replace('@@SHARED-NAMES@@', $SharedNameSection).Replace('@@UNRESOLVED-PRINCIPALS@@', $UnresolvedPrincipalSection)
 }

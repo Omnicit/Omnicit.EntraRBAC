@@ -160,9 +160,10 @@ function Export-OERInventory {
     Stop warning preference (-WarningAction Stop, or $WarningPreference set to 'Stop') the export
     stops at that warning, before it writes the bundle. Any other warning of a scope's read is
     written after that read. An operator's -WarningVariable also collects the warnings of the
-    per-scope reads -- Get-OERInventory's root-scope warning once per scope, and any other per-scope
-    warning twice -- while the display shows each other per-scope warning once, and the root-scope
-    assignments only in the export's one warning.
+    per-scope reads -- Get-OERInventory's root-scope warning, and its warning on role assignments
+    whose principal could not be looked up, once per scope, and any other per-scope warning twice --
+    while the display shows each other per-scope warning once, and the root-scope assignments and the
+    assignments whose principal could not be looked up only in the export's own warnings.
 
     NAMES THAT TWO OR MORE OBJECTS SHARE. Microsoft Entra ID does not keep display names unique, and
     the apply engine refuses a name that more than one live object answers to, so inventory.json and
@@ -183,6 +184,24 @@ function Export-OERInventory {
     share a name. The names stay in IncompleteReads as well. Leaving them out changes nothing in the
     tenant.
 
+    ROLE ASSIGNMENTS WHOSE PRINCIPAL COULD NOT BE LOOKED UP. A role assignment can name a principal
+    that Microsoft Entra ID does not return: one that was deleted, or one the directory cannot read.
+    Such an assignment stays in inventory.json and roleAssignments.json, written by the principal's
+    object id with principalStatus Deleted, when the principal is among the directory's deleted items,
+    or Unresolved, when it is found neither there nor in the directory (the Get-OERInventory help
+    describes the rule). Invoke-OERStructure never creates such an assignment, and removing its entry
+    lets -Prune remove it. Each such principal is looked for among the deleted items once for the
+    whole export, however many Azure scopes read the assignment. The export writes ONE warning that
+    gives how many such assignments it read, each counted once. It writes it after the walk and before
+    the bundle is written, so -WhatIf shows it too, and under a Stop warning preference the export
+    stops at that warning, before it writes the bundle. The generated README.md lists them, with their
+    count, in a section "Role assignments whose principal could not be looked up", directly after
+    "Names two or more objects share": each by role, scope, principal and, when it is known, the
+    principal type, with its status and the reason in words, or the statement that none was found.
+    A principal whose lookup failed is written by its object id with no principalStatus and is named
+    in IncompleteReads (below), and so is one whose deleted items read failed, which is written as
+    Unresolved. The Azure scope is never skipped for either.
+
     Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
     Groups read when it left anything unread, then one entry per partial report from
     Get-OERInventory, which reads the other Entra ID sections. Each entry names the affected
@@ -192,7 +211,12 @@ function Export-OERInventory {
     by its own name alone (groups also when the group read stops on an unforeseen error, with the
     warning 'Could not read groups: ...'), and is written as an empty array that does not mean the
     tenant has none; the entry groupsRoster likewise means groupsRoster.json is empty only because
-    the roster read failed. Last, after every Entra ID entry, IncompleteReads carries one entry per
+    the roster read failed. After every Entra ID entry, IncompleteReads carries one entry per role
+    assignment principal that could not be read (see ROLE ASSIGNMENTS WHOSE PRINCIPAL COULD NOT BE
+    LOOKED UP above), each once however many Azure scopes read the assignment, reading
+    'roleAssignments/<role> -> <principal id> @ <scope>' followed by '/principal' when the principal
+    could not be looked up, or '/principalStatus' when only its deleted items read failed. Last, after
+    those entries, IncompleteReads carries one entry per
     Azure scope where at least one role management policy could not be judged (see WHICH AZURE ROLE
     MANAGEMENT POLICIES ARE EXPORTED above), reading 'roleManagementPolicies/role selection at' and
     the scope in its canonical form -- for a subscription,
@@ -204,13 +228,14 @@ function Export-OERInventory {
     kept: when only one row could not be judged, the other unused, unchanged policies there are still
     left out. The Count of IncompleteReads is therefore one for the Groups read when it left anything
     unread, plus the number of partial reports from Get-OERInventory, plus one when the group roster
-    could not be read, plus one per such Azure scope, and not the number of unread collections; read
-    the entries for that. The same non-terminating InventoryPartial error is raised here when
-    IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty, and its message gives the
-    causes of the unread group reads (Get-OERInventory's own InventoryPartial gives those of the other
-    sections). The part of that message that counts partial Entra ID read entries counts the Entra ID
-    entries only; the Azure scopes where policies could not be judged have a clause of their own,
-    which names each of them. A members, scopedRoles, resources or resourceRoles collection that
+    could not be read, plus one per role assignment principal that could not be read, plus one per
+    such Azure scope, and not the number of unread collections; read the entries for that. The same
+    non-terminating InventoryPartial error is raised here when IncompleteReads, SkippedScopes or
+    SkippedEligibilityScopes is non-empty, and its message gives the causes of the unread group reads
+    (Get-OERInventory's own InventoryPartial gives those of the other sections). The part of that
+    message that counts partial Entra ID read entries counts the Entra ID entries only; the role
+    assignment principals that could not be read have a clause of their own, which names each of them
+    and gives the causes, and so have the Azure scopes where policies could not be judged. A members, scopedRoles, resources or resourceRoles collection that
     could not be read, or that has an entry the export could name by nothing the apply engine
     accepts, is NOT written into inventory.json as an empty one or with an empty name: its key is an
     explicit null, which the apply engine reads as "leave untouched" (so is the members key of a group
@@ -525,10 +550,22 @@ function Export-OERInventory {
         # stopped before the statement after the walk is ignored by every later call, an export's
         # included, which overwrites it here. There is deliberately NO try/finally around the region: a
         # statement-terminating error inside it must keep skipping only its own statement.
-        $script:_OERInventoryRunContext = [PSCustomObject]@{
-            Owner          = $MyInvocation
-            GroupNameIndex = $GroupNameIndex
+        #
+        # Sprint 11 step 6 (BL-133, A18): three more members for the role assignment principals. The
+        # per-scope calls read a principal the directory did not return among its deleted items once for the
+        # whole export, keeping each answer in PrincipalStatus (keyed without regard to letter case); and a
+        # principal whose lookup or deleted items read failed is named in UnreadPrincipal, with its cause in
+        # UnreadPrincipalCause, instead of in the call's own InventoryPartial, which the call's -ErrorAction
+        # Stop below would turn into a skip of the whole scope. The local reference keeps both lists after
+        # the context is cleared, for IncompleteReads and the partial message.
+        $RunContext = [PSCustomObject]@{
+            Owner                = $MyInvocation
+            GroupNameIndex       = $GroupNameIndex
+            PrincipalStatus      = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            UnreadPrincipal      = [System.Collections.Generic.List[string]]::new()
+            UnreadPrincipalCause = [System.Collections.Generic.List[object]]::new()
         }
+        $script:_OERInventoryRunContext = $RunContext
         # The ids the roster member-count join below is keyed on come from the group reader alone:
         # it is asked for -IncludeId above, PURELY to key that join on object id instead of display
         # name (Entra permits duplicate group display names -- Add-OERGroupMember.ps1:43-45 -- so a
@@ -674,6 +711,10 @@ function Export-OERInventory {
         # Get-OERInventory calls left out, as each call's Omnicit.EntraRBAC.RootScopeAssignment
         # information record carries them: one list for the whole walk, deduplicated after it.
         $RootScopeRows = [System.Collections.Generic.List[object]]::new()
+        # Sprint 11 step 6 (BL-133, A18): the role assignments written with principalStatus, as each per-scope
+        # call's Omnicit.EntraRBAC.UnresolvedPrincipal information record carries them: one list for the
+        # whole walk, deduplicated after it.
+        $UnresolvedPrincipalRows = [System.Collections.Generic.List[object]]::new()
 
         if ($AzureSections.Count -gt 0) {
             $TreeParams = @{}
@@ -747,6 +788,10 @@ function Export-OERInventory {
                                 # -WarningVariable still collects the captured warnings too: PowerShell
                                 # appends a nested command's warnings to every enclosing -WarningVariable,
                                 # whatever that command's -WarningAction (measured).
+                                #
+                                # Sprint 11 step 6 (BL-133): the Omnicit.EntraRBAC.UnresolvedPrincipal notices are
+                                # read the same way: their rows join $UnresolvedPrincipalRows, their warning texts
+                                # are not written again, and ONE warning after the walk counts the rows.
                                 $ScopeWarnings = $null
                                 $ScopeInformation = $null
                                 try {
@@ -754,9 +799,13 @@ function Export-OERInventory {
                                         -InformationAction SilentlyContinue -InformationVariable ScopeInformation
                                 } finally {
                                     $ScopeNotices = @($ScopeInformation | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.RootScopeAssignment' } | ForEach-Object { $_.MessageData })
-                                    $ScopeNoticeTexts = @($ScopeNotices | ForEach-Object { [string]$_.Warning })
+                                    $ScopePrincipalNotices = @($ScopeInformation | Where-Object { $null -ne $_ -and $_.Tags -contains 'Omnicit.EntraRBAC.UnresolvedPrincipal' } | ForEach-Object { $_.MessageData })
+                                    $ScopeNoticeTexts = @(@($ScopeNotices) + @($ScopePrincipalNotices) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_.Warning })
                                     foreach ($ScopeNotice in $ScopeNotices) {
                                         foreach ($RootRow in @($ScopeNotice.Assignments)) { if ($null -ne $RootRow) { $RootScopeRows.Add($RootRow) } }
+                                    }
+                                    foreach ($ScopePrincipalNotice in $ScopePrincipalNotices) {
+                                        foreach ($PrincipalRow in @($ScopePrincipalNotice.Assignments)) { if ($null -ne $PrincipalRow) { $UnresolvedPrincipalRows.Add($PrincipalRow) } }
                                     }
                                     foreach ($ScopeWarning in @($ScopeWarnings)) {
                                         if ($null -eq $ScopeWarning) { continue }
@@ -857,6 +906,38 @@ function Export-OERInventory {
             $RootList = Format-OERRootScopeAssignment -Assignment $RootScopeRows.ToArray()
             $RootScopeAssignments = @($RootList.Assignments)
             Write-Warning "Export-OERInventory: left out $($RootScopeAssignments.Count) role assignment(s) at the root scope '/', which grants access over every management group and subscription in the tenant (elevated access), from inventory.json and roleAssignments.json: $($RootList.Text). README.md names them under 'Role assignments at the root scope (elevated access)'; review them as a finding. Invoke-OERStructure never creates or removes a role assignment at the root scope."
+        }
+
+        # Sprint 11 step 6 (BL-133, A18): the role assignments the walk's reads wrote with principalStatus,
+        # each once -- an assignment inherited by several scopes is handed over by each read -- deduplicated
+        # on the role assignment id, and on scope, role and principal for a row with none, without regard to
+        # letter case, in the order first handed over. They stay in inventory.json and roleAssignments.json.
+        # One warning counts them, here after the walk and before the bundle's ShouldProcess, so -WhatIf
+        # shows it too, and the README lists them (docs/development/rationale.md#unresolved-principals).
+        $UnresolvedPrincipalAssignments = @()
+        if ($UnresolvedPrincipalRows.Count -gt 0) {
+            $SeenPrincipalRow = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $UnresolvedPrincipalAssignments = @(foreach ($PrincipalRow in $UnresolvedPrincipalRows) {
+                    $PrincipalRowKey = if (-not [string]::IsNullOrWhiteSpace([string]$PrincipalRow.RoleAssignmentId)) {
+                        'id|' + [string]$PrincipalRow.RoleAssignmentId
+                    } else {
+                        'row|{0}|{1}|{2}' -f $PrincipalRow.Scope, $PrincipalRow.Role, $PrincipalRow.Principal
+                    }
+                    if ($SeenPrincipalRow.Add($PrincipalRowKey)) { $PrincipalRow }
+                })
+            Write-Warning "Export-OERInventory: $($UnresolvedPrincipalAssignments.Count) role assignment(s) in inventory.json and roleAssignments.json name a principal that Microsoft Entra ID does not return, each written by the principal's object id with principalStatus Deleted (found among the directory's deleted items) or Unresolved (found neither in the directory nor among its deleted items). README.md names them under 'Role assignments whose principal could not be looked up'; review them as a finding. Invoke-OERStructure never creates such an assignment."
+        }
+
+        # Sprint 11 step 6 (BL-133, A18): the role assignment principals the walk's reads could not look up,
+        # or could not look for among the directory's deleted items, as they named them to the run context,
+        # each entry once (an inherited assignment is read by several scopes), in the order first named. Kept
+        # apart from the Entra ID entries in $IncompleteReads and appended after them, before the role policy
+        # selection entries, so the Entra ID entries keep their documented order and own clause.
+        $UnreadPrincipalReads = [System.Collections.Generic.List[string]]::new()
+        $SeenUnreadPrincipal = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($UnreadPrincipal in @($RunContext.UnreadPrincipal)) {
+            if ([string]::IsNullOrWhiteSpace($UnreadPrincipal)) { continue }
+            if ($SeenUnreadPrincipal.Add($UnreadPrincipal)) { $UnreadPrincipalReads.Add($UnreadPrincipal) }
         }
 
         # --- Group split: RBAC-relevant kept in inventory.json; unfiltered roster written separately ---
@@ -1089,8 +1170,10 @@ function Export-OERInventory {
             # The members and owners the group reader left out as PIM for Groups access go into the
             # README alone too, per group by name, for the groups inventory.json writes (BL-125), and
             # so do the role assignments at the root scope the walk left out (BL-126), and the names two
-            # or more objects share, with their counts (BL-131).
-            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments -SharedNames $SharedNames) |
+            # or more objects share, with their counts (BL-131), and the role assignments written with
+            # principalStatus (BL-133). The role assignment principals that could not be read follow the
+            # Entra ID entries and precede the role policy selection's, as in the output object.
+            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments -SharedNames $SharedNames -UnresolvedPrincipalAssignments $UnresolvedPrincipalAssignments) |
                 Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
         }
         $WrittenFiles.Add('README.md')
@@ -1139,9 +1222,10 @@ function Export-OERInventory {
             SkippedScopes          = @($SkippedScopes)
             AzurePimEligibility    = @($AzureEligibilities).Count
             SkippedEligibilityScopes = @($SkippedEligibilityScopes)
-            # The Entra ID entries first, in their documented order, then the scopes where role
-            # management policies that could not be judged were kept (BL-107).
-            IncompleteReads        = @($IncompleteReads) + @($RolePolicySelectionReads)
+            # The Entra ID entries first, in their documented order, then the role assignment principals
+            # that could not be read (BL-133), then the scopes where role management policies that could
+            # not be judged were kept (BL-107).
+            IncompleteReads        = @($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads)
             Files                  = $WrittenFiles.ToArray()
         }
         $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.InventoryBundle')
@@ -1151,7 +1235,7 @@ function Export-OERInventory {
         # then learns the coverage is incomplete. A warning alone left $? true, -ErrorAction Stop
         # inert and a try/catch seeing success, which is how a heavily truncated bundle reached the
         # LLM -> Invoke-OERStructure workflow looking exactly like a full tenant snapshot.
-        if ($SkippedScopes.Count -gt 0 -or $SkippedEligibilityScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0 -or $RolePolicySelectionReads.Count -gt 0) {
+        if ($SkippedScopes.Count -gt 0 -or $SkippedEligibilityScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0 -or $UnreadPrincipalReads.Count -gt 0 -or $RolePolicySelectionReads.Count -gt 0) {
             $PartialParts = [System.Collections.Generic.List[string]]::new()
             # A '<...>' entry is not a scope that failed to READ: it names the whole walk that could not
             # start, or a level of the tree (management groups, subscriptions) that could not be LISTED,
@@ -1222,6 +1306,19 @@ function Export-OERInventory {
                     if ($GroupCauseClause) { $IncompletePart += '.' + $GroupCauseClause.TrimEnd('.') }
                 }
                 $PartialParts.Add($IncompletePart)
+            }
+            if ($UnreadPrincipalReads.Count -gt 0) {
+                # A clause of its own (BL-133), not folded into the Entra ID one above, whose count and
+                # wording stay over the Entra ID entries only: these are rows of roleAssignments.json, each
+                # written by its principal's object id. The causes are the ones the per-scope reads handed
+                # to the run context; Format-OERUnreadCauseClause owns their wording, deduplication and cap,
+                # and its trailing period is trimmed, as above, because the parts are joined with one.
+                $PrincipalPart = "$($UnreadPrincipalReads.Count) role assignment principal read(s) failed, so each principal is written by its object id -- " +
+                    'with no principalStatus where its lookup through directoryObjects/getByIds failed, and as Unresolved where only the read of ' +
+                    "the directory's deleted items failed: $($UnreadPrincipalReads -join '; ')"
+                $PrincipalCauseClause = Format-OERUnreadCauseClause -Cause @($RunContext.UnreadPrincipalCause) -Label 'Causes of the unread principal lookups'
+                if ($PrincipalCauseClause) { $PrincipalPart += '.' + $PrincipalCauseClause.TrimEnd('.') }
+                $PartialParts.Add($PrincipalPart)
             }
             if ($RolePolicySelectionReads.Count -gt 0) {
                 # A clause of its own (BL-107), not folded into the Entra ID one above, whose count and

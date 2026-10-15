@@ -13,6 +13,24 @@ BeforeAll {
         [PSCustomObject]@{ Read = $true; Value = @(); Message = $null; Exception = $null }
     }
 
+    # Sprint 11 step 6 (BL-133, A18): where a test reaches the REAL Get-OERInventory RoleAssignments
+    # section, its principals are looked up with Resolve-OERPrincipalName -Detailed (one answer per id:
+    # Id, Read, Found, Name, ObjectType, Cause); every other section keeps the default map. A fixture's
+    # mock answers both forms through this: -Names maps an id to the name the directory returns for it,
+    # and an id it does not hold is one the directory did not return.
+    $script:AnswerPrincipalLookup = {
+        param([string[]]$Id, [bool]$Detailed, [hashtable]$Names)
+        if (-not $Detailed) {
+            $Map = @{}
+            foreach ($One in @($Id)) { if ($One -and $Names.ContainsKey($One)) { $Map[$One] = $Names[$One] } }
+            return $Map
+        }
+        foreach ($One in @($Id | Where-Object { $_ } | Select-Object -Unique)) {
+            $Found = $Names.ContainsKey($One)
+            [PSCustomObject]@{ Id = $One; Read = $true; Found = $Found; Name = $(if ($Found) { [string]$Names[$One] } else { $null }); ObjectType = $null; Cause = $null }
+        }
+    }
+
     # F2 / A17. The bundle's README.md lists what the export could not read; the apply document and
     # every other JSON file must not. These helpers read the section back from a written bundle.
     $script:CouldNotReadHeading = '## What this export could not read'
@@ -1069,7 +1087,8 @@ Describe 'Export-OERInventory (role assignments at the root scope, through the r
             }
         }
         Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
-            @{ 'dddd4444-0000-0000-0000-000000000001' = 'person1@example.com'; 'dddd4444-0000-0000-0000-000000000002' = 'person2@example.com' }
+            param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+            & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent @{ 'dddd4444-0000-0000-0000-000000000001' = 'person1@example.com'; 'dddd4444-0000-0000-0000-000000000002' = 'person2@example.com' }
         }
     }
 
@@ -2525,7 +2544,10 @@ Describe 'Export-OERInventory (help documents the bundle nesting)' {
         $Description | Should -Match ([regex]::Escape('WHICH AZURE ROLE MANAGEMENT POLICIES ARE EXPORTED.'))
         $Description | Should -Match ([regex]::Escape('keeps a role''s policy at a scope only when the role has an active role assignment or a PIM eligibility EXACTLY at that scope, or the policy has been changed.'))
         $Description | Should -Match ([regex]::Escape('A policy that cannot be judged is kept, never dropped, and its scope is named in IncompleteReads (below)'))
-        $Description | Should -Match ([regex]::Escape('Last, after every Entra ID entry, IncompleteReads carries one entry per Azure scope where at least one role management policy could not be judged'))
+        # Sprint 11 step 6 (BL-133): the role assignment principals that could not be read stand between
+        # the Entra ID entries and these.
+        $Description | Should -Match ([regex]::Escape('After every Entra ID entry, IncompleteReads carries one entry per role assignment principal that could not be read'))
+        $Description | Should -Match ([regex]::Escape('Last, after those entries, IncompleteReads carries one entry per Azure scope where at least one role management policy could not be judged'))
         $Description | Should -Match ([regex]::Escape('It does not mean every policy at the scope was kept: when only one row could not be judged, the other unused, unchanged policies there are still left out.'))
         $Description | Should -Not -Match 'nothing is missing for it'
         $Description | Should -Match ([regex]::Escape('plus one per such Azure scope, and not the number of unread collections'))
@@ -4814,7 +4836,10 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
                 RoleAssignmentId = "$Scope/providers/Microsoft.Authorization/roleAssignments/$GroupId"
             }
         }
-        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ $script:RcOps = 'Ops'; $script:RcSolo = 'Solo' } }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+            & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent @{ $script:RcOps = 'Ops'; $script:RcSolo = 'Solo' }
+        }
         # Any request the fixture does not answer fails visibly; the one listing of every group is answered.
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected request: $Uri" }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
@@ -4836,7 +4861,7 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
         Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Exactly -Times 1 -ParameterFilter { $Scope -eq $script:RcSubA -and $ResolveNames }
         Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Exactly -Times 1 -ParameterFilter { $Scope -eq $script:RcSubB -and $ResolveNames }
         # 'Ops' is shared by two groups, so it is written by its object id; 'Solo' is unique, so by its name.
-        Get-RcRoleAssignmentRow -Bundle $Bundle | Should -Be @("$($script:RcSubA)|$($script:RcOps)|Group", "$($script:RcSubB)|Solo|")
+        Get-RcRoleAssignmentRow -Bundle $Bundle | Should -Be @("$($script:RcSubA)|$($script:RcOps)|Group", "$($script:RcSubB)|Solo|Group")
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -ceq $script:RcListing -and $All }
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1
     }
@@ -4846,7 +4871,7 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
         # Reach proof: the roster was read once, and both scopes were read and named from its index.
         Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Exactly -Times 1 -ParameterFilter { $All }
         Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Exactly -Times 2 -ParameterFilter { $ResolveNames }
-        Get-RcRoleAssignmentRow -Bundle $Bundle | Should -Be @("$($script:RcSubA)|$($script:RcOps)|Group", "$($script:RcSubB)|Solo|")
+        Get-RcRoleAssignmentRow -Bundle $Bundle | Should -Be @("$($script:RcSubA)|$($script:RcOps)|Group", "$($script:RcSubB)|Solo|Group")
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 0
     }
 
@@ -4875,8 +4900,17 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
         @($script:RcSeen | Where-Object { $_.OwnerOnStack }).Count | Should -Be 3
         $Contexts[0].Owner | Should -BeOfType ([System.Management.Automation.InvocationInfo])
         $Contexts[0].Owner.MyCommand.Name | Should -BeExactly 'Export-OERInventory'
-        # The owner and the group name index for now; later members join the same object.
-        @($Contexts[0].PSObject.Properties.Name) | Should -Be @('Owner', 'GroupNameIndex')
+        # The owner, the group name index and the three members of the principal reads (Sprint 11 step 6,
+        # BL-133): the deleted items answers, and the unread principal entries and their causes, each empty
+        # and of the type Get-OERInventory fills.
+        @($Contexts[0].PSObject.Properties.Name) | Should -Be @('Owner', 'GroupNameIndex', 'PrincipalStatus', 'UnreadPrincipal', 'UnreadPrincipalCause')
+        $Contexts[0].PrincipalStatus | Should -BeOfType ([System.Collections.Generic.Dictionary[string, object]])
+        $Contexts[0].PrincipalStatus.Comparer.Equals('ABC', 'abc') | Should -BeTrue
+        $Contexts[0].PrincipalStatus.Count | Should -Be 0
+        , $Contexts[0].UnreadPrincipal | Should -BeOfType ([System.Collections.Generic.List[string]])
+        $Contexts[0].UnreadPrincipal.Count | Should -Be 0
+        , $Contexts[0].UnreadPrincipalCause | Should -BeOfType ([System.Collections.Generic.List[object]])
+        $Contexts[0].UnreadPrincipalCause.Count | Should -Be 0
         $Contexts[0].GroupNameIndex.Read | Should -BeTrue
         $Contexts[0].GroupNameIndex.IdsByName['ops'].Count | Should -Be 2
         $Contexts[0].GroupNameIndex.IdsByName['solo'].Count | Should -Be 1
@@ -4908,7 +4942,7 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-rosterfail') -Include Groups, RoleAssignments -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
         # Reach proof: the roster read ran and failed, and the scopes were read.
         Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Exactly -Times 1 -ParameterFilter { $All }
-        Get-RcRoleAssignmentRow -Bundle $Bundle | Should -Be @("$($script:RcSubA)|$($script:RcOps)|Group", "$($script:RcSubB)|Solo|")
+        Get-RcRoleAssignmentRow -Bundle $Bundle | Should -Be @("$($script:RcSubA)|$($script:RcOps)|Group", "$($script:RcSubB)|Solo|Group")
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -ceq $script:RcListing -and $All }
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1
     }
@@ -4941,7 +4975,7 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
                 ) }
         } -ParameterFilter { $Uri -ceq $script:RcListing }
         $Inv = Get-OERInventory -Include RoleAssignments -Scope $script:RcSubA -WarningAction SilentlyContinue
-        @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @('Ops|')
+        @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @('Ops|Group')
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -ceq $script:RcListing -and $All }
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1
     }
@@ -4958,7 +4992,7 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
         # Reach proof: a context with a finished command's invocation as its Owner stands in the module.
         $Stale.Owner | Should -BeOfType ([System.Management.Automation.InvocationInfo])
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-overwrite') -Include RoleAssignments -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
-        Get-RcRoleAssignmentRow -Bundle $Bundle | Should -Be @("$($script:RcSubA)|$($script:RcOps)|Group", "$($script:RcSubB)|Solo|")
+        Get-RcRoleAssignmentRow -Bundle $Bundle | Should -Be @("$($script:RcSubA)|$($script:RcOps)|Group", "$($script:RcSubB)|Solo|Group")
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -ceq $script:RcListing -and $All }
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly -Times 1
         $null -eq (Get-RcRunContext) | Should -BeTrue
@@ -5012,5 +5046,259 @@ $Bundle = Export-OERInventory -OutputPath '#ROOT#' -Include AdministrativeUnits,
         # The Entra ID call was made and refused, and the walk read both scopes after it.
         @(Get-Content -LiteralPath $Log) | Should -Be @('Get-OERInventory AdministrativeUnits', 'Get-OERInventory RoleAssignments', 'Get-OERInventory RoleAssignments')
         @($Run.Errors | Where-Object { $_ -like '*the Entra ID call was refused*' }).Count | Should -BeGreaterThan 0
+    }
+}
+
+Describe 'Export-OERInventory (role assignments whose principal could not be looked up, Sprint 11 step 6, BL-133)' {
+    # BL-133 (A18). A role assignment whose principal Microsoft Entra ID does not return stays in
+    # inventory.json and roleAssignments.json, written by the principal's object id with principalStatus.
+    # Every per-scope Get-OERInventory call names such rows in a warning and an information record tagged
+    # Omnicit.EntraRBAC.UnresolvedPrincipal; the export reads the records, suppresses those warnings,
+    # deduplicates the rows (the role assignment id, else scope, role and principal, without regard to
+    # letter case), warns ONCE before its ShouldProcess and lists them in the README. The warnings are
+    # counted on the warning STREAM (3>&1), what the caller is shown. No id below is version-4 shaped.
+    BeforeAll {
+        # Writes what a per-scope Get-OERInventory call writes, from inside the module, so the preferences
+        # of the call it stands in for govern it exactly as they govern the real command.
+        function script:Write-AsUpxInventory {
+            param([string]$Warning, [object]$Notice)
+            & (Get-Module $script:moduleName) {
+                param($Warning, $Notice)
+                if ($Warning) { Microsoft.PowerShell.Utility\Write-Warning $Warning }
+                if ($Notice) { Microsoft.PowerShell.Utility\Write-Information -MessageData $Notice -Tags 'Omnicit.EntraRBAC.UnresolvedPrincipal' }
+            } $Warning $Notice
+        }
+        $script:UpxHeading = '## Role assignments whose principal could not be looked up'
+        $script:UpxMg = '/providers/Microsoft.Management/managementGroups/plat'
+        $script:UpxS1 = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:UpxGone = 'dddd9999-0000-0000-0000-000000000001'
+        $script:UpxNowhere = 'dddd9999-0000-0000-0000-000000000002'
+        $script:UpxFail = 'dddd9999-0000-0000-0000-000000000003'
+        $script:UpxIdA = "$($script:UpxMg)/providers/Microsoft.Authorization/roleAssignments/cccc9999-0000-0000-0000-000000000001"
+        function script:Get-UpxExportWarning {
+            param([int]$Count)
+            "Export-OERInventory: $Count role assignment(s) in inventory.json and roleAssignments.json name a principal that Microsoft " +
+            "Entra ID does not return, each written by the principal's object id with principalStatus Deleted (found among the " +
+            "directory's deleted items) or Unresolved (found neither in the directory nor among its deleted items). README.md names " +
+            "them under 'Role assignments whose principal could not be looked up'; review them as a finding. Invoke-OERStructure never " +
+            'creates such an assignment.'
+        }
+        # The README section, heading included, up to the next level 2 heading; $null when it is missing.
+        function script:Get-UpxReadmeSection {
+            param([string]$BundlePath)
+            $Readme = Get-Content (Join-Path $BundlePath 'README.md') -Raw
+            $Start = $Readme.IndexOf($script:UpxHeading)
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
+        }
+        # One export, its result, the text of every warning that reached the caller's stream, and its errors.
+        function script:Invoke-UpxExport {
+            param([hashtable]$Splat)
+            $ExErr = $null
+            $All = @(Export-OERInventory @Splat -WarningAction Continue -ErrorAction SilentlyContinue -ErrorVariable ExErr 3>&1)
+            [PSCustomObject]@{
+                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                Partial  = @($ExErr | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+            }
+        }
+    }
+
+    It 'states the rule in the help' {
+        $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('ROLE ASSIGNMENTS WHOSE PRINCIPAL COULD NOT BE LOOKED UP.'))
+        $Description | Should -Match ([regex]::Escape('Invoke-OERStructure never creates such an assignment, and removing its entry lets -Prune remove it.'))
+        $Description | Should -Match ([regex]::Escape('in a section "Role assignments whose principal could not be looked up", directly after "Names two or more objects share"'))
+        $Description | Should -Match ([regex]::Escape('The Azure scope is never skipped for either.'))
+    }
+
+    Context 'the rows the per-scope calls hand over' {
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+            Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+            Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+            Mock -ModuleName $script:moduleName Get-OERGroup {}
+            Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+            Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+            Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+            Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+                [PSCustomObject]@{
+                    Scopes    = @($script:UpxMg, $script:UpxS1)
+                    Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+                }
+            }
+            # Each scope hands over the inherited management group row A (its id in another letter case at
+            # the second scope) and a row B with no role assignment id (its role and principal in another
+            # letter case at the second scope), with the warning a real call writes.
+            Mock -ModuleName $script:moduleName Get-OERInventory {
+                param($Include, $Scope, $Subscription, $ManagementGroup, $AllRolesAtScope)
+                $Ra = @()
+                if ($Include -contains 'RoleAssignments' -and $Scope) {
+                    $First = $Scope -eq $script:UpxMg
+                    $RowA = [PSCustomObject]@{
+                        RoleAssignmentId = $(if ($First) { $script:UpxIdA } else { $script:UpxIdA.ToUpperInvariant() })
+                        Scope = $script:UpxMg; Role = 'Reader'; Principal = $script:UpxGone; PrincipalType = 'User'; PrincipalStatus = 'Deleted'
+                    }
+                    $RowB = [PSCustomObject]@{
+                        RoleAssignmentId = ''; Scope = $script:UpxS1; Role = $(if ($First) { 'Owner' } else { 'OWNER' })
+                        Principal = $(if ($First) { $script:UpxNowhere } else { $script:UpxNowhere.ToUpperInvariant() }); PrincipalType = ''; PrincipalStatus = 'Unresolved'
+                    }
+                    $Notice = [PSCustomObject]@{ Warning = "per-scope unresolved principals at $Scope"; Assignments = @($RowA, $RowB) }
+                    $Notice.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.UnresolvedPrincipalNotice')
+                    Write-AsUpxInventory -Warning "per-scope unresolved principals at $Scope" -Notice $Notice
+                    $Ra = @([PSCustomObject]@{ scope = $script:UpxMg; role = 'Reader'; principal = $script:UpxGone; principalType = 'User'; principalStatus = 'Deleted' })
+                }
+                $Inv = [PSCustomObject]@{
+                    Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                    AccessReviews = @(); RoleAssignments = $Ra; RoleManagementPolicies = @()
+                }
+                $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+                $Inv
+            }
+        }
+
+        AfterEach {
+            InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+        }
+
+        It 'names each row once, in its own warning and in the README, and shows none of the per-scope warnings' {
+            $Run = Invoke-UpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'upx-once'); Include = 'RoleAssignments' }
+            # Reach proof: both scopes were read, and each handed over both rows.
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly
+            $Run.Warnings | Should -Be @(Get-UpxExportWarning -Count 2)
+            $Section = Get-UpxReadmeSection -BundlePath $Run.Result.BundlePath
+            $Section | Should -Match '(?m)^This export read 2 such role assignment\(s\):\r?$'
+            @($Section -split '\r?\n' | Where-Object { $_ -like '- *' }) | Should -Be @(
+                "- ``Reader`` at ``$($script:UpxMg)`` for ``$($script:UpxGone)`` (User): ``Deleted``, found among the directory's deleted items"
+                "- ``Owner`` at ``$($script:UpxS1)`` for ``$($script:UpxNowhere)``: ``Unresolved``, found neither in the directory nor among its deleted items (deleted beyond the retention period, a principal of another tenant, for example through Azure Lighthouse, or not readable)"
+            )
+            # The rows stay in the document, and nothing about them is a partial read.
+            $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+            @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalStatus)" }) | Should -Be @("$($script:UpxGone)|Deleted")
+            $Run.Partial.Count | Should -Be 0
+            @($Run.Result.IncompleteReads).Count | Should -Be 0
+        }
+
+        It 'writes the warning under -WhatIf too, and no bundle' {
+            $Run = Invoke-UpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'upx-whatif'); Include = 'RoleAssignments'; WhatIf = $true }
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly
+            $Run.Warnings | Should -Be @(Get-UpxExportWarning -Count 2)
+            Test-Path -LiteralPath $Run.Result.BundlePath | Should -BeFalse
+        }
+
+        It 'stops at its own warning under -WarningAction Stop, before the bundle is written' {
+            $Out = Join-Path $TestDrive 'upx-stop'
+            $Thrown = { Export-OERInventory -OutputPath $Out -Include RoleAssignments -WarningAction Stop } | Should -Throw -PassThru
+            $Thrown.Exception.Message | Should -BeLike '*role assignment(s) in inventory.json and roleAssignments.json name a principal*'
+            # Both scopes were read: the per-scope warnings are captured, not shown, so neither stopped a scope.
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly
+            Test-Path -LiteralPath $Out | Should -BeFalse
+        }
+
+        It 'says in the README that none was found, and writes no such warning, when no scope handed a row over' {
+            Mock -ModuleName $script:moduleName Get-OERInventory {
+                $Inv = [PSCustomObject]@{
+                    Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                    AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+                }
+                $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+                $Inv
+            }
+            $Run = Invoke-UpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'upx-none'); Include = 'RoleAssignments' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 2 -Exactly
+            @($Run.Warnings | Where-Object { $_ -like '*principalStatus*' }).Count | Should -Be 0
+            ((Get-UpxReadmeSection -BundlePath $Run.Result.BundlePath) -replace '\s+', ' ') | Should -Match ([regex]::Escape('None. No role assignment this export read names a principal that the directory did not return'))
+        }
+    }
+
+    Context 'end to end, through the real Get-OERInventory' {
+        # The management group read holds two assignments, both inherited by the subscription read: one
+        # whose principal the directory did not return and holds among its deleted items, and one whose
+        # principal lookup fails. The group reader leaves one collection unread, an Entra ID entry.
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+            Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+            Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+            Mock -ModuleName $script:moduleName Get-OERGroup {}
+            Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+                [PSCustomObject]@{
+                    Groups = @(); Unread = @('groups/Team/members')
+                    Causes = @([PSCustomObject]@{ Cause = 'Could not read members for group ''g-1'': Too many requests (429).'; Target = 'g-1' })
+                }
+            }
+            # The validator learns principalStatus in a later task; the self-check is not what is tested.
+            Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+            Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+            Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+                [PSCustomObject]@{
+                    Scopes    = @($script:UpxMg, $script:UpxS1)
+                    Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+                }
+            }
+            Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
+                [PSCustomObject]@{
+                    Scope = $script:UpxMg; RoleName = 'Reader'; RoleDefinitionId = "$($script:UpxMg)/providers/Microsoft.Authorization/roleDefinitions/rd-reader"
+                    PrincipalId = $script:UpxGone; PrincipalType = 'User'; PrincipalDisplayName = $null; RoleAssignmentId = $script:UpxIdA
+                }
+                [PSCustomObject]@{
+                    Scope = $script:UpxMg; RoleName = 'Owner'; RoleDefinitionId = "$($script:UpxMg)/providers/Microsoft.Authorization/roleDefinitions/rd-owner"
+                    PrincipalId = $script:UpxFail; PrincipalType = 'User'; PrincipalDisplayName = 'Person Three'
+                    RoleAssignmentId = "$($script:UpxMg)/providers/Microsoft.Authorization/roleAssignments/cccc9999-0000-0000-0000-000000000003"
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+                foreach ($One in @($Id)) {
+                    if ($One -eq $script:UpxGone) { [PSCustomObject]@{ Id = $One; Read = $true; Found = $false; Name = $null; ObjectType = $null; Cause = $null } }
+                    else { [PSCustomObject]@{ Id = $One; Read = $false; Found = $false; Name = $null; ObjectType = $null; Cause = 'Too many requests (429)' } }
+                }
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected request: $Uri" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = $script:UpxGone; '@odata.type' = '#microsoft.graph.user' }
+            } -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:UpxGone)" }
+        }
+
+        AfterEach {
+            InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+        }
+
+        It 'reads each principal among the deleted items once for the whole export, writes it with principalStatus, and names it once' {
+            $Run = Invoke-UpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'upx-e2e'); Include = 'Groups', 'RoleAssignments' }
+            # Reach proof: both scopes were read, each returning both assignments.
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 2 -Exactly -ParameterFilter { $ResolveNames }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:UpxGone)" }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+            @($Inv.roleAssignments | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalType)|$($_.principalStatus)" }) | Should -Be @(
+                "Reader|$($script:UpxGone)|User|Deleted"
+                "Owner|$($script:UpxFail)|User|"
+            )
+            @($Run.Warnings | Where-Object { $_ -like 'Export-OERInventory: * name a principal*' }) | Should -Be @(Get-UpxExportWarning -Count 1)
+            @($Run.Warnings | Where-Object { $_ -like 'Get-OERInventory:*' }).Count | Should -Be 0
+            @((Get-UpxReadmeSection -BundlePath $Run.Result.BundlePath) -split '\r?\n' | Where-Object { $_ -like '- *' }) | Should -Be @(
+                "- ``Reader`` at ``$($script:UpxMg)`` for ``$($script:UpxGone)`` (User): ``Deleted``, found among the directory's deleted items"
+            )
+        }
+
+        It 'names a failed lookup once in IncompleteReads after the Entra ID entries, keeps the scopes, and gives it a clause of its own in InventoryPartial' {
+            $Run = Invoke-UpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'upx-unread'); Include = 'Groups', 'RoleAssignments' }
+            $Entry = "roleAssignments/Owner -> $($script:UpxFail) @ $($script:UpxMg)/principal"
+            # No scope was skipped: the per-scope calls named the failed lookup to the run context instead of
+            # raising their own InventoryPartial, which -ErrorAction Stop would have turned into a skip.
+            @($Run.Result.SkippedScopes) | Should -BeNullOrEmpty
+            $Run.Result.ScopeCount | Should -Be 2
+            # Both calls named it; the export names it once, after the Entra ID entry.
+            @($Run.Result.IncompleteReads) | Should -Be @('groups/Team/members', $Entry)
+            $Run.Partial.Count | Should -Be 1
+            $Message = $Run.Partial[0].Exception.Message
+            $Message | Should -BeLike "*1 role assignment principal read(s) failed, so each principal is written by its object id -- with no principalStatus where its lookup through directoryObjects/getByIds failed, and as Unresolved where only the read of the directory's deleted items failed: $Entry. Causes of the unread principal lookups: Could not look up the principal of a role assignment through directoryObjects/getByIds: Too many requests (429).*"
+            # The Entra ID clause still counts the Entra ID entries only.
+            $Message | Should -BeLike '*1 partial Entra ID read entry(ies) name*'
+            # The README names it under "What this export could not read".
+            (Get-Content (Join-Path $Run.Result.BundlePath 'README.md') -Raw) | Should -Match ([regex]::Escape("- Entra ID: ``$Entry``"))
+        }
     }
 }
