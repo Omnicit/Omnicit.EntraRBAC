@@ -9422,6 +9422,9 @@ longer reached by a review that names the package by name, since the package's r
 they are kept, and matter again only if that order or that key ever changes. (b) The `-WhatIf` residual
 above. (c) Rule 15 refuses offline a document it accepted before (two same-named packages in two
 catalogs and a review naming that name). The release note does not list it (the controller's ruling on
-Task 7's review): only a hand-written document with two `accessPackages` entries of one name reaches
-it, an export never writes two, and the refusal names the entries and says to name the package by its
-object id.
+Task 7's review): only a hand-written document reaches it. An export can write two `accessPackages`
+entries of one name, one per catalog ([#roster-identity-and-shared-names](#roster-identity-and-shared-names),
+R-5), but it names a review's access package by its object id whenever another package in the tenant
+carries that name ([#access-review-target](#access-review-target), since Sprint 11 step 5), and Rule
+15 never reads a reference that is an object id. The refusal names the entries and says to name the
+package by its object id.

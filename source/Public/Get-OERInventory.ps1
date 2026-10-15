@@ -269,9 +269,10 @@ function Get-OERInventory {
     principalType, or after principal when there is none. Such an assignment stays in the document:
     Invoke-OERStructure never creates it, and removing the entry lets -Prune remove it, like any
     undeclared assignment, at a scope the document still declares. One warning counts them, and an
-    information record tagged Omnicit.EntraRBAC.UnresolvedPrincipal hands the caller the same rows (RoleAssignmentId, Scope, Role, Principal, PrincipalType, PrincipalStatus and
-    StatusRead, which is false where the deleted items read failed) and the warning's text; under the
-    default $InformationPreference the record is not displayed. Under a Stop warning preference the
+    information record tagged Omnicit.EntraRBAC.UnresolvedPrincipal hands the caller the same rows
+    (RoleAssignmentId, Scope, Role, Principal, PrincipalType, PrincipalStatus and StatusRead, which is
+    false where the deleted items read failed) and the warning's text; under the default
+    $InformationPreference the record is not displayed. Under a Stop warning preference the
     command stops at that warning, before it returns the inventory, as it does at the root scope
     warning. When the lookup itself fails, the principal is written by its object id with no
     principalStatus, and 'roleAssignments/<role> -> <principal id> @ <scope>/principal' is reported
@@ -283,13 +284,13 @@ function Get-OERInventory {
     by its object id.
 
     A role assignment whose scope breaks a scope spelling rule the validator applies, as the scope of
-    a resource whose name holds a '#' or a '%' does for example (Test-OERStructure refuses such a scope
-    as an Error; about_Omnicit.EntraRBAC lists the rules under RENAMES, MAIL ALIASES AND SCOPE
-    SPELLING), is left out of the RoleAssignments section too: no document can
-    declare that scope, so a document that carried it would be refused as a whole. Invoke-OERStructure
-    never creates a role assignment at such a scope, and never removes one, since it prunes only at a
-    scope a document declares. The root scope is decided first, so a role assignment at the root scope
-    whose spelling is refused too is named only as described above. One warning counts such
+    a resource whose name holds a '#' or a '%' does for example (Test-OERStructure refuses such a
+    scope as an Error; about_Omnicit.EntraRBAC lists the rules under RENAMES, MAIL ALIASES AND SCOPE
+    SPELLING), is left out of the RoleAssignments section too: no document can declare that scope, so
+    a document that carried it would be refused as a whole. Invoke-OERStructure never creates a role
+    assignment at such a scope, and never removes one, since it prunes only at a scope a document
+    declares. The root scope is decided first, so a role assignment at the root scope whose spelling
+    is refused too is named only as described above. One warning counts such
     assignments, and an information record tagged Omnicit.EntraRBAC.UndeclarableScope hands the caller
     the rows (RoleAssignmentId, Scope, Role, Principal, PrincipalType and Reason, which names the rules
     the scope breaks in words) and the warning's text; under the default $InformationPreference the

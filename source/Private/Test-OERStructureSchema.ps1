@@ -220,20 +220,20 @@ function Test-OERStructureSchema {
     engine shares, so sub: and subscription: with an id, and mg:, are spellings of the scope's path;
     the comparison never resolves a scope online. A role or principal is compared as written. An
     entry missing a key part is not compared. directoryRoleAssignments keeps its own check, described
-    above. A roleAssignments or roleManagementPolicies scope that breaks one of the two scope spelling
-    rules -- the trailing or doubled '/' rule (A15) and, for a scope written as an Azure path, the
-    segment rules (A13, BL-141) -- is an Error at the entry's scope path, once for each rule it breaks,
-    with the message Get-OERScopeSpellingProblem gives for it. That helper owns the rules, their order
-    and their texts; its help is the reference list and says why each rule exists
+    above. A roleAssignments or roleManagementPolicies scope that breaks one of the two scope
+    spelling rules -- the trailing or doubled '/' rule (A15) and, for a scope written as an Azure path,
+    the segment rules (A13, BL-141) -- is an Error at the entry's scope path, once for each rule it
+    breaks, with the message Get-OERScopeSpellingProblem gives for it. That helper owns the rules,
+    their order and their texts; its help is the reference list and says why each rule exists
     (docs/development/rationale.md#role-assignment-key). This validator decides no spelling itself:
-    Add-ScopeSlashFinding and Add-ScopeSegmentFinding add one Error per problem the helper returns. The
-    slash rule applies to every scope; a scope in the mg:, sub: or subscription: form is exempt from
-    the segment rules, as the helper decides through ConvertTo-OERScopeSplat, since a lookup resolves it
-    and it is never sent as written. A role assignment at a resource whose name breaks a rule cannot be
-    declared, and the message says to remove the entry; one or more spaces between other characters of
-    a segment are accepted, since an Azure resource name can hold them, so a role assignment at such a
-    resource, as Get-OERInventory exports it, is valid. A roleAssignments
-    scope that is the Azure root scope '/' (Test-OERAzureRootScope decides, so '//' is reported this
+    Add-ScopeSlashFinding and Add-ScopeSegmentFinding add one Error per problem the helper returns.
+    The slash rule applies to every scope; a scope in the mg:, sub: or subscription: form is exempt
+    from the segment rules, as the helper decides through ConvertTo-OERScopeSplat, since a lookup
+    resolves it and it is never sent as written. A role assignment at a resource whose name breaks a
+    rule cannot be declared, and the message says to remove the entry; one or more spaces between
+    other characters of a segment are accepted, since an Azure resource name can hold them, so a role
+    assignment at such a resource, as Get-OERInventory exports it, is valid. A roleAssignments scope
+    that is the Azure root scope '/' (Test-OERAzureRootScope decides, so '//' is reported this
     way too, beside its Error, and so is a spelling the Azure Resource Manager transport sends to the
     root, such as '/.' or '/%2e', beside its A13 Error) is a Warning at the entry's scope path (BL-126): a role assignment
     there is elevated access, which Invoke-OERStructure never creates or removes, so the entry is

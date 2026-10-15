@@ -244,7 +244,7 @@ Global Administrator -- and a finding to review, not part of the RBAC model a pr
 
 ## Role assignments whose principal the directory did not return
 
-An Azure role assignment can name a principal that Microsoft Entra ID no longer returns: one that was
+An Azure role assignment can name a principal that Microsoft Entra ID does not return: one that was
 deleted, or one this directory cannot read. The export looks every principal of the `roleAssignments`
 section up through `directoryObjects/getByIds`, over every directory object type, and looks for each
 principal that lookup did not return among the directory's deleted items, with one read of

@@ -64,18 +64,17 @@ function Get-OERInventoryReadme {
     roleAssignments.json, written by the principal's object id with principalStatus, that
     Invoke-OERStructure never creates one and that removing its entry from the document lets -Prune
     remove it at a scope the document still declares, and that a principal whose lookup failed is
-    named under "What this export could not
-    read" instead. Then it gives the count and one bullet per -UnresolvedPrincipalAssignments row, in
-    the order given: the role, the scope and the principal as code spans (the same fence rule as the
-    entries above), the principal type in parentheses when it is known, and the status as a code span
-    with its reason in words -- Deleted, found among the directory's deleted items; Unresolved, found
-    neither in the directory nor among its deleted items (deleted beyond the retention period, a
-    principal of another tenant, for example through Azure Lighthouse, or not readable). An
-    Unresolved row whose StatusRead is not true -- its deleted items read failed, or the row does not
-    say -- is given no reason as a fact: the bullet says that the read failed, so the reason is not
-    known, and that the read is named under "What this export could not read". It never writes the
-    role assignment id. When -UnresolvedPrincipalAssignments is empty it says that none was
-    found. That parameter is mandatory for the same reason as the six above.
+    named under "What this export could not read" instead. Then it gives the count and one bullet per
+    -UnresolvedPrincipalAssignments row, in the order given: the role, the scope and the principal as
+    code spans (the same fence rule as the entries above), the principal type in parentheses when it
+    is known, and the status as a code span with its reason in words -- Deleted, found among the
+    directory's deleted items; Unresolved, found neither in the directory nor among its deleted items
+    (deleted beyond the retention period, a principal of another tenant, for example through Azure
+    Lighthouse, or not readable). An Unresolved row whose StatusRead is not true -- its deleted items
+    read failed, or the row does not say -- is given no reason as a fact: the bullet says that the read
+    failed, so the reason is not known, and that the read is named under "What this export could not
+    read". It never writes the role assignment id. When -UnresolvedPrincipalAssignments is empty it
+    says that none was found. That parameter is mandatory for the same reason as the six above.
 
     Directly after it comes the section "Role assignments at a scope no document can declare" (A13,
     A15). It says that the validator refuses the spelling of such a scope, with a resource name that

@@ -805,7 +805,7 @@ document invalid. `Invoke-OERStructure` reports such an entry `Skipped`, with a 
 looks up, reads or writes anything for it, also under `-WhatIf`, and never prunes the root scope,
 also with `-Prune`.
 
-An Azure role assignment can name a principal that Microsoft Entra ID no longer returns.
+An Azure role assignment can name a principal that Microsoft Entra ID does not return.
 `Get-OERInventory` and `Export-OERInventory` keep such an assignment in `roleAssignments`, written by
 the principal's object id with `principalStatus`: `Deleted` when the principal is among the
 directory's deleted items, `Unresolved` when it is found neither there nor in the directory (deleted

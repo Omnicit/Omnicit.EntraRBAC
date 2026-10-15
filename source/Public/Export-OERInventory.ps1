@@ -199,35 +199,33 @@ function Export-OERInventory {
     assignment; a read that fails is not kept, and is sent again by the next scope that needs it. The
     export writes ONE warning that gives how many such assignments it read, each counted once. It
     writes it after the walk and before the bundle is written, so -WhatIf shows it too, and under a
-    Stop warning preference the export
-    stops at that warning, before it writes the bundle. The generated README.md lists them, with their
-    count, in a section "Role assignments whose principal the directory did not return", directly
-    after "Names two or more objects share": each by role, scope, principal and, when it is known, the
-    principal type, with its status and the reason in words -- or that the reason is not known, where
-    the deleted items read failed -- or the statement that none was found.
-    A principal whose lookup failed is written by its object id with no principalStatus and is named
-    in IncompleteReads (below), and so is one whose deleted items read failed, which is written as
-    Unresolved. The Azure scope is never skipped for either.
+    Stop warning preference the export stops at that warning, before it writes the bundle. The
+    generated README.md lists them, with their count, in a section "Role assignments whose principal
+    the directory did not return", directly after "Names two or more objects share": each by role,
+    scope, principal and, when it is known, the principal type, with its status and the reason in
+    words -- or that the reason is not known, where the deleted items read failed -- or the statement
+    that none was found. A principal whose lookup failed is written by its object id with no
+    principalStatus and is named in IncompleteReads (below), and so is one whose deleted items read
+    failed, which is written as Unresolved. The Azure scope is never skipped for either.
 
     ROLE ASSIGNMENTS AT A SCOPE NO DOCUMENT CAN DECLARE. Azure Resource Manager can return a role
     assignment at a scope whose spelling the validator refuses as an Error, for example the scope of a
     resource whose name holds a '#' or a '%' (about_Omnicit.EntraRBAC lists the scope spelling rules
     under RENAMES, MAIL ALIASES AND SCOPE SPELLING). No document can declare such a scope, and a
     document that carried one would be refused as a whole, so inventory.json and roleAssignments.json
-    never carry one: Get-OERInventory leaves it out
-    of every scope's read (the Get-OERInventory help describes the rule). Invoke-OERStructure never
-    creates a role assignment at such a scope, and never removes one, since it prunes only at a scope
-    a document declares. A role assignment at the root scope whose spelling is refused too is named
-    only as a root scope assignment. The export writes ONE warning that gives how many such
-    assignments it read, each counted once however many Azure scopes read it. It writes it after the
-    walk and before the bundle is written, so -WhatIf shows it too, and under a Stop warning preference
-    the export stops at that warning, before it writes the bundle. The generated README.md lists them,
-    with their count, in a section "Role assignments at a scope no document can declare", directly
-    after "Role assignments whose principal the directory did not return": each by role, scope,
-    principal and, when it is known, the principal type, with the rules its scope breaks in words --
-    or the statement that none was read. Such an assignment is left out, not unread: it is not named
-    in IncompleteReads, and it makes no bundle partial. Leaving them out of the export changes nothing
-    in the tenant.
+    never carry one: Get-OERInventory leaves it out of every scope's read (the Get-OERInventory help
+    describes the rule). Invoke-OERStructure never creates a role assignment at such a scope, and
+    never removes one, since it prunes only at a scope a document declares. A role assignment at the
+    root scope whose spelling is refused too is named only as a root scope assignment. The export
+    writes ONE warning that gives how many such assignments it read, each counted once however many
+    Azure scopes read it. It writes it after the walk and before the bundle is written, so -WhatIf
+    shows it too, and under a Stop warning preference the export stops at that warning, before it
+    writes the bundle. The generated README.md lists them, with their count, in a section "Role
+    assignments at a scope no document can declare", directly after "Role assignments whose principal
+    the directory did not return": each by role, scope, principal and, when it is known, the principal
+    type, with the rules its scope breaks in words -- or the statement that none was read. Such an
+    assignment is left out, not unread: it is not named in IncompleteReads, and it makes no bundle
+    partial. Leaving them out of the export changes nothing in the tenant.
 
     GROUPS USING PIM FOR GROUPS IN A RESTRICTED MANAGEMENT UNIT. Microsoft Learn states that
     Privileged Identity Management does not support a group in a restricted management administrative
