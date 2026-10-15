@@ -1073,6 +1073,13 @@ Describe 'Get-OERInventoryReadme (role assignments at a scope no document can de
         ((Get-UdBullets -Section $Section) -join "`n") | Should -BeExactly "- ```` Odd``Role ```` at ``$($script:UdSub)/resourceGroups\<rg new>`` for ``dddd6666-0000-0000-0000-000000000003`` (Group): the scope holds a backslash; and more"
     }
 
+    It 'writes no reason, and no colon, for a row that gives none' {
+        $Bullets = @(Get-UdBullets -Section (Get-UdSection -Readme (Get-UdReadme -Rows @(
+                        (New-UdRow -Scope '/subscriptions/x/rg#1' -Role 'Reader' -Principal 'dddd6666-0000-0000-0000-000000000008' -PrincipalType 'User' -Reason '')
+                    ))))
+        $Bullets | Should -Be @('- `Reader` at `/subscriptions/x/rg#1` for `dddd6666-0000-0000-0000-000000000008` (User)')
+    }
+
     It 'places the section directly after "Role assignments whose principal the directory did not return" and ahead of ## Files (<State>)' -ForEach @(
         @{ State = 'none'; Rows = @() }
         @{ State = 'one row'; Rows = @([PSCustomObject]@{ RoleAssignmentId = ''; Scope = '/subscriptions/x/rg#1'; Role = 'Owner'; Principal = 'dddd6666-0000-0000-0000-000000000004'; PrincipalType = 'Group'; Reason = 'the scope holds a question mark or a number sign' }) }

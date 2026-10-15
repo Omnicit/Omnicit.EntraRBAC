@@ -3325,6 +3325,19 @@ Describe 'Get-OERInventory' {
             $Rows[0].Reason | Should -BeExactly $Reason
         }
 
+        It 'names a rule it has no words for by the rule''s own name, so a reason is never empty' {
+            # Get-OERScopeSpellingProblem owns the rules; a rule added there before the words here is still
+            # named, by the Rule the owner returns.
+            Mock -ModuleName $script:moduleName Get-OERScopeSpellingProblem {
+                [PSCustomObject]@{ Rule = 'SomeLaterRule'; Message = 'not read here' }
+            } -ParameterFilter { $Scope -eq $script:UdHash }
+            $script:UdRas = @(New-UdRa -Scope $script:UdHash -RoleName 'Reader' -PrincipalId 'dddd3333-0000-0000-0000-000000000001' -PrincipalType 'User')
+            $Info = $null
+            $null = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM -WarningAction SilentlyContinue -InformationVariable Info
+            Should -Invoke -ModuleName $script:moduleName Get-OERScopeSpellingProblem -Times 1 -Exactly -ParameterFilter { $Scope -eq $script:UdHash }
+            @((Get-UdNotice -Information @($Info))[0].MessageData.Assignments | ForEach-Object { $_.Reason }) | Should -Be @('the scope holds SomeLaterRule')
+        }
+
         It 'leaves a role assignment at the root scope whose spelling is refused too in the root list only (<Scope>)' -ForEach @(
             @{ Scope = '//' }
             @{ Scope = '/%2e' }
