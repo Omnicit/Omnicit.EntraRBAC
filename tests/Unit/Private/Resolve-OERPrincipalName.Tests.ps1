@@ -144,4 +144,109 @@ Describe 'Resolve-OERPrincipalName' {
             }
         }
     }
+
+    Context '-Detailed (Sprint 11 step 6, BL-133, A18)' {
+        # The export's role assignment principals need to tell three answers apart: a principal the
+        # directory returned, one a successful lookup did not return, and one whose lookup failed. The
+        # default map cannot: it falls back to the id for both of the last two. -Detailed answers one
+        # object per id instead, and a failed batch is reported, never swallowed.
+        It 'answers one object per distinct id, in input order: a found user by UPN, a found group by display name, and an id the batch did not return' {
+            InModuleScope $script:moduleName {
+                Mock Invoke-OERGraphRequest {
+                    @{ value = @(
+                            @{ id = 'g-1'; '@odata.type' = '#microsoft.graph.group'; displayName = 'Sales Team' },
+                            @{ id = 'u-1'; '@odata.type' = '#microsoft.graph.user'; userPrincipalName = 'anna@contoso.com'; displayName = 'Anna' }
+                        ) }
+                }
+                $Result = @(Resolve-OERPrincipalName -Id @('u-1', 'g-1', 'gone-1', 'u-1', ' ') -Detailed)
+                $Result.Count | Should -Be 3
+                @($Result[0].PSObject.Properties.Name) | Should -Be @('Id', 'Read', 'Found', 'Name', 'ObjectType', 'Cause')
+                @($Result | ForEach-Object { "$($_.Id)|$($_.Read)|$($_.Found)|$($_.Name)|$($_.ObjectType)|$($_.Cause)" }) | Should -Be @(
+                    'u-1|True|True|anna@contoso.com|user|'
+                    'g-1|True|True|Sales Team|group|'
+                    'gone-1|True|False|||'
+                )
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
+            }
+        }
+
+        It 'names a found object with no user principal name by its display name, and one with neither by its id' {
+            InModuleScope $script:moduleName {
+                Mock Invoke-OERGraphRequest {
+                    @{ value = @(
+                            @{ id = 'dev-1'; '@odata.type' = '#microsoft.graph.device'; displayName = 'Kiosk 7' },
+                            @{ id = 'odd-1'; '@odata.type' = '#microsoft.graph.servicePrincipal' }
+                        ) }
+                }
+                $Result = @(Resolve-OERPrincipalName -Id @('dev-1', 'odd-1') -Detailed)
+                @($Result | ForEach-Object { "$($_.Id)|$($_.Found)|$($_.Name)|$($_.ObjectType)" }) | Should -Be @(
+                    'dev-1|True|Kiosk 7|device'
+                    'odd-1|True|odd-1|servicePrincipal'
+                )
+            }
+        }
+
+        It 'omits the types filter, so every directory object type is searched' {
+            InModuleScope $script:moduleName {
+                Mock Invoke-OERGraphRequest { @{ value = @() } }
+                $null = Resolve-OERPrincipalName -Id @('dev-1') -Detailed
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Method -eq 'POST' -and $Uri -eq 'v1.0/directoryObjects/getByIds' -and
+                    -not $Body.ContainsKey('types') -and @($Body.ids) -contains 'dev-1'
+                }
+            }
+        }
+
+        It 'answers every id of a failed batch as not read, with the cause, scrubs the record first, and never throws' {
+            # Two batches: the first fails, the second answers. Only the first batch's ids are unread.
+            InModuleScope $script:moduleName {
+                $script:DetailedCall = 0
+                Mock Invoke-OERGraphRequest {
+                    $script:DetailedCall++
+                    if ($script:DetailedCall -eq 1) { throw 'Too many requests (429)' }
+                    @{ value = @(@{ id = 'id-1001'; '@odata.type' = '#microsoft.graph.user'; userPrincipalName = 'person1@example.com' }) }
+                }
+                Mock Remove-OERErrorRecord { }
+                $Ids = 1..1001 | ForEach-Object { "id-$_" }
+                $Errors = $null
+                $Result = @(Resolve-OERPrincipalName -Id $Ids -Detailed -ErrorVariable Errors)
+                $Result.Count | Should -Be 1001
+                @($Result | Select-Object -First 1000 | Where-Object { $_.Read -eq $false -and $_.Found -eq $false -and $_.Cause -ceq 'Too many requests (429)' }).Count | Should -Be 1000
+                "$($Result[1000].Id)|$($Result[1000].Read)|$($Result[1000].Found)|$($Result[1000].Name)|$($Result[1000].Cause)" | Should -Be 'id-1001|True|True|person1@example.com|'
+                Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly
+                # -ErrorVariable also collects the stray the failed batch raised inside the call (the
+                # engine fills it before any catch runs); the helper itself publishes none.
+                @($Errors | Where-Object { @(([string]$_.FullyQualifiedErrorId) -split ',') -contains 'Resolve-OERPrincipalName' }).Count | Should -Be 0
+            }
+        }
+
+        It 'returns nothing and makes no call for an empty input' {
+            InModuleScope $script:moduleName {
+                Mock Invoke-OERGraphRequest { @{ value = @() } }
+                @(Resolve-OERPrincipalName -Id @() -Detailed).Count | Should -Be 0
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+            }
+        }
+
+        It 'refuses -Detailed together with -PreferDisplayName at binding, before any request' {
+            InModuleScope $script:moduleName {
+                Mock Invoke-OERGraphRequest { @{ value = @() } }
+                { Resolve-OERPrincipalName -Id @('u-1') -Detailed -PreferDisplayName } | Should -Throw -ErrorId 'AmbiguousParameterSet,Resolve-OERPrincipalName'
+                Should -Invoke Invoke-OERGraphRequest -Times 0
+            }
+        }
+
+        It 'leaves the default map exactly as it was: no -Detailed, the same map for a found, a missing and a failed lookup' {
+            InModuleScope $script:moduleName {
+                Mock Invoke-OERGraphRequest {
+                    @{ value = @(@{ id = 'u-1'; '@odata.type' = '#microsoft.graph.user'; userPrincipalName = 'anna@contoso.com' }) }
+                }
+                $Map = Resolve-OERPrincipalName -Id @('u-1', 'gone-1')
+                $Map | Should -BeOfType ([hashtable])
+                $Map['u-1'] | Should -Be 'anna@contoso.com'
+                $Map['gone-1'] | Should -Be 'gone-1'
+            }
+        }
+    }
 }
