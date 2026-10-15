@@ -46,6 +46,24 @@ BeforeAll {
         $Index.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupNameIndex')
         $Index
     }
+    # Sprint 11 step 6 (BL-133, A18): the RoleAssignments section looks its principals up with
+    # Resolve-OERPrincipalName -Detailed, which answers one object per id (Id, Read, Found, Name,
+    # ObjectType, Cause); every other section keeps the map the default call returns. A fixture's mock
+    # answers both forms through this: -Names maps an id to the name the directory returns for it, and an
+    # id it does not hold is one the directory did not return (Found false under -Detailed, absent from
+    # the map otherwise).
+    $script:AnswerPrincipalLookup = {
+        param([string[]]$Id, [bool]$Detailed, [hashtable]$Names)
+        if (-not $Detailed) {
+            $Map = @{}
+            foreach ($One in @($Id)) { if ($One -and $Names.ContainsKey($One)) { $Map[$One] = $Names[$One] } }
+            return $Map
+        }
+        foreach ($One in @($Id | Where-Object { $_ } | Select-Object -Unique)) {
+            $Found = $Names.ContainsKey($One)
+            [PSCustomObject]@{ Id = $One; Read = $true; Found = $Found; Name = $(if ($Found) { [string]$Names[$One] } else { $null }); ObjectType = $null; Cause = $null }
+        }
+    }
     # Three Split-Path hops from tests\Unit\Public: tests\Unit\Public -> tests\Unit -> tests ->
     # repo root. A two-hop version resolves to tests\ and was corrected once already on this
     # branch (Task 1) -- do not repeat that mistake.
@@ -75,6 +93,11 @@ Describe 'Get-OERInventory' {
         # use" here so every existing fixture keeps reaching the policy reads it stubs; the Context
         # 'pimPolicy only for a group that uses PIM for Groups' overrides it for the other answers.
         Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x' } }
+        # Sprint 11 step 6 (BL-133): a role assignment principal the directory did not return is looked for
+        # among its deleted items. No fixture in this Describe means that: a principal its name map does not
+        # hold fails here, loudly, rather than through the transport. The Describe 'Get-OERInventory role
+        # assignment principals that could not be looked up' drives the real read.
+        Mock -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus { throw "unexpected deleted items read: $Id" }
     }
 
     It 'returns a tagged Omnicit.EntraRBAC.Inventory object' {
@@ -2823,15 +2846,17 @@ Describe 'Get-OERInventory' {
                     RoleAssignmentId = '/subscriptions/sub-1/.../ra-1'
                 }
             }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ 'p-1' = 'anna@contoso.com' } }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed) & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent @{ 'p-1' = 'anna@contoso.com' } }
         }
 
-        It 'projects role and principal as names (D6) and omits principalType for a user' {
+        It 'projects role and principal as names (D6) and writes principalType User for a user (A18)' {
             $ra = (Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).RoleAssignments[0]
             $ra.scope | Should -Be '/subscriptions/sub-1'
             $ra.role | Should -Be 'Reader'
             $ra.principal | Should -Be 'anna@contoso.com'
-            $ra.PSObject.Properties.Name | Should -Not -Contain 'principalType'
+            # Sprint 11 step 6: principalType is written for every row whose type maps to the enum.
+            $ra.principalType | Should -BeExactly 'User'
+            @($ra.PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType')
         }
 
         It 'requests resolved names from Get-OERRoleAssignment' {
@@ -2846,25 +2871,26 @@ Describe 'Get-OERInventory' {
                     PrincipalType = 'ServicePrincipal'; RoleDefinitionId = 'rd'; PrincipalId = 'sp-1'; RoleAssignmentId = 'ra-1'
                 }
             }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ 'sp-1' = 'Contoso SP' } }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed) & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent @{ 'sp-1' = 'Contoso SP' } }
             $ra = (Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).RoleAssignments[0]
             $ra.principalType | Should -Be 'ServicePrincipal'
             $ra.principal | Should -Be 'Contoso SP'
         }
 
-        It 'maps a ForeignGroup principal type to Group and omits principalType (round-trip safe)' {
+        It 'maps a ForeignGroup principal type to Group and writes principalType Group (round-trip safe, A18)' {
             Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
                 [PSCustomObject]@{
                     Scope = '/subscriptions/sub-1'; RoleName = 'Owner'; PrincipalDisplayName = 'Partner Admins'
                     PrincipalType = 'ForeignGroup'; RoleDefinitionId = 'rd'; PrincipalId = 'fg-1'; RoleAssignmentId = 'ra-fg'
                 }
             }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ 'fg-1' = 'Partner Admins' } }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed) & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent @{ 'fg-1' = 'Partner Admins' } }
             # The one group in the tenant that carries the name (BL-131, Task 3c), so it is written by it.
             Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewGroupNameIndexOf @{ 'fg-1' = 'Partner Admins' } }
             $ra = (Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).RoleAssignments[0]
             $ra.principal | Should -Be 'Partner Admins'
-            $ra.PSObject.Properties.Name | Should -Not -Contain 'principalType'
+            # Never the ARM value ForeignGroup, which the schema enum does not hold.
+            $ra.principalType | Should -BeExactly 'Group'
         }
 
         It 'falls back to ids when names are unresolved' {
@@ -2874,7 +2900,7 @@ Describe 'Get-OERInventory' {
                     PrincipalType = 'User'; RoleDefinitionId = 'rd-full'; PrincipalId = 'p-1'; RoleAssignmentId = 'ra-1'
                 }
             }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ 'p-1' = 'p-1' } }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed) & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent @{ 'p-1' = 'p-1' } }
             $ra = (Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).RoleAssignments[0]
             $ra.role | Should -Be 'rd-full'
             $ra.principal | Should -Be 'p-1'
@@ -2898,16 +2924,16 @@ Describe 'Get-OERInventory' {
                     PrincipalType = 'User'; RoleDefinitionId = 'rd-full'; PrincipalId = 'u-9'; RoleAssignmentId = 'ra-u9'
                 }
             }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ 'u-9' = 'anna@contoso.com' } }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed) & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent @{ 'u-9' = 'anna@contoso.com' } }
             $ra = (Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).RoleAssignments[0]
             $ra.principal | Should -Be 'anna@contoso.com'
-            $ra.PSObject.Properties.Name | Should -Not -Contain 'principalType'
+            $ra.principalType | Should -BeExactly 'User'
         }
     }
 
     Context 'roleAssignments condition and description projection' {
         BeforeEach {
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ 'p-1' = 'user@contoso.com' } }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed) & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent @{ 'p-1' = 'user@contoso.com' } }
             Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
                 @(
                     [PSCustomObject]@{
@@ -3009,12 +3035,8 @@ Describe 'Get-OERInventory' {
             $script:RootRas = @($script:RootUaa, $script:RootMgRow, $script:RootSubRow)
             Mock -ModuleName $script:moduleName Get-OERRoleAssignment { $script:RootRas }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
-                param([string[]]$Id)
-                $Map = @{}
-                foreach ($One in @($Id)) {
-                    if ($script:RootNames.ContainsKey($One)) { $Map[$One] = $script:RootNames[$One] }
-                }
-                $Map
+                param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+                & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent $script:RootNames
             }
             # BL-131 (Task 3c): the tenant's groups are the groups the rows name, each under the name the
             # fixture gives it, so a group principal is shared or unique as the fixture says.
@@ -3110,7 +3132,9 @@ Describe 'Get-OERInventory' {
             $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'aaaa1111-0000-0000-0000-000000000001' -IncludeARM -WarningAction SilentlyContinue -InformationVariable Info
             @($Inv.roleAssignments).Count | Should -Be 1
             $Inv.roleAssignments[0].principal | Should -BeExactly 'Team'
-            $Inv.roleAssignments[0].PSObject.Properties.Name | Should -Not -Contain 'principalType'
+            # Sprint 11 step 6 (A18): principalType is written for every row whose type maps to the enum,
+            # so it is there whether or not the pass moved the row; the name above is the proof.
+            $Inv.roleAssignments[0].principalType | Should -BeExactly 'Group'
             @((Get-RootNotice -Information @($Info))[0].MessageData.Assignments | ForEach-Object { $_.Principal }) | Should -Be @('Ops|Team')
         }
 
@@ -3300,12 +3324,8 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Get-OERRoleAssignment { $script:DupRoleAssignments }
             Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy { $script:DupPolicies }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
-                param([string[]]$Id)
-                $Map = @{}
-                foreach ($One in @($Id)) {
-                    if ($script:DupNames.ContainsKey($One)) { $Map[$One] = $script:DupNames[$One] }
-                }
-                $Map
+                param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+                & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent $script:DupNames
             }
             # BL-131 (Task 3c): the tenant's groups are the groups the role assignments name, each under
             # the name the fixture gives it, so a group principal is shared or unique as the fixture says.
@@ -3773,12 +3793,13 @@ Describe 'Get-OERInventory' {
                 New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One'
             )
             $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            # Sprint 11 step 6 (A18): the user keeps its name and carries principalType User, as every row
+            # whose type maps to the enum does.
             @($Inv.roleAssignments | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalType)" }) | Should -Be @(
                 "Reader|$($script:DupGrp1)|Group"
                 "Reader|$($script:DupGrp2)|Group"
-                'Reader|person1@example.com|'
+                'Reader|person1@example.com|User'
             )
-            @($Inv.roleAssignments)[2].PSObject.Properties.Name | Should -Not -Contain 'principalType'
             Assert-DupDocumentValid -Inventory $Inv
         }
 
@@ -3947,8 +3968,10 @@ Describe 'Get-OERInventory' {
 
         It 'names the full role definition id when two roles of one name still collide after the principal is an id' {
             # One user holds two different role definitions that carry the same display name. The
-            # principal moves to its id first, which does not separate them, so the role moves too.
-            $script:DupNames = @{ $script:DupUser1 = 'person1@example.com' }
+            # principal moves to its id first, which does not separate them, so the role moves too. The
+            # directory names the second user too (Sprint 11 step 6: one it did not return would be read
+            # among its deleted items and written by id).
+            $script:DupNames = @{ $script:DupUser1 = 'person1@example.com'; $script:DupUser2 = 'User Two' }
             $script:DupRoleAssignments = @(
                 New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One' -RoleName 'Contoso Reader' -RoleDefinitionId $script:DupRoleDef1
                 New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One' -RoleName 'Contoso Reader' -RoleDefinitionId $script:DupRoleDef2
@@ -4328,7 +4351,14 @@ Describe 'Get-OERInventory' {
             function script:Invoke-AsExport {
                 [CmdletBinding()]
                 param([object]$Index, [int]$Times = 1)
-                $Context = [PSCustomObject]@{ Owner = $MyInvocation; GroupNameIndex = $Index }
+                # The shape Export-OERInventory makes (Sprint 11 step 6 added the three principal members).
+                $Context = [PSCustomObject]@{
+                    Owner                = $MyInvocation
+                    GroupNameIndex       = $Index
+                    PrincipalStatus      = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    UnreadPrincipal      = [System.Collections.Generic.List[string]]::new()
+                    UnreadPrincipalCause = [System.Collections.Generic.List[object]]::new()
+                }
                 & (Get-Module $script:moduleName) { param($Context) $script:_OERInventoryRunContext = $Context } $Context
                 $Inventory = foreach ($Call in 1..$Times) { Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM }
                 [PSCustomObject]@{ Context = $Context; Inventory = @($Inventory) }
@@ -4343,10 +4373,8 @@ Describe 'Get-OERInventory' {
             $script:GpNames = @{ $script:GpOps = 'Ops'; $script:GpOpsOther = 'OPS'; $script:GpSolo = 'Solo'; $script:GpUser = 'person1@example.com' }
             Mock -ModuleName $script:moduleName Get-OERRoleAssignment { $script:GpRas }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
-                param([string[]]$Id)
-                $Map = @{}
-                foreach ($One in @($Id)) { if ($script:GpNames.ContainsKey($One)) { $Map[$One] = $script:GpNames[$One] } }
-                $Map
+                param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+                & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent $script:GpNames
             }
             Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment { $script:GpEligible }
             Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { @() }
@@ -4377,11 +4405,12 @@ Describe 'Get-OERInventory' {
             (Test-OERStructure -InputObject $Inv).Valid | Should -BeTrue
         }
 
-        It 'writes a role assignment group whose name no other group carries by that name, with no principalType' {
+        It 'writes a role assignment group whose name no other group carries by that name, with principalType Group (A18)' {
+            # Sprint 11 step 6: principalType is written for every row whose type maps to the enum.
             $script:GpRas = @(New-GpRa -PrincipalId $script:GpSolo -PrincipalType 'Group')
             $Ra = @((Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).roleAssignments)
             $Ra[0].principal | Should -BeExactly 'Solo'
-            $Ra[0].PSObject.Properties.Name | Should -Not -Contain 'principalType'
+            $Ra[0].principalType | Should -BeExactly 'Group'
             Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Exactly -Times 1
         }
 
@@ -4401,8 +4430,8 @@ Describe 'Get-OERInventory' {
             )
             $script:GpEligible = @(New-GpDirRow -PrincipalId $script:GpUser -PrincipalType 'User' -ScheduleId 's-1')
             $Inv = Get-OERInventory -Include RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM
-            # Reach proof: both sections wrote their rows, by name.
-            @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @('person1@example.com|', 'Ops|ServicePrincipal')
+            # Reach proof: both sections wrote their rows, by name (each with its principalType, A18).
+            @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @('person1@example.com|User', 'Ops|ServicePrincipal')
             @($Inv.directoryRoleAssignments).principal | Should -Be @('person1@example.com')
             Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
         }
@@ -4418,19 +4447,23 @@ Describe 'Get-OERInventory' {
             $InvErr = $null
             $Inv = Get-OERInventory -Include RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM -ErrorVariable InvErr
             @($InvErr) | Should -BeNullOrEmpty
-            # Reach proof: both rows were written.
-            @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @('Ops|')
+            # Reach proof: both rows were written. The ARM type maps to the enum, so principalType is
+            # written (A18) although the principal keeps its name.
+            @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @('Ops|Group')
             @($Inv.directoryRoleAssignments).Count | Should -Be 1
             Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
         }
 
         It 'writes a group principal whose name <Case> by its object id, with no index read' -ForEach @(
-            @{ Case = 'could not be read'; Blank = $false; Lookups = 2 }
-            @{ Case = 'was read blank'; Blank = $true; Lookups = 1 }
+            @{ Case = 'could not be read'; Blank = $false }
+            @{ Case = 'was read blank'; Blank = $true }
         ) {
             # The name each section holds for the group is its object id (no name was read) or blank, and
             # Get-OERGroupReference returns the id for either whatever the index holds: the listing of every
-            # group is not read for it.
+            # group is not read for it. Sprint 11 step 6: in RoleAssignments a group the directory did not
+            # return is written by its object id with principalStatus (from the deleted items read, answered
+            # here), and needs no index either.
+            Mock -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus { [PSCustomObject]@{ Id = $Id; Status = 'Deleted'; Read = $true; Cause = $null } }
             $Unnamed = 'eeee2222-0000-0000-0000-000000000009'
             if ($Blank) { $script:GpNames[$Unnamed] = ' ' }
             $Ra = New-GpRa -PrincipalId $Unnamed -PrincipalType 'Group'
@@ -4438,13 +4471,16 @@ Describe 'Get-OERInventory' {
             $script:GpRas = @($Ra)
             $script:GpEligible = @(New-GpDirRow -PrincipalId $Unnamed -ScheduleId 's-1')
             $InvErr = $null
-            $Inv = Get-OERInventory -Include RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM -ErrorVariable InvErr
+            $Inv = Get-OERInventory -Include RoleAssignments, DirectoryRoleAssignments -Subscription 'Prod' -IncludeARM -ErrorVariable InvErr -WarningAction SilentlyContinue
             @($InvErr) | Should -BeNullOrEmpty
-            # Reach proof: the sections asked for the group's name (each section while the shared cache did
-            # not hold it) and wrote the group by its object id with principalType Group.
+            # Reach proof: the sections asked for the group's name and wrote the group by its object id with
+            # principalType Group. Each section asks on its own (Sprint 11 step 6: the RoleAssignments section
+            # keeps its own answers and leaves the shared cache of the other sections alone), so twice.
             @($Inv.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @("$Unnamed|Group")
             @($Inv.directoryRoleAssignments | ForEach-Object { "$($_.principal)|$($_.principalType)" }) | Should -Be @("$Unnamed|Group")
-            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times $Lookups -Exactly
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly -ParameterFilter { $Detailed }
+            Should -Invoke -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus -Times $(if ($Blank) { 0 } else { 1 }) -Exactly
             Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
         }
 
@@ -4500,7 +4536,8 @@ Describe 'Get-OERInventory' {
             $Ra = @($Run.Inventory[0].roleAssignments)
             $Ra.Count | Should -Be 1
             $Ra[0].principal | Should -BeExactly 'Ops'
-            $Ra[0].PSObject.Properties.Name | Should -Not -Contain 'principalType'
+            # principalType is written either way (A18); the name is the proof the context's index was read.
+            $Ra[0].principalType | Should -BeExactly 'Group'
             Should -Invoke -ModuleName $script:moduleName Get-OERGroupNameIndex -Times 0
         }
 
@@ -7378,6 +7415,345 @@ Describe 'Get-OERInventory' {
                 'accessPackages', 'accessReviews', 'directoryRoleManagementPolicies', 'directoryRoleAssignments',
                 'roleAssignments', 'roleManagementPolicies')
         }
+    }
+}
+
+Describe 'Get-OERInventory role assignment principals that could not be looked up (Sprint 11 step 6, BL-133, A18)' {
+    # A role assignment can name a principal the directory does not return. The section looks every
+    # principal up with Resolve-OERPrincipalName -Detailed and tells three cases apart: a principal it
+    # returned (written by its name), one a successful lookup did not return (written by its object id
+    # with principalStatus Deleted or Unresolved, from ONE read of the directory's deleted items), and one
+    # whose lookup failed (written by its object id with no principalStatus and named unread). The
+    # deleted items read runs for real here, answered through the transport. principalType is written for
+    # every row whose ARM type maps to the schema enum. No id below is version-4 shaped.
+    BeforeAll {
+        $script:UpSub = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:UpSub2 = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'
+        $script:UpUser = 'dddd8888-0000-0000-0000-000000000001'
+        $script:UpGone = 'dddd8888-0000-0000-0000-000000000002'
+        $script:UpNowhere = 'dddd8888-0000-0000-0000-000000000003'
+        $script:UpGroup = 'dddd8888-0000-0000-0000-000000000004'
+        $script:UpDevice = 'dddd8888-0000-0000-0000-000000000005'
+        $script:UpDenied = 'dddd8888-0000-0000-0000-000000000006'
+        $script:UpTag = 'Omnicit.EntraRBAC.UnresolvedPrincipal'
+        function script:New-UpRa {
+            param([string]$PrincipalId, [string]$PrincipalType, [string]$RoleName = 'Reader', [string]$Scope = $script:UpSub)
+            [PSCustomObject]@{
+                Scope = $Scope; RoleName = $RoleName
+                RoleDefinitionId = "$Scope/providers/Microsoft.Authorization/roleDefinitions/bbbb8888-0000-0000-0000-000000000001"
+                PrincipalId = $PrincipalId; PrincipalType = $PrincipalType; PrincipalDisplayName = 'read under another name'
+                RoleAssignmentId = "$Scope/providers/Microsoft.Authorization/roleAssignments/$PrincipalId-$RoleName"
+            }
+        }
+        # The answers of the -Detailed lookup, per id.
+        function script:New-UpFound {
+            param([string]$Id, [string]$Name, [string]$ObjectType)
+            [PSCustomObject]@{ Id = $Id; Read = $true; Found = $true; Name = $Name; ObjectType = $ObjectType; Cause = $null }
+        }
+        function script:New-UpNotFound {
+            param([string]$Id)
+            [PSCustomObject]@{ Id = $Id; Read = $true; Found = $false; Name = $null; ObjectType = $null; Cause = $null }
+        }
+        function script:New-UpUnread {
+            param([string]$Id, [string]$Cause)
+            [PSCustomObject]@{ Id = $Id; Read = $false; Found = $false; Name = $null; ObjectType = $null; Cause = $Cause }
+        }
+        # The warning Get-OERInventory writes for <Count> rows written with principalStatus.
+        function script:Get-UpWarningText {
+            param([int]$Count)
+            "Get-OERInventory: $Count role assignment(s) name a principal that Microsoft Entra ID does not return, so each is written by " +
+            "the principal's object id with principalStatus: Deleted when the principal was found among the directory's deleted items, " +
+            'Unresolved when it was found neither in the directory nor among its deleted items (deleted beyond the retention period, a ' +
+            'principal of another tenant, or not readable). Invoke-OERStructure never creates such an assignment; review them as a finding.'
+        }
+        # The InventoryPartial records Get-OERInventory itself published.
+        function script:Get-UpPartial {
+            param([object[]]$Record)
+            @($Record | Where-Object {
+                    $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' -and
+                    $_.FullyQualifiedErrorId -like 'InventoryPartial*'
+                })
+        }
+        # Stands in for Export-OERInventory: makes the run context the export makes, owned by its OWN
+        # invocation, calls Get-OERInventory once per scope from inside itself, and hands back the context.
+        function script:Invoke-UpAsExport {
+            [CmdletBinding()]
+            param([string[]]$Scope)
+            $Context = [PSCustomObject]@{
+                Owner                = $MyInvocation
+                GroupNameIndex       = $null
+                PrincipalStatus      = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                UnreadPrincipal      = [System.Collections.Generic.List[string]]::new()
+                UnreadPrincipalCause = [System.Collections.Generic.List[object]]::new()
+            }
+            & (Get-Module $script:moduleName) { param($Context) $script:_OERInventoryRunContext = $Context } $Context
+            $Errors = @()
+            $Inventory = foreach ($One in $Scope) {
+                $CallErrors = $null
+                Get-OERInventory -Include RoleAssignments -Scope $One -IncludeARM -ErrorAction SilentlyContinue -ErrorVariable CallErrors -WarningAction SilentlyContinue
+                $Errors += @($CallErrors)
+            }
+            [PSCustomObject]@{ Context = $Context; Inventory = @($Inventory); Errors = $Errors }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        $script:UpRas = @()
+        $script:UpAnswers = @{}
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment { $script:UpRas }
+        # The -Detailed lookup answers what the test put in $script:UpAnswers for each id, and nothing
+        # for an id it holds no answer for.
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+            if (-not $Detailed) { throw 'the RoleAssignments section looks its principals up with -Detailed' }
+            foreach ($One in @($Id)) { if ($script:UpAnswers.ContainsKey($One)) { $script:UpAnswers[$One] } }
+        }
+        Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewGroupNameIndexOf @{ $script:UpGroup = 'Ops' } }
+        # The deleted items: UpGone is among them, UpNowhere answers 404 (the not-found marker), UpDenied
+        # cannot be read. Any other request fails loudly.
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected request: $Uri" }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ id = $script:UpGone; '@odata.type' = '#microsoft.graph.user'; deletedDateTime = '2026-10-01T00:00:00Z' }
+        } -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:UpGone)" }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'Request_ResourceNotFound'; StatusCode = 404; Message = 'Resource does not exist.'; Uri = $Uri }
+            $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+            $Marker
+        } -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:UpNowhere)" }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            throw 'Insufficient privileges to complete the operation.'
+        } -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:UpDenied)" }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'writes a principal the directory returned by its name, with principalType for a user and for a group, and reads no deleted items' {
+        $script:UpRas = @(
+            New-UpRa -PrincipalId $script:UpUser -PrincipalType 'User'
+            New-UpRa -PrincipalId $script:UpGroup -PrincipalType 'Group' -RoleName 'Owner'
+        )
+        $script:UpAnswers = @{
+            $script:UpUser  = New-UpFound -Id $script:UpUser -Name 'person1@example.com' -ObjectType 'user'
+            $script:UpGroup = New-UpFound -Id $script:UpGroup -Name 'Ops' -ObjectType 'group'
+        }
+        $W = $null; $Info = $null; $InvErr = $null
+        $Inv = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningVariable W -WarningAction SilentlyContinue `
+            -InformationVariable Info -ErrorVariable InvErr -ErrorAction SilentlyContinue
+        @($Inv.roleAssignments | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalType)" }) | Should -Be @(
+            'Reader|person1@example.com|User'
+            'Owner|Ops|Group'
+        )
+        @(@($Inv.roleAssignments)[0].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType')
+        @($Inv.roleAssignments | Where-Object { $_.PSObject.Properties.Name -contains 'principalStatus' }).Count | Should -Be 0
+        @($W).Count | Should -Be 0
+        @($Info | Where-Object { $_.Tags -contains $script:UpTag }).Count | Should -Be 0
+        (Get-UpPartial -Record @($InvErr)).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly -ParameterFilter { $Detailed }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'writes a deleted principal by its object id with principalStatus Deleted after principalType, warns once and hands the row over in one information record' {
+        $script:UpRas = @(New-UpRa -PrincipalId $script:UpGone -PrincipalType 'User')
+        $script:UpAnswers = @{ $script:UpGone = New-UpNotFound -Id $script:UpGone }
+        $W = $null; $Info = $null; $InvErr = $null
+        $Inv = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningVariable W -WarningAction SilentlyContinue `
+            -InformationVariable Info -ErrorVariable InvErr -ErrorAction SilentlyContinue
+        $Ra = @($Inv.roleAssignments)
+        $Ra.Count | Should -Be 1
+        @($Ra[0].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType', 'principalStatus')
+        "$($Ra[0].principal)|$($Ra[0].principalType)|$($Ra[0].principalStatus)" | Should -Be "$($script:UpGone)|User|Deleted"
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:UpGone)" }
+        @($W).Count | Should -Be 1
+        [string]$W[0].Message | Should -BeExactly (Get-UpWarningText -Count 1)
+        $Records = @($Info | Where-Object { $_.Tags -contains $script:UpTag })
+        $Records.Count | Should -Be 1
+        $Notice = $Records[0].MessageData
+        $Notice.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.UnresolvedPrincipalNotice'
+        @($Notice.PSObject.Properties.Name) | Should -Be @('Warning', 'Assignments')
+        $Notice.Warning | Should -BeExactly (Get-UpWarningText -Count 1)
+        $Rows = @($Notice.Assignments)
+        $Rows.Count | Should -Be 1
+        @($Rows[0].PSObject.Properties.Name) | Should -Be @('RoleAssignmentId', 'Scope', 'Role', 'Principal', 'PrincipalType', 'PrincipalStatus')
+        "$($Rows[0].RoleAssignmentId)|$($Rows[0].Scope)|$($Rows[0].Role)|$($Rows[0].Principal)|$($Rows[0].PrincipalType)|$($Rows[0].PrincipalStatus)" |
+            Should -Be "$($script:UpSub)/providers/Microsoft.Authorization/roleAssignments/$($script:UpGone)-Reader|$($script:UpSub)|Reader|$($script:UpGone)|User|Deleted"
+        (Get-UpPartial -Record @($InvErr)).Count | Should -Be 0
+    }
+
+    It 'writes a principal found nowhere as Unresolved, maps a ForeignGroup to Group, and counts both kinds in the one warning and record' {
+        $script:UpRas = @(
+            New-UpRa -PrincipalId $script:UpGone -PrincipalType 'User'
+            New-UpRa -PrincipalId $script:UpNowhere -PrincipalType 'ForeignGroup' -RoleName 'Contributor'
+        )
+        $script:UpAnswers = @{ $script:UpGone = New-UpNotFound -Id $script:UpGone; $script:UpNowhere = New-UpNotFound -Id $script:UpNowhere }
+        $W = $null; $Info = $null; $InvErr = $null
+        $Inv = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningVariable W -WarningAction SilentlyContinue `
+            -InformationVariable Info -ErrorVariable InvErr -ErrorAction SilentlyContinue
+        @($Inv.roleAssignments | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalType)|$($_.principalStatus)" }) | Should -Be @(
+            "Reader|$($script:UpGone)|User|Deleted"
+            "Contributor|$($script:UpNowhere)|Group|Unresolved"
+        )
+        @($W).Count | Should -Be 1
+        [string]$W[0].Message | Should -BeExactly (Get-UpWarningText -Count 2)
+        $Records = @($Info | Where-Object { $_.Tags -contains $script:UpTag })
+        $Records.Count | Should -Be 1
+        @($Records[0].MessageData.Assignments | ForEach-Object { "$($_.Role)|$($_.PrincipalType)|$($_.PrincipalStatus)" }) | Should -Be @(
+            'Reader|User|Deleted'
+            'Contributor|Group|Unresolved'
+        )
+        (Get-UpPartial -Record @($InvErr)).Count | Should -Be 0
+    }
+
+    It 'reports a failed lookup as unread: the object id with principalType, no principalStatus, no deleted items read, and InventoryPartial with the cause' {
+        $script:UpRas = @(New-UpRa -PrincipalId $script:UpUser -PrincipalType 'User')
+        $script:UpAnswers = @{ $script:UpUser = New-UpUnread -Id $script:UpUser -Cause 'Too many requests (429)' }
+        $W = $null; $Info = $null; $InvErr = $null
+        $Inv = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningVariable W -WarningAction SilentlyContinue `
+            -InformationVariable Info -ErrorVariable InvErr -ErrorAction SilentlyContinue
+        $Ra = @($Inv.roleAssignments)
+        @($Ra[0].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType')
+        "$($Ra[0].principal)|$($Ra[0].principalType)" | Should -Be "$($script:UpUser)|User"
+        $Partial = Get-UpPartial -Record @($InvErr)
+        $Partial.Count | Should -Be 1
+        [string]$Partial[0].TargetObject | Should -BeExactly "roleAssignments/Reader -> $($script:UpUser) @ $($script:UpSub)/principal"
+        $Partial[0].Exception.Message | Should -BeLike '*Could not look up the principal of a role assignment through directoryObjects/getByIds: Too many requests (429)*'
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        @($W).Count | Should -Be 0
+        @($Info | Where-Object { $_.Tags -contains $script:UpTag }).Count | Should -Be 0
+    }
+
+    It 'reads a principal the lookup gave no answer for as a failed lookup, never as one the directory did not return' {
+        $script:UpRas = @(New-UpRa -PrincipalId $script:UpUser -PrincipalType 'User')
+        $InvErr = $null
+        $Inv = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningAction SilentlyContinue -ErrorVariable InvErr -ErrorAction SilentlyContinue
+        @($Inv.roleAssignments)[0].PSObject.Properties.Name | Should -Not -Contain 'principalStatus'
+        $Partial = Get-UpPartial -Record @($InvErr)
+        [string]$Partial[0].TargetObject | Should -BeExactly "roleAssignments/Reader -> $($script:UpUser) @ $($script:UpSub)/principal"
+        $Partial[0].Exception.Message | Should -BeLike '*through directoryObjects/getByIds: the lookup returned no answer for this principal.*'
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'writes principalStatus Unresolved and names the status unread with its cause when the deleted items read fails, and still counts the row' {
+        $script:UpRas = @(New-UpRa -PrincipalId $script:UpDenied -PrincipalType 'ServicePrincipal')
+        $script:UpAnswers = @{ $script:UpDenied = New-UpNotFound -Id $script:UpDenied }
+        $W = $null; $InvErr = $null
+        $Inv = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningVariable W -WarningAction SilentlyContinue `
+            -ErrorVariable InvErr -ErrorAction SilentlyContinue
+        $Ra = @($Inv.roleAssignments)
+        "$($Ra[0].principal)|$($Ra[0].principalType)|$($Ra[0].principalStatus)" | Should -Be "$($script:UpDenied)|ServicePrincipal|Unresolved"
+        $Partial = Get-UpPartial -Record @($InvErr)
+        $Partial.Count | Should -Be 1
+        [string]$Partial[0].TargetObject | Should -BeExactly "roleAssignments/Reader -> $($script:UpDenied) @ $($script:UpSub)/principalStatus"
+        $Partial[0].Exception.Message | Should -BeLike "*Could not read whether the principal of a role assignment is among the directory's deleted items: Insufficient privileges to complete the operation.*"
+        [string]$W[0].Message | Should -BeExactly (Get-UpWarningText -Count 1)
+    }
+
+    It 'writes a device by its object id with no principalType and no principalStatus when the directory returned it, and with principalStatus when it did not' {
+        # Written by its display name, with no principalType, the device would be applied as a group of
+        # that name (the engine's heuristic for a principal with no '@').
+        $script:UpRas = @(
+            New-UpRa -PrincipalId $script:UpDevice -PrincipalType 'Device'
+            New-UpRa -PrincipalId $script:UpGone -PrincipalType 'Device' -RoleName 'Owner'
+        )
+        $script:UpAnswers = @{
+            $script:UpDevice = New-UpFound -Id $script:UpDevice -Name 'Kiosk 7' -ObjectType 'device'
+            $script:UpGone   = New-UpNotFound -Id $script:UpGone
+        }
+        $W = $null; $Info = $null
+        $Inv = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningVariable W -WarningAction SilentlyContinue -InformationVariable Info
+        $Ra = @($Inv.roleAssignments)
+        @($Ra[0].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal')
+        $Ra[0].principal | Should -BeExactly $script:UpDevice
+        @($Ra[1].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalStatus')
+        "$($Ra[1].principal)|$($Ra[1].principalStatus)" | Should -Be "$($script:UpGone)|Deleted"
+        # The record names the ARM type as it is, since principalType cannot.
+        @(@($Info | Where-Object { $_.Tags -contains $script:UpTag })[0].MessageData.Assignments | ForEach-Object { $_.PrincipalType }) | Should -Be @('Device')
+    }
+
+    It 'reads each principal among the deleted items once per call, and again in the next call' {
+        $script:UpRas = @(
+            New-UpRa -PrincipalId $script:UpGone -PrincipalType 'User'
+            New-UpRa -PrincipalId $script:UpGone -PrincipalType 'User' -RoleName 'Owner'
+        )
+        $script:UpAnswers = @{ $script:UpGone = New-UpNotFound -Id $script:UpGone }
+        $First = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningAction SilentlyContinue
+        @($First.roleAssignments | ForEach-Object { $_.principalStatus }) | Should -Be @('Deleted', 'Deleted')
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+        $null = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningAction SilentlyContinue
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly
+    }
+
+    It 'under an export run context: hands the unread entries and causes to the context, raises no InventoryPartial of its own, and reads each principal among the deleted items once for every call' {
+        # The export calls this command once per scope with -ErrorAction Stop, where an InventoryPartial of
+        # its own would skip the whole scope: the scope's rows must still be written.
+        $script:UpRas = @(
+            New-UpRa -PrincipalId $script:UpUser -PrincipalType 'User'
+            New-UpRa -PrincipalId $script:UpGone -PrincipalType 'User' -RoleName 'Owner'
+            New-UpRa -PrincipalId $script:UpDenied -PrincipalType 'User' -RoleName 'Contributor'
+        )
+        $script:UpAnswers = @{
+            $script:UpUser   = New-UpUnread -Id $script:UpUser -Cause 'Too many requests (429)'
+            $script:UpGone   = New-UpNotFound -Id $script:UpGone
+            $script:UpDenied = New-UpNotFound -Id $script:UpDenied
+        }
+        $Run = Invoke-UpAsExport -Scope @($script:UpSub, $script:UpSub2)
+        # Both calls wrote every row.
+        @($Run.Inventory).Count | Should -Be 2
+        foreach ($One in $Run.Inventory) {
+            @($One.roleAssignments | ForEach-Object { "$($_.principal)|$($_.principalStatus)" }) | Should -Be @(
+                "$($script:UpUser)|"
+                "$($script:UpGone)|Deleted"
+                "$($script:UpDenied)|Unresolved"
+            )
+        }
+        (Get-UpPartial -Record @($Run.Errors)).Count | Should -Be 0
+        # The unread entries of both calls, in the order found, and a cause for each.
+        @($Run.Context.UnreadPrincipal) | Should -Be @(
+            "roleAssignments/Reader -> $($script:UpUser) @ $($script:UpSub)/principal"
+            "roleAssignments/Contributor -> $($script:UpDenied) @ $($script:UpSub)/principalStatus"
+            "roleAssignments/Reader -> $($script:UpUser) @ $($script:UpSub)/principal"
+            "roleAssignments/Contributor -> $($script:UpDenied) @ $($script:UpSub)/principalStatus"
+        )
+        @($Run.Context.UnreadPrincipalCause | ForEach-Object { "$($_.Target)|$($_.Cause)" }) | Should -Be @(
+            "$($script:UpUser)|Could not look up the principal of a role assignment through directoryObjects/getByIds: Too many requests (429)"
+            "$($script:UpDenied)|Could not read whether the principal of a role assignment is among the directory's deleted items: Insufficient privileges to complete the operation."
+            "$($script:UpUser)|Could not look up the principal of a role assignment through directoryObjects/getByIds: Too many requests (429)"
+            "$($script:UpDenied)|Could not read whether the principal of a role assignment is among the directory's deleted items: Insufficient privileges to complete the operation."
+        )
+        # One read of UpGone for the export, kept in the context; the failed read of UpDenied is read again.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:UpGone)" }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter { $Uri -ceq "v1.0/directory/deletedItems/$($script:UpDenied)" }
+        @($Run.Context.PrincipalStatus.Keys) | Should -Be @($script:UpGone.ToLowerInvariant())
+        $Run.Context.PrincipalStatus[$script:UpGone].Status | Should -Be 'Deleted'
+    }
+
+    It 'leaves a root-scope row whose principal was not found, or could not be looked up, in the root list only: no deleted items read, no count, nothing unread' {
+        $script:UpRas = @(
+            New-UpRa -PrincipalId $script:UpGone -PrincipalType 'User' -RoleName 'User Access Administrator' -Scope '/'
+            New-UpRa -PrincipalId $script:UpUser -PrincipalType 'User' -RoleName 'Owner' -Scope '/'
+        )
+        $script:UpAnswers = @{ $script:UpGone = New-UpNotFound -Id $script:UpGone; $script:UpUser = New-UpUnread -Id $script:UpUser -Cause 'Too many requests (429)' }
+        $W = $null; $Info = $null; $InvErr = $null
+        $Inv = Get-OERInventory -Include RoleAssignments -Scope $script:UpSub -IncludeARM -WarningVariable W -WarningAction SilentlyContinue `
+            -InformationVariable Info -ErrorVariable InvErr -ErrorAction SilentlyContinue
+        @($Inv.roleAssignments).Count | Should -Be 0
+        # Reach proof: both rows reached the root list, by their object ids.
+        @(@($Info | Where-Object { $_.Tags -contains 'Omnicit.EntraRBAC.RootScopeAssignment' })[0].MessageData.Assignments | ForEach-Object { $_.Principal }) |
+            Sort-Object | Should -Be @($script:UpUser, $script:UpGone | Sort-Object)
+        @($Info | Where-Object { $_.Tags -contains $script:UpTag }).Count | Should -Be 0
+        @($W | Where-Object { [string]$_.Message -like '*principalStatus*' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        (Get-UpPartial -Record @($InvErr)).Count | Should -Be 0
+    }
+
+    It 'states the rule in the help' {
+        $Help = (Get-Help Get-OERInventory -Full | Out-String) -replace '\s+', ' '
+        $Help | Should -Match ([regex]::Escape('principalStatus'))
+        $Help | Should -Match ([regex]::Escape('Omnicit.EntraRBAC.UnresolvedPrincipal'))
+        $Help | Should -Match ([regex]::Escape('principalType is written for every role assignment whose principal type is a user, a group (a ForeignGroup included) or a service principal'))
     }
 }
 
