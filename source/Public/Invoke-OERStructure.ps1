@@ -670,7 +670,8 @@ function Invoke-OERStructure {
         # checks again. A refused entry is reported Failed by the engine itself and never dispatched, so
         # nothing is read at its scope, written for it or pruned there; the public cmdlets do not check.
         $SubscriptionTenantCache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        $ForeignScopeDetail = 'the apply engine reads and writes a role assignment or a role management policy only in a subscription it can show to belong to this session''s tenant, so none was read or written for this entry'
+        # A refused entry's Detail is the owner's Reason, its own closing period dropped, then '; ' and this.
+        $ForeignScopeDetail ='the apply engine reads and writes a role assignment or a role management policy only in a subscription it can show to belong to this session''s tenant, so none was read or written for this entry'
 
         # R12: a section -Include leaves out decides none of its renames, so a reference to an entry's new
         # name -- a group created into a unit, an access package in a catalog, an access review of a
@@ -850,7 +851,7 @@ function Invoke-OERStructure {
                     if ($HomeTenant.Verdict -eq 'Foreign' -or $HomeTenant.Verdict -eq 'Undecided') {
                         $PSCmdlet.WriteError($HomeTenant.ErrorRecord)
                         $Results.Add((ConvertTo-OERStructureResult -Section $Section.DocKey -Item $RaEntry.Label -Action 'Failed' `
-                                    -Detail "$($HomeTenant.Reason); $ForeignScopeDetail" -ErrorRecord $HomeTenant.ErrorRecord))
+                                    -Detail "$(([string]$HomeTenant.Reason).TrimEnd('.')); $ForeignScopeDetail" -ErrorRecord $HomeTenant.ErrorRecord))
                         continue
                     }
                     $RaGroupOfItem = $RaGroup[$RaEntry.Scope]
@@ -872,7 +873,7 @@ function Invoke-OERStructure {
                     if ($HomeTenant.Verdict -eq 'Foreign' -or $HomeTenant.Verdict -eq 'Undecided') {
                         $PSCmdlet.WriteError($HomeTenant.ErrorRecord)
                         $Results.Add((ConvertTo-OERStructureResult -Section $Section.DocKey -Item "$($It.role) @ $($It.scope)" -Action 'Failed' `
-                                    -Detail "$($HomeTenant.Reason); $ForeignScopeDetail" -ErrorRecord $HomeTenant.ErrorRecord))
+                                    -Detail "$(([string]$HomeTenant.Reason).TrimEnd('.')); $ForeignScopeDetail" -ErrorRecord $HomeTenant.ErrorRecord))
                         continue
                     }
                     if ($HomeTenant.Scope) { $ExtraParams.ResolvedScope = $HomeTenant.Scope }

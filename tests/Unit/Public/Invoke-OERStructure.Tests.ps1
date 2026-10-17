@@ -964,11 +964,14 @@ Describe 'Invoke-OERStructure help pointer to the worked example' {
 }
 
 Describe 'Invoke-OERStructure with an ambiguous subscription display name in a scope' {
-    # The Azure handlers run for REAL here, and so do Resolve-OERScope and (for the policy entry)
-    # Get-/Set-OERRoleManagementPolicy: only the ARM and Graph transports and the lookups below the
-    # scope are mocked. The subscription list answers with two subscriptions that share the display
-    # name 'Dup Sub' and one 'Good Sub'. Subscription display names are not unique, so a scope
-    # 'subscription:Dup Sub' cannot name one subscription: the entry must fail with the candidates
+    # The Azure handler runs for REAL here, and so does Resolve-OERScope: only the ARM and Graph
+    # transports and the lookups below the scope are mocked. (A roleManagementPolicies entry at such a
+    # scope is refused by the subscription home tenant check before its handler runs, with the
+    # resolver's AmbiguousName record; that case is in the Describe 'Invoke-OERStructure stays in the
+    # home tenant's subscriptions (BL-150, A19)'.) The subscription list answers with two
+    # subscriptions that share the display name 'Dup Sub' and one 'Good Sub'. Subscription display
+    # names are not unique, so a scope 'subscription:Dup Sub' cannot name one subscription: the
+    # entry must fail with the candidates
     # and the run must go on, and under -Prune nothing at the ambiguous scope may be removed or
     # created. An entry whose scope cannot be resolved may be another spelling of ANY scope in the
     # section, so it also withholds the prune of every other scope in it: the extra assignment at
@@ -1068,38 +1071,6 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
                 $_.FullyQualifiedErrorId -like 'AmbiguousName*' -and $_.TargetObject -eq 'Dup Sub'
             })
         $Published.Count | Should -Be 2
-    }
-
-    It 'fails a roleManagementPolicies entry at the ambiguous scope with both candidate ids and reads and writes no policy' {
-        $Json = '{ "version":"1.0", "roleManagementPolicies":[' +
-            '{"scope":"subscription:Dup Sub","role":"Reader","allowPermanentEligibility":false} ] }'
-        $Err = $null
-        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleManagementPolicies -Confirm:$false `
-                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
-
-        # Positive proof first: the subscription list WAS read, so the refusal is the ambiguity.
-        # Twice: Get-OERRoleManagementPolicy and Set-OERRoleManagementPolicy each re-resolve the scope.
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 2 -Exactly -ParameterFilter {
-            $Path -eq '/subscriptions?api-version=2022-12-01' -and $All
-        }
-
-        # No policy was looked up or written: the subscription list is the only ARM request made.
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0 -ParameterFilter {
-            $Path -ne '/subscriptions?api-version=2022-12-01'
-        }
-        Should -Invoke -ModuleName $script:moduleName Resolve-OERRoleDefinitionId -Times 0
-
-        $Rows.Count | Should -Be 1
-        $Rows[0].Item | Should -BeExactly 'Reader @ subscription:Dup Sub'
-        $Rows[0].Action | Should -Be 'Failed'
-        $Rows[0].Detail | Should -Match 'aaaa1111-0000-0000-0000-000000000001'
-        $Rows[0].Detail | Should -Match 'aaaa1111-0000-0000-0000-000000000002'
-        # One InvalidScope record is the engine's publication for the entry; the Get and Set cmdlets
-        # each published their own before it, so narrow on the command that published.
-        @($Err | Where-Object {
-                $_.InvocationInfo.MyCommand.Name -eq 'Invoke-OERStructure' -and
-                $_.FullyQualifiedErrorId -like 'InvalidScope,*' -and $_.Exception.Message -like '*matches 2 subscriptions*'
-            }).Count | Should -Be 1
     }
 }
 
@@ -4577,6 +4548,22 @@ Describe 'Invoke-OERStructure stays in the home tenant''s subscriptions (BL-150,
         $script:StDetail = 'the apply engine reads and writes a role assignment or a role management policy only in a subscription it can show to belong to this session''s tenant, so none was read or written for this entry'
         $script:StForeignReason = "subscription 'aaaa1111-0000-0000-0000-000000000002' belongs to tenant 'ffff0000-0000-0000-0000-000000000002', not to tenant 'eeee0000-0000-0000-0000-000000000001', the tenant the session's Microsoft Graph token was issued for"
         $script:StUndeclaredItem = 'bbbb1500-0000-0000-0000-000000000001 -> dddd1500-0000-0000-0000-000000000009 @ /subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg-own'
+        # The real owner and the real resolver, taken before any test spies on them, so a spy can call
+        # through to them: the owner's spy records each verdict, the resolver's each record it throws.
+        $script:StRealOwner = InModuleScope Omnicit.EntraRBAC { Get-Command Get-OERSubscriptionHomeTenant -CommandType Function }
+        $script:StRealResolve = InModuleScope Omnicit.EntraRBAC { Get-Command Resolve-OERScope -CommandType Function }
+        function script:Set-StSpy {
+            $script:StVerdicts = [System.Collections.Generic.List[object]]::new()
+            $script:StResolverErrors = [System.Collections.Generic.List[object]]::new()
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERSubscriptionHomeTenant {
+                $Verdict = & $script:StRealOwner @PesterBoundParameters
+                $script:StVerdicts.Add($Verdict)
+                $Verdict
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope {
+                try { & $script:StRealResolve @PesterBoundParameters } catch { $script:StResolverErrors.Add($PSItem); throw }
+            }
+        }
         # One live role assignment of a principal the document does not declare, at a scope.
         function script:New-StLive {
             param([string]$Scope, [string]$Suffix)
@@ -4606,6 +4593,10 @@ Describe 'Invoke-OERStructure stays in the home tenant''s subscriptions (BL-150,
         $script:StLive = [System.Collections.Generic.List[object]]::new()
         $script:StLive.Add((New-StLive -Scope $script:StOwnRg -Suffix '09'))
         $script:StLive.Add((New-StLive -Scope $script:StForeignRg -Suffix '08'))
+        # What the subscription list answers; a test adds to it.
+        $script:StSubscriptionList = [System.Collections.Generic.List[object]]::new()
+        $script:StSubscriptionList.Add([PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Own' })
+        $script:StSubscriptionList.Add([PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; displayName = 'Customer' })
         # What each subscription GET answers: the subscription, or an ErrorRecord the transport throws.
         $script:StSubscriptionAnswer = @{
             $script:StOwn     = [PSCustomObject]@{ id = $script:StOwn; subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Own'; tenantId = 'EEEE0000-0000-0000-0000-000000000001' }
@@ -4631,10 +4622,7 @@ Describe 'Invoke-OERStructure stays in the home tenant''s subscriptions (BL-150,
             $script:StArmLog.Add("$RequestMethod $Path")
             $Bare = $Path.Split('?')[0]
             if ($RequestMethod -eq 'GET' -and $Path -eq '/subscriptions?api-version=2022-12-01') {
-                return [PSCustomObject]@{ value = @(
-                        [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Own' }
-                        [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; displayName = 'Customer' }
-                    ) }
+                return [PSCustomObject]@{ value = @($script:StSubscriptionList) }
             }
             if ($RequestMethod -eq 'GET' -and $Path -like '/subscriptions/*?api-version=2022-12-01' -and $Bare -notlike '/subscriptions/*/*') {
                 $Answer = $script:StSubscriptionAnswer[$Bare]
@@ -4805,7 +4793,8 @@ Describe 'Invoke-OERStructure stays in the home tenant''s subscriptions (BL-150,
 
         # Reached: the subscription was read, once for both entries, and nothing more was read there.
         (Get-StRequestUnder -Under $script:StForeign) | Should -Be @($script:StForeignGet)
-        $Reason = "the read of subscription 'aaaa1111-0000-0000-0000-000000000002' failed: $($script:StReadError.Exception.Message)"
+        # The Reason's own closing period is dropped before the separator, so the Detail does not read ".;".
+        $Reason = "the read of subscription 'aaaa1111-0000-0000-0000-000000000002' failed: The client does not have authorization to perform action 'Microsoft.Resources/subscriptions/read' over scope '/subscriptions/aaaa1111-0000-0000-0000-000000000002'"
         @($Rows | ForEach-Object { $_.Action }) | Should -Be @('Failed', 'Failed')
         @($Rows | ForEach-Object { $_.Detail }) | Should -Be @("$Reason; $($script:StDetail)", "$Reason; $($script:StDetail)")
         # The read's own record, published by the engine once per entry; no SubscriptionTenantMismatch.
@@ -4853,21 +4842,136 @@ Describe 'Invoke-OERStructure stays in the home tenant''s subscriptions (BL-150,
     }
 
     It 'fails a roleManagementPolicies entry whose subscription name the subscription list does not resolve, with the resolver''s record' {
+        Set-StSpy
         $Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "subscription:Nobody", "role": "Reader", "activationMaxHours": 4 } ] }'
         $Err = $null
         $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
         $Message = "Subscription 'Nobody' was not found or you do not have access to it."
-        # Reached: the name was looked up in the subscription list, and nothing else was read.
+        # Reached: the name was looked up in the subscription list, once, and nothing else was read; the
+        # resolver threw, and the check's verdict is Undecided with that record.
         @($script:StArmLog) | Should -Be @('GET /subscriptions?api-version=2022-12-01')
+        $script:StResolverErrors.Count | Should -Be 1
+        $script:StVerdicts.Count | Should -Be 1
+        $script:StVerdicts[0].Verdict | Should -BeExactly 'Undecided'
+        [object]::ReferenceEquals($script:StVerdicts[0].ErrorRecord.Exception, $script:StResolverErrors[0].Exception) | Should -BeTrue
         $Rows.Count | Should -Be 1
         $Rows[0].Item | Should -BeExactly 'Reader @ subscription:Nobody'
         $Rows[0].Action | Should -Be 'Failed'
-        $Rows[0].Detail | Should -BeExactly "scope 'subscription:Nobody' could not be resolved: $Message; $($script:StDetail)"
+        $Rows[0].Detail | Should -BeExactly "scope 'subscription:Nobody' could not be resolved: Subscription 'Nobody' was not found or you do not have access to it; $($script:StDetail)"
+        # The record published is the resolver's own, once, and no other id: neither InvalidScope, which the
+        # policy cmdlets published for the same scope before the check, nor SubscriptionTenantMismatch.
         $Published = @($Err | Where-Object { $_.InvocationInfo.MyCommand.Name -eq 'Invoke-OERStructure' })
         $Published.Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -BeExactly "$Message,Invoke-OERStructure"
+        $Published[0].FullyQualifiedErrorId | Should -Not -BeLike 'InvalidScope*'
         $Published[0].Exception.Message | Should -BeExactly $Message
+        [object]::ReferenceEquals($Published[0].Exception, $script:StResolverErrors[0].Exception) | Should -BeTrue
+        @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'InvalidScope*' }).Count | Should -Be 0
         @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'SubscriptionTenantMismatch*' }).Count | Should -Be 0
         Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 0
+    }
+
+    It 'fails a roleManagementPolicies entry whose subscription display name two subscriptions share, with the resolver''s own AmbiguousName record, and never dispatches the handler (R-17)' {
+        # Subscription display names are not unique. The check resolves the entry's scope itself, with one read
+        # of the subscription list; Resolve-OERScope refuses the shared name with AmbiguousName, naming both
+        # candidates, and the verdict is Undecided. The entry is Failed with that record as itself, and the
+        # handler -- whose Get- and Set-OERRoleManagementPolicy each resolved the name again before the check,
+        # and published InvalidScope -- is never called. Ruling R-17: the published ErrorId is AmbiguousName.
+        $script:StSubscriptionList.Add([PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000003'; displayName = 'Dup Sub' })
+        $script:StSubscriptionList.Add([PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000004'; displayName = 'Dup Sub' })
+        Set-StSpy
+        $Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "subscription:Dup Sub", "role": "Reader", "allowPermanentEligibility": false } ] }'
+        $Err = $null
+        $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+        # Reached: the owner resolved the name with one read of the subscription list, the resolver refused it
+        # with AmbiguousName, and the verdict is Undecided with that record.
+        @($script:StArmLog) | Should -Be @('GET /subscriptions?api-version=2022-12-01')
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERScope -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERScope -Times 1 -Exactly -ParameterFilter { $Subscription -ceq 'Dup Sub' }
+        $script:StResolverErrors.Count | Should -Be 1
+        [string]$script:StResolverErrors[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+        $script:StVerdicts.Count | Should -Be 1
+        $script:StVerdicts[0].Verdict | Should -BeExactly 'Undecided'
+        [object]::ReferenceEquals($script:StVerdicts[0].ErrorRecord.Exception, $script:StResolverErrors[0].Exception) | Should -BeTrue
+
+        $Rows.Count | Should -Be 1
+        $Rows[0].Section | Should -BeExactly 'roleManagementPolicies'
+        $Rows[0].Item | Should -BeExactly 'Reader @ subscription:Dup Sub'
+        $Rows[0].Action | Should -Be 'Failed'
+        $Rows[0].Detail | Should -BeLike "scope 'subscription:Dup Sub' could not be resolved: *"
+        $Rows[0].Detail | Should -Match 'aaaa1111-0000-0000-0000-000000000003'
+        $Rows[0].Detail | Should -Match 'aaaa1111-0000-0000-0000-000000000004'
+        $Rows[0].Detail | Should -BeLike "*Re-run with the subscription id; $($script:StDetail)"
+
+        # The record published is the resolver's own, once: AmbiguousName, never InvalidScope.
+        $Published = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-OERStructure' })
+        $Published.Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -BeExactly 'AmbiguousName,Invoke-OERStructure'
+        $Published[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidArgument)
+        $Published[0].TargetObject | Should -BeExactly 'Dup Sub'
+        [object]::ReferenceEquals($Published[0].Exception, $script:StResolverErrors[0].Exception) | Should -BeTrue
+        @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'InvalidScope*' }).Count | Should -Be 0
+
+        # The handler was never dispatched.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERDeclaredApprover -Times 0
+    }
+
+    It 'fails every entry in a subscription with SubscriptionTenantMismatch, and reads no subscription, when the session''s token tenant is <Name>' -ForEach @(
+        @{ Name = 'a domain'; Token = 'contoso.onmicrosoft.com' }
+        @{ Name = 'a braced GUID'; Token = '{eeee0000-0000-0000-0000-000000000001}' }
+    ) {
+        Set-StState -TokenTenantId $Token
+        $Json = '{ "version": "1.0", "roleAssignments": [ ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg-own", "role": "Reader", "principal": "person2@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg-customer", "role": "Reader", "principal": "person1@example.com" } ], ' +
+            '"roleManagementPolicies": [ { "scope": "sub:aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "activationMaxHours": 4 }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000002", "role": "Reader", "activationMaxHours": 4 } ] }'
+        $Err = $null
+        $Rows = @(Invoke-OERStructure -Json $Json -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+        $Reason = "the session holds no Microsoft Graph token whose tenant ID subscription '{0}' could be compared with; $($script:StDetail)"
+        # Reached: all four entries were refused by the check, with the no-session reason.
+        @($Rows | ForEach-Object { $_.Item }) | Should -Be @(
+            "Reader -> person2@example.com @ $($script:StOwnRg)"
+            "Reader -> person1@example.com @ $($script:StForeignRg)"
+            'Reader @ sub:aaaa1111-0000-0000-0000-000000000001'
+            "Reader @ $($script:StForeign)"
+        )
+        @($Rows | ForEach-Object { $_.Action }) | Should -Be @('Failed', 'Failed', 'Failed', 'Failed')
+        @($Rows | ForEach-Object { $_.Detail }) | Should -Be @(
+            ($Reason -f 'aaaa1111-0000-0000-0000-000000000001'), ($Reason -f 'aaaa1111-0000-0000-0000-000000000002')
+            ($Reason -f 'aaaa1111-0000-0000-0000-000000000001'), ($Reason -f 'aaaa1111-0000-0000-0000-000000000002'))
+        @($Err | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @(
+            'SubscriptionTenantMismatch,Invoke-OERStructure', 'SubscriptionTenantMismatch,Invoke-OERStructure'
+            'SubscriptionTenantMismatch,Invoke-OERStructure', 'SubscriptionTenantMismatch,Invoke-OERStructure')
+        # Not one request: no subscription read, and nothing looked up, read or written at any scope.
+        $script:StArmLog.Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERStructurePrincipal -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 0
+    }
+
+    It 'reads no subscription for a roleManagementPolicies entry at a management group path, and dispatches the handler as before' {
+        $Json = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "/providers/Microsoft.Management/managementGroups/mg1", "role": "Reader", "activationMaxHours": 4 } ] }'
+        $Err = $null
+        $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+        # Reached: the handler read and updated the policy at the management group, as the path names it.
+        $Rows.Count | Should -Be 1
+        $Rows[0].Item | Should -BeExactly 'Reader @ /providers/Microsoft.Management/managementGroups/mg1'
+        $Rows[0].Action | Should -Be 'Updated'
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
+            $Scope -ceq '/providers/Microsoft.Management/managementGroups/mg1' -and -not $ManagementGroup -and -not $Subscription
+        }
+        Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
+            $Scope -ceq '/providers/Microsoft.Management/managementGroups/mg1' -and -not $ManagementGroup -and -not $Subscription -and $ActivationMaxHours -eq 4
+        }
+        # No request at all: no subscription read, and the path needs no management group lookup.
+        $script:StArmLog.Count | Should -Be 0
+        @($Err).Count | Should -Be 0
     }
 
     It 'reads no subscription for an entry at a management group or at the root scope, and handles them as before' {
@@ -4918,8 +5022,8 @@ Describe 'Invoke-OERStructure stays in the home tenant''s subscriptions (BL-150,
     Context 'in a script with no try above it' {
         # The public engine in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere
         # above it, as at a prompt. The script sets the session in ITS copy of the module scope, installs its
-        # own fakes there and logs every ARM request and every principal lookup with AppendAllText, whose path
-        # is substituted into the text. In the refusal scenario the 'foreign' subscription answers another
+        # own fakes there and logs every ARM request, every principal lookup and every policy read and write
+        # with AppendAllText, whose path is substituted into the text. In the refusal scenario the 'foreign' subscription answers another
         # tenant; in the control it answers the session's tenant, so the scenario tells a refusal from silence.
         BeforeAll {
             function script:New-StNoTryScenario {
@@ -4935,6 +5039,18 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
         if ($Reference -eq 'person1@example.com') { 'dddd1500-0000-0000-0000-000000000001' } else { 'dddd1500-0000-0000-0000-000000000002' }
     }
     Set-Item -Path function:script:Resolve-OERPrincipal -Value { [pscustomobject]@{ PrincipalId = 'dddd1500-0000-0000-0000-000000000002'; PrincipalType = 'User' } }
+    Set-Item -Path function:script:Resolve-OERDeclaredApprover -Value { param($Declared) $Declared }
+    Set-Item -Path function:script:Get-OERRoleManagementPolicy -Value {
+        param([string]$Role, [string]$Scope, [string]$Subscription, [string]$ManagementGroup)
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY GET $Scope$Subscription$ManagementGroup`n")
+        [pscustomobject]@{ RoleName = $Role; ActivationMaxHours = 8; RequireApproval = $false; Approvers = @() }
+    }
+    Set-Item -Path function:script:Set-OERRoleManagementPolicy -Value {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([string]$Role, [string]$Scope, [string]$Subscription, [string]$ManagementGroup, [int]$ActivationMaxHours)
+        [System.IO.File]::AppendAllText('#LOG#', "POLICY SET $Scope$Subscription$ManagementGroup`n")
+        [pscustomobject]@{ PolicyId = 'p-1' }
+    }
     Set-Item -Path function:script:Invoke-OERArmRequest -Value {
         param([string]$Method = 'GET', [string]$Path, [hashtable]$Body, [switch]$All)
         [System.IO.File]::AppendAllText('#LOG#', "$Method $Path`n")
@@ -4962,7 +5078,7 @@ Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
         throw "unexpected $Method $Path"
     }
 }
-$Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg-customer", "role": "Reader", "principal": "person1@example.com" }, { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg-own", "role": "Reader", "principal": "person2@example.com" } ] }'
+$Json = '{ "version": "1.0", "roleAssignments": [ { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg-customer", "role": "Reader", "principal": "person1@example.com" }, { "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg-own", "role": "Reader", "principal": "person2@example.com" } ], "roleManagementPolicies": [ { "scope": "sub:aaaa1111-0000-0000-0000-000000000002", "role": "Reader", "activationMaxHours": 4 } ] }'
 Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$($_.Action):$($_.Item)" }
 'END'
 '@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#FOREIGNTENANT#', $ForeignTenant))
@@ -4973,7 +5089,7 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
             $script:StOwnLabel = 'Reader -> person2@example.com @ /subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg-own'
         }
 
-        It 'reaches the end, having refused the foreign entry with nothing sent under its subscription but the read, though the own entry was created and pruned' {
+        It 'reaches the end, having refused the foreign role assignment and policy entries with nothing sent under their subscription but its read, though the own entry was created and pruned' {
             $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
             $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-StNoTryScenario -Log $Log -ForeignTenant 'ffff0000-0000-0000-0000-000000000002')
             $Run.Output[-1] | Should -BeExactly 'END'
@@ -4981,17 +5097,21 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
             # Reached: the own entry was created, and the undeclared assignment there removed, after the refusal.
             @($Logged | Where-Object { $_ -like 'PUT /subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg-own/providers/Microsoft.Authorization/roleAssignments/*' }).Count | Should -Be 1
             $Logged | Should -Contain 'DELETE /subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg-own/providers/Microsoft.Authorization/roleAssignments/cccc1500-0000-0000-0000-000000000009?api-version=2022-04-01'
-            # Under the foreign subscription, its one read and nothing else; a failure prints what was sent.
+            # Under the foreign subscription, its one read and nothing else -- no role assignment request, and
+            # no policy read or write; a failure prints what was sent.
             @($Logged | Where-Object { $_ -like '* /subscriptions/aaaa1111-0000-0000-0000-000000000002*' }) | Should -Be @(
                 'GET /subscriptions/aaaa1111-0000-0000-0000-000000000002?api-version=2022-12-01') -Because "the requests were:`n$($Logged -join "`n")"
+            @($Logged | Where-Object { $_ -like 'POLICY *' }) | Should -BeNullOrEmpty
             $Logged | Should -Not -Contain 'LOOKUP person1@example.com'
             @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
                 "ROW:Failed:$($script:StForeignLabel)"
                 "ROW:Created:$($script:StOwnLabel)"
                 "ROW:Removed:$($script:StOwnUndeclared)"
+                'ROW:Failed:Reader @ sub:aaaa1111-0000-0000-0000-000000000002'
             )
-            @($Run.Errors).Count | Should -Be 1
+            @($Run.Errors).Count | Should -Be 2
             $Run.Errors[0] | Should -BeLike "Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg-customer' was refused: subscription 'aaaa1111-0000-0000-0000-000000000002' belongs to tenant 'ffff0000-0000-0000-0000-000000000002'*"
+            $Run.Errors[1] | Should -BeLike "Scope 'sub:aaaa1111-0000-0000-0000-000000000002' was refused: subscription 'aaaa1111-0000-0000-0000-000000000002' belongs to tenant 'ffff0000-0000-0000-0000-000000000002'*"
             @($Run.Prompts).Count | Should -Be 0
         }
 
@@ -5002,11 +5122,15 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
             $Logged = @(Get-Content -LiteralPath $Log)
             @($Logged | Where-Object { $_ -like 'PUT /subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg-customer/providers/Microsoft.Authorization/roleAssignments/*' }).Count | Should -Be 1
             $Logged | Should -Contain 'LOOKUP person1@example.com'
+            # The policy entry is read and updated at the scope the check resolved.
+            $Logged | Should -Contain 'POLICY GET /subscriptions/aaaa1111-0000-0000-0000-000000000002'
+            $Logged | Should -Contain 'POLICY SET /subscriptions/aaaa1111-0000-0000-0000-000000000002'
             @($Run.Output | Where-Object { $_ -like 'ROW:*' }) | Should -Be @(
                 "ROW:Created:$($script:StForeignLabel)"
                 "ROW:Removed:$($script:StForeignUndeclared)"
                 "ROW:Created:$($script:StOwnLabel)"
                 "ROW:Removed:$($script:StOwnUndeclared)"
+                'ROW:Updated:Reader @ sub:aaaa1111-0000-0000-0000-000000000002'
             )
             @($Run.Errors).Count | Should -Be 0
         }
