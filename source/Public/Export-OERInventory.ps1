@@ -202,9 +202,9 @@ function Export-OERInventory {
     its read failed, it gave no tenantId, or the session's token names no tenant ID -- is not walked
     either: it is named in IncompleteReads as 'subscriptionHomeTenant at <scope>' and in a clause of the
     InventoryPartial message with its causes, and the scope tree writes one warning that names them. So
-    is a -Scope that cannot be resolved, one that does not start with '/', for example: nothing is read
-    at it, and it is named 'subscriptionHomeTenant at <the scope as given>', with a cause that gives the
-    resolver's message.
+    is a -Scope that cannot be resolved, a raw -Scope that does not start with '/', for example:
+    nothing is read at it, and it is named 'subscriptionHomeTenant at <the scope as given>', with a
+    cause that gives the resolver's message.
     Invoke-OERStructure refuses a role assignment or a role management policy at a scope in a
     subscription of another tenant (SubscriptionTenantMismatch).
 

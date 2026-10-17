@@ -171,7 +171,10 @@ function Get-OERInventory {
     (it does not check a subscription's home tenant, while Export-OERInventory's Azure walk enters only
     the subscriptions of the tenant the session's Microsoft Graph token was issued for), and
     Invoke-OERStructure refuses a role assignment or a role management policy at a scope in a
-    subscription of another tenant with SubscriptionTenantMismatch.
+    subscription of another tenant with SubscriptionTenantMismatch. A role assignment row that an
+    inventory of such a subscription carries at a management group above it, read at the
+    subscription as inherited, lies in no subscription and is not checked: Invoke-OERStructure applies
+    it like any management group row.
     A role assignment at the Azure root scope '/', above every management group and subscription in
     the tenant, is left out of the RoleAssignments section: it is elevated
     access, a finding to review rather than part of the RBAC model a document describes, and

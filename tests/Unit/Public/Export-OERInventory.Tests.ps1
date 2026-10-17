@@ -6867,8 +6867,9 @@ Describe 'Export-OERInventory stays in the home tenant''s subscriptions (BL-150,
         $Description | Should -Match ([regex]::Escape("named in IncompleteReads as 'subscriptionHomeTenant at <scope>'"))
         $Description | Should -Match ([regex]::Escape('Invoke-OERStructure refuses a role assignment or a role management policy at a scope in a subscription of another tenant (SubscriptionTenantMismatch).'))
         $Description | Should -Match ([regex]::Escape('Of the subscriptions, ScopesEnumerated counts only those of this tenant'))
-        # A -Scope the resolver refuses is the fourth cause (Ruling R-21, Sprint 11 step 6c Task 3).
-        $Description | Should -Match ([regex]::Escape("So is a -Scope that cannot be resolved, one that does not start with '/', for example: nothing is read at it, and it is named 'subscriptionHomeTenant at <the scope as given>', with a cause that gives the resolver's message."))
+        # A -Scope the resolver refuses is the fourth cause (docs/development/rationale.md#home-tenant-subscriptions,
+        # limit (f)).
+        $Description | Should -Match ([regex]::Escape("So is a -Scope that cannot be resolved, a raw -Scope that does not start with '/', for example: nothing is read at it, and it is named 'subscriptionHomeTenant at <the scope as given>', with a cause that gives the resolver's message."))
         # The -Scope parameter says what a scope in another tenant's subscription, or an undecided one, gets.
         $ScopeParam = @((Get-Help Export-OERInventory -Full).Parameters.Parameter) | Where-Object { $_.Name -eq 'Scope' }
         $ScopeText = ((@($ScopeParam.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
