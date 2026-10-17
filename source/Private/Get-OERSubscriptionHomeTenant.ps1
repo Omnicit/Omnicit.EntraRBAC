@@ -8,7 +8,8 @@ function Get-OERSubscriptionHomeTenant {
     The single owner of decision A19 (BL-150): whether the Azure subscription a scope lies in, or a
     subscription the subscription list returned, belongs to the tenant the module's session works in.
     The export's Azure walk enters only such a subscription, and Invoke-OERStructure reads and writes a
-    role assignment or a role management policy only at a scope in one.
+    role assignment or a role management policy at a scope in a subscription only when the subscription
+    is one.
 
     The subscription's home tenant is read from the tenantId field Azure Resource Manager returns for
     it (Subscriptions - Get and Subscriptions - List, api-version 2022-12-01, documented as "The
@@ -24,7 +25,8 @@ function Get-OERSubscriptionHomeTenant {
     - Home: the subscription's tenantId is the session's tenant.
     - Foreign: the subscription's tenantId is another tenant, for example a customer subscription
       another tenant delegated to this one through Azure Lighthouse.
-    - Undecided: the home tenant could not be decided -- the scope could not be resolved, the read of
+    - Undecided: the home tenant could not be decided -- the scope is written in a spelling no
+      structure document can declare (see -Scope below), the scope could not be resolved, the read of
       the subscription failed, the subscription gave no tenantId that is a GUID, or the session holds no
       Graph token whose tenant ID is a GUID.
     A Foreign verdict, and an Undecided one, carries a Reason and an ErrorRecord: the record of the
@@ -33,7 +35,16 @@ function Get-OERSubscriptionHomeTenant {
     names the scope and the reason.
 
     -Scope takes a scope in the structure document's syntax. It is parsed by ConvertTo-OERScopeSplat:
-    an 'mg:' form is NoSubscription with no request and no resolution; any other form is resolved by
+    an 'mg:' form is NoSubscription with no request and no resolution. Any other form is then checked
+    by Get-OERScopeSpellingProblem, the single owner of the scope spelling rules a structure document
+    must keep (Ruling R-27): a scope for which it returns any problem -- a trailing or doubled '/' in
+    any form, and in a raw path also a '.' or '..' segment, a '%', a '\', a '?' or a '#', white space at
+    the start or end of the scope or of a segment, white space other than a space, or a control
+    character -- is Undecided with a SubscriptionTenantMismatch record whose reason names the scope and
+    the rules, and nothing is resolved or read for it. The Azure Resource Manager transport sends a path
+    as part of a System.Uri, which removes a '.' or '..' segment, can decode an escape and reads '\' as
+    '/', so the subscription such a text names first need not be the one a request reaches; the owner
+    decides only on text that is the path a request sends. Any other form is resolved by
     Resolve-OERScope (a subscription named by its display name costs one read of the subscription list)
     and made canonical by ConvertTo-OERCanonicalScope. A resolved scope outside '/subscriptions/<id>'
     -- a management group path, or the root scope '/' -- is NoSubscription with no request. A scope
@@ -92,7 +103,7 @@ function Get-OERSubscriptionHomeTenant {
     function Get-SubscriptionTenantMismatchRecord {
         param([string]$ScopeText, [string]$Reason)
         [System.Management.Automation.ErrorRecord]::new(
-            [System.Exception]::new((("Scope '{0}' was refused: {1}. Invoke-OERStructure and Export-OERInventory read and write a role assignment or a role management policy only in a subscription they can show to belong to the tenant the session's Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription's home tenant to manage it there.") -f $ScopeText, $Reason)),
+            [System.Exception]::new((("Scope '{0}' was refused: {1}. Invoke-OERStructure reads and writes, and Export-OERInventory reads, a role assignment or a role management policy in a subscription only when they can show that the subscription belongs to the tenant the session's Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription's home tenant to manage it there.") -f $ScopeText, $Reason)),
             'SubscriptionTenantMismatch',
             [System.Management.Automation.ErrorCategory]::InvalidOperation,
             $ScopeText)
@@ -132,6 +143,19 @@ function Get-OERSubscriptionHomeTenant {
         if ($Splat.ContainsKey('ManagementGroup')) {
             return Get-HomeTenantVerdict -VerdictScope $null -SubscriptionId $null -DisplayName $null -Verdict 'NoSubscription' `
                 -HomeTenantId $null -SessionTenantId $SessionTenantId -Reason $null -ErrorRecord $null
+        }
+        # 1b. Ruling R-27: a scope that breaks a spelling rule a structure document must keep is decided on
+        # nothing. Get-OERScopeSpellingProblem owns those rules. The ARM transport sends a path as part of a
+        # System.Uri, which removes a '.' or '..' segment, can decode an escape and reads '\' as '/', so the
+        # subscription the text names first need not be the one a request reaches. Nothing is resolved or
+        # read for such a scope: it is Undecided, with a SubscriptionTenantMismatch record naming the rules.
+        $SpellingProblem = @(Get-OERScopeSpellingProblem -Scope $Scope -Path '-Scope')
+        if ($SpellingProblem.Count -gt 0) {
+            $SpellingRules = @($SpellingProblem | ForEach-Object { [string]$_.Rule }) -join ', '
+            $SpellingReason = "scope '$Scope' is written in a spelling no structure document can declare ($SpellingRules), so the path a request sends for it may name another scope than its text; nothing was resolved or read for it"
+            return Get-HomeTenantVerdict -VerdictScope $null -SubscriptionId $null -DisplayName $null -Verdict 'Undecided' `
+                -HomeTenantId $null -SessionTenantId $SessionTenantId -Reason $SpellingReason `
+                -ErrorRecord (Get-SubscriptionTenantMismatchRecord -ScopeText $ScopeText -Reason $SpellingReason)
         }
         # 2. Any other form is resolved to an Azure Resource Manager scope. A resolution that fails is
         # Undecided, with the resolver's own record.

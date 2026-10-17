@@ -1629,7 +1629,7 @@ Describe 'Get-OERInventoryReadme (subscriptions delegated from another tenant, B
             'from its home tenant. A subscription whose home tenant could not be read is named under "What this'
             'export could not read" instead.'
         ) -join "`n"
-        $script:FsNone = "None. The Azure walk found no subscription whose home tenant is another tenant. Subscriptions are listed only`nwhen the export includes ``RoleAssignments`` or ``RoleManagementPolicies``, and a ``-Scope`` at a management group or the root scope`nlies in no subscription."
+        $script:FsNone = "None. This export named no subscription whose home tenant is another tenant. Subscriptions are listed only when`nthe export includes ``RoleAssignments`` or ``RoleManagementPolicies`` and gives no ``-Scope``; a ``-Scope`` names one scope, and one at a`nmanagement group or the root scope lies in no subscription. A subscription listing that failed, a walk that could`nnot start and a subscription whose home tenant could not be read are named under `"What this export could not read`"."
     }
 
     It 'says that none was found when the list is empty, after the intro exactly' {

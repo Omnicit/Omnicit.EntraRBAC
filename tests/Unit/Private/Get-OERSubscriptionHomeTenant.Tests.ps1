@@ -19,7 +19,7 @@ Describe 'Get-OERSubscriptionHomeTenant (BL-150, A19)' {
         $script:HtGetPath = '/subscriptions/aaaa1111-0000-0000-0000-000000000001?api-version=2022-12-01'
         $script:HtRgScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
         $script:HtShape = 'Scope,SubscriptionId,DisplayName,Verdict,HomeTenantId,SessionTenantId,Reason,ErrorRecord'
-        $script:HtTail = '. Invoke-OERStructure and Export-OERInventory read and write a role assignment or a role management policy only in a subscription they can show to belong to the tenant the session''s Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription''s home tenant to manage it there.'
+        $script:HtTail = '. Invoke-OERStructure reads and writes, and Export-OERInventory reads, a role assignment or a role management policy in a subscription only when they can show that the subscription belongs to the tenant the session''s Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription''s home tenant to manage it there.'
         # The real resolver, taken before any test mocks it, so a spy can call through to it.
         $script:HtRealResolveScope = InModuleScope Omnicit.EntraRBAC { Get-Command Resolve-OERScope -CommandType Function }
         function script:Invoke-HtOwner {
@@ -244,6 +244,82 @@ Describe 'Get-OERSubscriptionHomeTenant (BL-150, A19)' {
         }
     }
 
+    Context 'a scope spelled so that the request would not reach it as written (Ruling R-27)' {
+        # The ARM transport builds a System.Uri, which removes a '.' or '..' segment, can decode an escape and
+        # reads '\' as '/'. A scope that breaks a rule of Get-OERScopeSpellingProblem -- the rules a structure
+        # document must keep -- could therefore be decided on one subscription and read at another, so it is
+        # Undecided before anything is resolved or read. aaaa...0001 is the session's own subscription and
+        # aaaa...0002 another tenant's; the GET answer says the session's tenant, so a read would rate it Home.
+        It 'is Undecided with a SubscriptionTenantMismatch record naming <Rules>, and resolves and reads nothing, for <Name>' -ForEach @(
+            @{ Name = '..-segments from the own subscription to another'; Rules = 'DotSegment'
+                Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/../../subscriptions/aaaa1111-0000-0000-0000-000000000002' }
+            @{ Name = '..-segments from a management group path to a subscription'; Rules = 'DotSegment'
+                Scope = '/providers/Microsoft.Management/managementGroups/mg1/../../../../subscriptions/aaaa1111-0000-0000-0000-000000000002' }
+            @{ Name = 'an escaped dot segment'; Rules = 'Escape'
+                Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/%2e%2e/%2e%2e/subscriptions/aaaa1111-0000-0000-0000-000000000002' }
+            @{ Name = 'backslash-separated ..-segments'; Rules = 'DotSegment, Backslash'
+                Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/rg\..\..\..\subscriptions\aaaa1111-0000-0000-0000-000000000002' }
+            @{ Name = 'a trailing slash'; Rules = 'Slash'
+                Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/' }
+            @{ Name = 'a doubled slash'; Rules = 'Slash'
+                Scope = '//subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg1' }
+            @{ Name = 'a sub: form with a trailing slash'; Rules = 'Slash'
+                Scope = 'sub:aaaa1111-0000-0000-0000-000000000001/' }
+        ) {
+            $V = Invoke-HtOwner -Splat @{ Scope = $Scope }
+            $V.Verdict | Should -BeExactly 'Undecided'
+            $null -eq $V.Scope | Should -BeTrue
+            $null -eq $V.SubscriptionId | Should -BeTrue
+            $null -eq $V.DisplayName | Should -BeTrue
+            $null -eq $V.HomeTenantId | Should -BeTrue
+            $V.SessionTenantId | Should -BeExactly $script:HtSession
+            $Reason = "scope '$Scope' is written in a spelling no structure document can declare ($Rules), so the path a request sends for it may name another scope than its text; nothing was resolved or read for it"
+            $V.Reason | Should -BeExactly $Reason
+            $V.ErrorRecord | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+            $V.ErrorRecord.FullyQualifiedErrorId | Should -BeExactly 'SubscriptionTenantMismatch'
+            $V.ErrorRecord.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
+            $V.ErrorRecord.TargetObject | Should -BeExactly $Scope
+            $V.ErrorRecord.Exception.Message | Should -BeExactly ("Scope '$Scope' was refused: $Reason" + $script:HtTail)
+            ($V.PSObject.Properties.Name -join ',') | Should -BeExactly $script:HtShape
+            # Nothing resolved and nothing read: no subscription id was taken from the text.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+        }
+
+        It 'takes the spelling verdict before the session is asked: no state still gives the spelling reason, with no request' {
+            InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+            $Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/../../subscriptions/aaaa1111-0000-0000-0000-000000000002'
+            $V = Invoke-HtOwner -Splat @{ Scope = $Scope }
+            $V.Verdict | Should -BeExactly 'Undecided'
+            $null -eq $V.SessionTenantId | Should -BeTrue
+            $V.Reason | Should -BeExactly "scope '$Scope' is written in a spelling no structure document can declare (DotSegment), so the path a request sends for it may name another scope than its text; nothing was resolved or read for it"
+            $V.ErrorRecord.FullyQualifiedErrorId | Should -BeExactly 'SubscriptionTenantMismatch'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+        }
+
+        It 'still resolves and reads, once, a scope that breaks no spelling rule (<Name>)' -ForEach @(
+            @{ Name = 'the clean resource group path'; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' }
+            @{ Name = 'a space between the characters of a segment'; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg one' }
+        ) {
+            $V = Invoke-HtOwner -Splat @{ Scope = $Scope }
+            $V.Verdict | Should -BeExactly 'Home'
+            $V.Scope | Should -BeExactly $Scope
+            $V.SubscriptionId | Should -BeExactly $script:HtSub
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001?api-version=2022-12-01' }
+        }
+
+        It 'leaves an mg: form to its own early return: NoSubscription, with no spelling verdict and no request' {
+            $V = Invoke-HtOwner -Splat @{ Scope = 'mg:mg1/' }
+            $V.Verdict | Should -BeExactly 'NoSubscription'
+            $null -eq $V.Reason | Should -BeTrue
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+        }
+    }
+
     Context 'the cache' {
         It 'reads a subscription once per cache, however its id is written, and gives the same verdict to every scope in it' {
             # An ordinal dictionary, so the key is found again only because the owner lower-cases it.
@@ -338,6 +414,7 @@ Describe 'Get-OERSubscriptionHomeTenant (BL-150, A19)' {
         @{ Name = 'Undecided'; Splat = @{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }; Tenant = '' }
         @{ Name = 'NoSubscription'; Splat = @{ Scope = 'mg:mg1' }; Tenant = '' }
         @{ Name = 'NoSubscription at the root'; Splat = @{ Scope = '/' }; Tenant = '' }
+        @{ Name = 'Undecided for a scope a document could not declare'; Splat = @{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/../x' }; Tenant = '' }
     ) {
         $script:HtAnswer.tenantId = $Tenant
         $V = Invoke-HtOwner -Splat $Splat

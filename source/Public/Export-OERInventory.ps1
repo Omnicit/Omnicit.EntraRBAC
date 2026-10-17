@@ -204,7 +204,14 @@ function Export-OERInventory {
     InventoryPartial message with its causes, and the scope tree writes one warning that names them. So
     is a -Scope that cannot be resolved, a raw -Scope that does not start with '/', for example:
     nothing is read at it, and it is named 'subscriptionHomeTenant at <the scope as given>', with a
-    cause that gives the resolver's message.
+    cause that gives the resolver's message. So is a -Scope spelled so that a request would not reach
+    it as written: a trailing or doubled '/', a '.' or '..' segment, a '%', a '\', a '?' or a '#', white
+    space at the start or end of the scope or of a segment, white space other than a space, or a control
+    character -- the scope spelling rules a structure document must keep (about_Omnicit.EntraRBAC lists
+    them under RENAMES, MAIL ALIASES AND SCOPE SPELLING). The request for such a scope could reach
+    another path than its text -- one in another subscription, for example -- so nothing is resolved or
+    read for it, and it is named the same way, with a cause that names the rules it breaks; write it
+    without them.
     Invoke-OERStructure refuses a role assignment or a role management policy at a scope in a
     subscription of another tenant (SubscriptionTenantMismatch).
 
@@ -485,9 +492,13 @@ function Export-OERInventory {
     scope in a subscription of another tenant is not read: the warning and README.md name it (see
     SUBSCRIPTIONS OF ANOTHER TENANT above). One whose subscription's home tenant cannot be told -- the
     read failed, the subscription gave no tenantId, the session's token names no tenant ID (then the
-    subscription is not read), or the scope cannot be resolved -- is not read either, and is named in
-    IncompleteReads, so the bundle is partial. A scope at a management group or the root scope lies in
-    no subscription and is read as before.
+    subscription is not read), the scope is spelled so that a request would not reach it as written (a
+    trailing or doubled '/', a '.' or '..' segment, a '%', a '\', a '?' or a '#', white space at the
+    start or end of the scope or of a segment, white space other than a space, or a control character;
+    then nothing is resolved or read),
+    or the scope cannot be resolved -- is not read either, and is named in IncompleteReads, so the
+    bundle is partial. A scope at a management group or the root scope lies in no subscription and is
+    read as before.
 
     .PARAMETER Force
     Overwrite an existing bundle folder of the same name. Without this switch an existing folder of the

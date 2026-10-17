@@ -157,10 +157,13 @@ function Get-OERInventoryReadme {
     under "What this export could not read" instead. Then it gives the count and one bullet per
     -ForeignSubscriptions row, in the order given: the scope, the display name and the home tenant as
     code spans (the same fence rule as the entries above), and 'not given' for a display name or a home
-    tenant the row does not carry. When -ForeignSubscriptions is empty it says that the Azure walk found
-    none, that subscriptions are listed only when the export includes an Azure section, and that a
-    -Scope at a management group or the root scope lies in no subscription. That parameter is mandatory
-    for the same reason as the ten above.
+    tenant the row does not carry. When -ForeignSubscriptions is empty it says that the export named
+    none, that subscriptions are listed only when the export includes an Azure section and gives no
+    -Scope, that a -Scope names one scope and one at a management group or the root scope lies in no
+    subscription, and that a subscription listing that failed, a walk that could not start and a
+    subscription whose home tenant could not be read are named under "What this export could not read".
+    It claims nothing about subscriptions that were not listed. That parameter is mandatory for the same
+    reason as the ten above.
 
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
@@ -721,7 +724,7 @@ export could not read" instead.
     $ForeignSubscriptionSection = if ($ForeignBullets.Count -gt 0) {
         $ForeignIntro + "`n`n" + "This export did not read $($ForeignBullets.Count) such subscription(s):" + "`n`n" + ($ForeignBullets -join "`n")
     } else {
-        $ForeignIntro + "`n`n" + "None. The Azure walk found no subscription whose home tenant is another tenant. Subscriptions are listed only`nwhen the export includes ``RoleAssignments`` or ``RoleManagementPolicies``, and a ``-Scope`` at a management group or the root scope`nlies in no subscription."
+        $ForeignIntro + "`n`n" + "None. This export named no subscription whose home tenant is another tenant. Subscriptions are listed only when`nthe export includes ``RoleAssignments`` or ``RoleManagementPolicies`` and gives no ``-Scope``; a ``-Scope`` names one scope, and one at a`nmanagement group or the root scope lies in no subscription. A subscription listing that failed, a walk that could`nnot start and a subscription whose home tenant could not be read are named under `"What this export could not read`"."
     }
 
     $Readme = @'

@@ -662,16 +662,16 @@ function Invoke-OERStructure {
         $RenameMap = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
         # SEC (BL-150, A19): the apply engine reads and writes a role assignment or a role management
-        # policy only in a subscription it can show to belong to the tenant the session's Microsoft Graph
-        # token was issued for -- never in one another tenant delegated to it, for example through Azure
-        # Lighthouse. Get-OERSubscriptionHomeTenant owns the decision; this cache holds what one read of a
+        # policy in a subscription only when it can show that the subscription belongs to the tenant the
+        # session's Microsoft Graph token was issued for -- never in one another tenant delegated to it,
+        # for example through Azure Lighthouse. Get-OERSubscriptionHomeTenant owns the decision; this cache holds what one read of a
         # subscription gave, a failed read included, so the check is made once per subscription and
         # document, before the first read or write for a scope there. A new document, a piped one included,
         # checks again. A refused entry is reported Failed by the engine itself and never dispatched, so
         # nothing is read at its scope, written for it or pruned there; the public cmdlets do not check.
         $SubscriptionTenantCache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
         # A refused entry's Detail is the owner's Reason, its own closing period dropped, then '; ' and this.
-        $ForeignScopeDetail ='the apply engine reads and writes a role assignment or a role management policy only in a subscription it can show to belong to this session''s tenant, so none was read or written for this entry'
+        $ForeignScopeDetail = 'the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session''s tenant, so none was read or written for this entry'
 
         # R12: a section -Include leaves out decides none of its renames, so a reference to an entry's new
         # name -- a group created into a unit, an access package in a catalog, an access review of a

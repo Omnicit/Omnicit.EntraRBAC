@@ -6870,11 +6870,16 @@ Describe 'Export-OERInventory stays in the home tenant''s subscriptions (BL-150,
         # A -Scope the resolver refuses is the fourth cause (docs/development/rationale.md#home-tenant-subscriptions,
         # limit (f)).
         $Description | Should -Match ([regex]::Escape("So is a -Scope that cannot be resolved, a raw -Scope that does not start with '/', for example: nothing is read at it, and it is named 'subscriptionHomeTenant at <the scope as given>', with a cause that gives the resolver's message."))
+        # And a -Scope with a spelling a document could not declare (docs/development/rationale.md#home-tenant-subscriptions,
+        # Ruling R-27).
+        $Description | Should -Match ([regex]::Escape("So is a -Scope spelled so that a request would not reach it as written: a trailing or doubled '/', a '.' or '..' segment, a '%', a '\', a '?' or a '#', white space at the start or end of the scope or of a segment, white space other than a space, or a control character -- the scope spelling rules a structure document must keep"))
+        $Description | Should -Match ([regex]::Escape('so nothing is resolved or read for it, and it is named the same way, with a cause that names the rules it breaks; write it without them.'))
         # The -Scope parameter says what a scope in another tenant's subscription, or an undecided one, gets.
         $ScopeParam = @((Get-Help Export-OERInventory -Full).Parameters.Parameter) | Where-Object { $_.Name -eq 'Scope' }
         $ScopeText = ((@($ScopeParam.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
         $ScopeText | Should -Match ([regex]::Escape('A scope in a subscription of another tenant is not read: the warning and README.md name it'))
         $ScopeText | Should -Match ([regex]::Escape('or the scope cannot be resolved -- is not read either, and is named in IncompleteReads, so the bundle is partial.'))
+        $ScopeText | Should -Match ([regex]::Escape("the scope is spelled so that a request would not reach it as written (a trailing or doubled '/', a '.' or '..' segment, a '%', a '\', a '?' or a '#', white space at the start or end of the scope or of a segment, white space other than a space, or a control character; then nothing is resolved or read), or the scope cannot be resolved"))
         $ScopeText | Should -Match ([regex]::Escape('A scope at a management group or the root scope lies in no subscription and is read as before.'))
     }
 
@@ -7015,6 +7020,50 @@ Describe 'Export-OERInventory stays in the home tenant''s subscriptions (BL-150,
         $Run.Partial.Count | Should -Be 0
         @($Run.Result.IncompleteReads).Count | Should -Be 0
         $Run.Result.ScopesEnumerated | Should -Be 0
+        # Nor did the eligibility read or the Lighthouse read get a scope: each was asked once, about none.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Times 1 -Exactly -ParameterFilter { @($Scope).Count -eq 0 }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly -ParameterFilter { @($Scope).Count -eq 0 }
+    }
+
+    It 'reads nothing at a -Scope whose subscription cannot be told from its text (<Name>): it is named unread, as given, and the bundle is partial' -ForEach @(
+        # Ruling R-27: '..' segments that a request's System.Uri would take from the own subscription to another.
+        @{ Name = 'a raw -Scope spelled so that the request would not reach it as written'
+            Given = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/../../subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg1'
+            Reason = "scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001/../../subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg1' is written in a spelling no structure document can declare (DotSegment), so the path a request sends for it may name another scope than its text; nothing was resolved or read for it" }
+        # Limit (f), Ruling R-26: a raw -Scope that does not start with '/' cannot be resolved.
+        @{ Name = 'a raw -Scope that cannot be resolved'
+            Given = 'subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            Reason = "scope 'subscriptions/aaaa1111-0000-0000-0000-000000000001' could not be resolved: Scope 'subscriptions/aaaa1111-0000-0000-0000-000000000001' is not a valid ARM resource id: it must start with '/'." }
+    ) {
+        # A subscription GET would answer the session's tenant, so a read would have walked the scope.
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest { [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Own'; tenantId = 'eeee0000-0000-0000-0000-000000000001' } }
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord {}
+        $Run = Invoke-HtxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'htx-unread-scope'); Include = @('RoleAssignments'); Scope = $Given }
+
+        # Named once, under the scope as given, in IncompleteReads only (R-26): not in SkippedScopes or
+        # SkippedEligibilityScopes.
+        @($Run.Result.IncompleteReads) | Should -Be @("subscriptionHomeTenant at $Given")
+        @($Run.Result.SkippedScopes).Count | Should -Be 0
+        @($Run.Result.SkippedEligibilityScopes).Count | Should -Be 0
+        $Run.Partial.Count | Should -Be 1
+        $Run.Partial[0].Exception.Message | Should -BeExactly ("This inventory bundle is PARTIAL: 1 Azure subscription(s) were not walked, since whether each belongs to this tenant could not be read, so none of their role assignments, role management policies, PIM eligibilities or Azure Lighthouse delegations is in the bundle: subscriptionHomeTenant at $Given. " +
+            "Causes of the unread subscription tenants: $($Reason.TrimEnd('.'))" + $script:HtxPartialTail)
+        # Reached: the tree's one warning names it, and the README lists it under its label.
+        $Run.Warnings | Should -Be @("Could not tell whether 1 subscription(s) belong to this tenant, so none of them is walked: '$Given' ($Reason)")
+        $Bullets = @((Get-HtxReadmeSection -BundlePath $Run.Result.BundlePath -Heading '## What this export could not read') -split '\r?\n' | Where-Object { $_ -like '- *' })
+        $Bullets | Should -Be @("- Azure subscription whose tenant could not be read: ``subscriptionHomeTenant at $Given``")
+        # Nothing was read: no subscription, no scope, and the eligibility and Lighthouse reads were given none.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscription -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Times 1 -Exactly -ParameterFilter { @($Scope).Count -eq 0 }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly -ParameterFilter { @($Scope).Count -eq 0 }
+        $Run.Result.ScopesEnumerated | Should -Be 0
+        $Run.Result.ScopeCount | Should -Be 0
+        # No subscription of another tenant was named.
+        @($Run.Warnings | Where-Object { $_ -like '*did not read*subscription(s) whose home tenant*' }).Count | Should -Be 0
     }
 
     It 'never asks the owner, and adds nothing, for a pure-Entra export' {

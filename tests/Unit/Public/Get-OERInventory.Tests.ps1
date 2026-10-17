@@ -9206,7 +9206,7 @@ Describe 'Get-OERInventory help documents the tenantId (BL-88, A14)' {
 }
 
 Describe 'Get-OERInventory help documents the subscriptions of another tenant (BL-150, A19)' {
-    It 'says it reads a scope in a subscription of another tenant, unlike the export''s walk, and that Invoke-OERStructure refuses one' {
+    It 'says it reads a scope in a subscription of another tenant, unlike the export''s walk, that Invoke-OERStructure refuses one, and that a management group row read there as inherited is not checked' {
         # Whitespace collapsed first, so the assertion does not depend on where the prose wraps.
         $Help = Get-Help Get-OERInventory -Full
         $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '

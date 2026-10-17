@@ -350,7 +350,8 @@ Describe 'Resolve-OERInventoryScopeTree' {
 
         It 'returns a -Scope in the tenant''s own subscription verbatim, after one read' {
             Mock -ModuleName $script:moduleName Invoke-OERArmRequest { [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Own'; tenantId = 'EEEE0000-0000-0000-0000-000000000001' } }
-            $Given = '/SUBSCRIPTIONS/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/'
+            # Written in upper case, as ARM does not; a trailing '/' would make it undecided (Ruling R-27, below).
+            $Given = '/SUBSCRIPTIONS/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
             $Run = Invoke-TrTree -Splat @{ Scope = $Given }
             @($Run.Tree.Scopes) | Should -BeExactly @($Given)
             @($Run.Tree.ForeignSubscriptions).Count | Should -Be 0
@@ -387,6 +388,49 @@ Describe 'Resolve-OERInventoryScopeTree' {
             $Run.Tree.UndecidedSubscriptions[0].Reason | Should -BeExactly $Reason
             $Run.Warnings | Should -Be @("Could not tell whether 1 subscription(s) belong to this tenant, so none of them is walked: '$Given' ($Reason)")
             Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly
+        }
+
+        It 'walks nothing in a -Scope spelled so that the request would not reach it as written (<Name>), names it undecided, warns once, and sends no request (Ruling R-27)' -ForEach @(
+            @{ Name = '..-segments from the own subscription to another'; Rules = 'DotSegment'
+                Given = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/../../subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg1' }
+            @{ Name = '..-segments from a management group path to a subscription'; Rules = 'DotSegment'
+                Given = '/providers/Microsoft.Management/managementGroups/mg1/../../../../subscriptions/aaaa1111-0000-0000-0000-000000000002' }
+            @{ Name = 'a trailing slash'; Rules = 'Slash'
+                Given = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/' }
+        ) {
+            # Every subscription GET would answer the session's tenant, so a read would have walked the scope.
+            Mock -ModuleName $script:moduleName Invoke-OERArmRequest { [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Own'; tenantId = 'eeee0000-0000-0000-0000-000000000001' } }
+            Mock -ModuleName $script:moduleName Get-OERSubscription { }
+            Mock -ModuleName $script:moduleName Get-OERManagementGroupList { }
+            $Run = Invoke-TrTree -Splat @{ Scope = $Given }
+            @($Run.Tree.Scopes).Count | Should -Be 0
+            @($Run.Tree.ForeignSubscriptions).Count | Should -Be 0
+            @($Run.Tree.UndecidedSubscriptions).Count | Should -Be 1
+            $Reason = "scope '$Given' is written in a spelling no structure document can declare ($Rules), so the path a request sends for it may name another scope than its text; nothing was resolved or read for it"
+            $null -eq $Run.Tree.UndecidedSubscriptions[0].SubscriptionId | Should -BeTrue
+            $Run.Tree.UndecidedSubscriptions[0].Scope | Should -BeExactly $Given
+            $Run.Tree.UndecidedSubscriptions[0].Reason | Should -BeExactly $Reason
+            $Run.Warnings | Should -Be @("Could not tell whether 1 subscription(s) belong to this tenant, so none of them is walked: '$Given' ($Reason)")
+            # Not one request: neither the subscription the text names first nor the one it reaches.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERSubscription -Times 0
+        }
+
+        It 'walks nothing in a -Scope that cannot be resolved, names it undecided with the resolver''s message, warns once, and sends no request' {
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord {}
+            Mock -ModuleName $script:moduleName Get-OERSubscription { }
+            Mock -ModuleName $script:moduleName Get-OERManagementGroupList { }
+            $Given = 'subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $Run = Invoke-TrTree -Splat @{ Scope = $Given }
+            @($Run.Tree.Scopes).Count | Should -Be 0
+            @($Run.Tree.ForeignSubscriptions).Count | Should -Be 0
+            @($Run.Tree.UndecidedSubscriptions).Count | Should -Be 1
+            $Reason = "scope '$Given' could not be resolved: Scope '$Given' is not a valid ARM resource id: it must start with '/'."
+            $null -eq $Run.Tree.UndecidedSubscriptions[0].SubscriptionId | Should -BeTrue
+            $Run.Tree.UndecidedSubscriptions[0].Scope | Should -BeExactly $Given
+            $Run.Tree.UndecidedSubscriptions[0].Reason | Should -BeExactly $Reason
+            $Run.Warnings | Should -Be @("Could not tell whether 1 subscription(s) belong to this tenant, so none of them is walked: '$Given' ($Reason)")
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
         }
     }
 }
