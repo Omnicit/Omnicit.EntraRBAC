@@ -1037,7 +1037,11 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Add-ScopeSegmentFinding` add one Error per problem it returns and decide no spelling, and
   `Get-OERInventory` leaves a role assignment at a scope with any problem out of the document (one
   warning and one `Omnicit.EntraRBAC.UndeclarableScope` record per call), which the engine never
-  prunes. Never decide a scope spelling anywhere else. The owner's help is the reference list of the
+  prunes, and `Get-OERSubscriptionHomeTenant` rates a raw scope with any problem (and any other
+  non-`mg:` scope with a stray `/`) `Undecided` with `SubscriptionTenantMismatch`, resolving and
+  reading nothing for it, so an `Export-OERInventory -Scope` spelled so is unread (Ruling R-27: the
+  transport's `System.Uri` would send another path than the text decided on). Never decide a scope
+  spelling anywhere else. The owner's help is the reference list of the
   rules and names every text that must follow a new one: README.md, the about topic, the two scope
   descriptions in the schema JSON, this bullet, and `Get-OERInventory`'s words for each rule in the
   Reason. Every other help, the bundle README and the prompt point at a list or give an example.
