@@ -1277,6 +1277,19 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   never read a missing or non-GUID token tenant as a match. Gate 10 holds the comparison to
   `Invoke-OERStructure`, in a row with an `It` of its own; nothing machine-checks who calls
   `Get-OERInventoryTenantId`. `Why: docs/development/rationale.md#a-document-names-the-tenant-it-was-exported-from`
+- **`Get-OERSubscriptionHomeTenant` is the single owner of whether a subscription's home tenant is
+  the session's tenant (A19, BL-150)** -- ARM's subscription `tenantId` (Subscriptions - Get or List,
+  api-version `2022-12-01`) against `Get-OERInventoryTenantId`, compared without regard to letter
+  case and only when both are canonical GUIDs. It is called only by `Resolve-OERInventoryScopeTree`
+  and `Invoke-OERStructure` (gate 10), never by another public cmdlet: the role assignment and policy
+  cmdlets and `Get-OERInventory` use the scope they are given. `Export-OERInventory`'s walk enters
+  only a subscription of the session's tenant, names one of another tenant with one warning and in
+  its README, and names one it cannot decide in `IncompleteReads` (partial). The engine checks once
+  per subscription and document, before the first read or write of a `roleAssignments` or
+  `roleManagementPolicies` scope there, and refuses the entry `Failed` with `SubscriptionTenantMismatch`
+  -- or with the read's or the resolver's own record when that failed -- reading no role assignment or
+  policy there, writing nothing and never pruning there. Never decide a subscription's tenant anywhere else.
+  `Why: docs/development/rationale.md#home-tenant-subscriptions`
 
 ---
 
@@ -1517,9 +1530,10 @@ bug.
   `Checkpoint-OERSignIn`, `Invoke-MgGraphRequest` only in the Graph wrapper,
   `Invoke-WebRequest` only in the ARM wrapper, `Invoke-RestMethod` only in
   `Resolve-OERTenantDomain` and `Resolve-OERTenantDomain` only in `Initialize-OERAuth`,
-  `Set-OERSessionUncertain` only in `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`, and
-  `Get-OERDocumentTenantMismatch` only in `Invoke-OERStructure`, every listed owner really calling
-  it; the tenant lookup's one `Invoke-RestMethod` call carrying only
+  `Set-OERSessionUncertain` only in `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`,
+  `Get-OERDocumentTenantMismatch` only in `Invoke-OERStructure`, and
+  `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree` and `Invoke-OERStructure`,
+  every listed owner really calling it; the tenant lookup's one `Invoke-RestMethod` call carrying only
   `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`, with no splat; `$script:_OERSessionUncertain`
   read and written only in `Set-OERSessionUncertain`, and in `Initialize-OERAuth` exactly three
   `Set-OERSessionUncertain` calls -- the statement directly after the `Lock-OERSignIn` assignment and
