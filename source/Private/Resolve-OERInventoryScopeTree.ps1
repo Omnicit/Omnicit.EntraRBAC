@@ -26,8 +26,10 @@ function Resolve-OERInventoryScopeTree {
     scope lies in is decided by one read of it (Get-OERSubscriptionHomeTenant -Scope): a scope in the
     tenant's own subscription, or at a management group or the root scope, which lie in no subscription
     and are not read, is returned verbatim as before; a scope in a foreign subscription is named in
-    ForeignSubscriptions, and one whose subscription could not be decided -- its read failed, too -- in
-    UndecidedSubscriptions, each with the scope as given, and Scopes is then empty.
+    ForeignSubscriptions, and one whose subscription could not be decided -- its read failed, too, or
+    it breaks a scope spelling rule (Get-OERScopeSpellingProblem), a management group path included,
+    and then nothing is resolved or read -- in UndecidedSubscriptions, each with the scope as given, and
+    Scopes is then empty.
 
     A listing that fails is never read as an empty level. For the full tree, a management-group or
     subscription listing that is refused or fails is caught, warned about, and named in the output's
@@ -45,7 +47,8 @@ function Resolve-OERInventoryScopeTree {
 
     .PARAMETER Scope
     A single raw ARM scope. When given, no enumeration occurs: the scope is returned verbatim when it
-    lies in no subscription or in one of this tenant's own, and Scopes is empty otherwise (see above).
+    breaks no scope spelling rule and lies in no subscription or in one of this tenant's own, and
+    Scopes is empty otherwise (see above).
 
     .PARAMETER TenantId
     Optional tenant id or domain forwarded to Initialize-OERAuth.

@@ -1936,7 +1936,10 @@ included) do NOT change.
   and makes the bundle partial; before the step it reached `Get-OERInventory` and was skipped, which
   made the bundle partial too (R-26). So is an export `-Scope` with a spelling no document can declare
   (R-27): nothing is resolved or read for it, and its cause names the rules it breaks; one written with
-  a trailing `/` was read before the step. The export help names both among the causes.
+  a trailing `/` was read before the step. Such a scope need not lie in a subscription at all -- a
+  management group path with a stray `/` is refused the same way -- yet the tree's warning, the
+  `InventoryPartial` clause and the README label still call it a subscription whose tenant could not be
+  read. The export help names both cases among the causes.
 - (g) The engine's two owner calls stand outside the per-entry `try`, where the plan placed them. An
   owner that threw would end the document instead of failing one row; it cannot throw for any scope
   the validator admits, since every resolution and read sits in the owner's own `try`.

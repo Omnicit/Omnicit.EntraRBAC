@@ -1040,7 +1040,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   prunes, and `Get-OERSubscriptionHomeTenant` rates a raw scope with any problem (and any other
   non-`mg:` scope with a stray `/`) `Undecided` with `SubscriptionTenantMismatch`, resolving and
   reading nothing for it, so an `Export-OERInventory -Scope` spelled so is unread (Ruling R-27: the
-  transport's `System.Uri` would send another path than the text decided on). Never decide a scope
+  transport's `System.Uri` need not send the path the text names). Never decide a scope
   spelling anywhere else. The owner's help is the reference list of the
   rules and names every text that must follow a new one: README.md, the about topic, the two scope
   descriptions in the schema JSON, this bullet, and `Get-OERInventory`'s words for each rule in the

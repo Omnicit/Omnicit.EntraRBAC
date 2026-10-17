@@ -6872,15 +6872,16 @@ Describe 'Export-OERInventory stays in the home tenant''s subscriptions (BL-150,
         $Description | Should -Match ([regex]::Escape("So is a -Scope that cannot be resolved, a raw -Scope that does not start with '/', for example: nothing is read at it, and it is named 'subscriptionHomeTenant at <the scope as given>', with a cause that gives the resolver's message."))
         # And a -Scope with a spelling a document could not declare (docs/development/rationale.md#home-tenant-subscriptions,
         # Ruling R-27).
-        $Description | Should -Match ([regex]::Escape("So is a -Scope spelled so that a request would not reach it as written: a trailing or doubled '/', a '.' or '..' segment, a '%', a '\', a '?' or a '#', white space at the start or end of the scope or of a segment, white space other than a space, or a control character -- the scope spelling rules a structure document must keep"))
+        $Description | Should -Match ([regex]::Escape("So is a -Scope spelled so that a request would not reach it as written, a management group path included: one that breaks a scope spelling rule a structure document must keep, such as a '.' or '..' segment or a trailing '/' (about_Omnicit.EntraRBAC lists every rule under RENAMES, MAIL ALIASES AND SCOPE SPELLING)."))
+        $Description | Should -Match ([regex]::Escape('A -Scope at a management group or the root scope, spelled as a structure document may spell it, is not in a subscription and is read as before.'))
         $Description | Should -Match ([regex]::Escape('so nothing is resolved or read for it, and it is named the same way, with a cause that names the rules it breaks; write it without them.'))
         # The -Scope parameter says what a scope in another tenant's subscription, or an undecided one, gets.
         $ScopeParam = @((Get-Help Export-OERInventory -Full).Parameters.Parameter) | Where-Object { $_.Name -eq 'Scope' }
         $ScopeText = ((@($ScopeParam.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
         $ScopeText | Should -Match ([regex]::Escape('A scope in a subscription of another tenant is not read: the warning and README.md name it'))
         $ScopeText | Should -Match ([regex]::Escape('or the scope cannot be resolved -- is not read either, and is named in IncompleteReads, so the bundle is partial.'))
-        $ScopeText | Should -Match ([regex]::Escape("the scope is spelled so that a request would not reach it as written (a trailing or doubled '/', a '.' or '..' segment, a '%', a '\', a '?' or a '#', white space at the start or end of the scope or of a segment, white space other than a space, or a control character; then nothing is resolved or read), or the scope cannot be resolved"))
-        $ScopeText | Should -Match ([regex]::Escape('A scope at a management group or the root scope lies in no subscription and is read as before.'))
+        $ScopeText | Should -Match ([regex]::Escape("So is a scope spelled so that a request would not reach it as written, a management group path included: one that breaks a scope spelling rule a structure document must keep, such as a '.' or '..' segment or a trailing '/' (about_Omnicit.EntraRBAC lists every rule); nothing is resolved or read for it."))
+        $ScopeText | Should -Match ([regex]::Escape('Any other scope at a management group or the root scope lies in no subscription and is read as before.'))
     }
 
     It 'walks only the own subscription, names the foreign one in one warning and the README, and is not partial' {

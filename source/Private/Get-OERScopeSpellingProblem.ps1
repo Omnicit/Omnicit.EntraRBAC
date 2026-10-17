@@ -34,8 +34,9 @@ function Get-OERScopeSpellingProblem {
     ConvertTo-OERScopeSplat owns that syntax, so the exemption asks it: only a scope it returns as
     @{ Scope = ... } is checked.
 
-    This help is the reference list of the rules. Seven texts hold no full list and point elsewhere:
+    This help is the reference list of the rules. Eight texts hold no full list and point elsewhere:
     the help of Test-OERStructureSchema and of Get-OERStructureSchemaJson point at this help; the help
+    of Get-OERSubscriptionHomeTenant gives an example and points at this help; the help
     of Get-OERInventory and of Export-OERInventory give an example and point at the about topic
     (about_Omnicit.EntraRBAC, RENAMES, MAIL ALIASES AND SCOPE SPELLING), and the help of
     Get-OERInventory points at Test-OERStructure as well; the bundle README Get-OERInventoryReadme

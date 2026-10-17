@@ -38,10 +38,9 @@ function Get-OERSubscriptionHomeTenant {
     an 'mg:' form is NoSubscription with no request and no resolution. Any other form is then checked
     by Get-OERScopeSpellingProblem, the single owner of the scope spelling rules a structure document
     must keep (Ruling R-27): a scope for which it returns any problem -- a trailing or doubled '/' in
-    any form, and in a raw path also a '.' or '..' segment, a '%', a '\', a '?' or a '#', white space at
-    the start or end of the scope or of a segment, white space other than a space, or a control
-    character -- is Undecided with a SubscriptionTenantMismatch record whose reason names the scope and
-    the rules, and nothing is resolved or read for it. The Azure Resource Manager transport sends a path
+    any form, and in a raw path also a '.' or '..' segment, for example (its help is the reference list
+    of the rules) -- is Undecided with a SubscriptionTenantMismatch record whose reason names the scope
+    and the rules, and nothing is resolved or read for it. The Azure Resource Manager transport sends a path
     as part of a System.Uri, which removes a '.' or '..' segment, can decode an escape and reads '\' as
     '/', so the subscription such a text names first need not be the one a request reaches; the owner
     decides only on text that is the path a request sends. Any other form is resolved by
