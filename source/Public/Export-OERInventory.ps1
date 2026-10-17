@@ -201,7 +201,10 @@ function Export-OERInventory {
     not in a subscription and is read as before. A subscription whose home tenant could not be read --
     its read failed, it gave no tenantId, or the session's token names no tenant ID -- is not walked
     either: it is named in IncompleteReads as 'subscriptionHomeTenant at <scope>' and in a clause of the
-    InventoryPartial message with its causes, and the scope tree writes one warning that names them.
+    InventoryPartial message with its causes, and the scope tree writes one warning that names them. So
+    is a -Scope that cannot be resolved, one that does not start with '/', for example: nothing is read
+    at it, and it is named 'subscriptionHomeTenant at <the scope as given>', with a cause that gives the
+    resolver's message.
     Invoke-OERStructure refuses a role assignment or a role management policy at a scope in a
     subscription of another tenant (SubscriptionTenantMismatch).
 
@@ -476,7 +479,15 @@ function Export-OERInventory {
     Narrow the Azure scope walk to a single management group branch identified by name or id.
 
     .PARAMETER Scope
-    Narrow the Azure scope walk to a single raw ARM scope string (e.g. a subscription id path).
+    Narrow the Azure scope walk to a single raw ARM scope string (e.g. a subscription id path). A
+    scope in a subscription is read only when that subscription's home tenant is the tenant the
+    session's Microsoft Graph token was issued for, which one read of the subscription decides. A
+    scope in a subscription of another tenant is not read: the warning and README.md name it (see
+    SUBSCRIPTIONS OF ANOTHER TENANT above). One whose subscription's home tenant cannot be told -- the
+    read failed, the subscription gave no tenantId, the session's token names no tenant ID (then the
+    subscription is not read), or the scope cannot be resolved -- is not read either, and is named in
+    IncompleteReads, so the bundle is partial. A scope at a management group or the root scope lies in
+    no subscription and is read as before.
 
     .PARAMETER Force
     Overwrite an existing bundle folder of the same name. Without this switch an existing folder of the

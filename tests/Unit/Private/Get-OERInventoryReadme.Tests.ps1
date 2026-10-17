@@ -1580,6 +1580,7 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
         ($Bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
     }
 }
+
 Describe 'Get-OERInventoryReadme (subscriptions delegated from another tenant, BL-150, A19)' {
     # The export's Azure walk reads only the subscriptions whose home tenant is the tenant the session's
     # Microsoft Graph token was issued for. A subscription of another tenant that is listed for the session
@@ -1746,6 +1747,7 @@ Describe 'Get-OERInventoryReadme (subscriptions delegated from another tenant, B
         ($Bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
     }
 }
+
 Describe 'Get-OERInventoryReadme apply-document section list' {
     # The coverage paragraph counts and lists the apply-document sections. Tie both to the sections
     # schema.json declares, so a section added to the schema cannot leave the README claiming fewer.
