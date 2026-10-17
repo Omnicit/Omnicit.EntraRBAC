@@ -92,7 +92,7 @@ function Get-OERSubscriptionHomeTenant {
     function Get-SubscriptionTenantMismatchRecord {
         param([string]$ScopeText, [string]$Reason)
         [System.Management.Automation.ErrorRecord]::new(
-            [System.Exception]::new((("Scope '{0}' was refused: {1}. Omnicit.EntraRBAC reads and writes a role assignment or a role management policy only in a subscription it can show to belong to the tenant the session's Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription's home tenant to manage it there.") -f $ScopeText, $Reason)),
+            [System.Exception]::new((("Scope '{0}' was refused: {1}. Invoke-OERStructure and Export-OERInventory read and write a role assignment or a role management policy only in a subscription they can show to belong to the tenant the session's Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription's home tenant to manage it there.") -f $ScopeText, $Reason)),
             'SubscriptionTenantMismatch',
             [System.Management.Automation.ErrorCategory]::InvalidOperation,
             $ScopeText)

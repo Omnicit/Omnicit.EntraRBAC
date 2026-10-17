@@ -19,7 +19,7 @@ Describe 'Get-OERSubscriptionHomeTenant (BL-150, A19)' {
         $script:HtGetPath = '/subscriptions/aaaa1111-0000-0000-0000-000000000001?api-version=2022-12-01'
         $script:HtRgScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
         $script:HtShape = 'Scope,SubscriptionId,DisplayName,Verdict,HomeTenantId,SessionTenantId,Reason,ErrorRecord'
-        $script:HtTail = '. Omnicit.EntraRBAC reads and writes a role assignment or a role management policy only in a subscription it can show to belong to the tenant the session''s Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription''s home tenant to manage it there.'
+        $script:HtTail = '. Invoke-OERStructure and Export-OERInventory read and write a role assignment or a role management policy only in a subscription they can show to belong to the tenant the session''s Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription''s home tenant to manage it there.'
         # The real resolver, taken before any test mocks it, so a spy can call through to it.
         $script:HtRealResolveScope = InModuleScope Omnicit.EntraRBAC { Get-Command Resolve-OERScope -CommandType Function }
         function script:Invoke-HtOwner {
