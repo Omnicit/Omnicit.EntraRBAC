@@ -698,4 +698,17 @@ Describe 'Get-OERInventoryPromptTemplate Azure Lighthouse delegations (Sprint 11
             $T.IndexOf('"Subscriptions delegated from another tenant (not read)" names') | Should -BeLessThan $T.IndexOf('an entry labelled "Role assignment principal that could not be read"')
         }
     }
+
+    It 'tells the model an operator may check the names with Test-OERStructure -NamingStandard, that proposed names follow the standard, and that a name that does not is a Warning, never a refusal (Sprint 11 step 7)' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('-NamingStandard'))
+            $T | Should -Match ([regex]::Escape('An operator who keeps a naming standard file can also check the names in a proposal with: Test-OERStructure -Path ./proposal.json -NamingStandard ./naming-standard.json'))
+            $T | Should -Match ([regex]::Escape("Propose names that follow the operator's naming standard (the Naming convention line of USER PREFERENCES)."))
+            $T | Should -Match ([regex]::Escape('A name that does not follow it is a Warning there, never a refusal.'))
+            # The paragraph stands in "After you respond", directly after the three commands and the
+            # sentence that ends that block.
+            $T.IndexOf('-NamingStandard ./naming-standard.json') | Should -BeGreaterThan $T.IndexOf('So every json block you emit must validate against schema.json')
+        }
+    }
 }

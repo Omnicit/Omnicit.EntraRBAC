@@ -10214,3 +10214,113 @@ R-5), but it names a review's access package by its object id whenever another p
 carries that name ([#access-review-target](#access-review-target), since Sprint 11 step 5), and Rule
 15 never reads a reference that is an object id. The refusal names the entries and says to name the
 package by its object id.
+
+## naming-standard
+
+Sprint 11 step 7 (A6, A9) made the naming standard data. `Test-OERStructure -NamingStandard` reads a JSON
+file and adds one Warning per object and broken rule to the validation of a document or of an exported
+`inventory.json`; `Invoke-OERStructure` never receives one, so applying a document is unchanged. The
+only new public parameter is `-NamingStandard` and the only new ErrorId is `InvalidNamingStandard`.
+Four functions own the pieces (CLAUDE.md, Code Style): `Test-OERNamingStandardName` the rules, their
+order and their Detail texts, `Read-OERNamingStandard` reading and refusing the file,
+`Get-OERNamingStandardSchemaJson` its schema, and `Test-OERStructureSchema` (Rule 17) the findings. No
+request is sent: the check is offline. This anchor records the rulings behind that design and the
+known limits.
+
+**The reader checks the file by hand, and the schema is held in step.** The schema is draft-07 and is
+published at `docs/examples/naming-standard.schema.json`, for an editor or an LLM. The reader does not
+call `Test-Json` at run time. It checks the file against the rules the schema declares, in its own
+code, for two reasons. Its messages are ASCII and name every problem in one throw (a path such as
+`segments[1].case`, what was expected, what was found), where a library's messages are not ours and
+change with the PowerShell version's JSON Schema library. And two rules draft-07 cannot express need
+the reader anyway: every `pattern` and every `exceptions` entry must compile as a .NET regular
+expression, and no `values` entry may contain the separator (it could never match a segment, since a
+name is split at the separator first). Matching of keys and enum values is exact (ordinal), as
+draft-07 specifies, so a key or value that carries a hidden character is refused. The two cannot drift
+unseen: `tests/Unit/Private/Read-OERNamingStandard.Tests.ps1`, Context "agreement with the schema",
+runs every refusal case through `Test-Json -Schema` and holds that the schema refuses it too, except
+the cases of those two rules, where the schema accepts and only the reader refuses; it is skipped where
+`Test-Json` has no `-Schema`. `tests/Unit/Private/Get-OERNamingStandardSchemaJson.Tests.ps1`
+holds the published file identical to the function's output (after LF normalization and trimming the
+end) and the example standard accepted by both the reader and the published schema. The file carries
+`"version": "1.0"`, an exact enum, so a later format is refused by its version and never misread.
+Cost if wrong: the reader and the schema can disagree where no refusal case reaches.
+
+**Every pattern matches the whole text; values compare ordinally.** A segment `pattern` and an
+`exceptions` entry are compiled as `\A(?:pattern)\z` with `RegexOptions.CultureInvariant`, and they
+are case-sensitive unless they carry `(?i)`. `-match` semantics, which find the text anywhere, would
+make `Fin` accept the segment `Finance` and the exception `All Users` exempt `All Users Copy`; a closed
+standard needs the whole-text reading, and an exception never exempts more than its text says. The
+cost is that an operator who expects `-match` must write `Fin.*` for a prefix. A `values` entry is compared exactly and is never read as a pattern, so `C++` and `A.B`
+mean what they say, and a hidden character is a difference. Held by `Read-OERNamingStandard.Tests.ps1`
+("compiles a pattern and an exception as a whole-text match") and by
+`tests/Unit/Private/Test-OERNamingStandardName.Tests.ps1` (Contexts "the pattern", "the exceptions",
+"the allowed values" and "a name that holds characters a pattern would read specially").
+Letter cases are Unicode categories (`\p{Lu}`, `\p{Ll}`, `\p{L}`, `\p{Nd}`), so an A with a ring above
+is a letter. Cost if wrong: a name an operator thought exempt is checked, or the reverse.
+
+**An optional segment is present when the part count requires it, otherwise when the part fits.** With
+R required segments, T segments and n parts, exactly n minus R optional segments are present. An
+optional segment is skipped when none is left to place, takes the next part when as many optional
+segments remain (from it to the end) as are still to be placed, and otherwise takes the part when it
+fits the segment (one of its values or its pattern, and its letter case) and is skipped when it does
+not. The count decides first, since a name with that many parts must carry that many optional segments;
+the fit decides only where the count leaves a choice. Cost if wrong: a part is read as belonging to
+another optional segment than the author meant, and is reported against that one. Held by "optional
+segments" in `Test-OERNamingStandardName.Tests.ps1`.
+
+**A structural rule stops the segment checks of that name.** A name with an empty segment, with no
+separator where one is needed (`separator`) or with too few or too many segments (`segmentCount`) has no
+reliable segment alignment, so reporting each segment's value and case against a guess would add noise
+to the one finding that matters. The finding stops that name's checks; `maxLength` does not stop them,
+since the length says nothing about the segments. Held by "the separator" and "the segment count" in
+`Test-OERNamingStandardName.Tests.ps1` ("stops at the count and checks no segment").
+
+**A synchronized group the standard does not include gets one Warning, decided before the exceptions
+are read.** The apply engine writes nothing to a group synchronized from on-premises, so a naming
+Warning on it would ask for a change that only the on-premises directory can make. By default such a
+group is skipped, and its single Warning says it was not checked and how to include it
+(`includeSyncedGroups`), whether or not its name would have followed the standard and even when the
+name matches an exception, so every synced group gets the same row and no name hides one. When the
+standard includes synced groups, the group is checked like any other and each finding says that its
+name can only change in the on-premises directory. The check is offline, so it reads the document's own
+`onPremisesSynced` key (only the boolean true counts); the apply engine decides on the live read, as
+[#synced-groups](#synced-groups) records. Held by Context "a group synchronized from on-premises" in
+`tests/Unit/Private/Test-OERStructureSchema.Tests.ps1`.
+
+**A template whose name cannot be computed gets a Warning saying it was not checked.** A group declared
+with `template` and `tokens` is checked on the name `Resolve-OERName` gives, at the template's path.
+When a token has no value the name does not exist, so the check cannot say anything about it and says
+exactly that, once. The validator's own findings about the template stand. Held by Context "a group
+named by a template" in `Test-OERStructureSchema.Tests.ps1`.
+
+**The Item of a policy's finding is the policy's own name.** An assignment policy is listed in
+`sections` as `assignmentPolicies`, but its finding carries the Section `accessPackages` (the
+top-level section it sits in) and the policy's own `displayName` as Item, at
+`accessPackages[i].assignmentPolicies[k].displayName`, so a reader finds the policy by the name that
+broke the rule and the document by the path. Held by Context "every section that carries names" in
+`Test-OERStructureSchema.Tests.ps1`.
+
+**An unreadable standard is one error, and no document is read or validated.** A path that is not a
+file, malformed JSON, a key or value the standard does not allow or a pattern that does not compile
+raises the non-terminating error `InvalidNamingStandard`, once, with the reader's message, after which
+`Test-OERStructure` returns no result for any document (piped ones included). Validating the documents
+without the standard would let a broken file pass for "no naming problems". The error is
+non-terminating, like the unreadable structure document's, so a script with no `try` goes on, and the
+standard is read once in `begin`, never per document. Held by Context "a standard that cannot be read",
+"a pipeline of documents" and "a script with no try" in `tests/Unit/Public/Test-OERStructure.Tests.ps1`.
+
+**The same check works on an exported inventory.** The export's own `inventory.json` is the document;
+`tests/Unit/Public/Export-OERInventory.Tests.ps1` ("the exported inventory.json is checked against a
+naming standard") reads a bundle back through the real `Test-OERStructure`. Held end to end for the
+shipped examples by `tests/Unit/Public/Test-OERStructure.Tests.ps1` (the apply example against the
+example standard: still Valid, one Warning per name the example standard does not allow).
+
+**Known limits.** (a) `ConvertFrom-Json` turns a date-like string such as `2024-01-01` into a
+`DateTime`, so such a string anywhere in the naming standard file is refused as not a string. This is
+a limit of the parser, not something the reader fixes; `Read-OERStructureDocument` parses structure
+documents the same way. (b) The check reads the document it is given. An object the export left out of
+`inventory.json` (a name two or more objects share, a role assignment at a scope no document can
+declare) is not in the document and so is not checked; the bundle's `README.md` lists those. (c)
+The standard does not model Microsoft Graph's own limits on a display name: it is advisory, and a name
+that follows it can still be refused when it is applied, as one that breaks it can be accepted.

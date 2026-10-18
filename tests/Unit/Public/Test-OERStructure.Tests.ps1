@@ -373,6 +373,43 @@ Describe 'Test-OERStructure -NamingStandard (Sprint 11 step 7)' {
             Should -Invoke -ModuleName $script:moduleName Test-OERStructureSchema -Exactly -Times 1 -ParameterFilter { $null -eq $NamingStandard }
             Should -Invoke -ModuleName $script:moduleName Test-OERStructureSchema -Exactly -Times 2
         }
+
+        It 'checks the shipped docs/examples/example-structure.json against docs/examples/naming-standard.json: still Valid, with one Warning for each name the example standard does not allow' {
+            # The two shipped examples are neutral and were written apart: the apply example uses the
+            # names of an older demo, so the example standard has something to say about most of them.
+            # The rows below are what the example standard produces, in the order the document holds them.
+            $Example = Join-Path $PSScriptRoot '..' '..' '..' 'docs' 'examples' 'example-structure.json'
+            $Standard = Join-Path $PSScriptRoot '..' '..' '..' 'docs' 'examples' 'naming-standard.json'
+            Test-Path -LiteralPath $Standard -PathType Leaf | Should -BeTrue -Because 'the Test-OERStructure help names docs/examples/naming-standard.json'
+            $Plain = Test-OERStructure -Path $Example
+            $Result = @(Test-OERStructure -Path $Example -NamingStandard $Standard)
+            $Result.Count | Should -Be 1
+            $Result[0].Valid | Should -BeTrue
+            @($Result[0].Errors | Where-Object Severity -eq 'Error').Count | Should -Be 0
+            # What the document raises without a standard stands first and unchanged; the naming rows follow.
+            @($Result[0].Errors).Count | Should -Be (@($Plain.Errors).Count + 7)
+            $Naming = @(@($Result[0].Errors) | Select-Object -Skip @($Plain.Errors).Count)
+            $Naming.Count | Should -Be 7
+            foreach ($Finding in $Naming) {
+                $Finding.Severity | Should -BeExactly 'Warning'
+                $Finding.Message | Should -BeLike "Name '*' at * does not follow the naming standard (rule '*"
+            }
+            $Expected = @(
+                @{ Section = 'groups'; Item = 'role_sec_identity_administrator'; Path = 'groups[0].displayName'; Rule = "(rule 'separator'):" }
+                @{ Section = 'administrativeUnits'; Item = 'OER-AU-Demo'; Path = 'administrativeUnits[0].displayName'; Rule = "(rule 'values', segment 1 'kind'):" }
+                @{ Section = 'administrativeUnits'; Item = 'OER-AU-Demo'; Path = 'administrativeUnits[0].displayName'; Rule = "(rule 'values', segment 2 'area'):" }
+                @{ Section = 'catalogs'; Item = 'CAT-OER-Demo'; Path = 'catalogs[0].displayName'; Rule = "(rule 'values', segment 2 'area'):" }
+                @{ Section = 'accessPackages'; Item = 'AP-OER-Demo'; Path = 'accessPackages[0].displayName'; Rule = "(rule 'values', segment 2 'area'):" }
+                @{ Section = 'accessPackages'; Item = 'Default'; Path = 'accessPackages[0].assignmentPolicies[0].displayName'; Rule = "(rule 'separator'):" }
+                @{ Section = 'accessReviews'; Item = 'AR-OER-Demo'; Path = 'accessReviews[0].displayName'; Rule = "(rule 'values', segment 2 'area'):" }
+            )
+            for ($I = 0; $I -lt $Expected.Count; $I++) {
+                $Naming[$I].Section | Should -BeExactly $Expected[$I].Section
+                $Naming[$I].Item | Should -BeExactly $Expected[$I].Item
+                $Naming[$I].Path | Should -BeExactly $Expected[$I].Path
+                $Naming[$I].Message | Should -BeLike ("*does not follow the naming standard " + $Expected[$I].Rule + '*')
+            }
+        }
     }
 
     Context 'a standard that cannot be read' {

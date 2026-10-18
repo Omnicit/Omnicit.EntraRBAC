@@ -6931,6 +6931,14 @@ Describe 'Test-OERStructureSchema (Rule 17, naming standard, Sprint 11 step 7)' 
             $Hit[0].Message | Should -Match 'was not checked against the naming standard'
         }
 
+        It 'gets the row even when its name matches an exception, since the decision is made before the exceptions are read' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json '{ "version": "1.0", "groups": [ { "displayName": "All Users", "onPremisesSynced": true } ] }'
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -Match "^Name 'All Users' at groups\[0\]\.displayName was not checked against the naming standard"
+        }
+
         It 'is checked when the standard includes synced groups, and each finding names what to do' {
             $V = Invoke-NsValidation -Standard (Get-NsStandard -IncludeSynced) -Json '{ "version": "1.0", "groups": [ { "displayName": "bad_synced", "onPremisesSynced": true } ] }'
             $Hit = @(Get-NsFinding -Validation $V)

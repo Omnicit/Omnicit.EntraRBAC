@@ -848,6 +848,10 @@ character validation.
 Used by every creation cmdlet. Do not duplicate template substitution logic -- always call this
 helper.
 
+The rules a name must follow are a separate matter, held in a naming standard file that
+`Test-OERStructure -NamingStandard` checks offline; `Test-OERNamingStandardName` owns them (see **Code
+Style**). `Why: docs/development/rationale.md#naming-standard`
+
 ---
 
 ## Argument Completion
@@ -1119,6 +1123,17 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   and `Test-OERStructureSchema` compares a renamed group's `mailNickname` with the alias derived from
   its previous name. Never re-implement the derivation inline.
   `Why: docs/development/rationale.md#mail-nickname`
+- **`Test-OERNamingStandardName` is the single owner of the naming rules, their order and their Detail
+  texts; `Read-OERNamingStandard` of reading and refusing the naming standard file; and
+  `Get-OERNamingStandardSchemaJson` of its schema.** `Test-OERStructureSchema` (Rule 17) adds one
+  Warning per object and broken rule, only when `Test-OERStructure -NamingStandard` hands it a standard,
+  and `Invoke-OERStructure` never passes one: a naming finding is never an Error, and applying a
+  document is unchanged. Every pattern matches the whole text, values compare ordinally, and a file
+  the reader refuses is `InvalidNamingStandard`, once, with no document read or validated. The reader
+  checks the file by hand and never calls `Test-Json`; `docs/examples/naming-standard.schema.json` is
+  the schema function's output, held identical by a test, and is never edited by hand. Never
+  re-implement a rule, a Detail text or the file's validation elsewhere.
+  `Why: docs/development/rationale.md#naming-standard`
 - **`Select-OERManagedDirectoryRoleAssignment` is the single owner of which live directory role
   assignment the apply engine may match or prune** (tenant scope, `memberType` Direct, Active only
   `assignmentType` Assigned), and `Get-OERTokenObjectId` the single owner of reading the signed-in

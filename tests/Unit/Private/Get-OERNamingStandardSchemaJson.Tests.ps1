@@ -104,4 +104,31 @@ Describe 'Get-OERNamingStandardSchemaJson' {
             Test-Json -Json $Bad -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
         }
     }
+
+    # docs/examples/naming-standard.schema.json is what the example standard's "$schema" key points at,
+    # and what an editor or an LLM validates a standard against without the module. The function is the
+    # single owner of the schema, so the published file is a copy that this test holds identical.
+    It 'is published as docs/examples/naming-standard.schema.json, identical to the function output with LF line endings and one trailing newline' {
+        $Published = Join-Path $PSScriptRoot '../../../docs/examples/naming-standard.schema.json'
+        Test-Path -LiteralPath $Published -PathType Leaf | Should -BeTrue -Because 'the example standard references ./naming-standard.schema.json'
+        $Text = [System.IO.File]::ReadAllText((Get-Item -LiteralPath $Published).FullName)
+        $Text | Should -Not -Match "`r" -Because 'the published schema uses LF line endings'
+        $Text.EndsWith("`n") | Should -BeTrue -Because 'the published schema ends with a newline'
+        $Text.EndsWith("`n`n") | Should -BeFalse -Because 'the published schema ends with exactly one newline'
+        $FromFunction = InModuleScope $script:moduleName { Get-OERNamingStandardSchemaJson }
+        $Text.Replace("`r`n", "`n").TrimEnd() | Should -BeExactly $FromFunction.Replace("`r`n", "`n").TrimEnd()
+    }
+
+    It 'reads docs/examples/naming-standard.json without a problem, and the published schema accepts it and refuses an unknown key (draft-07)' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        $Dir = Join-Path $PSScriptRoot '../../../docs/examples'
+        $Example = (Get-Item -LiteralPath (Join-Path $Dir 'naming-standard.json')).FullName
+        $PublishedSchema = Get-Content -LiteralPath (Join-Path $Dir 'naming-standard.schema.json') -Raw
+        $Standard = InModuleScope $script:moduleName -Parameters @{ Path = $Example } { Read-OERNamingStandard -Path $Path }
+        $Standard.Separator | Should -BeExactly '-'
+        @($Standard.Segments).Count | Should -Be 4
+        @($Standard.Sections).Count | Should -Be 6
+        $Json = Get-Content -LiteralPath $Example -Raw
+        Test-Json -Json $Json -Schema $PublishedSchema -ErrorAction SilentlyContinue | Should -BeTrue
+        Test-Json -Json $Json.Replace('"separator"', '"seperator"') -Schema $PublishedSchema -ErrorAction SilentlyContinue | Should -BeFalse
+    }
 }
