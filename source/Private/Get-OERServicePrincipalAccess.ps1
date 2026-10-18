@@ -29,8 +29,9 @@ function Get-OERServicePrincipalAccess {
     entries is read again in full with a paged read of its own, and that read is used instead of the
     expanded entries: v1.0/servicePrincipals/{id}/appRoleAssignments?$top=999 for read 1, and
     v1.0/servicePrincipals/{id}/owners or v1.0/applications/{id}/owners, each with
-    $select=id,displayName,userPrincipalName&$top=999, for reads 2 and 3. An object with 19 or fewer
-    is not read again (measured: no object in the test tenant reached 20).
+    $select=id,displayName,userPrincipalName&$top=999, for reads 2 and 3, the id as Graph listed it,
+    lower-cased and URI-escaped. An object with 19 or fewer is not read again (measured: no object in
+    the test tenant reached 20, so these re-reads were not measured live).
 
     The cost: one request per page of each of the three lists and of the grants, one
     directoryObjects/getByIds per 1,000 users named in grants, and one extra paged read per object
@@ -153,7 +154,9 @@ function Get-OERServicePrincipalAccess {
         }
         $Entries = [object[]]@(@($Item.$Key) | Where-Object { $null -ne $_ })
         if ($Entries.Count -ge $ExpandedCap) {
-            $Entries = Get-ListValue -Response (Invoke-OERGraphRequest -Uri ($ReReadFormat -f $ItemId) -All)
+            # The id is Graph's, not the module's, so it is escaped before it becomes a path segment, as
+            # Get-OERSubscriptionHomeTenant escapes a subscription id: a GUID is sent unchanged.
+            $Entries = Get-ListValue -Response (Invoke-OERGraphRequest -Uri ($ReReadFormat -f [uri]::EscapeDataString($ItemId)) -All)
         }
         , $Entries
     }

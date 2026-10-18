@@ -439,6 +439,36 @@ Describe 'Get-OERServicePrincipalAccess' {
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 4 -Exactly
         }
 
+        # The id in a full read's path is Graph's, so it is URI-escaped as a path segment. A GUID is sent
+        # unchanged, which is why the tests above match their unescaped forms; an id holding a space, a '/'
+        # and a '#' shows the escape. A path sent unescaped has no mocked answer, so it reads as a failed part.
+        It 'escapes the id in the path of a full read (<Name>)' -ForEach @(
+            @{ Name = 'the app role assignments of a client'; Part = 'ApplicationPermissions'
+                Escaped = 'v1.0/servicePrincipals/odd%20id%2F%231/appRoleAssignments?$top=999' }
+            @{ Name = 'the owners of an app registration'; Part = 'ApplicationOwners'
+                Escaped = 'v1.0/applications/odd%20id%2F%231/owners?$select=id,displayName,userPrincipalName&$top=999' }
+        ) {
+            if ($Part -eq 'ApplicationPermissions') {
+                $Odd = @{ id = 'Odd Id/#1'; appId = '13131313-1313-1313-1313-131313131313'; displayName = 'Odd Client'; appRoles = @()
+                    appRoleAssignments = New-SpaAssignments -Count 20 -Client 'odd id/#1' }
+                $script:Replies[$script:PermissionListUri].value += $Odd
+                $script:Replies[$Escaped] = New-SpaList (New-SpaAssignments -Count 21 -Client 'odd id/#1')
+            } else {
+                $Odd = @{ id = 'Odd Id/#1'; appId = '13131313-1313-1313-1313-131313131313'; displayName = 'Odd App'; owners = New-SpaOwners -Count 20 }
+                $script:Replies[$script:AppOwnerListUri].value += $Odd
+                $script:Replies[$Escaped] = New-SpaList (New-SpaOwners -Count 21)
+            }
+            $Result = Invoke-Spa
+            @($Result.Unread).Count | Should -Be 0
+            $script:ExpectedUri = $Escaped
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq $script:ExpectedUri -and $All }
+            if ($Part -eq 'ApplicationPermissions') {
+                @($Result.ApplicationPermissions | Where-Object { $_.servicePrincipalId -ceq 'odd id/#1' }).Count | Should -Be 21
+            } else {
+                @($Result.ApplicationOwners | Where-Object { $_.applicationId -ceq 'odd id/#1' }).Count | Should -Be 21
+            }
+        }
+
         It 'leaves the part unread when the full read of one object fails, naming that object' {
             $script:Replies[$script:SpOwnerListUri].value[0].owners = New-SpaOwners -Count 20
             $script:Replies[(Get-SpOwnerReReadUri -Id $script:ClientId)] = New-SpaGraphError -Message 'Too many requests (429).'

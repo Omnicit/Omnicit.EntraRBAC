@@ -9452,7 +9452,7 @@ Describe 'Get-OERInventory help documents the subscriptions of another tenant (B
         $Description | Should -Match ([regex]::Escape("A -Scope at a management group or the root scope '/', and a -ManagementGroup, lie in no subscription and are read as before."))
         $Description | Should -Match ([regex]::Escape('is not read: each included section is written empty, and one non-terminating SubscriptionTenantMismatch error, written after the inventory object, names the scope and the tenant, however many of the two sections were included; with both -Scope and -Subscription in subscriptions of another tenant, that one error names the -Scope. The inventory is not reported partial for it.'))
         # R-9: the ARM token the check's read needs is acquired in the sign-in.
-        $Description | Should -Match ([regex]::Escape("each is checked. The Azure Resource Manager token that read needs is acquired in the command's sign-in, as -IncludeARM does, whenever either section is included with a -Scope or a -Subscription."))
+        $Description | Should -Match ([regex]::Escape("each is checked. The Azure Resource Manager token that read needs is acquired in the command's sign-in, as -IncludeARM does, whenever RoleAssignments, or RoleManagementPolicies with exactly one of -Role, -CommonRoles and -AllRolesAtScope, is included with a -Scope or a -Subscription."))
         $Description | Should -Match ([regex]::Escape("is not read either: each included section is written empty and reported by its name (roleAssignments, roleManagementPolicies) through the InventoryPartial error below, with the reason as its cause."))
         $Description | Should -Match ([regex]::Escape('Under Export-OERInventory the scopes it hands this cmdlet were already decided by its walk, and the answers are shared, so the check costs the export no request.'))
         $Description | Should -Match ([regex]::Escape('Invoke-OERStructure refuses a role assignment or a role management policy at a scope in a subscription of another tenant with SubscriptionTenantMismatch.'))
@@ -9475,7 +9475,7 @@ Describe 'Get-OERInventory help documents the subscriptions of another tenant (B
         $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
         # The text that told every caller to pass -IncludeARM, or have the sections acquire it on first use, is gone.
         $Description | Should -Not -Match ([regex]::Escape('need an ARM token: pass -IncludeARM to acquire it up front (the Azure sections otherwise acquire it on first use)'))
-        $Description | Should -Match ([regex]::Escape("Azure sections (RoleAssignments, RoleManagementPolicies) need an ARM token and their targeting parameters. With either section and a -Scope or a -Subscription, the token is acquired up front, in the command's one sign-in, as -IncludeARM does, since the subscription is checked before either section reads (see below); with a -ManagementGroup alone, pass -IncludeARM to acquire it up front, or the Azure sections acquire it on first use."))
+        $Description | Should -Match ([regex]::Escape("Azure sections (RoleAssignments, RoleManagementPolicies) need an ARM token and their targeting parameters. With either section and a -Scope or a -Subscription, the token is acquired up front, in the command's one sign-in, as -IncludeARM does, since the subscription is checked before either section reads (see below) -- for RoleManagementPolicies only with exactly one of -Role, -CommonRoles and -AllRolesAtScope, since with none or more than one that section is skipped with a warning and reads nothing; with a -ManagementGroup alone, pass -IncludeARM to acquire it up front, or the Azure sections acquire it on first use."))
 
         $ParamText = @{}
         foreach ($Name in 'Include', 'IncludeARM') {
@@ -9483,8 +9483,8 @@ Describe 'Get-OERInventory help documents the subscriptions of another tenant (B
             $ParamText[$Name] = ((@($Param.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
         }
         $ParamText.Include | Should -Not -Match ([regex]::Escape('require -IncludeARM plus their targeting parameters'))
-        $ParamText.Include | Should -Match ([regex]::Escape('RoleAssignments and RoleManagementPolicies need an ARM token and their targeting parameters: with a -Scope or a -Subscription the token is acquired up front, as -IncludeARM does; with a -ManagementGroup alone they acquire it on first use unless -IncludeARM is passed.'))
-        $ParamText.IncludeARM | Should -Match ([regex]::Escape("Acquire an ARM token up front, in the command's sign-in. Forwarded to Initialize-OERAuth. It is implied when RoleAssignments or RoleManagementPolicies is included with a -Scope or a -Subscription, since the subscription is checked before either section reads; with a -ManagementGroup alone the Azure sections otherwise acquire the token on first use. A call that includes neither section acquires no ARM token without it."))
+        $ParamText.Include | Should -Match ([regex]::Escape('RoleAssignments and RoleManagementPolicies need an ARM token and their targeting parameters: with a -Scope or a -Subscription the token is acquired up front, as -IncludeARM does (for RoleManagementPolicies only with exactly one of -Role, -CommonRoles and -AllRolesAtScope, without which it reads nothing); with a -ManagementGroup alone they acquire it on first use unless -IncludeARM is passed.'))
+        $ParamText.IncludeARM | Should -Match ([regex]::Escape("Acquire an ARM token up front, in the command's sign-in. Forwarded to Initialize-OERAuth. It is implied when RoleAssignments, or RoleManagementPolicies with exactly one of -Role, -CommonRoles and -AllRolesAtScope, is included with a -Scope or a -Subscription, since the subscription is checked before either section reads; with a -ManagementGroup alone the Azure sections otherwise acquire the token on first use. A call that includes neither section acquires no ARM token without it."))
     }
 }
 
@@ -9869,7 +9869,8 @@ Describe 'Get-OERInventory asks for the ARM token in its sign-in when it checks 
     # Before the subscription check (Sprint 11 step 8) a call without -IncludeARM signed in for Microsoft Graph
     # only, and the two readers acquired the
     # ARM token on first use, through their own Initialize-OERAuth -IncludeARM. The subscription check now reads
-    # the subscription before either reader runs, so begin asks for the token whenever either section is
+    # the subscription before either reader runs, so begin asks for the token whenever RoleAssignments, or
+    # RoleManagementPolicies with exactly one role source (the only case in which that section reads), is
     # included with a -Scope or a -Subscription that is not blank, exactly as -IncludeARM does. The REAL owner
     # and the REAL readers run here: the sign-in mock records each call and puts an ARM token in the module's
     # state only when -IncludeARM is passed, and the transport mock refuses every request with
@@ -10035,5 +10036,58 @@ Describe 'Get-OERInventory asks for the ARM token in its sign-in when it checks 
         $script:AtAuthCalls[0] | Should -BeFalse
         # A blank scope is never checked, so the subscription is never read.
         Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0 -ParameterFilter { $Path -ceq $script:AtGet }
+    }
+
+    # RoleManagementPolicies reads only with exactly one of -Role, -CommonRoles and -AllRolesAtScope; with none
+    # or more than one it warns and skips before the subscription check. Its term of the sign-in's condition is
+    # that same rule, so a call that cannot read the section never asks for an ARM token for it, and a failed
+    # ARM sign-in cannot latch the call's Entra ID sections for a section that reads nothing.
+    It 'does not ask for the token in the sign-in for RoleManagementPolicies with a -Scope and <Name>, and still warns and skips the section' -ForEach @(
+        @{ Name = 'no role source'; Splat = @{}
+            Warning = 'RoleManagementPolicies requires -Role, -CommonRoles, or -AllRolesAtScope; section skipped.' }
+        @{ Name = 'two role sources'; Splat = @{ Role = @('Reader'); CommonRoles = $true }
+            Warning = 'RoleManagementPolicies: specify only one of -Role, -CommonRoles, or -AllRolesAtScope; section skipped.' }
+    ) {
+        $Call = @{ Include = @('RoleManagementPolicies'); Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' }
+        foreach ($Key in $Splat.Keys) { $Call[$Key] = $Splat[$Key] }
+        $Inv = Get-OERInventory @Call -ErrorAction Continue -ErrorVariable InvErr -WarningVariable InvWarn -WarningAction SilentlyContinue
+        # Reach proof: the command signed in once, in begin, and that sign-in asked for no ARM token.
+        $script:AtAuthCalls.Count | Should -Be 1
+        $script:AtAuthCalls[0] | Should -BeFalse
+        # The section still warns and skips, as it did when the sign-in asked for the token anyway.
+        @($InvWarn | ForEach-Object { [string]$_.Message }) | Should -Be @($Warning)
+        @($Inv.RoleManagementPolicies).Count | Should -Be 0
+        @($InvErr).Count | Should -Be 0
+        # Nothing was read, the subscription included.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+    }
+
+    It 'asks for the token in the sign-in for RoleManagementPolicies with a -Scope and one -Role, and reaches the section''s read' {
+        Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {}
+        $Inv = Get-OERInventory -Include RoleManagementPolicies -Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' -Role 'Reader' `
+            -ErrorAction Continue -ErrorVariable InvErr -WarningVariable InvWarn -WarningAction SilentlyContinue
+        $script:AtAuthCalls.Count | Should -Be 1
+        $script:AtAuthCalls[0] | Should -BeTrue
+        @($InvWarn).Count | Should -Be 0
+        @($InvErr).Count | Should -Be 0
+        @($Inv.RoleManagementPolicies).Count | Should -Be 0
+        # The subscription was checked with the token, and the section reached its read.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq $script:AtGet }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
+            $Role -ceq 'Reader' -and $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
+        }
+    }
+
+    It 'still asks for the token in the sign-in for RoleAssignments when RoleManagementPolicies beside it has no role source' {
+        $ReadScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
+        $Inv = Get-OERInventory -Include RoleAssignments, RoleManagementPolicies -Scope $ReadScope `
+            -ErrorAction Continue -ErrorVariable InvErr -WarningVariable InvWarn -WarningAction SilentlyContinue
+        $script:AtAuthCalls[0] | Should -BeTrue
+        ($Inv.RoleAssignments | ConvertTo-Json -Depth 8 -Compress) | Should -BeExactly $script:AtRaJson.Replace('#SCOPE#', $ReadScope)
+        @($Inv.RoleManagementPolicies).Count | Should -Be 0
+        @($InvWarn | ForEach-Object { [string]$_.Message }) | Should -Be @('RoleManagementPolicies requires -Role, -CommonRoles, or -AllRolesAtScope; section skipped.')
+        @($InvErr).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq $script:AtGet }
     }
 }

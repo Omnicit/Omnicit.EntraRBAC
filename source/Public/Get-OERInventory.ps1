@@ -11,7 +11,9 @@ function Get-OERInventory {
     Azure sections (RoleAssignments, RoleManagementPolicies) need an ARM token and their targeting
     parameters. With either section and a -Scope or a -Subscription, the token is acquired up front,
     in the command's one sign-in, as -IncludeARM does, since the subscription is checked before
-    either section reads (see below); with a -ManagementGroup alone, pass -IncludeARM to acquire it
+    either section reads (see below) -- for RoleManagementPolicies only with exactly one of -Role,
+    -CommonRoles and -AllRolesAtScope, since with none or more than one that section is skipped with
+    a warning and reads nothing; with a -ManagementGroup alone, pass -IncludeARM to acquire it
     up front, or the Azure sections acquire it on first use. Names are emitted by default for portability;
     -IncludeId additionally stamps each top-level object with its id.
     The Groups section is SECURITY-ENABLED-SCOPED unless you say otherwise: with no -GroupFilter it
@@ -186,8 +188,9 @@ function Get-OERInventory {
     per call, before either section reads anything, with one read of it (a subscription named by its
     display name also costs one read of the subscription list); with both -Scope and -Subscription,
     each is checked. The Azure Resource Manager token that read needs is acquired in the command's
-    sign-in, as -IncludeARM does, whenever either section is included with a -Scope or a
-    -Subscription. A -Scope at a management group or the root scope '/', and a -ManagementGroup, lie
+    sign-in, as -IncludeARM does, whenever RoleAssignments, or RoleManagementPolicies with exactly one
+    of -Role, -CommonRoles and -AllRolesAtScope, is included with a -Scope or a -Subscription. A -Scope
+    at a management group or the root scope '/', and a -ManagementGroup, lie
     in no subscription and are read as before. A subscription of another tenant -- a customer
     subscription another tenant delegated to this one through Azure Lighthouse, for example -- is not
     read: each included section is written empty, and one non-terminating SubscriptionTenantMismatch
@@ -351,8 +354,10 @@ function Get-OERInventory {
     or multi-stage review is skipped with a warning. DirectoryRoleManagementPolicies and
     DirectoryRoleAssignments read Microsoft Entra directory roles through Microsoft Graph and need no
     ARM token. RoleAssignments and RoleManagementPolicies need an ARM token and their targeting
-    parameters: with a -Scope or a -Subscription the token is acquired up front, as -IncludeARM does;
-    with a -ManagementGroup alone they acquire it on first use unless -IncludeARM is passed.
+    parameters: with a -Scope or a -Subscription the token is acquired up front, as -IncludeARM does
+    (for RoleManagementPolicies only with exactly one of -Role, -CommonRoles and -AllRolesAtScope,
+    without which it reads nothing); with a -ManagementGroup alone they acquire it on first use unless
+    -IncludeARM is passed.
 
     .PARAMETER GroupFilter
     An OData filter (without the $filter= prefix) selecting which groups to read. When omitted,
@@ -411,8 +416,9 @@ function Get-OERInventory {
 
     .PARAMETER IncludeARM
     Acquire an ARM token up front, in the command's sign-in. Forwarded to Initialize-OERAuth. It is
-    implied when RoleAssignments or RoleManagementPolicies is included with a -Scope or a
-    -Subscription, since the subscription is checked before either section reads; with a
+    implied when RoleAssignments, or RoleManagementPolicies with exactly one of -Role, -CommonRoles and
+    -AllRolesAtScope, is included with a -Scope or a -Subscription, since the subscription is checked
+    before either section reads; with a
     -ManagementGroup alone the Azure sections otherwise acquire the token on first use. A call that
     includes neither section acquires no ARM token without it.
 
@@ -471,7 +477,17 @@ function Get-OERInventory {
         # readers' acquisition on first use, and a call that includes neither section acquires none, as
         # before: an ARM token asked for without an -AuthMethod can turn an app-only session into an
         # interactive prompt (see Export-OERInventory's begin).
-        $ChecksSubscription = ($Include -contains 'RoleAssignments' -or $Include -contains 'RoleManagementPolicies') -and
+        # RoleManagementPolicies reads only with exactly one of -Role, -CommonRoles and -AllRolesAtScope:
+        # with none or more than one it skips with a warning before the check (process, below) and reads
+        # nothing, so it asks for the token only then. $RoleSources is computed here once and is the list
+        # that section decides by, so the two cannot drift apart.
+        $RoleSources = @(
+            if ($Role) { 'Role' }
+            if ($CommonRoles) { 'CommonRoles' }
+            if ($AllRolesAtScope) { 'AllRolesAtScope' }
+        )
+        $RolePoliciesRead = $Include -contains 'RoleManagementPolicies' -and $RoleSources.Count -eq 1
+        $ChecksSubscription = ($Include -contains 'RoleAssignments' -or $RolePoliciesRead) -and
             (-not [string]::IsNullOrWhiteSpace($Scope) -or -not [string]::IsNullOrWhiteSpace($Subscription))
         if ($IncludeARM -or $ChecksSubscription) { $AuthParams.IncludeARM = $true }
         Initialize-OERAuth @AuthParams
@@ -2376,10 +2392,8 @@ function Get-OERInventory {
         }
 
         if ($Include -contains 'RoleManagementPolicies') {
-            $RoleSources = @()
-            if ($Role) { $RoleSources += 'Role' }
-            if ($CommonRoles) { $RoleSources += 'CommonRoles' }
-            if ($AllRolesAtScope) { $RoleSources += 'AllRolesAtScope' }
+            # $RoleSources is begin's list (-Role, -CommonRoles, -AllRolesAtScope given), which also decides
+            # whether the sign-in asks for the ARM token: this section reads only with exactly one.
             $HasScope = [bool]($Scope -or $Subscription -or $ManagementGroup)
 
             if ($RoleSources.Count -gt 1) {
