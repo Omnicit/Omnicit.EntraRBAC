@@ -281,7 +281,7 @@ function Get-S116cFileCanonical {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -305,13 +305,28 @@ Write-OerLiveStep "The worktree's build keeps one subscription check per documen
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main clone; a
 `False` mark -- build the worktree first (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: 2026-10-18 00:54 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. Run in session s11-steg6c-c2 (the step's third session): the module loads from the worktree s11-steg6c-c2, which is not the main clone; the worktree is on fix/stay-in-the-home-tenant at 8996fab with 0 tracked changes, and its build (1.2.1, built in this worktree) carries all five marks. The main clone is on main, never switched; its local main is an older commit of main (an ancestor of origin/main), which is the operator's clone and not this step's. Leak check: 0 hits.
+
+Console, redacted (S.1):
+Runner: check S.1; child exit code 0; 2 s; run at 2026-10-18 00:54 UTC.
+[oer-s116c] The module loads from a worktree that is not the main clone: True
+[oer-s116c] Main clone: branch main; HEAD 491e72e
+[oer-s116c] Worktree: branch fix/stay-in-the-home-tenant; HEAD 8996fab docs: add the live checklist for the home tenant subscriptions; tracked changes: 0
+[oer-s116c] The worktree's build decides a subscription's home tenant: True
+[oer-s116c] The worktree's build carries the refusal SubscriptionTenantMismatch: True
+[oer-s116c] The worktree's build names an undecided subscription: True
+[oer-s116c] The worktree's build writes the README section for another tenant's subscriptions: True
+[oer-s116c] The worktree's build keeps one subscription check per document in the engine: True
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build. #type/subtask
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -325,11 +340,29 @@ Disconnect-OerLive
 True`.
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), or `False`.
 
-Result:
+Result: 2026-10-18 00:55 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. Every identity line True, identity check passed, and the module is the worktree's build (1.2.1, loaded from the worktree s11-steg6c-c2). Leak check: 0 hits.
+
+Console, redacted (0.1):
+Runner: check 0.1; child exit code 0; 4 s; run at 2026-10-18 00:54 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] The module is the worktree's build: True; version 1.2.1
+```
 
 ### 0.2. The prerequisite objects
 
-- [ ] **0.2** `Initialize-OerS116cPrereq.ps1 -WhatIf` plans the group and the resource group and writes nothing; the first `-Unattended` run writes the baseline and creates both; the second finds both and creates nothing. #type/subtask
+- [x] **0.2** `Initialize-OerS116cPrereq.ps1 -WhatIf` plans the group and the resource group and writes nothing; the first `-Unattended` run writes the baseline and creates both; the second finds both and creates nothing. #type/subtask
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS116cPrereq.ps1'
@@ -350,13 +383,85 @@ group's id recorded.
 **Failure looks like:** a prefixed object before the first run (STOP: the script did not make it), a
 401/403 (STOP: a missing permission), or a second run that creates something.
 
-Result:
+Result: 2026-10-18 00:55 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. The -WhatIf run printed a What if: line for the baseline, the group and the resource group and created nothing (the sweep found no prefixed object, the resource group did not exist). The first -Unattended run wrote the baseline, created oer-s116c-grp (its read by id answered 404 three times, replication delay, then read back True) and created oer-s116c-rg (Succeeded); the second run found both and created nothing; exit code 0 each time; the group's id is recorded. Leak check: 0 hits.
+
+Console, redacted (0.2):
+Runner: check 0.2; child exit code 0; 36 s; run at 2026-10-18 00:55 UTC.
+[oer-s116c] == Initialize-OerS116cPrereq.ps1 -WhatIf
+[prereq] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[prereq] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[prereq] [oer-s116c] Mode: CREATE. Prefix 'oer-s116c-'. Objects (fixed): the security group oer-s116c-grp (no member, no owner); the resource group oer-s116c-rg (no resource, location 'swedencentral', tagged purpose). Nothing is assigned here. OerLive 1.0.3.
+[prereq] [oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[prereq] [oer-s116c] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116c-' is left.
+[prereq] [oer-s116c] Baseline: objects carrying the prefix: 0; the resource group exists: False.
+[prereq] What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s116c\baseline-s116c.json".
+[prereq] What if: Performing the operation "Create a security group with no member and no owner (Microsoft Graph POST v1.0/groups)" on target "oer-s116c-grp".
+[prereq] What if: Performing the operation "Create a resource group with no resource in the test subscription (Azure Resource Manager PUT resourcegroups, location 'swedencentral', tag purpose 'Omnicit.EntraRBAC live verification (oer-s116c)')" on target "oer-s116c-rg".
+[prereq] [oer-s116c] Setup changes nothing outside the prefix, so nothing is restored by -Teardown; it removes the test objects.
+[oer-s116c] Exit code: 0
+[oer-s116c] == Initialize-OerS116cPrereq.ps1 -Unattended
+[prereq] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[prereq] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[prereq] [oer-s116c] Mode: CREATE. Prefix 'oer-s116c-'. Objects (fixed): the security group oer-s116c-grp (no member, no owner); the resource group oer-s116c-rg (no resource, location 'swedencentral', tagged purpose). Nothing is assigned here. OerLive 1.0.3.
+[prereq] [oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[prereq] [oer-s116c] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116c-' is left.
+[prereq] [oer-s116c] Baseline: objects carrying the prefix: 0; the resource group exists: False.
+[prereq] [oer-s116c] Wrote the baseline raw\s116c\baseline-s116c.json and read it back.
+[prereq] [oer-s116c] Reading oer-s116c-grp back by its id answered 404 Request_ResourceNotFound (attempt 1 of 6, likely replication delay) -- trying again in 5 s.
+[prereq] [oer-s116c] Reading oer-s116c-grp back by its id answered 404 Request_ResourceNotFound (attempt 2 of 6, likely replication delay) -- trying again in 5 s.
+[prereq] [oer-s116c] Reading oer-s116c-grp back by its id answered 404 Request_ResourceNotFound (attempt 3 of 6, likely replication delay) -- trying again in 5 s.
+[prereq] [oer-s116c] Created oer-s116c-grp; read back by its id: True.
+[prereq] [oer-s116c] Created oer-s116c-rg; read back: True (provisioning state 'Succeeded').
+[prereq] [oer-s116c] Setup changes nothing outside the prefix, so nothing is restored by -Teardown; it removes the test objects.
+[oer-s116c] Exit code: 0
+[oer-s116c] == Initialize-OerS116cPrereq.ps1 -Unattended
+[prereq] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[prereq] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[prereq] [oer-s116c] Mode: CREATE. Prefix 'oer-s116c-'. Objects (fixed): the security group oer-s116c-grp (no member, no owner); the resource group oer-s116c-rg (no resource, location 'swedencentral', tagged purpose). Nothing is assigned here. OerLive 1.0.3.
+[prereq] [oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[prereq] [oer-s116c] Baseline: raw\s116c\baseline-s116c.json exists already (written by an earlier run); it is never overwritten.
+[prereq] [oer-s116c] Found oer-s116c-grp (securityEnabled True, mailEnabled False); nothing created.
+[prereq] [oer-s116c] Found oer-s116c-rg (location 'swedencentral', purpose tag 'Omnicit.EntraRBAC live verification (oer-s116c)'); nothing created.
+[prereq] [oer-s116c] Setup changes nothing outside the prefix, so nothing is restored by -Teardown; it removes the test objects.
+[oer-s116c] Exit code: 0
+[oer-s116c] The created ids are recorded: group True
+```
 
 ## M. The measurement behind the decision (reads only)
 
 ### M.1. The subscription's tenantId, read as oer-live-cc
 
-- [ ] **M.1** Subscriptions - List and Subscriptions - Get (api-version `2022-12-01`) answer for the test subscription with a `tenantId` that equals the session's `TokenTenantId`, no `homeTenantId`, and an empty `managedByTenants`. #type/subtask
+- [x] **M.1** Subscriptions - List and Subscriptions - Get (api-version `2022-12-01`) answer for the test subscription with a `tenantId` that equals the session's `TokenTenantId`, no `homeTenantId`, and an empty `managedByTenants`. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -386,11 +491,33 @@ and keys that include `tenantId`, `managedByTenants` and `subscriptionId`.
 **Failure looks like:** a `tenantId` missing or unequal to the session's tenant (the owner's premise,
 Ruling R-1 in `rationale.md#home-tenant-subscriptions`, would then be wrong), or a 401/403 (STOP).
 
-Result:
+Result: 2026-10-18 00:56 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. TokenTenantId is a GUID and the configured test tenant. Subscriptions - List (api-version 2022-12-01) answers 200 with one subscription, the test subscription; the list row and Subscriptions - Get carry the same keys (authorizationSource, displayName, id, managedByTenants, state, subscriptionId, subscriptionPolicies, tenantId), a tenantId that is a GUID and equals the session's TokenTenantId, no homeTenantId, and managedByTenants empty -- as measured in DEL 1 (2026-10-15), so Ruling R-1's field is the one ARM returns. Leak check: 0 hits.
+
+Console, redacted (M.1):
+Runner: check M.1; child exit code 0; 5 s; run at 2026-10-18 00:55 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] The session's TokenTenantId is a GUID: True; it is the configured test tenant: True
+[oer-s116c] Subscriptions - List: Ok=True Status=200 Code= Count=1
+[oer-s116c] Listed: the test subscription: True; keys: authorizationSource,displayName,id,managedByTenants,state,subscriptionId,subscriptionPolicies,tenantId; tenantId is a GUID: True; tenantId equals the session's TokenTenantId: True; homeTenantId present: False; managedByTenants: 0
+[oer-s116c] Subscriptions - Get: Ok=True Status=200 Code=
+[oer-s116c] Get: the test subscription: True; keys: authorizationSource,displayName,id,managedByTenants,state,subscriptionId,subscriptionPolicies,tenantId; tenantId is a GUID: True; tenantId equals the session's TokenTenantId: True; homeTenantId present: False; managedByTenants: 0
+```
 
 ### M.2. A subscription the identity cannot see
 
-- [ ] **M.2** A GET of a made-up subscription, and a role assignment read at a resource group in it, answer 404 `SubscriptionNotFound`. #type/subtask
+- [x] **M.2** A GET of a made-up subscription, and a role assignment read at a resource group in it, answer 404 `SubscriptionNotFound`. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -407,11 +534,30 @@ Disconnect-OerLive
 **Expect:** both `Ok=False Status=404 Code=SubscriptionNotFound`.
 **Failure looks like:** a 200 (the made-up id exists: run again, a new id is drawn), or a 401/403 (STOP).
 
-Result:
+Result: 2026-10-18 00:56 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. A GET of a made-up subscription (a new random id) and a role assignment read at a resource group in it both answer Ok=False Status=404 Code=SubscriptionNotFound. Leak check: 0 hits.
+
+Console, redacted (M.2):
+Runner: check M.2; child exit code 0; 6 s; run at 2026-10-18 00:56 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] GET of a made-up subscription: Ok=False Status=404 Code=SubscriptionNotFound
+[oer-s116c] Role assignments at a resource group of it: Ok=False Status=404 Code=SubscriptionNotFound
+```
 
 ### M.3. The owner's verdicts, in the module's scope
 
-- [ ] **M.3** `Get-OERSubscriptionHomeTenant`, called in the module's scope with one cache, decides the test subscription `Home` with one read, its resource group and its id in upper case from the cache, a management group and the root scope `NoSubscription` with no request, and a made-up subscription `Undecided` with the read's own `SubscriptionNotFound`, read once. #type/subtask
+- [x] **M.3** `Get-OERSubscriptionHomeTenant`, called in the module's scope with one cache, decides the test subscription `Home` with one read, its resource group and its id in upper case from the cache, a management group and the root scope `NoSubscription` with no request, and a made-up subscription `Undecided` with the read's own `SubscriptionNotFound`, read once. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -447,11 +593,36 @@ group and the upper-case `sub:` form `Home` with 0 requests; the management grou
 **Failure looks like:** a second read of a subscription, a request for the management group or the root
 scope, or `Home` for the made-up subscription.
 
-Result:
+Result: 2026-10-18 00:56 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. With one cache: the test subscription Home with 1 Azure Resource Manager request, no record, home tenant equal True; its resource group and the upper-case sub: form Home with 0 requests (from the cache); mg:oer-s116c-none and the root scope NoSubscription with 0 requests; a made-up subscription Undecided with 1 request and the read's own SubscriptionNotFound; its resource group Undecided with 0 requests and SubscriptionNotFound (the failure is cached); 2 cache entries. Leak check: 0 hits.
+
+Console, redacted (M.3):
+Runner: check M.3; child exit code 0; 6 s; run at 2026-10-18 00:56 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] the test subscription: Verdict Home; Azure Resource Manager requests 1; record none; home tenant equals the session's: True
+[oer-s116c] the resource group oer-s116c-rg in it: Verdict Home; Azure Resource Manager requests 0; record none; home tenant equals the session's: True
+[oer-s116c] the test subscription in upper case, sub: form: Verdict Home; Azure Resource Manager requests 0; record none; home tenant equals the session's: True
+[oer-s116c] a management group named in the document syntax: Verdict NoSubscription; Azure Resource Manager requests 0; record none; home tenant equals the session's: False
+[oer-s116c] the root scope: Verdict NoSubscription; Azure Resource Manager requests 0; record none; home tenant equals the session's: False
+[oer-s116c] a made-up subscription: Verdict Undecided; Azure Resource Manager requests 1; record SubscriptionNotFound; home tenant equals the session's: False
+[oer-s116c] the resource group oer-s116c-rg in the made-up subscription: Verdict Undecided; Azure Resource Manager requests 0; record SubscriptionNotFound; home tenant equals the session's: False
+[oer-s116c] Cache entries: 2
+```
 
 ### M.4. An identity with no Azure role (oer-live-cc-noperm)
 
-- [ ] **M.4** As `oer-live-cc-noperm`, which holds no Azure role, Subscriptions - List and Get answer as measured here; the owner then decides the test subscription `Undecided` with that answer as itself, and `Invoke-OERStructure -WhatIf` reports the step's two entries `Failed` with it and sends nothing else. #type/subtask
+- [x] **M.4** As `oer-live-cc-noperm`, which holds no Azure role, Subscriptions - List and Get answer as measured here; the owner then decides the test subscription `Undecided` with that answer as itself, and `Invoke-OERStructure -WhatIf` reports the step's two entries `Failed` with it and sends nothing else. #type/subtask
 
 An identity that cannot read its subscription cannot be shown to be in the session's tenant, so under A19
 its Azure entries are refused with the read's own error. This identity holds no role at all; one whose
@@ -496,13 +667,35 @@ the plan one request in the test subscription (its read), both rows `Failed`, th
 `Home` and the rows go on to the role assignment and policy reads, which this identity is refused.
 **Failure looks like:** a write, or a role assignment or policy read after a refused subscription read.
 
-Result:
+Result: 2026-10-18 00:57 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed (recorded, as the check asks). As oer-live-cc-noperm the identity check passed; Subscriptions - List answers 200 with 0 subscriptions, and Subscriptions - Get of the test subscription answers 403 AuthorizationFailed. The owner decides oer-s116c-rg Undecided with that AuthorizationFailed as its record. Invoke-OERStructure -WhatIf: 0 token requests, 0 Microsoft Graph requests, 1 Azure Resource Manager request (the read of the test subscription), 0 writes, 0 role assignment and 0 role policy reads; both rows Failed with the failed read as itself; the records Invoke-OERStructure wrote itself AuthorizationFailed x2 (the other records in -ErrorVariable are the inner layers' copies). So an identity that cannot read its subscription gets its Azure entries refused with the read's own error, as Ruling R-18 records. Leak check: 0 hits.
+
+Console, redacted (M.4):
+Runner: check M.4; child exit code 0; 6 s; run at 2026-10-18 00:56 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s116c] Subscriptions - List: Ok=True Status=200 Code= Count=0
+[oer-s116c] Subscriptions - Get of the test subscription: Ok=False Status=403 Code=AuthorizationFailed
+[oer-s116c] Owner verdict for oer-s116c-rg: Undecided; record AuthorizationFailed
+[oer-s116c] token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 1, writes: 0; subscription reads: 1; subscription list reads: 0; role assignment reads: 0; role policy reads: 0
+[oer-s116c] Requests in the test subscription: 1, of them reads of the subscription itself: 1
+[oer-s116c] Row: roleAssignments | Reader -> oer-s116c-grp @ /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg | Failed | the read of subscription '00000000-0000-0000-0000-000000000001' failed: AuthorizationFailed: The client '00000000-0000-0000-0000-000000000002' with object id '00000000-0000-0000-0000-000000000003' does not have authorization to perform action 'Microsoft.Resources/subscriptions/read' over scope '/subscriptions/00000000-0000-0000-0000-000000000001' or the scope is invalid. If access was recently granted, please refresh your credentials; the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session's tenant, so none was read or written for this entry
+[oer-s116c] Row: roleManagementPolicies | Reader @ /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg | Failed | the read of subscription '00000000-0000-0000-0000-000000000001' failed: AuthorizationFailed: The client '00000000-0000-0000-0000-000000000002' with object id '00000000-0000-0000-0000-000000000003' does not have authorization to perform action 'Microsoft.Resources/subscriptions/read' over scope '/subscriptions/00000000-0000-0000-0000-000000000001' or the scope is invalid. If access was recently granted, please refresh your credentials; the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session's tenant, so none was read or written for this entry
+[oer-s116c] Errors: (no id) x1, AuthorizationFailed x5; written by Invoke-OERStructure itself: AuthorizationFailed x2
+```
 
 ## 1. Exports of the test subscription as oer-live-cc
 
 ### 1.1. An export of the own subscription is decided with one read
 
-- [ ] **1.1** An export with `-Scope` the test subscription decides it `Home` with one read of the subscription, warns about no other tenant's or undecided subscription, names nothing `subscriptionHomeTenant` in `IncompleteReads`, and its README section for another tenant's subscriptions says `None.`. #type/subtask
+- [x] **1.1** An export with `-Scope` the test subscription decides it `Home` with one read of the subscription, warns about no other tenant's or undecided subscription, names nothing `subscriptionHomeTenant` in `IncompleteReads`, and its README section for another tenant's subscriptions says `None.`. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -532,11 +725,35 @@ and saying `None.`.
 **Failure looks like:** 0 or 2 reads of the subscription, a write, a token request, an
 `InventoryPartial` naming the subscription, or the section missing.
 
-Result:
+Result: 2026-10-18 00:59 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. The export with -Scope the test subscription read the subscription itself exactly once and listed no subscriptions (subscription list reads: 0); 0 token requests and 0 writes for both services (334 Microsoft Graph and 11 Azure Resource Manager requests, all reads); no IncompleteReads entry, none naming subscriptionHomeTenant, no SkippedScopes, no error, and no warning about another tenant's or an undecided subscription; the bundle README carries the section 'Subscriptions delegated from another tenant (not read)' saying None., and marks no delegation as managed by this tenant. Leak check: 0 hits.
+
+Console, redacted (1.1):
+Runner: check 1.1; child exit code 0; 114 s; run at 2026-10-18 00:57 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] token requests: 0; Microsoft Graph requests: 334, writes: 0; Azure Resource Manager requests: 11, writes: 0; subscription reads: 1; subscription list reads: 0; role assignment reads: 1; role policy reads: 0
+[oer-s116c] Reads of the test subscription itself: 1
+[oer-s116c] IncompleteReads: 0; naming subscriptionHomeTenant: 0; SkippedScopes: 0
+[oer-s116c] Errors:
+[oer-s116c] Warnings about another tenant's subscriptions: 0; about undecided subscriptions: 0
+[oer-s116c] README section 'Subscriptions delegated from another tenant (not read)': True; says None: True
+[oer-s116c] README marks no delegation as managed by this tenant: True
+```
 
 ### 1.2. inventory.json is the same as main's, and the export sends one request more
 
-- [ ] **1.2** The same export with `main`'s source (`cd7e6a3`, loaded in dev mode from a `git archive` copy under `raw\s116c\`) writes the same set of files and an `inventory.json` and per-area files equal to this branch's, and this branch sent exactly one request more: the read of the test subscription. #type/subtask
+- [x] **1.2** The same export with `main`'s source (`cd7e6a3`, loaded in dev mode from a `git archive` copy under `raw\s116c\`) writes the same set of files and an `inventory.json` and per-area files equal to this branch's, and this branch sent exactly one request more: the read of the test subscription. #type/subtask
 
 ```powershell
 $Src = Join-Path $Raw 'main-src'
@@ -591,11 +808,48 @@ it with CRLF, the archived source keeps the repository's LF).
 request only in one export, or a file only in one bundle. A difference in a file that reads live state can
 also mean the tenant changed between the two exports: run 1.1 and 1.2 again before reading it as a defect.
 
-Result:
+Result: 2026-10-18 01:01 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. main's source (cd7e6a3, dev mode from a git archive copy) was loaded (True and True). The only Azure Resource Manager request only in this branch's export is GET /subscriptions/ and the test subscription's id (branch 11, main 10), none only in main's; no Microsoft Graph request only in either (334 each); no file only in one bundle; every JSON file equal (inventory.json and every per-area file, the roster and the hierarchy, arrays compared without regard to order), and schema.json equal with its line endings aside; no error in either export. Leak check: 0 hits.
+
+Console, redacted (1.2):
+Runner: check 1.2; child exit code 0; 117 s; run at 2026-10-18 00:59 UTC.
+[oer-s116c] main's source is loaded (dev mode, no home tenant owner): True and True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] main: token requests: 0; Microsoft Graph requests: 334, writes: 0; Azure Resource Manager requests: 10, writes: 0; subscription reads: 0; subscription list reads: 0; role assignment reads: 1; role policy reads: 0
+[oer-s116c] Azure Resource Manager requests only in this branch's export: GET /subscriptions/00000000-0000-0000-0000-000000000001; only in main's:
+[oer-s116c] Microsoft Graph requests only in this branch's export: 0; only in main's: 0
+[oer-s116c] Files only in this branch's bundle: ; only in main's:
+[oer-s116c] accessPackages.json equal: True
+[oer-s116c] accessReviews.json equal: True
+[oer-s116c] administrativeUnits.json equal: True
+[oer-s116c] azurePimEligibility.json equal: True
+[oer-s116c] catalogs.json equal: True
+[oer-s116c] directoryRoleAssignments.json equal: True
+[oer-s116c] directoryRoleManagementPolicies.json equal: True
+[oer-s116c] groups.json equal: True
+[oer-s116c] groupsRoster.json equal: True
+[oer-s116c] inventory.json equal: True
+[oer-s116c] lighthouseDelegations.json equal: True
+[oer-s116c] roleAssignments.json equal: True
+[oer-s116c] roleManagementPolicies.json equal: True
+[oer-s116c] scopeHierarchy.json equal: True
+[oer-s116c] schema.json equal, line endings aside: True
+[oer-s116c] main's errors:
+```
 
 ### 1.3. An export -Scope in a subscription the identity cannot see is partial and reads nothing there
 
-- [ ] **1.3** An export with `-Scope` a made-up subscription (Azure sections only) reads the subscription once (404), warns once that it could not tell its tenant, names it `subscriptionHomeTenant at` the scope in `IncompleteReads`, raises `InventoryPartial`, lists it in the README under what could not be read, and sends no other request at it. #type/subtask
+- [x] **1.3** An export with `-Scope` a made-up subscription (Azure sections only) reads the subscription once (404), warns once that it could not tell its tenant, names it `subscriptionHomeTenant at` the scope in `IncompleteReads`, raises `InventoryPartial`, lists it in the README under what could not be read, and sends no other request at it. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -628,11 +882,61 @@ the files; the README label `True`.
 **Failure looks like:** a role assignment or policy read at the made-up subscription, a complete export,
 or the subscription named as another tenant's.
 
-Result:
+Result: 2026-10-18 01:02 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. One request at the made-up subscription, and it is the read of the subscription itself (404 SubscriptionNotFound); no role assignment, role policy or Lighthouse read; 0 Microsoft Graph requests, 0 writes, 0 token requests. One IncompleteReads entry, subscriptionHomeTenant at /subscriptions/ and the made-up id; the error InventoryPartial; one warning starting 'Could not tell whether 1 subscription(s) belong to this tenant' with the failed read as its cause; roleAssignments.json and roleManagementPolicies.json empty and scopeHierarchy.json with no subscription; the README label True. The -ErrorVariable also holds three SubscriptionNotFound records and one RuntimeException; a supplement run of the same export (1.3x, its own made-up id) named each record's writer: the only record Export-OERInventory wrote itself is InventoryPartial, and the three SubscriptionNotFound records name no command (the inner layers' copies of the failed read). Leak check: 0 hits for both runs.
+
+Console, redacted (1.3):
+Runner: check 1.3; child exit code 0; 6 s; run at 2026-10-18 01:01 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 1, writes: 0; subscription reads: 1; subscription list reads: 0; role assignment reads: 0; role policy reads: 0
+[oer-s116c] Requests at the made-up subscription: 1, of them reads of the subscription itself: 1; Lighthouse reads: 0
+[oer-s116c] IncompleteReads: 1; subscriptionHomeTenant at /subscriptions/00000000-0000-0000-0000-000000000004
+[oer-s116c] Errors: SubscriptionNotFound, SubscriptionNotFound, , SubscriptionNotFound, InventoryPartial
+[oer-s116c] Warning: Could not tell whether 1 subscription(s) belong to this tenant, so none of them is walked: '/subscriptions/00000000-0000-0000-0000-000000000004' (the read of subscription '00000000-0000-0000-0000-000000000004' failed: SubscriptionNotFound: The subscription '00000000-0000-0000-0000-000000000004' could not be found.)
+[oer-s116c] roleAssignments.json: []
+[oer-s116c] roleManagementPolicies.json: []
+[oer-s116c] scopeHierarchy.json: {
+  "managementGroups": [],
+  "subscriptions": []
+}
+[oer-s116c] README lists it with the label 'Azure subscription whose tenant could not be read': True
+
+Console, redacted (1.3x):
+Runner: check 1.3x; child exit code 0; 6 s; run at 2026-10-18 01:02 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 1, writes: 0; subscription reads: 1; subscription list reads: 0; role assignment reads: 0; role policy reads: 0
+[oer-s116c] Record: id SubscriptionNotFound; written by (no command named)
+[oer-s116c] Record: id SubscriptionNotFound; written by (no command named)
+[oer-s116c] Record: not an ErrorRecord (RuntimeException)
+[oer-s116c] Record: id SubscriptionNotFound; written by (no command named)
+[oer-s116c] Record: id InventoryPartial; written by Export-OERInventory
+[oer-s116c] Records Export-OERInventory wrote itself: InventoryPartial
+[oer-s116c] Warnings: 1
+```
 
 ### 1.3b. An export -Scope with '..' segments is not read at all
 
-- [ ] **1.3b** An export with `-Scope` written as the test subscription followed by `/../../subscriptions/` and a made-up id -- a spelling a document could not declare, which the request would send to the made-up subscription -- reads nothing at either subscription, names the scope `subscriptionHomeTenant at` the scope as given in `IncompleteReads`, and raises `InventoryPartial`. #type/subtask
+- [x] **1.3b** An export with `-Scope` written as the test subscription followed by `/../../subscriptions/` and a made-up id -- a spelling a document could not declare, which the request would send to the made-up subscription -- reads nothing at either subscription, names the scope `subscriptionHomeTenant at` the scope as given in `IncompleteReads`, and raises `InventoryPartial`. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -658,11 +962,33 @@ entry, naming the scope as given; the error `InventoryPartial`; one warning star
 **Failure looks like:** any request at the made-up subscription (the walk followed the `..` segments), or a
 read of the test subscription that rates the scope its own.
 
-Result:
+Result: 2026-10-18 01:02 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. The -Scope written as the test subscription followed by /../../subscriptions/ and a made-up id sent 0 Azure Resource Manager requests (none in either subscription), 0 Microsoft Graph requests and 0 writes; one IncompleteReads entry naming the scope exactly as given; the error InventoryPartial; one warning starting 'Could not tell whether 1 subscription(s) belong to this tenant', whose cause names the spelling problem (DotSegment) and says nothing was resolved or read for it. Leak check: 0 hits.
+
+Console, redacted (1.3b):
+Runner: check 1.3b; child exit code 0; 5 s; run at 2026-10-18 01:01 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0; subscription reads: 0; subscription list reads: 0; role assignment reads: 0; role policy reads: 0
+[oer-s116c] Requests in the test subscription: 0; at the made-up subscription: 0
+[oer-s116c] IncompleteReads: 1; naming the scope as given: 1
+[oer-s116c] Errors: InventoryPartial
+[oer-s116c] Warning: Could not tell whether 1 subscription(s) belong to this tenant, so none of them is walked: '/subscriptions/00000000-0000-0000-0000-000000000001/../../subscriptions/00000000-0000-0000-0000-000000000005' (scope '/subscriptions/00000000-0000-0000-0000-000000000001/../../subscriptions/00000000-0000-0000-0000-000000000005' is written in a spelling no structure document can declare (DotSegment), so the path a request sends for it may name another scope than its text; nothing was resolved or read for it)
+```
 
 ### 1.4. A walk without -Scope decides the listed subscription from the list
 
-- [ ] **1.4** An export of the role assignments without `-Scope` lists the subscriptions once, walks the test subscription with no read of the subscription itself, and warns about no other tenant's or undecided subscription. #type/subtask
+- [x] **1.4** An export of the role assignments without `-Scope` lists the subscriptions once, walks the test subscription with no read of the subscription itself, and warns about no other tenant's or undecided subscription. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -673,7 +999,8 @@ $null = New-Item -ItemType Directory -Path $Out -Force
 $Bundle = Export-OERInventory -OutputPath $Out -Include RoleAssignments -ErrorAction SilentlyContinue -ErrorVariable ExportErrors -WarningVariable ExportWarnings 3>$null
 Write-OerLiveStep (Get-S116cSent)
 Stop-S116cCount
-Write-OerLiveStep "Scopes enumerated include the test subscription: $(@($Bundle.ScopesEnumerated) -contains $SubScope); SkippedScopes: $((@($Bundle.SkippedScopes) | ForEach-Object { [string]$_ }) -join ' | ')"
+$SubId = [regex]::Escape($Cfg.SubscriptionId)
+Write-OerLiveStep "Scopes enumerated (a count): $($Bundle.ScopesEnumerated); scopes read: $($Bundle.ScopeCount); role assignment reads at the test subscription: $(@($global:S116cArm | Where-Object { $_ -match "^GET /subscriptions/$SubId/providers/Microsoft\.Authorization/roleAssignments" }).Count); SkippedScopes: $((@($Bundle.SkippedScopes) | ForEach-Object { [string]$_ }) -join ' | ')"
 Write-OerLiveStep "IncompleteReads naming subscriptionHomeTenant: $(@($Bundle.IncompleteReads | Where-Object { [string]$_ -like 'subscriptionHomeTenant*' }).Count)"
 Write-OerLiveStep "Errors: $(@($ExportErrors | ForEach-Object { ([string]$_.FullyQualifiedErrorId -split ',')[0] }) -join ', ')"
 Write-OerLiveStep "Warnings about another tenant's subscriptions: $(@($ExportWarnings | Where-Object { [string]$_ -like '*whose home tenant is another tenant*' }).Count); about undecided subscriptions: $(@($ExportWarnings | Where-Object { [string]$_ -like 'Could not tell whether*' }).Count)"
@@ -682,7 +1009,8 @@ Write-OerLiveStep "README section for another tenant's subscriptions says None: 
 Disconnect-OerLive
 ```
 
-**Expect:** `subscription list reads: 1` and `subscription reads: 0`; the test subscription enumerated;
+**Expect:** `subscription list reads: 1` and `subscription reads: 0`; the test subscription walked --
+`ScopesEnumerated` and `ScopeCount` are counts, here `1` each, and one role assignment read at it;
 no `subscriptionHomeTenant` entry and no warning about another tenant's or an undecided subscription; the
 README section says `None.`; `writes: 0`. The management group listing is refused for this identity
 (measured in earlier steps), so `SkippedScopes` may name it and the export may be partial for that reason
@@ -690,7 +1018,30 @@ alone -- behaviour that is `main`'s and not this branch's.
 **Failure looks like:** a read of the test subscription itself, a second list read, or the test
 subscription left out.
 
-Result:
+Result: 2026-10-18 01:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed, after a correction of this check's own print line. The first run (01:02 UTC) printed 'Scopes enumerated include the test subscription: False': the line tested the bundle's ScopesEnumerated with -contains as if it were a list of scopes, but ScopesEnumerated is a count, on main and on this branch alike, so the line could never print True. The line now prints ScopesEnumerated and ScopeCount and counts the role assignment reads at the test subscription; the module was not changed. The run below: the subscriptions listed once (subscription list reads: 1) and the test subscription itself read 0 times; ScopesEnumerated 1, ScopeCount 1, and one role assignment read at the test subscription, so the walk decided it from the list and walked it; no subscriptionHomeTenant entry, and no warning about another tenant's or an undecided subscription; the README section says None.; 0 writes and 0 token requests. SkippedScopes names the refused management group listing, and the errors are that AuthorizationFailed and the InventoryPartial it causes, main's behaviour and not this branch's, as the check foresaw. Leak check: 0 hits.
+
+Console, redacted (1.4):
+Runner: check 1.4; child exit code 0; 10 s; run at 2026-10-18 01:03 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] token requests: 0; Microsoft Graph requests: 3, writes: 0; Azure Resource Manager requests: 12, writes: 0; subscription reads: 0; subscription list reads: 1; role assignment reads: 1; role policy reads: 0
+[oer-s116c] Scopes enumerated (a count): 1; scopes read: 1; role assignment reads at the test subscription: 1; SkippedScopes: <management groups: the listing failed>
+[oer-s116c] IncompleteReads naming subscriptionHomeTenant: 0
+[oer-s116c] Errors: AuthorizationFailed, AuthorizationFailed, InventoryPartial
+[oer-s116c] Warnings about another tenant's subscriptions: 0; about undecided subscriptions: 0
+[oer-s116c] README section for another tenant's subscriptions says None: True
+```
 
 ## 2. Apply on the test subscription as oer-live-cc
 
@@ -700,7 +1051,7 @@ live policy and changes nothing.
 
 ### 2.1. The plan checks the subscription once and plans as before
 
-- [ ] **2.1** `Test-OERStructure` accepts the document; `Invoke-OERStructure -WhatIf` reads the test subscription once, plans the role assignment, reports the policy `Unchanged` and writes nothing. #type/subtask
+- [x] **2.1** `Test-OERStructure` accepts the document; `Invoke-OERStructure -WhatIf` reads the test subscription once, plans the role assignment, reports the policy `Unchanged` and writes nothing. #type/subtask
 
 ```powershell
 $Doc = [ordered]@{
@@ -729,11 +1080,35 @@ row `Skipped` with `would create role assignment 'Reader' for 'oer-s116c-grp'`; 
 `Unchanged`, with at least one role policy read; `writes: 0`; `token requests: 0`; no error.
 **Failure looks like:** a write, a `Failed` row, 0 or 2 reads of the subscription.
 
-Result:
+Result: 2026-10-18 01:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. Test-OERStructure: Valid True, no finding. Invoke-OERStructure -WhatIf read the test subscription itself exactly once, printed a What if: line for the role assignment, reported the role assignment row Skipped 'would create role assignment 'Reader' for 'oer-s116c-grp'' and the policy row Unchanged after one role policy read; 0 writes for both services, 0 token requests, no error. Leak check: 0 hits.
+
+Console, redacted (2.1):
+Runner: check 2.1; child exit code 0; 11 s; run at 2026-10-18 01:04 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] Valid: True; findings: 0; Errors: 0
+What if: Performing the operation "Create role assignment 'Reader' for 'oer-s116c-grp'" on target "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg".
+[oer-s116c] token requests: 0; Microsoft Graph requests: 2, writes: 0; Azure Resource Manager requests: 6, writes: 0; subscription reads: 1; subscription list reads: 0; role assignment reads: 1; role policy reads: 1
+[oer-s116c] Reads of the test subscription itself: 1
+[oer-s116c] Row: roleAssignments | Reader -> oer-s116c-grp @ /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg | Skipped | would create role assignment 'Reader' for 'oer-s116c-grp' at '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg'
+[oer-s116c] Row: roleManagementPolicies | Reader @ /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg'
+[oer-s116c] Errors: none; written by Invoke-OERStructure itself: none
+```
 
 ### 2.2. The real run creates the role assignment after the one check
 
-- [ ] **2.2** The real run reads the test subscription once, creates the role assignment (one write), keeps the policy `Unchanged`, and Azure Resource Manager then lists the assignment at `oer-s116c-rg`. #type/subtask
+- [x] **2.2** The real run reads the test subscription once, creates the role assignment (one write), keeps the policy `Unchanged`, and Azure Resource Manager then lists the assignment at `oer-s116c-rg`. #type/subtask
 
 ```powershell
 $Path = Join-Path $Raw 'docs\home.json'
@@ -757,11 +1132,34 @@ Graph `writes: 0`; no error; `oer-s116c-grp` listed at the resource group.
 **Failure looks like:** a `Failed` row, a second write, or the assignment not listed (a `PrincipalNotFound`
 right after the group was created is replication delay: run 2.2 again after a minute).
 
-Result:
+Result: 2026-10-18 01:04 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. The real run read the test subscription itself once, created the role assignment (row Created) with the run's only write, one Azure Resource Manager PUT of a role assignment at oer-s116c-rg, and kept the policy Unchanged; 0 Microsoft Graph writes, 0 token requests, no error; Azure Resource Manager then lists oer-s116c-grp at the resource group. Leak check: 0 hits.
+
+Console, redacted (2.2):
+Runner: check 2.2; child exit code 0; 15 s; run at 2026-10-18 01:04 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] token requests: 0; Microsoft Graph requests: 3, writes: 0; Azure Resource Manager requests: 8, writes: 1 (PUT /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000006); subscription reads: 1; subscription list reads: 0; role assignment reads: 1; role policy reads: 1
+[oer-s116c] Reads of the test subscription itself: 1
+[oer-s116c] Row: roleAssignments | Reader -> oer-s116c-grp @ /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg | Created | created role assignment 'Reader' for 'oer-s116c-grp' at '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg'
+[oer-s116c] Row: roleManagementPolicies | Reader @ /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg'
+[oer-s116c] Errors: none; written by Invoke-OERStructure itself: none
+[oer-s116c] Azure Resource Manager lists at oer-s116c-rg: oer-s116c-grp
+```
 
 ### 2.3. The same document again writes nothing (G8)
 
-- [ ] **2.3** The same document run again, and once more with `-Prune`, reads the test subscription once per run and reports both rows `Unchanged`, with no write. #type/subtask
+- [x] **2.3** The same document run again, and once more with `-Prune`, reads the test subscription once per run and reports both rows `Unchanged`, with no write. #type/subtask
 
 ```powershell
 $Path = Join-Path $Raw 'docs\home.json'
@@ -786,13 +1184,41 @@ Disconnect-OerLive
 for both services and no error; `oer-s116c-grp` still listed at the resource group.
 **Failure looks like:** a write, a `Created` or `Removed` row, or a second read of the subscription.
 
-Result:
+Result: 2026-10-18 01:05 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed (G8). The same document run again for real, and once more with -Prune: in both runs the test subscription itself was read once, both rows Unchanged, 0 writes for both services, no error; oer-s116c-grp is still listed at the resource group. Leak check: 0 hits.
+
+Console, redacted (2.3):
+Runner: check 2.3; child exit code 0; 16 s; run at 2026-10-18 01:04 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] == Real: token requests: 0; Microsoft Graph requests: 2, writes: 0; Azure Resource Manager requests: 6, writes: 0; subscription reads: 1; subscription list reads: 0; role assignment reads: 1; role policy reads: 1
+[oer-s116c] Reads of the test subscription itself: 1
+[oer-s116c] Row: roleAssignments | Reader -> oer-s116c-grp @ /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg'
+[oer-s116c] Row: roleManagementPolicies | Reader @ /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg'
+[oer-s116c] Errors: none; written by Invoke-OERStructure itself: none
+[oer-s116c] == Real -Prune: token requests: 0; Microsoft Graph requests: 2, writes: 0; Azure Resource Manager requests: 6, writes: 0; subscription reads: 1; subscription list reads: 0; role assignment reads: 1; role policy reads: 1
+[oer-s116c] Reads of the test subscription itself: 1
+[oer-s116c] Row: roleAssignments | Reader -> oer-s116c-grp @ /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg'
+[oer-s116c] Row: roleManagementPolicies | Reader @ /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg'
+[oer-s116c] Errors: none; written by Invoke-OERStructure itself: none
+[oer-s116c] Azure Resource Manager lists at oer-s116c-rg: oer-s116c-grp
+```
 
 ## 3. Apply at a subscription the identity cannot see
 
 ### 3.1. Both entries are Failed with the read's own error, and nothing is read or written there
 
-- [ ] **3.1** A document with a role assignment at a resource group of a made-up subscription and a role management policy entry at `sub:` the same subscription: under `-WhatIf`, `-WhatIf -Prune`, a real run and a real run with `-Prune`, both rows are `Failed` with `SubscriptionNotFound` as itself, the subscription is read once per run, and nothing else is sent there. #type/subtask
+- [x] **3.1** A document with a role assignment at a resource group of a made-up subscription and a role management policy entry at `sub:` the same subscription: under `-WhatIf`, `-WhatIf -Prune`, a real run and a real run with `-Prune`, both rows are `Failed` with `SubscriptionNotFound` as itself, the subscription is read once per run, and nothing else is sent there. #type/subtask
 
 ```powershell
 $MadeUp = New-S116cMadeUpSubscriptionId
@@ -830,11 +1256,49 @@ itself `SubscriptionNotFound x2`; `writes: 0` for both services.
 read of it, a row that is not `Failed`, or `SubscriptionTenantMismatch` (that id is for a subscription
 that was read and is another tenant's, or that gave no tenant).
 
-Result:
+Result: 2026-10-18 01:05 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. Test-OERStructure: Valid True, no Error. Under -WhatIf, -WhatIf -Prune, a real run and a real run with -Prune: one request at the made-up subscription per run, the read of the subscription itself (one read serves both entries); 0 role assignment and 0 role policy reads, 0 Microsoft Graph requests, 0 writes for both services, 0 token requests; both rows Failed, each Detail starting with the failed read of the subscription; the records Invoke-OERStructure wrote itself SubscriptionNotFound x2 in every run (the other records in -ErrorVariable are the inner layers' copies); no SubscriptionTenantMismatch. Leak check: 0 hits.
+
+Console, redacted (3.1):
+Runner: check 3.1; child exit code 0; 6 s; run at 2026-10-18 01:05 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] Valid: True; Errors: 0
+[oer-s116c] == WhatIf: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 1, writes: 0; subscription reads: 1; subscription list reads: 0; role assignment reads: 0; role policy reads: 0
+[oer-s116c] Requests at the made-up subscription: 1, of them reads of the subscription itself: 1
+[oer-s116c] Row: roleAssignments | Reader -> oer-s116c-grp @ /subscriptions/00000000-0000-0000-0000-000000000007/resourceGroups/oer-s116c-rg | Failed | the read of subscription '00000000-0000-0000-0000-000000000007' failed: SubscriptionNotFound: The subscription '00000000-0000-0000-0000-000000000007' could not be found; the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session's tenant, so none was read or written for this entry
+[oer-s116c] Row: roleManagementPolicies | Reader @ sub:00000000-0000-0000-0000-000000000007 | Failed | the read of subscription '00000000-0000-0000-0000-000000000007' failed: SubscriptionNotFound: The subscription '00000000-0000-0000-0000-000000000007' could not be found; the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session's tenant, so none was read or written for this entry
+[oer-s116c] Errors: (no id) x1, SubscriptionNotFound x5; written by Invoke-OERStructure itself: SubscriptionNotFound x2
+[oer-s116c] == WhatIf -Prune: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 1, writes: 0; subscription reads: 1; subscription list reads: 0; role assignment reads: 0; role policy reads: 0
+[oer-s116c] Requests at the made-up subscription: 1, of them reads of the subscription itself: 1
+[oer-s116c] Row: roleAssignments | Reader -> oer-s116c-grp @ /subscriptions/00000000-0000-0000-0000-000000000007/resourceGroups/oer-s116c-rg | Failed | the read of subscription '00000000-0000-0000-0000-000000000007' failed: SubscriptionNotFound: The subscription '00000000-0000-0000-0000-000000000007' could not be found; the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session's tenant, so none was read or written for this entry
+[oer-s116c] Row: roleManagementPolicies | Reader @ sub:00000000-0000-0000-0000-000000000007 | Failed | the read of subscription '00000000-0000-0000-0000-000000000007' failed: SubscriptionNotFound: The subscription '00000000-0000-0000-0000-000000000007' could not be found; the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session's tenant, so none was read or written for this entry
+[oer-s116c] Errors: (no id) x1, SubscriptionNotFound x5; written by Invoke-OERStructure itself: SubscriptionNotFound x2
+[oer-s116c] == Real: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 1, writes: 0; subscription reads: 1; subscription list reads: 0; role assignment reads: 0; role policy reads: 0
+[oer-s116c] Requests at the made-up subscription: 1, of them reads of the subscription itself: 1
+[oer-s116c] Row: roleAssignments | Reader -> oer-s116c-grp @ /subscriptions/00000000-0000-0000-0000-000000000007/resourceGroups/oer-s116c-rg | Failed | the read of subscription '00000000-0000-0000-0000-000000000007' failed: SubscriptionNotFound: The subscription '00000000-0000-0000-0000-000000000007' could not be found; the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session's tenant, so none was read or written for this entry
+[oer-s116c] Row: roleManagementPolicies | Reader @ sub:00000000-0000-0000-0000-000000000007 | Failed | the read of subscription '00000000-0000-0000-0000-000000000007' failed: SubscriptionNotFound: The subscription '00000000-0000-0000-0000-000000000007' could not be found; the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session's tenant, so none was read or written for this entry
+[oer-s116c] Errors: (no id) x1, SubscriptionNotFound x5; written by Invoke-OERStructure itself: SubscriptionNotFound x2
+[oer-s116c] == Real -Prune: token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 1, writes: 0; subscription reads: 1; subscription list reads: 0; role assignment reads: 0; role policy reads: 0
+[oer-s116c] Requests at the made-up subscription: 1, of them reads of the subscription itself: 1
+[oer-s116c] Row: roleAssignments | Reader -> oer-s116c-grp @ /subscriptions/00000000-0000-0000-0000-000000000007/resourceGroups/oer-s116c-rg | Failed | the read of subscription '00000000-0000-0000-0000-000000000007' failed: SubscriptionNotFound: The subscription '00000000-0000-0000-0000-000000000007' could not be found; the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session's tenant, so none was read or written for this entry
+[oer-s116c] Row: roleManagementPolicies | Reader @ sub:00000000-0000-0000-0000-000000000007 | Failed | the read of subscription '00000000-0000-0000-0000-000000000007' failed: SubscriptionNotFound: The subscription '00000000-0000-0000-0000-000000000007' could not be found; the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session's tenant, so none was read or written for this entry
+[oer-s116c] Errors: (no id) x1, SubscriptionNotFound x5; written by Invoke-OERStructure itself: SubscriptionNotFound x2
+```
 
 ### 3.2. A refused entry does not stop the document's own entries
 
-- [ ] **3.2** One document with the role assignment of 2.2 and the two made-up entries of 3.1, run for real with `-Prune`: the own row `Unchanged`, the two made-up rows `Failed`, each subscription read once, nothing written and nothing pruned. #type/subtask
+- [x] **3.2** One document with the role assignment of 2.2 and the two made-up entries of 3.1, run for real with `-Prune`: the own row `Unchanged`, the two made-up rows `Failed`, each subscription read once, nothing written and nothing pruned. #type/subtask
 
 ```powershell
 $MadeUp = New-S116cMadeUpSubscriptionId
@@ -866,7 +1330,31 @@ the row at `oer-s116c-rg` `Unchanged`, the two made-up rows `Failed`; `writes: 0
 `Removed` row; `oer-s116c-grp` still listed at the resource group.
 **Failure looks like:** a write, a `Removed` row, or the own row `Failed`.
 
-Result:
+Result: 2026-10-18 01:06 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed. One document with the role assignment of 2.2 and the two made-up entries, run for real with -Prune: one read of the test subscription and one request at the made-up subscription (its read); the row at oer-s116c-rg Unchanged and the two made-up rows Failed with SubscriptionNotFound as itself (written by Invoke-OERStructure itself x2); 0 writes for both services, no Removed row, 0 token requests; oer-s116c-grp still listed at the resource group. A refused entry does not stop the document's own entries. Leak check: 0 hits.
+
+Console, redacted (3.2):
+Runner: check 3.2; child exit code 0; 7 s; run at 2026-10-18 01:05 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] token requests: 0; Microsoft Graph requests: 2, writes: 0; Azure Resource Manager requests: 5, writes: 0; subscription reads: 2; subscription list reads: 0; role assignment reads: 1; role policy reads: 0
+[oer-s116c] Reads of the test subscription itself: 1; requests at the made-up subscription: 1, of them reads of it: 1
+[oer-s116c] Row: roleAssignments | Reader -> oer-s116c-grp @ /subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/oer-s116c-rg'
+[oer-s116c] Row: roleAssignments | Reader -> oer-s116c-grp @ /subscriptions/00000000-0000-0000-0000-000000000008/resourceGroups/oer-s116c-rg | Failed | the read of subscription '00000000-0000-0000-0000-000000000008' failed: SubscriptionNotFound: The subscription '00000000-0000-0000-0000-000000000008' could not be found; the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session's tenant, so none was read or written for this entry
+[oer-s116c] Row: roleManagementPolicies | Reader @ sub:00000000-0000-0000-0000-000000000008 | Failed | the read of subscription '00000000-0000-0000-0000-000000000008' failed: SubscriptionNotFound: The subscription '00000000-0000-0000-0000-000000000008' could not be found; the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session's tenant, so none was read or written for this entry
+[oer-s116c] Errors: (no id) x1, SubscriptionNotFound x5; written by Invoke-OERStructure itself: SubscriptionNotFound x2
+[oer-s116c] Azure Resource Manager lists at oer-s116c-rg: oer-s116c-grp
+```
 
 ## B. Proved offline (class B)
 
@@ -926,7 +1414,7 @@ Result: not run by Claude Code -- class C, for the operator after the merge, opt
 
 ### T.1. The role assignment, the resource group and the group are gone, and the step's raw folders are deleted
 
-- [ ] **T.1** `Initialize-OerS116cPrereq.ps1 -Teardown -Unattended` removes the role assignment at `oer-s116c-rg`, the resource group and the group, and purges the group from the deleted items; the sweep finds nothing with the prefix; no residue row names it; the step's raw folders are deleted. The redaction map is deleted with `Clear-OerLiveRedactionMap` once every result is written up, after this check. #type/subtask
+- [x] **T.1** `Initialize-OerS116cPrereq.ps1 -Teardown -Unattended` removes the role assignment at `oer-s116c-rg`, the resource group and the group, and purges the group from the deleted items; the sweep finds nothing with the prefix; no residue row names it; the step's raw folders are deleted. The redaction map is deleted with `Clear-OerLiveRedactionMap` once every result is written up, after this check. #type/subtask
 
 ```powershell
 $Script = Join-Path $VaultDir 'Initialize-OerS116cPrereq.ps1'
@@ -956,4 +1444,163 @@ carrying the prefix oer-s116c-: 0`; the resource group `Status=404`; `Deleted gr
 **Failure looks like:** a role assignment at the resource group of another principal (STOP: the script did
 not make it), a prefixed object left, or a residue row.
 
-Result:
+Result: 2026-10-18 01:09 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: passed, after a correction of the prerequisite script's teardown and a read-back. First run (01:06 UTC): the teardown listed one role assignment at oer-s116c-rg, of oer-s116c-grp, and removed it; deleted the resource group (it reads 404); deleted the group (204); but its purge read the group's id among the deleted items seconds after the delete and got 404, so it purged nothing, and the block's own sweep a few seconds later still listed the group (listing lag) and one deleted group with the prefix -- the Expect (prefix 0, deleted groups 0) was not met. The script's purge (Initialize-OerS116cPrereq.ps1, the step's own file in the vault) now waits until the group the run deleted is listed among the deleted items, then purges every deleted group carrying the prefix, and reads the sweep until it is empty. Its -Teardown -WhatIf plan (T.0) planned exactly one purge, of oer-s116c-grp, and wrote nothing. Second run (01:08 UTC): the active sweep was already empty, the one deleted group was purged (204), the script's sweep converged at 0, exit code 0; the block's read of the deleted items a second later still listed it once (the deleted items listing lags behind a purge too). The read-back (T.1r, 01:09 UTC, with a wait of up to 600 s on that listing) found 0 deleted groups with the prefix on its first read, 0 objects carrying the prefix, the resource group 404, 0 residue rows naming the prefix, and both raw folders absent. Nothing outside the prefix was touched; the other projects' 5 residue rows were left as they were. Leak check: 0 hits for every run.
+
+Console, redacted (T.1first):
+Runner: check T.1; child exit code 0; 22 s; run at 2026-10-18 01:06 UTC.
+[prereq] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[prereq] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[prereq] [oer-s116c] Mode: TEARDOWN. Prefix 'oer-s116c-'. Objects (fixed): the security group oer-s116c-grp (no member, no owner); the resource group oer-s116c-rg (no resource, location 'swedencentral', tagged purpose). Nothing is assigned here. OerLive 1.0.3.
+[prereq] [oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[prereq] [oer-s116c] Role assignments at exactly oer-s116c-rg: 1; of a principal other than oer-s116c-grp: 0.
+[prereq] [oer-s116c] Removed a role assignment of oer-s116c-grp at oer-s116c-rg (status 200).
+[prereq] [oer-s116c] oer-s116c-rg reads 404: not yet (read 1, 0.2 s, likely replication delay) -- reading again in 2 s.
+[prereq] [oer-s116c] oer-s116c-rg reads 404: converged after 2 read(s), 2.6 s.
+[prereq] [oer-s116c] Deleted oer-s116c-rg; it reads 404: True.
+[prereq] [oer-s116c] Teardown of 'oer-s116c-': users 0, groups 1, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[prereq] [oer-s116c] Teardown 1/6: directory role assignments of the prefixed principals.
+[prereq] [oer-s116c] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[prereq] [oer-s116c] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[prereq] [oer-s116c] Teardown 4/6: members of the prefixed role-assignable groups.
+[prereq] [oer-s116c] Teardown 5/6: the prefixed groups.
+[prereq] [oer-s116c] Deleted: group oer-s116c-grp (204).
+[prereq] [oer-s116c] Teardown 6/6: the prefixed users.
+[prereq] [oer-s116c] Teardown of 'oer-s116c-': removed 1, residue 0, unreadable 0.
+[prereq] [oer-s116c] Remove-OerLiveTestObjects: removed 1, residue 0, unreadable 0, unread 0.
+[prereq] [oer-s116c] oer-s116c-grp among the deleted items: not found (status 404).
+[prereq] [oer-s116c] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116c-' is left.
+[prereq] [oer-s116c] Objects carrying the prefix oer-s116c-: 0; the resource group oer-s116c-rg exists: False.
+[oer-s116c] Teardown exit code: 0
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] Sweep: group 'oer-s116c-grp' (00000000-0000-0000-0000-000000000009) carries the prefix.
+[oer-s116c] Objects carrying the prefix oer-s116c-: 1
+[oer-s116c] The resource group reads: Ok=False Status=404 Code=ResourceGroupNotFound
+[oer-s116c] Deleted groups carrying the prefix: 1
+[oer-s116c] Residue rows naming the prefix: 0
+[oer-s116c] Raw folder deleted: True
+[oer-s116c] Raw folder deleted: True
+
+Console, redacted (T.0):
+Runner: check T.0; child exit code 0; 9 s; run at 2026-10-18 01:08 UTC.
+[prereq] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[prereq] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[prereq] [oer-s116c] Mode: TEARDOWN. Prefix 'oer-s116c-'. Objects (fixed): the security group oer-s116c-grp (no member, no owner); the resource group oer-s116c-rg (no resource, location 'swedencentral', tagged purpose). Nothing is assigned here. OerLive 1.0.3.
+[prereq] [oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[prereq] [oer-s116c] oer-s116c-rg does not exist; nothing to remove there.
+[prereq] [oer-s116c] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116c-' is left.
+[prereq] [oer-s116c] Teardown of 'oer-s116c-': users 0, groups 0, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[prereq] [oer-s116c] Teardown 1/6: directory role assignments of the prefixed principals.
+[prereq] [oer-s116c] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[prereq] [oer-s116c] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[prereq] [oer-s116c] Teardown 4/6: members of the prefixed role-assignable groups.
+[prereq] [oer-s116c] Teardown 5/6: the prefixed groups.
+[prereq] [oer-s116c] Teardown 6/6: the prefixed users.
+[prereq] [oer-s116c] Teardown of 'oer-s116c-': removed 0, residue 0, unreadable 0 (WhatIf: nothing was removed).
+[prereq] [oer-s116c] Remove-OerLiveTestObjects: removed 0, residue 0, unreadable 0, unread 0.
+[prereq] [oer-s116c] Deleted groups carrying the prefix before the purge: 1.
+[prereq] What if: Performing the operation "Purge the deleted group from the deleted items (Microsoft Graph DELETE)" on target "oer-s116c-grp".
+[prereq] [oer-s116c] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116c-' is left.
+[prereq] [oer-s116c] Objects carrying the prefix oer-s116c-: 0; the resource group oer-s116c-rg exists: False.
+[oer-s116c] Teardown plan exit code: 0
+
+Console, redacted (T.1):
+Runner: check T.1; child exit code 0; 13 s; run at 2026-10-18 01:08 UTC.
+[prereq] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[prereq] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[prereq] [oer-s116c] Mode: TEARDOWN. Prefix 'oer-s116c-'. Objects (fixed): the security group oer-s116c-grp (no member, no owner); the resource group oer-s116c-rg (no resource, location 'swedencentral', tagged purpose). Nothing is assigned here. OerLive 1.0.3.
+[prereq] [oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[prereq] [oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[prereq] [oer-s116c] oer-s116c-rg does not exist; nothing to remove there.
+[prereq] [oer-s116c] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116c-' is left.
+[prereq] [oer-s116c] Teardown of 'oer-s116c-': users 0, groups 0, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[prereq] [oer-s116c] Teardown 1/6: directory role assignments of the prefixed principals.
+[prereq] [oer-s116c] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[prereq] [oer-s116c] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[prereq] [oer-s116c] Teardown 4/6: members of the prefixed role-assignable groups.
+[prereq] [oer-s116c] Teardown 5/6: the prefixed groups.
+[prereq] [oer-s116c] Teardown 6/6: the prefixed users.
+[prereq] [oer-s116c] Teardown of 'oer-s116c-': removed 0, residue 0, unreadable 0.
+[prereq] [oer-s116c] Remove-OerLiveTestObjects: removed 0, residue 0, unreadable 0, unread 0.
+[prereq] [oer-s116c] Deleted groups carrying the prefix before the purge: 1.
+[prereq] [oer-s116c] Purged oer-s116c-grp from the deleted items: True (status 204).
+[prereq] [oer-s116c] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116c-' is left.
+[prereq] [oer-s116c] the sweep finds no object carrying the prefix: converged after 1 read(s), 0.7 s.
+[prereq] [oer-s116c] Objects carrying the prefix oer-s116c-: 0; the resource group oer-s116c-rg exists: False.
+[oer-s116c] Teardown exit code: 0
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116c-' is left.
+[oer-s116c] Objects carrying the prefix oer-s116c-: 0
+[oer-s116c] The resource group reads: Ok=False Status=404 Code=ResourceGroupNotFound
+[oer-s116c] Deleted groups carrying the prefix: 1
+[oer-s116c] Residue rows naming the prefix: 0
+[oer-s116c] Raw folder deleted: True
+[oer-s116c] Raw folder deleted: True
+
+Console, redacted (T.1r):
+Runner: check T.1r; child exit code 0; 6 s; run at 2026-10-18 01:09 UTC.
+[oer-s116c] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg6c-c2\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s116c] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s116c] the deleted items list no group carrying the prefix: converged after 1 read(s), 0.1 s.
+[oer-s116c] Deleted groups carrying the prefix: 0 (after 0.1 s, 1 read(s))
+[oer-s116c] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s116c-' is left.
+[oer-s116c] Objects carrying the prefix oer-s116c-: 0
+[oer-s116c] The resource group reads: Ok=False Status=404 Code=ResourceGroupNotFound
+[oer-s116c] Residue rows naming the prefix: 0
+[oer-s116c] Raw folder absent: True
+[oer-s116c] Raw folder absent: True
+```
