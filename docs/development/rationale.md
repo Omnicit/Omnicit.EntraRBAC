@@ -10572,13 +10572,44 @@ principals), with a full `servicePrincipals/{id}/appRoleAssignments?$top=999` re
 expanded list holds 20 or more: Microsoft Graph documents a maximum of 20 for an expanded directory
 relationship and no next link for it, and none there reached it. The owners are read expanded on the
 service principal list and on the app registration list (12 + 1), with a full `.../owners?$top=999`
-read of any object with 20 or more. The grants are one paged `oauth2PermissionGrants?$top=999` list,
-and the users they name one `directoryObjects/getByIds` per 1,000. Measured total: 27 requests, where
-the per-object reads cost about 2,340. The architect's example, one read per resource that exposes
-app roles (175 calls), was rejected: measured, it is both dearer and incomplete (it misses 2 of 133).
+read of any object with 20 or more. Since live check 1.1 (below) an object is also read in full when
+one of its expanded entries lacks the id its row needs. The grants are one paged
+`oauth2PermissionGrants?$top=999` list, and the users they name one `directoryObjects/getByIds` per
+1,000. Measured total: 29 requests -- 12 service principal list pages with their app role
+assignments, 2 full re-reads (check 1.1), 12 pages with owners, 1 app registration page, 1 grant page
+and 1 `getByIds` -- where the per-object reads cost about 2,340. The architect's example, one read
+per resource that exposes app roles (175 calls), was rejected: measured, it is both dearer and
+incomplete (it misses 2 of 133).
 Cost if wrong: an expanded list capped below 20 for this relationship without saying so would hide an
 object's permissions or owners beyond the cap; the threshold follows the documented cap, and the
 measured maximum was 19.
+
+**Measured live, check 1.1 (2026-10-18, read-only, as `oer-live-cc`), and Ruling R-14.**
+`Export-OERInventory -Include AdministrativeUnits, RoleAssignments -IncludeServicePrincipalAccess`
+wrote 133 application permission rows, 2 of them with `resourceId`, `resourceDisplayName` and
+`appRoleValue` all `null`: rows that name no resource, and a `null` value that reads as "the resource
+does not declare the role". A read-only diagnostic of those 2 measured that the expanded read
+(`v1.0/servicePrincipals/{client}?$select=id&$expand=appRoleAssignments`) returns the assignment with
+the `resourceId` key present and its value `null` (its keys `appRoleId`, `createdDateTime`,
+`deletedDateTime`, `id`, `principalDisplayName`, `principalId`, `principalType`,
+`resourceDisplayName`, `resourceId`), while the per-client read
+(`v1.0/servicePrincipals/{client}/appRoleAssignments?$top=999`) returns the same assignment id with
+its `resourceId` and `resourceDisplayName`; the resource exists, is named and declares the role. These
+2 are also the 2 assignments the resource side never listed (R-1). So the second round's "equal ... id
+for id" holds for the ids, and for these 2 the expanded values differ. A third row with
+`appRoleValue` `null` is genuine: its resource (762 app roles) does not declare that role. The reader
+now uses an object's expanded entries only when it holds fewer than 20 AND every entry carries the ids
+its row needs -- `resourceId` and `appRoleId` for an app role assignment, `id` for an owner -- and
+otherwise reads the object in full and uses that read. The owner half keeps the rule uniform: every
+expanded owner measured had an id, a type and a name. **R-14:** an app role assignment that the full
+read still returns without its `resourceId` or `appRoleId` leaves only `applicationPermissions`
+unread -- `null`, named, with the cause "Microsoft Graph returned an app role assignment of the
+service principal '...' without its resource id" (or "app role id") and the client id as its target.
+The service principal list itself was read, so the grants named through it, and the owners, are
+unaffected. An owner that the full read still returns without an id leaves that owners part unread.
+Cost if wrong: one extra request per object whose expansion lacks an id (2 here), and, should the
+full read lack the id too, a part written `null` where rows were read -- never a row that names no
+resource.
 
 **The shapes.** One JSON object, four parts in this order, each an array of rows or `null`:
 
@@ -10614,7 +10645,9 @@ an unchanged tenant write the same file.
   not known) or without its expanded collection (the expansion did not happen), a list answer with no
   value collection, or one user lookup that did not read -- leaves that part `null`, never `[]`, and
   names it `servicePrincipalAccess/<part>`. The grants are named through the service principal list,
-  so when that list was not read they are not read at all. Cost if wrong: one failed `getByIds` batch
+  so when that list was not read they are not read at all; an app role assignment without its ids
+  after the full read leaves only `applicationPermissions` unread, since the list was read (R-14).
+  Cost if wrong: one failed `getByIds` batch
   hides every delegated grant of the run.
 - **R-8 (both names of a grant's user).** A grant to one user carries the user's display name and its
   user principal name apart, like the owner rows; `Resolve-OERPrincipalName -Detailed` gained the two
@@ -10650,16 +10683,19 @@ roles are in the two role assignment files (above). (d) An owner whose answer ca
 `userPrincipalName` is written with `ownerUserPrincipalName` `null`; the measurement recorded the keys
 `@odata.type`, `displayName` and `id`. (e) The file is never applied: nothing in it is reconciled,
 granted or revoked, and no validator reads it. (f) The reader was proven with mocked tests. The four
-lists it reads were measured live with its URIs, not through the module; its full re-reads were not:
-no object reached 20 expanded entries, so `servicePrincipals/{id}/appRoleAssignments?$top=999`
-and `.../owners?$select=id,displayName,userPrincipalName&$top=999` were never sent with those query
-strings (the table above records the per-object paths without one). A re-read Microsoft Graph
-refuses leaves its part unread, `null` and named, the safe outcome. The id in a re-read's path is
-URI-escaped (the step's final review), which leaves a GUID unchanged.
+lists it reads were measured live with its URIs, and through the module by check 1.1's export. The
+full read `servicePrincipals/{id}/appRoleAssignments?$top=999` was sent by check 1.1's diagnostic,
+with that URI but not through the module, for the 2 clients above; the module's own re-read after
+R-14 was not measured live. The owner re-read `.../owners?$select=id,displayName,userPrincipalName&$top=999`
+was never sent with that query string: no object reached 20 expanded entries and every expanded
+owner had an id (the table above records the per-object paths without one). A re-read Microsoft
+Graph refuses leaves its part unread, `null` and named, the safe outcome. The id in a re-read's path
+is URI-escaped (the step's final review), which leaves a GUID unchanged.
 
 **Mutation proofs.** Each mutation applied to the source, the named tests run against it (a dev-mode
 module, no build, for the reader; a build for the requiredscope row), the file restored and its hash
-checked. Every mutant turned at least one test red.
+checked; the L rows (check 1.1, R-14) were applied to the built module's script, with the source line
+each one names. Every mutant turned at least one test red.
 
 | Id | Guard | Mutant | Red |
 |---|---|---|---|
@@ -10670,7 +10706,7 @@ checked. Every mutant turned at least one test red.
 | M8 | the 20-or-more re-read | `-ge` made `-gt` | the three re-read tests |
 | M11a to M11c | an object listed twice counts once | each dedupe removed | "counts an object listed twice once" |
 | M13 | the sort's casts | removed | the sort tests |
-| M14 | the id in a re-read's path URI-escaped (the final review's fix, `Get-OERServicePrincipalAccess.ps1:159`, mutated in the built module) | `-f $ItemId`, unescaped | the two escape tests |
+| M14 | the id in a re-read's path URI-escaped (the final review's fix, `Get-OERServicePrincipalAccess.ps1:159` then, `:191` since R-14, mutated in the built module) | `-f $ItemId`, unescaped | the two escape tests |
 | N3 to N10 | the grant's two names, and `-Detailed`'s two properties | each changed | the name tests |
 | C1, C2 | `ConvertTo-OERPrincipalType`: the optional prefix; the ordinal comparison | removed; culture-based | the prefix cases; the culture case |
 | R1 to R3, P1 | README section, label sentence and label; prompt bullet, each only with the switch or entry | forced on, or the label branch removed | the byte-identity and label tests |
@@ -10678,6 +10714,12 @@ checked. Every mutant turned at least one test red.
 | RS1, RS2 | the requiredscope `applications` and `oauth2PermissionGrants` rules | each made to match nothing | 4 and 3 red, the case for the export's literals among them |
 | RS3, RS4 | the same two rules narrowed so `Directory.Read.All` does not satisfy them | `Read` narrowed | the export's per-cmdlet case red, naming the literals |
 | RS5 | `Directory.Read.All` in the export's row of `Get-OERRequiredScopeMap` | dropped (rebuilt) | the export's per-cmdlet case red, 20 unsatisfied, 8 of them the reader's |
+| L1, L12 to L14 | check 1.1: an expanded entry without an id its row needs is read in full (`:188`, and `-RequiredKey` at each of the three calls) | the condition removed; each `-RequiredKey` dropped | 12 red; 8, 2 and 2 red (the re-read tests of that part) |
+| L2, L3 | `Get-MissingKey`: a blank id is missing (`:171`) | `IsNullOrEmpty`; never missing | the 4 blank-id tests; 12 red |
+| L4, L5, L15 | R-14: an assignment the full read returns without its ids leaves `applicationPermissions` `null`, with its cause (`:262`, `:276`, `:118`) | the check forced off; the rows built anyway; the two key words swapped | the 3 "leaves only the application permissions unread" tests |
+| L6, L7 | R-14: the list goes on and the grants are read (`:267`, `:384`) | `continue` made `break`; the old gate on `applicationPermissions` | the same 3 tests (the grants' resource name; the grants unread) |
+| L8, L9 | the list-read flag (`:298`, `:230`) | never set; set before the read | 40 red; the 7 tests of a failed service principal list |
+| L10, L11 | an owner the full read returns without an id leaves that part unread (`:322`, `:359`) | each check removed | the unread test of that part |
 
 ## scoped-role-principal-type
 

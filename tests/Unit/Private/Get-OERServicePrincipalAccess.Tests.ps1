@@ -366,7 +366,10 @@ Describe 'Get-OERServicePrincipalAccess' {
         It 'states in its help the one dependency between the parts and the grant row''s two user names' {
             $Help = InModuleScope $script:moduleName { Get-Help Get-OERServicePrincipalAccess -Full }
             $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
-            $Description | Should -Match ([regex]::Escape('One part failing never stops another, except that the grants are not read when read 1 was not;'))
+            $Description | Should -Match ([regex]::Escape('One part failing never stops another, except that the grants are not read when read 1''s list was not;'))
+            $Description | Should -Match ([regex]::Escape('An app role assignment that the full read still returns without its resourceId or appRoleId leaves only applicationPermissions unread, with a cause naming the service principal (Ruling R-14): the list itself was read, so the grants are read and named through it.'))
+            $Description | Should -Match ([regex]::Escape('or holds an entry that lacks the id its row needs (an app role assignment without a resourceId or an appRoleId, an owner without an id), is read again in full'))
+            $Description | Should -Match ([regex]::Escape('measured 29 requests for a tenant of 1,129 service principals and 67 app registrations, 2 of them such reads.'))
             $Description | Should -Match ([regex]::Escape('principalDisplayName and principalUserPrincipalName (for Principal the user''s displayName and userPrincipalName as the lookup returned them'))
             $Description | Should -Match ([regex]::Escape('without an appRoles collection (the roles it declares are then not known)'))
         }
@@ -482,6 +485,126 @@ Describe 'Get-OERServicePrincipalAccess' {
             @($Result.ApplicationPermissions).Count | Should -Be 3
             @($Result.ApplicationOwners).Count | Should -Be 2
             @($Result.DelegatedPermissionGrants).Count | Should -Be 3
+        }
+    }
+
+    # Measured live (check 1.1): an expanded app role assignment can carry its resourceId key with a null
+    # value, while the client's own read returns the same assignment with it. An expanded entry that
+    # lacks an id its row needs is therefore never used: the object is read in full instead.
+    Context 'an expanded entry that lacks the id its row needs is read in full' {
+        It 'reads a client whose expanded app role assignment has <Case> once more in full and uses that read' -ForEach @(
+            @{ Case = 'a null resourceId'; Key = 'resourceId'; Mode = 'null' }
+            @{ Case = 'no resourceId key'; Key = 'resourceId'; Mode = 'missing' }
+            @{ Case = 'a blank resourceId'; Key = 'resourceId'; Mode = 'blank' }
+            @{ Case = 'a null appRoleId'; Key = 'appRoleId'; Mode = 'null' }
+            @{ Case = 'a blank appRoleId'; Key = 'appRoleId'; Mode = 'blank' }
+        ) {
+            $Client = $script:Replies[$script:PermissionListUri].value[0]
+            # The full read returns the three assignments whole, as the expanded list held them before.
+            $script:Replies[(Get-PermissionReReadUri -Id $script:ClientId)] = New-SpaList @($Client.appRoleAssignments | ForEach-Object { $_.Clone() })
+            # In the expansion the first assignment, the one of the declared role, lacks the id.
+            $Expanded = $Client.appRoleAssignments[0]
+            switch ($Mode) {
+                'null' { $Expanded[$Key] = $null }
+                'missing' { $Expanded.Remove($Key) }
+                default { $Expanded[$Key] = '  ' }
+            }
+            $Expanded.resourceDisplayName = $null
+            $Result = Invoke-Spa
+            $script:ExpectedUri = Get-PermissionReReadUri -Id $script:ClientId
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq $script:ExpectedUri -and $All }
+            # The four lists and the one full read.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 5 -Exactly
+            @($Result.Unread).Count | Should -Be 0
+            @($Result.Causes).Count | Should -Be 0
+            $Rows = @($Result.ApplicationPermissions)
+            $Rows.Count | Should -Be 3
+            # The row of that assignment, from the full read: its resource with both names, and its role
+            # with the value the resource declares.
+            $Row = @($Rows | Where-Object { $_.appRoleId -eq $script:RoleUserRead })
+            $Row.Count | Should -Be 1
+            $Row[0].resourceId | Should -BeExactly $script:ResourceId
+            $Row[0].resourceDisplayName | Should -BeExactly 'Graph Resource'
+            $Row[0].appRoleValue | Should -BeExactly 'User.Read.All'
+            @($Rows | Where-Object { $null -eq $_.resourceId -or $null -eq $_.appRoleId }).Count | Should -Be 0
+        }
+
+        It 'leaves only the application permissions unread when the full read still returns an assignment without its <Words>' -ForEach @(
+            @{ Words = 'resource id'; Keys = @('resourceId') }
+            @{ Words = 'app role id'; Keys = @('appRoleId') }
+            @{ Words = 'resource id and app role id'; Keys = @('resourceId', 'appRoleId') }
+        ) {
+            $Client = $script:Replies[$script:PermissionListUri].value[0]
+            foreach ($Key in $Keys) { $Client.appRoleAssignments[0][$Key] = $null }
+            # The full read returns the same assignments, and the first one still without the id(s).
+            $script:Replies[(Get-PermissionReReadUri -Id $script:ClientId)] = New-SpaList @($Client.appRoleAssignments | ForEach-Object { $_.Clone() })
+            $Result = Invoke-Spa
+            $null -eq $Result.ApplicationPermissions | Should -BeTrue
+            @($Result.Unread) | Should -Be @('servicePrincipalAccess/applicationPermissions')
+            $KeyWords = @{ resourceId = 'resource id'; appRoleId = 'app role id' }
+            @($Result.Causes).Count | Should -Be $Keys.Count
+            for ($Index = 0; $Index -lt $Keys.Count; $Index++) {
+                $Result.Causes[$Index].Cause | Should -BeExactly "Microsoft Graph returned an app role assignment of the service principal '$($script:ClientId)' without its $($KeyWords[$Keys[$Index]])"
+                $Result.Causes[$Index].Target | Should -BeExactly $script:ClientId
+            }
+            # Reach proof: the client was read in full once.
+            $script:ExpectedUri = Get-PermissionReReadUri -Id $script:ClientId
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq $script:ExpectedUri -and $All }
+            # Ruling R-14: the list itself was read, so the grants are read and named through it -- the
+            # resource listed after the client among them -- and the owners are read.
+            $script:ExpectedUri = $script:GrantListUri
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq $script:ExpectedUri -and $All }
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly
+            $Grants = @($Result.DelegatedPermissionGrants)
+            $Grants.Count | Should -Be 3
+            foreach ($Grant in $Grants) {
+                $Grant.clientDisplayName | Should -BeExactly 'Client App'
+                $Grant.resourceDisplayName | Should -BeExactly 'Graph Resource'
+            }
+            @($Result.ServicePrincipalOwners).Count | Should -Be 2
+            @($Result.ApplicationOwners).Count | Should -Be 2
+        }
+
+        It 'reads the owners of <Name> whose expanded owner has no id once more in full and uses that read' -ForEach @(
+            @{ Name = 'a service principal'; List = 'SpOwner'; Index = 0; Id = '11111111-1111-1111-1111-111111111111'; Part = 'ServicePrincipalOwners'; IdKey = 'servicePrincipalId' }
+            @{ Name = 'an app registration'; List = 'AppOwner'; Index = 1; Id = '77777777-7777-7777-7777-777777777777'; Part = 'ApplicationOwners'; IdKey = 'applicationId' }
+        ) {
+            $ListUri = if ($List -eq 'SpOwner') { $script:SpOwnerListUri } else { $script:AppOwnerListUri }
+            $ReReadUri = if ($List -eq 'SpOwner') { Get-SpOwnerReReadUri -Id $Id } else { Get-AppOwnerReReadUri -Id $Id }
+            $script:Replies[$ListUri].value[$Index].owners = @(@{ '@odata.type' = '#microsoft.graph.user'; id = $null; displayName = 'Person Two' })
+            $script:Replies[$ReReadUri] = New-SpaList @(New-SpaOwner -Type '#microsoft.graph.user' -Id $script:UserTwo -Name 'Person Two' -Upn 'person2@example.com')
+            $Result = Invoke-Spa
+            $script:ExpectedUri = $ReReadUri
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq $script:ExpectedUri -and $All }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 5 -Exactly
+            @($Result.Unread).Count | Should -Be 0
+            $Rows = @($Result.$Part | Where-Object { $_.$IdKey -eq $Id })
+            $Rows.Count | Should -Be 1
+            $Rows[0].ownerId | Should -BeExactly $script:UserTwo
+            $Rows[0].ownerUserPrincipalName | Should -BeExactly 'person2@example.com'
+        }
+
+        It 'leaves only the owners of <Name> unread when the full read still returns an owner without its id' -ForEach @(
+            @{ Name = 'the service principals'; List = 'SpOwner'; Index = 0; Id = '11111111-1111-1111-1111-111111111111'; Part = 'ServicePrincipalOwners'; Unread = 'servicePrincipalOwners'; Kind = 'the owners of the service principal' }
+            @{ Name = 'the app registrations'; List = 'AppOwner'; Index = 1; Id = '77777777-7777-7777-7777-777777777777'; Part = 'ApplicationOwners'; Unread = 'applicationOwners'; Kind = 'the owners of the app registration' }
+        ) {
+            $ListUri = if ($List -eq 'SpOwner') { $script:SpOwnerListUri } else { $script:AppOwnerListUri }
+            $ReReadUri = if ($List -eq 'SpOwner') { Get-SpOwnerReReadUri -Id $Id } else { Get-AppOwnerReReadUri -Id $Id }
+            $script:Replies[$ListUri].value[$Index].owners = @(@{ '@odata.type' = '#microsoft.graph.user'; displayName = 'Person Two' })
+            $script:Replies[$ReReadUri] = New-SpaList @(@{ '@odata.type' = '#microsoft.graph.user'; id = '  '; displayName = 'Person Two' })
+            $Result = Invoke-Spa
+            $null -eq $Result.$Part | Should -BeTrue
+            @($Result.Unread) | Should -Be @("servicePrincipalAccess/$Unread")
+            @($Result.Causes).Count | Should -Be 1
+            $Result.Causes[0].Cause | Should -BeExactly "Could not read $Kind '$Id': Microsoft Graph returned an owner without its id."
+            $Result.Causes[0].Target | Should -BeExactly $Id
+            # Reach proof: the object was read in full once; the other parts are read.
+            $script:ExpectedUri = $ReReadUri
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq $script:ExpectedUri -and $All }
+            @($Result.ApplicationPermissions).Count | Should -Be 3
+            @($Result.DelegatedPermissionGrants).Count | Should -Be 3
+            $Other = if ($Part -eq 'ApplicationOwners') { 'ServicePrincipalOwners' } else { 'ApplicationOwners' }
+            @($Result.$Other).Count | Should -Be 2
         }
     }
 

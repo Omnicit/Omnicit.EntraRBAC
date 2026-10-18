@@ -7466,7 +7466,9 @@ Describe 'Export-OERInventory (service principal access, Sprint 11 step 8)' {
         $Description | Should -Not -Match ([regex]::Escape('what the tenant''s service principals may do'))
         $Description | Should -Match ([regex]::Escape('The file is one JSON object with four parts, in this order: applicationPermissions,'))
         $Description | Should -Match ([regex]::Escape('The file is read-only context and never applied: inventory.json and schema.json do not carry it, no apply cmdlet reads it back, and Invoke-OERStructure never grants, revokes or changes any of it.'))
-        $Description | Should -Match ([regex]::Escape('measured 27 requests for a tenant of 1,129 service principals and 67 app registrations.'))
+        $Description | Should -Match ([regex]::Escape('one extra paged read per object with 20 or more expanded entries, since Microsoft Graph documents at most 20 for an expanded directory relationship, or with an expanded entry that lacks the id its row needs, which Microsoft Graph was measured to return (an app role assignment without its resource id); measured 29 requests for a tenant of 1,129 service principals and 67 app registrations.'))
+        $Description | Should -Not -Match ([regex]::Escape('measured 27 requests'))
+        $Description | Should -Match ([regex]::Escape('an entry that even its object''s full read returns without the id its row needs'))
         $Description | Should -Match ([regex]::Escape("is written as null, never [], and is named in IncompleteReads as 'servicePrincipalAccess/<part>' (see below), in a clause of the InventoryPartial message with its causes, and in README.md under `"What this export could not read`"."))
         $Description | Should -Match ([regex]::Escape('principalId, principalDisplayName and principalUserPrincipalName -- the user''s display name and user principal name, all three null for AllPrincipals and the two names null for a user the directory did not return -- and scope)'))
         # The one dependency between the parts is stated with the rule it qualifies.

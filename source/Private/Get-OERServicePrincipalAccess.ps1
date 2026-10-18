@@ -12,31 +12,39 @@ function Get-OERServicePrincipalAccess {
     1. v1.0/servicePrincipals?$select=id,appId,displayName,appRoles&$expand=appRoleAssignments&$top=999
        -- every service principal: its name, the app roles it declares as a resource, and its OWN app
        role assignments, the client side. The application permissions are read from the client side,
-       expanded on this one list: measured in a test tenant, the expanded assignments equal the
-       per-client read of every service principal, while the resource side (appRoleAssignedTo)
-       missed 2 of 133 service principal assignments that the client side shows.
+       expanded on this one list: measured in a test tenant, the expanded assignments are, id for id,
+       those of the per-client read of every service principal (2 of them without their resourceId,
+       read again in full as below), while the resource side (appRoleAssignedTo) missed 2 of 133
+       service principal assignments that the client side shows.
     2. v1.0/servicePrincipals?$select=id,displayName&$expand=owners($select=id,displayName,userPrincipalName)&$top=999
        -- the owners of each service principal.
     3. v1.0/applications?$select=id,appId,displayName&$expand=owners($select=id,displayName,userPrincipalName)&$top=999
        -- the app registrations and the owners of each.
     4. v1.0/oauth2PermissionGrants?$top=999 -- the delegated permission grants. The users that the
        grants with consentType Principal name are looked up with ONE Resolve-OERPrincipalName -Detailed
-       call (directoryObjects/getByIds, 1,000 ids per request). Read 4 is made only when read 1 was
-       read, since the grants name their client and resource through it.
+       call (directoryObjects/getByIds, 1,000 ids per request). Read 4 is made only when read 1's
+       service principal list was read, since the grants name their client and resource through it.
 
     Microsoft Graph documents a maximum of 20 entries for an expanded directory relationship, and no
-    next link for it. So an object whose expanded appRoleAssignments or owners holds 20 or more
-    entries is read again in full with a paged read of its own, and that read is used instead of the
-    expanded entries: v1.0/servicePrincipals/{id}/appRoleAssignments?$top=999 for read 1, and
+    next link for it, and it can return an expanded entry without an id its row needs: measured live,
+    2 of 133 expanded app role assignments carried the resourceId key with a null value, while the
+    service principal's own read returned the same assignments with it. So an object whose expanded
+    appRoleAssignments or owners holds 20 or more entries, or holds an entry that lacks the id its row
+    needs (an app role assignment without a resourceId or an appRoleId, an owner without an id), is
+    read again in full with a paged read of its own, and that read is used instead of the expanded
+    entries: v1.0/servicePrincipals/{id}/appRoleAssignments?$top=999 for read 1, and
     v1.0/servicePrincipals/{id}/owners or v1.0/applications/{id}/owners, each with
     $select=id,displayName,userPrincipalName&$top=999, for reads 2 and 3, the id as Graph listed it,
-    lower-cased and URI-escaped. An object with 19 or fewer is not read again (measured: no object in
-    the test tenant reached 20, so these re-reads were not measured live).
+    lower-cased and URI-escaped. An object with 19 or fewer entries, each with those ids, is not read
+    again. Measured: no object in the test tenant reached 20; the full read of read 1 was sent with
+    its URI, though not through this function, for the 2 assignments above, and returned both with
+    their resourceId; the owner re-reads were not measured live.
 
     The cost: one request per page of each of the three lists and of the grants, one
     directoryObjects/getByIds per 1,000 users named in grants, and one extra paged read per object
-    with 20 or more expanded entries; measured 27 requests for a tenant of 1,129 service principals
-    and 67 app registrations. The function itself sends GET requests only; the getByIds POST is
+    with 20 or more expanded entries or with an expanded entry that lacks the id its row needs;
+    measured 29 requests for a tenant of 1,129 service principals and 67 app registrations, 2 of them
+    such reads. The function itself sends GET requests only; the getByIds POST is
     Resolve-OERPrincipalName's.
 
     A part is read whole or not at all: any failure inside a part leaves it $null, never an empty
@@ -44,13 +52,16 @@ function Get-OERServicePrincipalAccess {
     an object listed without an id, without an appRoles collection (the roles it declares are then
     not known) or without an appRoleAssignments collection (the expansion did not happen), neither of
     which is ever read as none -- leaves applicationPermissions AND delegatedPermissionGrants unread,
-    since the grants are named through that list, and the grants are then not read at all. Read 2
-    failing, the same way with its owners, leaves servicePrincipalOwners unread, read 3
-    applicationOwners, and read 4, or a user lookup that answers Read false for any user (or gives no
-    answer for one), delegatedPermissionGrants. A list answer that carries no value collection is a
-    failed read too. One part failing never stops another, except that the grants are not read when
-    read 1 was not; a part that was read and holds nothing is an empty array. An object listed twice
-    (by id, letter case ignored) counts once.
+    since the grants are named through that list, and the grants are then not read at all. An app
+    role assignment that the full read still returns without its resourceId or appRoleId leaves only
+    applicationPermissions unread, with a cause naming the service principal (Ruling R-14): the list
+    itself was read, so the grants are read and named through it. Read 2 failing, the same way with
+    its owners (an owner that the full read still returns without its id among them), leaves
+    servicePrincipalOwners unread, read 3 applicationOwners, and read 4, or a user lookup that answers
+    Read false for any user (or gives no answer for one), delegatedPermissionGrants. A list answer
+    that carries no value collection is a failed read too. One part failing never stops another,
+    except that the grants are not read when read 1's list was not; a part that was read and holds
+    nothing is an empty array. An object listed twice (by id, letter case ignored) counts once.
 
     The rows, each an ordered object with its keys in this order; every id is written lower-cased,
     every blank text is written $null, and nothing is invented:
@@ -101,6 +112,11 @@ function Get-OERServicePrincipalAccess {
     $ApplicationOwnerListUri = 'v1.0/applications?$select=id,appId,displayName&$expand=owners($select=id,displayName,userPrincipalName)&$top=999'
     $ApplicationOwnerReReadFormat = 'v1.0/applications/{0}/owners?$select=id,displayName,userPrincipalName&$top=999'
     $GrantListUri = 'v1.0/oauth2PermissionGrants?$top=999'
+    # The ids each row needs from an expanded entry, and how a cause names a missing one. An expanded
+    # entry without one is read again in full (Get-ExpandedEntry).
+    $PermissionRequiredKey = @('resourceId', 'appRoleId')
+    $PermissionKeyWords = @{ resourceId = 'resource id'; appRoleId = 'app role id' }
+    $OwnerRequiredKey = @('id')
 
     # A value as text: $null for a missing or blank value.
     function Get-TextOrNull {
@@ -144,16 +160,32 @@ function Get-OERServicePrincipalAccess {
         $ItemId
     }
 
+    # The keys, of those given, that at least one entry carries no value for, in the order given; an
+    # empty array when every entry carries every one. A row names its objects by these ids, so an entry
+    # without one cannot become a row.
+    function Get-MissingKey {
+        param([object[]]$Entry, [string[]]$Key)
+        $Missing = [System.Collections.Generic.List[string]]::new()
+        foreach ($Name in $Key) {
+            foreach ($Item in @($Entry)) {
+                if ([string]::IsNullOrWhiteSpace([string]$Item.$Name)) { $Missing.Add($Name); break }
+            }
+        }
+        , [string[]]$Missing.ToArray()
+    }
+
     # The entries of an expanded relationship of a listed object: the expanded ones, or, when 20 or more
-    # were expanded, the object's own paged read instead. An object that carries no such collection --
-    # the expansion did not happen -- is a failed read, never one with no entries.
+    # were expanded or one of them lacks a key its row needs (-RequiredKey), the object's own paged read
+    # instead. Measured live: an expanded app role assignment can carry its resourceId key with a null
+    # value, while the object's own read returns the same assignment with it. An object that carries no
+    # such collection -- the expansion did not happen -- is a failed read, never one with no entries.
     function Get-ExpandedEntry {
-        param([object]$Item, [string]$Key, [string]$ItemId, [string]$ReReadFormat)
+        param([object]$Item, [string]$Key, [string]$ItemId, [string]$ReReadFormat, [string[]]$RequiredKey)
         if (-not (Test-HasKey -Item $Item -Key $Key) -or $null -eq $Item.$Key) {
             throw "Microsoft Graph returned it without its expanded $Key collection, so the expansion did not happen."
         }
         $Entries = [object[]]@(@($Item.$Key) | Where-Object { $null -ne $_ })
-        if ($Entries.Count -ge $ExpandedCap) {
+        if ($Entries.Count -ge $ExpandedCap -or (Get-MissingKey -Entry $Entries -Key $RequiredKey).Count -gt 0) {
             # The id is Graph's, not the module's, so it is escaped before it becomes a path segment, as
             # Get-OERSubscriptionHomeTenant escapes a subscription id: a GUID is sent unchanged.
             $Entries = Get-ListValue -Response (Invoke-OERGraphRequest -Uri ($ReReadFormat -f [uri]::EscapeDataString($ItemId)) -All)
@@ -193,11 +225,15 @@ function Get-OERServicePrincipalAccess {
     # The names and roles are kept for the grants below.
     $ServicePrincipals = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $ApplicationPermissions = $null
+    # Whether the list itself was read, every object of it with its name and roles: the grants are named
+    # through it. It can be read while the application permissions are not (Ruling R-14, below).
+    $ServicePrincipalListRead = $false
     $Step = 'the service principal list with its app role assignments'
     $Target = $PermissionListUri
     try {
         $Listed = Get-ListValue -Response (Invoke-OERGraphRequest -Uri $PermissionListUri -All)
         $Held = [System.Collections.Generic.List[object]]::new()
+        $PermissionsWithoutId = $false
         foreach ($Listing in $Listed) {
             $Step = 'the service principal list with its app role assignments'
             $Target = $PermissionListUri
@@ -218,32 +254,48 @@ function Get-OERServicePrincipalAccess {
             }
             $ServicePrincipals[$ServicePrincipalId] = [PSCustomObject]@{ DisplayName = (Get-TextOrNull -Value $Listing.displayName); RoleValue = $RoleValue }
             $Step = "the app role assignments of the service principal '$ServicePrincipalId'"
-            foreach ($Assignment in (Get-ExpandedEntry -Item $Listing -Key 'appRoleAssignments' -ItemId $ServicePrincipalId -ReReadFormat $PermissionReReadFormat)) {
+            $Assignments = Get-ExpandedEntry -Item $Listing -Key 'appRoleAssignments' -ItemId $ServicePrincipalId -ReReadFormat $PermissionReReadFormat -RequiredKey $PermissionRequiredKey
+            # Ruling R-14: an assignment that even the full read returns without its resource id or app
+            # role id cannot become a row that names its resource and role, so the application permissions
+            # are unread. The list itself goes on being read, so the grants named through it are still read.
+            $MissingKeys = Get-MissingKey -Entry $Assignments -Key $PermissionRequiredKey
+            if ($MissingKeys.Count -gt 0) {
+                $PermissionsWithoutId = $true
+                foreach ($MissingKey in $MissingKeys) {
+                    $Causes.Add([PSCustomObject]@{ Cause = "Microsoft Graph returned an app role assignment of the service principal '$ServicePrincipalId' without its $($PermissionKeyWords[$MissingKey])"; Target = $ServicePrincipalId })
+                }
+                continue
+            }
+            foreach ($Assignment in $Assignments) {
                 $Held.Add([PSCustomObject]@{ ClientId = $ServicePrincipalId; Assignment = $Assignment })
             }
         }
         # The rows are built once every service principal is listed, since a resource can be listed
-        # after the client that holds its roles.
-        $Rows = foreach ($HeldAssignment in $Held) {
-            $Assignment = $HeldAssignment.Assignment
-            $ResourceId = Get-IdOrNull -Value $Assignment.resourceId
-            $AppRoleId = Get-IdOrNull -Value $Assignment.appRoleId
-            $Resource = $null
-            if ($ResourceId -and $ServicePrincipals.ContainsKey($ResourceId)) { $Resource = $ServicePrincipals[$ResourceId] }
-            $ResourceDisplayName = $null
-            if ($Resource -and $Resource.DisplayName) { $ResourceDisplayName = $Resource.DisplayName } else { $ResourceDisplayName = Get-TextOrNull -Value $Assignment.resourceDisplayName }
-            $AppRoleValue = $null
-            if ($Resource -and $AppRoleId -and $Resource.RoleValue.ContainsKey($AppRoleId)) { $AppRoleValue = $Resource.RoleValue[$AppRoleId] }
-            [PSCustomObject][ordered]@{
-                servicePrincipalId          = $HeldAssignment.ClientId
-                servicePrincipalDisplayName = $ServicePrincipals[$HeldAssignment.ClientId].DisplayName
-                resourceId                  = $ResourceId
-                resourceDisplayName         = $ResourceDisplayName
-                appRoleId                   = $AppRoleId
-                appRoleValue                = $AppRoleValue
+        # after the client that holds its roles. With an assignment that names no resource or role
+        # (Ruling R-14, above) no row is built and the part stays $null, named below.
+        if (-not $PermissionsWithoutId) {
+            $Rows = foreach ($HeldAssignment in $Held) {
+                $Assignment = $HeldAssignment.Assignment
+                $ResourceId = Get-IdOrNull -Value $Assignment.resourceId
+                $AppRoleId = Get-IdOrNull -Value $Assignment.appRoleId
+                $Resource = $null
+                if ($ResourceId -and $ServicePrincipals.ContainsKey($ResourceId)) { $Resource = $ServicePrincipals[$ResourceId] }
+                $ResourceDisplayName = $null
+                if ($Resource -and $Resource.DisplayName) { $ResourceDisplayName = $Resource.DisplayName } else { $ResourceDisplayName = Get-TextOrNull -Value $Assignment.resourceDisplayName }
+                $AppRoleValue = $null
+                if ($Resource -and $AppRoleId -and $Resource.RoleValue.ContainsKey($AppRoleId)) { $AppRoleValue = $Resource.RoleValue[$AppRoleId] }
+                [PSCustomObject][ordered]@{
+                    servicePrincipalId          = $HeldAssignment.ClientId
+                    servicePrincipalDisplayName = $ServicePrincipals[$HeldAssignment.ClientId].DisplayName
+                    resourceId                  = $ResourceId
+                    resourceDisplayName         = $ResourceDisplayName
+                    appRoleId                   = $AppRoleId
+                    appRoleValue                = $AppRoleValue
+                }
             }
+            $ApplicationPermissions = Get-SortedRow -Row @($Rows) -Key @('servicePrincipalDisplayName', 'resourceDisplayName', 'servicePrincipalId', 'resourceId', 'appRoleId')
         }
-        $ApplicationPermissions = Get-SortedRow -Row @($Rows) -Key @('servicePrincipalDisplayName', 'resourceDisplayName', 'servicePrincipalId', 'resourceId', 'appRoleId')
+        $ServicePrincipalListRead = $true
     } catch {
         Remove-OERErrorRecord -Record $PSItem
         $ApplicationPermissions = $null
@@ -265,7 +317,10 @@ function Get-OERServicePrincipalAccess {
             $Step = "the owners of the service principal '$ServicePrincipalId'"
             $Target = $ServicePrincipalId
             $ServicePrincipalDisplayName = Get-TextOrNull -Value $Listing.displayName
-            foreach ($Owner in (Get-ExpandedEntry -Item $Listing -Key 'owners' -ItemId $ServicePrincipalId -ReReadFormat $ServicePrincipalOwnerReReadFormat)) {
+            $Owners = Get-ExpandedEntry -Item $Listing -Key 'owners' -ItemId $ServicePrincipalId -ReReadFormat $ServicePrincipalOwnerReReadFormat -RequiredKey $OwnerRequiredKey
+            # An owner that even the full read returns without its id cannot become a row naming it.
+            if ((Get-MissingKey -Entry $Owners -Key $OwnerRequiredKey).Count -gt 0) { throw 'Microsoft Graph returned an owner without its id.' }
+            foreach ($Owner in $Owners) {
                 [PSCustomObject][ordered]@{
                     servicePrincipalId          = $ServicePrincipalId
                     servicePrincipalDisplayName = $ServicePrincipalDisplayName
@@ -299,7 +354,10 @@ function Get-OERServicePrincipalAccess {
             $Target = $ApplicationId
             $AppId = Get-IdOrNull -Value $Listing.appId
             $ApplicationDisplayName = Get-TextOrNull -Value $Listing.displayName
-            foreach ($Owner in (Get-ExpandedEntry -Item $Listing -Key 'owners' -ItemId $ApplicationId -ReReadFormat $ApplicationOwnerReReadFormat)) {
+            $Owners = Get-ExpandedEntry -Item $Listing -Key 'owners' -ItemId $ApplicationId -ReReadFormat $ApplicationOwnerReReadFormat -RequiredKey $OwnerRequiredKey
+            # An owner that even the full read returns without its id cannot become a row naming it.
+            if ((Get-MissingKey -Entry $Owners -Key $OwnerRequiredKey).Count -gt 0) { throw 'Microsoft Graph returned an owner without its id.' }
+            foreach ($Owner in $Owners) {
                 [PSCustomObject][ordered]@{
                     applicationId          = $ApplicationId
                     appId                  = $AppId
@@ -318,11 +376,12 @@ function Get-OERServicePrincipalAccess {
         $Causes.Add([PSCustomObject]@{ Cause = "Could not read $($Step): $($PSItem.Exception.Message)"; Target = $Target })
     }
 
-    # 4. The delegated permission grants, named through read 1: read only when read 1 was read. The users
+    # 4. The delegated permission grants, named through read 1: read only when its service principal list
+    # was read, which it can be while the application permissions are not (Ruling R-14). The users
     # a Principal grant names are looked up once, all of them in one call; one the lookup could not read
     # leaves the whole part unread, never written with a name missing for a reason nobody knows.
     $DelegatedPermissionGrants = $null
-    if ($null -ne $ApplicationPermissions) {
+    if ($ServicePrincipalListRead) {
         $Step = 'the delegated permission grants'
         $Target = $GrantListUri
         try {

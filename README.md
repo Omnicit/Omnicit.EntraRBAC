@@ -1095,8 +1095,9 @@ ids and display names. The file is never part of the apply document: `inventory.
 The read costs one request per page of each of three lists (the service principals with their app
 role assignments, the service principals with their owners, and the app registrations with their
 owners) and of the grants, one `directoryObjects/getByIds` per 1,000 users named in grants, and one
-more paged read per object with 20 or more expanded entries: 27 requests for a test tenant of 1,129
-service principals and 67 app registrations. A part is read whole or not at all: one that could not
+more paged read per object with 20 or more expanded entries or with an expanded entry that lacks the
+id its row needs: 29 requests for a test tenant of 1,129 service principals and 67 app registrations.
+A part is read whole or not at all: one that could not
 be read is written `null`, never `[]`, and is named in `IncompleteReads` as
 `servicePrincipalAccess/<part>` and in `InventoryPartial`, and the grants are not read when the
 service principal list they are named through was not. The bundle's `README.md` gives each part's

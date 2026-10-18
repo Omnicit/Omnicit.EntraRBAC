@@ -367,13 +367,16 @@ function Export-OERInventory {
     assignments, the service principals with their owners, and the app registrations with their
     owners) and of the grants, one directoryObjects/getByIds per 1,000 users named in grants, and one
     extra paged read per object with 20 or more expanded entries, since Microsoft Graph documents at
-    most 20 for an expanded directory relationship; measured 27 requests for a tenant of 1,129
-    service principals and 67 app registrations. It is read after the Azure walk and before the
-    bundle is written, under -WhatIf too, where Files lists the file and nothing is written. A part
-    is read whole or not at all: a part that could not be read -- a refused or failed request, an
-    object Microsoft Graph returned without its expanded collection, a service principal listed
-    without its app roles, or, for the grants, a user lookup that failed or the service principal
-    list they are named through -- is written as null, never [], and is named in IncompleteReads as
+    most 20 for an expanded directory relationship, or with an expanded entry that lacks the id its
+    row needs, which Microsoft Graph was measured to return (an app role assignment without its
+    resource id); measured 29 requests for a tenant of 1,129 service principals and 67 app
+    registrations. It is read after the Azure walk and before the bundle is written, under -WhatIf
+    too, where Files lists the file and nothing is written. A part is read whole or not at all: a
+    part that could not be read -- a refused or failed request, an object Microsoft Graph returned
+    without its expanded collection, a service principal listed without its app roles, an entry that
+    even its object's full read returns without the id its row needs, or, for the grants, a user
+    lookup that failed or the service principal list they are named through -- is written as null,
+    never [], and is named in IncompleteReads as
     'servicePrincipalAccess/<part>' (see below), in a clause of the InventoryPartial message with its
     causes, and in README.md under "What this export could not read". A part that could not be read
     never stops another, except that the grants are not read when the service principal list they
@@ -538,7 +541,8 @@ function Export-OERInventory {
     service principals and app registrations, and write them to servicePrincipalAccess.json as
     read-only context (see SERVICE PRINCIPAL ACCESS above). The read adds one request per page of each
     of three lists and of the grants, one directoryObjects/getByIds per 1,000 users named in grants,
-    and one paged read per object with 20 or more expanded entries. A part that could not be read is
+    and one paged read per object with 20 or more expanded entries or with an expanded entry that
+    lacks the id its row needs. A part that could not be read is
     written as null and named in IncompleteReads. It reads Microsoft Graph only, whatever -Include
     names, and needs no ARM token of its own. Without this switch none of it is read and no such file
     is written.

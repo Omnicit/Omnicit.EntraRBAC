@@ -420,8 +420,9 @@ same file. The bundle's `README.md` gives each part's row count under "Service p
 - **What it costs.** One request per page of each of three lists (the service principals with their
   app role assignments, the service principals with their owners, and the app registrations with
   their owners) and of the grants, one `directoryObjects/getByIds` per 1,000 users named in grants,
-  and one more paged read per object with 20 or more expanded entries: 27 requests for a test tenant
-  of 1,129 service principals and 67 app registrations. `Directory.Read.All`, which the export
+  and one more paged read per object with 20 or more expanded entries or with an expanded entry that
+  lacks the id its row needs: 29 requests for a test tenant of 1,129 service principals and 67 app
+  registrations. `Directory.Read.All`, which the export
   already requires, covers every read.
 - **Without the switch** none of it is read or written, and neither `README.md` nor
   `rbac-architect-prompt.md` mentions it.

@@ -845,7 +845,8 @@ named under "What this export could not read"; a part that was read and holds no
 read cost one request per page of each of the three lists (the service principals with their app
 role assignments, the service principals with their owners, and the app registrations with their
 owners) and of the grants, one `directoryObjects/getByIds` per 1,000 users named in grants, and one
-extra paged read per object with 20 or more expanded entries.
+extra paged read per object with 20 or more expanded entries or with an expanded entry that lacks
+the id its row needs.
 '@
         $SpAccessSection = "`n`n" + $SpAccessIntro + "`n`n" + 'The four parts, as this export wrote them:' + "`n`n" + (@($SpAccessBullets) -join "`n")
         $SpAccessFileBullet = @'
