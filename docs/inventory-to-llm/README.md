@@ -389,8 +389,8 @@ is one JSON object with four parts, in this order:
 - `applicationPermissions` -- one row per app role a service principal holds on a resource,
   application permissions among them, read from the client side: `servicePrincipalId`,
   `servicePrincipalDisplayName`, `resourceId`, `resourceDisplayName`, `appRoleId` and
-  `appRoleValue`, which is `null` for a role the resource does not declare or declares without a
-  value, such as the default access role, and for a resource the service principal list did not
+  `appRoleValue`, which is `null` for a role the resource does not declare (the default access
+  role, for one) or declares without a value, and for a resource the service principal list did not
   return (its `resourceDisplayName` is then the assignment's own, else `null`).
 - `delegatedPermissionGrants` -- one row per delegated permission grant: `clientId`,
   `clientDisplayName`, `resourceId`, `resourceDisplayName`, `consentType`, `principalId`,

@@ -10576,14 +10576,14 @@ read of any object with 20 or more. Since live check 1.1 (below) an object is al
 one of its expanded entries lacks the id its row needs. The grants are one paged
 `oauth2PermissionGrants?$top=999` list, and the users they name one `directoryObjects/getByIds` per
 1,000. Measured total: 29 requests, counted in one run of the module after the re-read fix of check
-1.1 (the export of `AdministrativeUnits` and `RoleAssignments` sent 35 requests with the switch
-against 6 without it) -- 12 service principal list pages with their app role assignments, 2 full
-re-reads, 12 pages with owners, 1 app registration page, 1 grant page and 1 `getByIds` -- where the
-per-object reads cost about 2,340. The architect's example, one read per resource that exposes app
-roles (175 calls), was rejected: measured, it is both dearer and incomplete (it misses 2 of 133).
-Cost if wrong: an expanded list capped below 20 for this relationship without saying so would hide an
-object's permissions or owners beyond the cap; the threshold follows the documented cap, and the
-measured maximum was 19.
+1.1 (the export of `AdministrativeUnits` and `RoleAssignments` sent 35 Microsoft Graph requests with
+the switch against 6 without it) -- 12 service principal list pages with their app role assignments,
+2 full re-reads, 12 pages with owners, 1 app registration page, 1 grant page and 1 `getByIds` --
+where the per-object reads cost about 2,340. The architect's example, one read per resource that
+exposes app roles (175 calls), was rejected: measured, it is both dearer and incomplete (it misses 2
+of 133). Cost if wrong: an expanded list capped below 20 for this relationship without saying so
+would hide an object's permissions or owners beyond the cap; the threshold follows the documented
+cap, and the measured maximum was 19.
 
 **Measured live, check 1.1 (2026-10-18, read-only, as `oer-live-cc`), and Ruling R-14.**
 `Export-OERInventory -Include AdministrativeUnits, RoleAssignments -IncludeServicePrincipalAccess`
@@ -10688,13 +10688,14 @@ roles are in the two role assignment files (above). (d) An owner whose answer ca
 granted or revoked, and no validator reads it. (f) The reader was proven with mocked tests. The four
 lists it reads were measured live with its URIs, and through the module by check 1.1's export. The
 full read `servicePrincipals/{id}/appRoleAssignments?$top=999` was sent by check 1.1's diagnostic,
-with that URI but not through the module, for the 2 clients above, and then through the module:
-check 1.1's pre-run after R-14 (2026-10-18, as `oer-live-cc`) made 2 full re-reads of app role
-assignments, of two different service principals, and no owner re-read, and its export wrote 133
-application permission rows with none missing an id or a name and 1 with `appRoleValue` `null`, a
-role its resource (762 app roles) does not declare. The export of `AdministrativeUnits` and
-`RoleAssignments` sent 35 Microsoft Graph requests with the switch against 6 without it, so 29 for
-the service principal access read: the "Measured total" above is that count from one run of the
+with that URI but not through the module, for the 2 clients above, and then through the module: a
+run of check 1.1 on the fixed build (2026-10-18, as `oer-live-cc`), made before the gate with its
+output not kept, made 2 full re-reads of app role assignments, of two different service principals,
+and no owner re-read, and its export wrote 133 application permission rows with none missing an id
+or a name and 1 with `appRoleValue` `null`, a role its resource (762 app roles) does not declare;
+the recorded second run of check 1.1 measured the same counts. The export of `AdministrativeUnits`
+and `RoleAssignments` sent 35 Microsoft Graph requests with the switch against 6 without it, so 29
+for the service principal access read: the "Measured total" above is that count from one run of the
 fixed module, in one tenant. Still not measured live: the re-read of an object with 20 or more
 expanded entries, since no object reached 20, and the owner re-read
 `.../owners?$select=id,displayName,userPrincipalName&$top=999`, never sent with that query string,

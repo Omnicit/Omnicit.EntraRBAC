@@ -351,9 +351,9 @@ function Export-OERInventory {
     JSON object with four parts, in this order: applicationPermissions, one row per app role a
     service principal holds on a resource -- application permissions among them -- read from the
     client side (servicePrincipalId, servicePrincipalDisplayName, resourceId, resourceDisplayName,
-    appRoleId and appRoleValue, which is null for a role the resource does not declare or declares
-    without a value, such as the default access role, and for a resource the service principal list
-    did not return (resourceDisplayName is then the assignment's own, else null);
+    appRoleId and appRoleValue, which is null for a role the resource does not declare (the default
+    access role, for one) or declares without a value, and for a resource the service principal list
+    did not return, whose resourceDisplayName is then the assignment's own, else null);
     delegatedPermissionGrants, one row per delegated permission grant (clientId, clientDisplayName,
     resourceId, resourceDisplayName, consentType, principalId, principalDisplayName and
     principalUserPrincipalName -- the user's display name and user principal name, all three null
@@ -544,10 +544,9 @@ function Export-OERInventory {
     read-only context (see SERVICE PRINCIPAL ACCESS above). The read adds one request per page of each
     of three lists and of the grants, one directoryObjects/getByIds per 1,000 users named in grants,
     and one paged read per object with 20 or more expanded entries or with an expanded entry that
-    lacks the id its row needs. A part that could not be read is
-    written as null and named in IncompleteReads. It reads Microsoft Graph only, whatever -Include
-    names, and needs no ARM token of its own. Without this switch none of it is read and no such file
-    is written.
+    lacks the id its row needs. A part that could not be read is written as null and named in
+    IncompleteReads. It reads Microsoft Graph only, whatever -Include names, and needs no ARM token
+    of its own. Without this switch none of it is read and no such file is written.
 
     .PARAMETER ManagementGroup
     Narrow the Azure scope walk to a single management group branch identified by name or id.
