@@ -631,7 +631,7 @@ so a matcher that stopped matching cannot pass by finding nothing to complain ab
 Sprint 9 step 2; the tenant lookup, the session-uncertain marker and the session reclaim added in
 Sprint 9 step 3; the document tenant comparison added in Sprint 9 step 6b; the reclaim splat key,
 the `Connect-OER` caller rule, the tenant-forward rule and the owner table read as a whole added in
-Sprint 10 step 10). The
+Sprint 10 step 10; the subscription home tenant row added in Sprint 11 step 6c). The
 gates that stand in front of every request -- the Graph SDK session gate in the Graph transport, and
 the sign-in latch gate and the sign-in supersession gate in both transports, all described under
 [#auth-state](#auth-state) -- are only as good as the claim that no request can go around them, and
@@ -645,26 +645,35 @@ wrappers and in `Initialize-OERAuth`; `Get-OERSignInSupersession` only in the tw
 only in the ARM wrapper; `Invoke-RestMethod` only in `Resolve-OERTenantDomain`, and
 `Resolve-OERTenantDomain` only in `Initialize-OERAuth`; `Set-OERSessionUncertain` only in
 `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`; `Get-OERDocumentTenantMismatch` only in
-`Invoke-OERStructure` -- and every listed owner must really call its command, so a rule cannot hold
+`Invoke-OERStructure`; `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree` and
+`Invoke-OERStructure` ([#home-tenant-subscriptions](#home-tenant-subscriptions)) -- and every listed
+owner must really call its command, so a rule cannot hold
 over nothing and a stale owner is a failure. Two of those lists were widened by one owner each in
 Sprint 9 step 2, each widening justified in the gate's own text. Every row of the owner table is
 enforced by one `It` that reads the table as a whole (Sprint 10 step 10, BL-101): for each row, no
-caller outside its owners and every owner really calling it, with at least thirteen rows, one row
-per command (the scan keys its counts on the command, so a second row would replace the first
-one's owners) and a call by its owners found for every row's command. So a row added without an
+caller outside its owners and every owner really calling it, with at least fourteen rows (thirteen
+until Sprint 11 step 6c added the `Get-OERSubscriptionHomeTenant` row and raised the floor with it),
+one row per command (the scan keys its counts on the command, so a second row would replace the
+first one's owners) and a call by its owners found for every row's command. So a row added without an
 `It` of its own is enforced all the same. Before BL-101 each row was enforced only by its own `It`
 and nothing read the table as a whole, so a row without an `It` asserted nothing -- MEASURED in
 Sprint 9 step 6b: the `Get-OERDocumentTenantMismatch` row alone, with its owner list emptied, left
 the gate green, and it got its own `It` then. A row deleted from the table is seen by its own `It`
 only where that `It` also asserts the row's call count -- the `Get-MgContext`, `Lock-OERSignIn`,
-`Unlock-OERSignIn`, `Invoke-MgGraphRequest`, `Invoke-WebRequest` and `Invoke-RestMethod` rows --
+`Unlock-OERSignIn`, `Invoke-MgGraphRequest`, `Invoke-WebRequest`, `Invoke-RestMethod` and, since
+Sprint 11 step 6c, `Get-OERSubscriptionHomeTenant` rows, seven in all --
 since that count then reads `$null` and fails. The `It`s of the other seven rows read those rows
 only through the violation and stale lists, where a missing key joins to an empty string, so they
 stay green: `Register-OERSignInIdentity`, `Get-OERSignInRefusal`, `Get-OERSignInSupersession`,
 `Get-OERSignInIdentity`, `Resolve-OERTenantDomain`, `Set-OERSessionUncertain` and
 `Get-OERDocumentTenantMismatch` (all thirteen measured, BL-101, each row deleted with a valid row
-added). For those seven the thirteen-row floor is what sees a deletion, and a deletion made in the
-same edit as a new row keeps the count, so nothing sees it.
+added; the fourteenth, Sprint 11 step 6c, deleted from a scratch copy turns its own `It` red, since
+that `It` asserts the call count first). For those seven the row floor is what sees a deletion, and
+a deletion made in the same edit as a new row keeps the count, so nothing sees it. So the floor
+moves with every row added: when Sprint 11 step 6c added the fourteenth row, a floor left at
+thirteen would have let one of those seven rows be deleted unseen, and at fourteen deleting the
+`Get-OERDocumentTenantMismatch` row from a scratch copy turns the whole-table `It` red (mutation
+R1G4 in [#home-tenant-subscriptions](#home-tenant-subscriptions)).
 The per-row `It`s stay and carry each row's reason; a new row still gets one for its explanation,
 but no longer needs one to be enforced.
 `Initialize-OERAuth` reads the latch once, before `Lock-OERSignIn`, to refuse a SIGN-IN under a
@@ -1436,15 +1445,33 @@ access here. The ruling fixes it in the texts and the bundle README, not by filt
 by tenant: the walk's scopes stay what they are for every Azure file, so the Lighthouse read covers
 what the role assignment read covers, and a row's direction is decidable from its
 `managedByTenantId` against the `tenantId` of `inventory.json` (the Graph token's tenant, which
-`Export-OERInventory` already holds as `$DocumentTenantId`). The warning names no direction;
-`Get-OERInventoryReadme -TenantId` (optional; `Export-OERInventory` passes `$DocumentTenantId`)
-marks a bullet whose `managedByTenantId` equals it, letter case ignored and never when the tenant is
-blank, as access this tenant holds over another tenant's subscription or resource group; and the
-export help, the prompt, README.md, the about topic and `docs/inventory-to-llm/README.md` say so in
+`Export-OERInventory` already holds as `$DocumentTenantId`). The warning named no direction;
+`Get-OERInventoryReadme -TenantId` (optional; `Export-OERInventory` passed `$DocumentTenantId`)
+marked a bullet whose `managedByTenantId` equalled it, letter case ignored and never when the tenant
+was blank, as access this tenant holds over another tenant's subscription or resource group; and the
+export help, the prompt, README.md, the about topic and `docs/inventory-to-llm/README.md` said so in
 one sentence each. Cost if wrong (the architect prefers this tenant's own subscriptions only):
 carrying each subscription's tenant through the scope tree and skipping the foreign ones is a later
 step. The reads from a managing tenant are unmeasured (known limit (g)), so the sprint's C-check
 records it.
+
+*What BL-150 changed (Sprint 11 step 6c, decision A19).* The architect took the later step R-12
+named: the export's Azure walk no longer reaches a subscription another tenant delegated to this
+one. `Get-OERSubscriptionHomeTenant` keeps every listed subscription whose home tenant (ARM's
+subscription `tenantId`) is not the tenant of the session's Microsoft Graph token out of the walk,
+so the Lighthouse read is never made at such a subscription
+([#home-tenant-subscriptions](#home-tenant-subscriptions)). The mark is removed with it (that step's
+Ruling R-9): `Get-OERInventoryReadme` no longer takes `-TenantId`, `Export-OERInventory` no longer
+passes `$DocumentTenantId` to it, and no bullet is marked. Microsoft Learn ("Onboard a customer to
+Azure Lighthouse", Troubleshooting) says "The `managedbyTenantId` value must not be the same as the
+tenant ID for the subscription being onboarded", so in the walk's own subscriptions no delegation
+names this tenant as its managing tenant, and a mark could never fire; its text would be false if
+it did. The bundle README, the export help, the prompt, README.md, the about topic and
+`docs/inventory-to-llm/README.md` now say that every row is access another tenant holds over a
+subscription or resource group of this tenant. The rows of the mutation tables below that test the
+mark (three "Final fix wave" rows of the `Get-OERInventoryReadme` table) and the README handed the
+export's tenant (one of the `Export-OERInventory` table) record guards that BL-150 removed together
+with their tests; they stay as the record of step 6b.
 
 **Known limits.**
 
@@ -1478,6 +1505,15 @@ records it.
   role assignment walk already skips such a scope. If the read answers, it may also return that
   customer's delegations to a third managing tenant; such a row carries no mark, although it is
   neither access over this tenant nor access this tenant holds. Not measured either.
+
+  *What BL-150 changed.* The export no longer makes these reads: since Sprint 11 step 6c the walk
+  does not enter a subscription whose home tenant is another tenant, so neither the read against a
+  delegated customer subscription nor a row of that customer's delegations to a third tenant can
+  reach `lighthouseDelegations.json`. Such a subscription is named in the bundle README section
+  "Subscriptions delegated from another tenant (not read)" instead, with one warning. What stays
+  unmeasured is whether a managing tenant's subscription list reports a delegated customer
+  subscription with the customer's `tenantId`, on which that selection rests
+  ([#home-tenant-subscriptions](#home-tenant-subscriptions), R-1).
 
 **Mutation proofs.** Each mutation was applied to the source, the module built, the covering tests
 run and seen red, and the file restored, with `git status` clean after each; "N red" is the number of
@@ -1604,6 +1640,413 @@ also turned export tests red):
   skips a null cause, and the list is read nowhere else.
 - Not mutated, since it cannot differ: `-ceq` against `-eq` on the fixed literal
   `<subscriptions: the listing failed>`.
+
+## home-tenant-subscriptions
+
+Sprint 11 step 6c (BL-150, decision A19) kept `Export-OERInventory`'s Azure walk and
+`Invoke-OERStructure`'s Azure sections in the subscriptions of the session's own tenant. This anchor
+records the problem, the measurement, the decision, how it works, the rulings with what each costs if
+it is wrong, the known limits and the mutation proofs. `Get-OERSubscriptionHomeTenant` is the single
+owner of the decision (CLAUDE.md, Code Style), and gate 10 of `tests/QA/sourcehygiene.tests.ps1`
+holds it to its two callers ([#static-source-gates](#static-source-gates)). One ErrorId was added,
+`SubscriptionTenantMismatch` (category `InvalidOperation`); no public parameter, no document key and
+no property of a public output object was added, and no public cmdlet other than `Export-OERInventory`
+and `Invoke-OERStructure` changed in behaviour (the help of `Get-OERInventory` changed too).
+
+**The problem (BL-150).** Sprint 11 step 6b's whole-branch review found that a managing (service
+provider) tenant's subscription list also returns the customer subscriptions delegated to it through
+Azure Lighthouse (inferred from Microsoft Learn, "Cross-tenant management experiences"; not measured),
+and that the export's walk then entered them: role assignments, role management policies, PIM
+eligibilities and Lighthouse rows of another tenant's subscription reached this tenant's bundle, and
+a document or a proposal made from that bundle could make `Invoke-OERStructure` write, and under
+`-Prune` remove, role assignments in the customer's subscription. Step 6b fixed only the texts and
+marked a delegation this tenant manages in the bundle README
+([#lighthouse-delegations](#lighthouse-delegations), R-12); carrying each subscription's tenant
+through the scope tree and skipping the foreign ones was left to a later step. This is that step.
+
+**The measurement (2026-10-15, live, reads only, as `oer-live-cc`).** No tenant or subscription value
+is recorded here.
+
+- M.0: the session's `TokenTenantId` is a GUID, the test tenant, and `ArmTokenTenantId` equals it.
+- M.1: Subscriptions - List (api-version `2022-12-01`) answers `200` with one subscription, whose keys
+  are `authorizationSource`, `displayName`, `id`, `managedByTenants`, `state`, `subscriptionId`,
+  `subscriptionPolicies` and `tenantId`. `tenantId` is a GUID equal to `TokenTenantId`; there is no
+  `homeTenantId` field in the REST answer; `managedByTenants` is `[]`.
+- M.2: Subscriptions - Get of the test subscription answers the same keys and values.
+- M.3: Subscriptions - Get of a made-up subscription id answers `404` `SubscriptionNotFound`; M.4: a
+  role assignment read with `atScope()` at that subscription answers `404` `SubscriptionNotFound`
+  too.
+- M.5: `Get-OERSubscription` returns a `TenantId` equal to `TokenTenantId`.
+- In all: 5 requests, 0 writes, 0 token calls after the sign-in; the leak check found nothing.
+
+Microsoft Learn ("Onboard a customer to Azure Lighthouse", Troubleshooting) adds: "The
+`managedbyTenantId` value must not be the same as the tenant ID for the subscription being
+onboarded." So in the tenant's own subscriptions no delegation names this tenant as its managing
+tenant.
+
+**The decision (A19).** The export's Azure walk never enters a subscription whose home tenant is not
+the session's tenant (`TokenTenantId`). Such a subscription is named in the bundle README as delegated
+from another tenant, with ONE warning, and is not read -- no role assignments, policies, eligibility
+or Lighthouse rows from it; that is a deliberate selection, not an unread collection. A subscription
+whose home tenant cannot be decided (the field is missing or the read fails) is unread: named in
+`IncompleteReads`, the export partial, nothing from it written. `Invoke-OERStructure` never writes,
+and never prunes, a role assignment or role management policy at a scope in a subscription whose home
+tenant is not the session's; the check is made once per subscription and run, before the first write
+or read for a scope there; the row is `Failed` with ONE new ErrorId for the refusal, and nothing is
+written. When the home tenant cannot be decided the row is `Failed` with the error as itself. The
+public cmdlets (`New-OERRoleAssignment`, `Remove-OERRoleAssignment` and the rest, `Get-OERInventory`
+included) do NOT change.
+
+**How it works.**
+
+- **The owner.** `Get-OERSubscriptionHomeTenant` returns one object (`Scope`, `SubscriptionId`,
+  `DisplayName`, `Verdict`, `HomeTenantId`, `SessionTenantId`, `Reason`, `ErrorRecord`) with one of
+  four verdicts: `NoSubscription` (a management group or the root scope `/`; nothing is read),
+  `Home`, `Foreign`, or `Undecided` (the scope breaks a spelling rule, the scope could not be
+  resolved, the read failed, the subscription gave no `tenantId` that is a GUID, or the session holds
+  no Graph token whose tenant ID is a GUID). The session's tenant is read through
+  `Get-OERInventoryTenantId`, and the two are compared with `-eq` only when both pass `Test-OERGuid`.
+  `-Subscription` decides a listed subscription from the `TenantId` the list returned, with no
+  request. `-Scope` takes a scope in the document's syntax: an `mg:` form is `NoSubscription` with no
+  resolution; any other form for which `Get-OERScopeSpellingProblem` returns a problem (only a stray
+  `/` for a `sub:` or `subscription:` form) is `Undecided` with a `SubscriptionTenantMismatch` record
+  that names the rules, and nothing is resolved or read for it (R-27); any other form is resolved
+  by `Resolve-OERScope` (a subscription display name costs the subscription list) and made canonical;
+  a scope inside `/subscriptions/{id}` costs one GET of the subscription (none without a session
+  tenant). `-Cache` keeps what one read gave, a failed read included, under the lower-cased
+  subscription id. A `Foreign` or `Undecided` verdict carries a `Reason` and an `ErrorRecord`: the
+  resolver's or the read's own record, or a new `SubscriptionTenantMismatch` record (target the scope
+  as given) when nothing failed. The owner never throws for a scope it cannot decide and never writes
+  an error record; both catches scrub the record first.
+- **The tree.** `Resolve-OERInventoryScopeTree` decides every listed subscription with
+  `-Subscription` and walks only a `Home` one: a `Foreign` one goes to `ForeignSubscriptions`, an
+  `Undecided` one to `UndecidedSubscriptions`, and neither reaches `Scopes` or the hierarchy. A
+  `-Scope` costs one owner call: kept verbatim when `NoSubscription` or `Home`, and otherwise named in
+  one of the two lists with the scope as given, `Scopes` then empty. The tree writes one warning per
+  call naming every undecided subscription with its reason; the foreign ones it leaves to the caller.
+- **The export.** `Export-OERInventory` writes ONE warning that names the foreign subscriptions,
+  after the Lighthouse warning and before the bundle's `ShouldProcess`, so `-WhatIf` shows it and a
+  Stop warning preference stops the export before the bundle is written. The README lists them in a
+  section "Subscriptions delegated from another tenant (not read)", directly after the Lighthouse
+  section. A foreign subscription alone makes no bundle partial. An undecided one is named in
+  `IncompleteReads` as `subscriptionHomeTenant at <scope>`, after the role selection entries and
+  before the Lighthouse ones, in the README under the label "Azure subscription whose tenant could not
+  be read", and in a clause of the `InventoryPartial` message with its causes
+  (`Format-OERUnreadCauseClause`). Of the subscriptions, `ScopesEnumerated` counts only the ones
+  walked. The 6b
+  README mark is removed ([#lighthouse-delegations](#lighthouse-delegations), R-12).
+- **The engine.** `Invoke-OERStructure` keeps one cache per document. A `roleAssignments` entry is
+  checked after its scope was resolved by the pre-pass (an entry whose scope could not be resolved
+  still takes the existing branch first), with the resolved scope. A `roleManagementPolicies` entry
+  is checked with its document scope, and an entry the check lets through is applied at the scope the
+  check resolved (`Sync-OERStructureRoleManagementPolicy -ResolvedScope`, private), so the policy read
+  and written is the one the check decided on; an `mg:` entry is resolved by the handler as before. A
+  `Foreign` or `Undecided` verdict publishes the verdict's record once and adds one `Failed` row (the
+  entry's label, and the Detail of the owner's `Reason`, its closing period dropped, followed by a
+  fixed sentence), and the entry is never dispatched: no principal or role lookup, no read at the
+  scope, no write. Every entry at one scope shares the verdict of its subscription, so a refused
+  scope's prune pass never runs. No `ShouldProcess` is involved, so `-WhatIf` and a real run report
+  the same row and send the same read of the subscription. A management group or the root scope
+  costs no subscription read.
+- **The gate.** Gate 10's owner table holds the row `Get-OERSubscriptionHomeTenant` with the owners
+  `Resolve-OERInventoryScopeTree.ps1` and `Invoke-OERStructure.ps1`; its own `It` asserts the call
+  count first, so a deleted row turns it red, and the whole-table floor rose to fourteen rows
+  ([#static-source-gates](#static-source-gates)).
+
+**Rulings.** Each with what it costs if it is wrong.
+
+- **R-1 (the field).** A subscription's home tenant is ARM's subscription `tenantId` (Subscriptions -
+  Get and List, `2022-12-01`, documented as "The subscription tenant ID"; Az PowerShell's
+  `HomeTenantId` and the Azure CLI's `homeTenantId` map to it; the REST answer has no `homeTenantId`,
+  measured), compared without regard to letter case with `TokenTenantId`, both canonical GUIDs.
+  `managedByTenants` is not consulted: it names the managing tenants, and Learn's own list example
+  shows per-subscription `tenantId` values that differ while `managedByTenants` lists the managers.
+  If wrong (a managing tenant's list reports the managing tenant as the `tenantId` of a delegated
+  subscription), the walk would read such a subscription as its own; the sprint's C-check P-15 in a
+  managing tenant settles it, and the extra signal would be "the session tenant is listed in
+  `managedByTenants`", one condition in the owner.
+- **R-2 (one owner).** One private owner decides for the tree and the engine and reads the session's
+  tenant through `Get-OERInventoryTenantId`: one rule, one place. If wrong, a second helper.
+- **R-3 (no session tenant).** With no state, or a `TokenTenantId` that is not a GUID, every
+  subscription is `Undecided` and nothing is read: the safer direction, since a tenant cannot be
+  shown. If wrong, such a session exports no Azure subscription and applies no Azure entry in a
+  subscription until its token names a tenant ID.
+- **R-4 (a failed read is cached).** The read of a subscription is cached per run with its failure:
+  "one check per subscription and run". If wrong, one transient failure fails every entry of that
+  subscription in the run; re-run the document.
+- **R-5 (a cache per document).** The engine's cache is per document, so a second piped document
+  checks again, since the session may change between documents. If wrong, one extra GET per
+  subscription per piped document.
+- **R-6 (one ErrorId).** `SubscriptionTenantMismatch` (`InvalidOperation`) is the one new ErrorId
+  (A9): for a foreign subscription, and for an undecided one where nothing failed (no `tenantId`, no
+  session tenant, or a scope a document could not declare, R-27), as `DocumentTenantMismatch` covers
+  "cannot be compared"; a failed read or a failed scope resolution is published as itself (A19). If
+  wrong, a second ErrorId for "cannot be decided".
+- **R-7 (where an undecided subscription is named).** In `IncompleteReads` as
+  `subscriptionHomeTenant at <scope>`, after the role selection entries and before the Lighthouse
+  entries (which stay last), with its own `InventoryPartial` clause and causes and one warning from
+  the tree; not in `SkippedScopes` or `SkippedEligibilityScopes` (the specification says
+  `IncompleteReads`; one name per gap). If wrong, two more list appends.
+- **R-8 (the hierarchy).** Foreign and undecided subscriptions are left out of `scopeHierarchy.json`
+  and `ScopesEnumerated`: the hierarchy describes this tenant's tree, and a customer's subscription
+  name stays out of this tenant's bundle files except the README section. If wrong, one filter in the
+  tree.
+- **R-9 (the 6b mark is removed).** The README mark of step 6b (its R-12) and
+  `Get-OERInventoryReadme -TenantId` are removed: Learn says a delegation's `managedByTenantId` must
+  not be the subscription's own tenant, and the walk now reads only own subscriptions, so the mark can
+  never fire and its text would be false if it did. If wrong, one parameter and one branch come back.
+- **R-10 (the engine resolves a policy scope), as amended by R-17.** The engine resolves a
+  `roleManagementPolicies` scope through the owner (a subscription display name costs the
+  subscription list) and hands the handler the resolved scope (`-ResolvedScope`, private), so the
+  policy read and written is the one the check decided on. A policy scope that cannot be resolved is
+  now `Failed` by the engine with the resolver's record as itself, where the handler's
+  `Get-OERRoleManagementPolicy` used to publish `InvalidScope`. No ErrorId is added, removed or
+  renamed by this, but the ErrorId published for that case changed (R-17). If wrong, the engine wraps
+  the resolver's record as `InvalidScope` (one constructor); raised to the architect.
+- **R-11 (the public cmdlets are unchanged), as narrowed by R-24.** `Get-OERInventory` and every other
+  public cmdlet are unchanged (A19): `Get-OERInventory` reads a scope it is given even in another
+  tenant's subscription, and the apply refuses such a document's role assignment and policy rows in
+  that subscription; a row it carries at a management group above that subscription, read as
+  inherited, lies in no subscription, is not checked, and is applied like any management group row in
+  the session's tenant (limit (c)). If wrong, `Get-OERInventory` gets the owner (one GET per call) in a
+  later step.
+- **R-12 (CLAUDE.md).** CLAUDE.md gets the single-owner bullet and the gate-10 sentence, since it
+  carries every owner rule, although the specification's list of texts does not name it. If wrong,
+  one bullet comes out.
+- **R-16 (the message names its commands).** The plan's `SubscriptionTenantMismatch` message said
+  the whole module reads and writes only in a subscription it can show to belong to the session's
+  tenant, which A19 contradicts (the public cmdlets are unchanged). The message names
+  `Invoke-OERStructure` and `Export-OERInventory` instead. Its first form here said that both "read
+  and write a role assignment or a role management policy only in a subscription they can show to
+  belong to" the session's tenant; the final whole-branch review reworded it (M-1), since the engine
+  also reads and writes at a management group, which lies in no subscription, and the export writes
+  no role assignment. It now reads: "... Invoke-OERStructure reads and writes, and
+  Export-OERInventory reads, a role assignment or a role management policy in a subscription only
+  when they can show that the subscription belongs to the tenant the session's Microsoft Graph token
+  was issued for -- not in one another tenant delegated to it, ...". The engine's refusal Detail
+  ("the apply engine reads and writes a role assignment or a role management policy in a subscription
+  only when it can show that the subscription belongs to this session's tenant, ...") was reworded the
+  same way. The specification outranks the plan's wording, and the 6b final review caught the same
+  kind of overclaim. If wrong, one sentence of the message again.
+- **R-17 (a policy scope that cannot be resolved).** The step's own decision, not a stop: A19 says a
+  row whose home tenant cannot be decided is `Failed` with the error as itself, and a resolver's
+  failure is reported as itself, so a `roleManagementPolicies` scope that cannot be resolved (and any
+  Azure entry whose subscription read fails) is `Failed` before the handler runs, with that record,
+  in a plan and in a run alike. At the base of the step (`cd7e6a3`) such a policy entry behaved
+  otherwise, as the Task 2 review measured: in a run it was `Failed` "failed to update role
+  management policy", and `Invoke-OERStructure` published `InvalidScope` after two reads of the
+  subscription list; under `-WhatIf` it was `Skipped` "would update ...". Now it costs one read of the
+  list, and the published ErrorId is the resolver's: `AmbiguousName` for a display name two
+  subscriptions share, or, for a name nobody carries, the resolver's plain message, which a thrown
+  string makes its own id. This is recorded here and in the pull request, not in the release note,
+  whose budget gives the step about 200 characters. If wrong, one sentence in `[Unreleased]` when a
+  later step rewrites the section.
+- **R-18 (an identity with a resource group role only).** Such an identity may be refused
+  Subscriptions - Get; under A19 its role assignment and policy entries would then be `Failed` with
+  that refusal as itself, and an export `-Scope` by it would be unread (partial). It cannot be
+  measured here without changing an identity's roles, so it is a known limit (below), a question for
+  the operator in the sprint's C-check P-15, and a finding; raised to the architect. If wrong (such
+  an identity is refused), an operator whose roles cover only resource groups loses the apply of
+  Azure entries until the owner learns another signal.
+- **R-19 (the refusal's shape).** The engine refuses a verdict that is `Foreign` or `Undecided`, as
+  the plan wrote it; the owner returns exactly four verdicts, pinned by its own tests. If wrong, a
+  fifth verdict added later passes the engine unchecked until the change that adds it to the owner
+  adds it here too.
+- **R-20 (no test of the owner inside a latched command).** The owner's GET goes through
+  `Invoke-OERArmRequest`, whose latch gate the transport suites and gate 10 hold, so no test runs the
+  real owner inside a command whose sign-in was refused. If wrong, a refused command's Azure entries
+  fail with `SignInRefused` (the Task 2 implementer saw exactly that in two transport scenarios)
+  without a test pinning it.
+- **R-24 (a management group row read through another tenant's subscription).** R-11 leaves a gap
+  open, and this ruling keeps it open in this step. `Get-OERRoleAssignment` without a filter returns
+  the assignments that apply at a scope, inherited ones included, and `Get-OERInventory` leaves out
+  only the root scope and the scopes no document can declare, so a document `Get-OERInventory` made at
+  a subscription of another tenant can carry role assignment rows at management groups above that
+  subscription. Such a row lies in no subscription: the owner rates it `NoSubscription`, and the
+  engine dispatches it like any management group row. Its principal is an object of the customer's
+  tenant, which the directory of the session's tenant does not return, so `Get-OERInventory` writes
+  it by its object id with `principalStatus` (when that lookup was read; a lookup that failed is named
+  unread instead), and the engine never creates such an entry (`Sync-OERStructureRoleAssignment`,
+  step 5a: `Skipped`, with no `ShouldProcess`). The prune pass at that scope still runs under
+  `-Prune`, so the realistic effect is the prune half: if the session's tenant holds a management
+  group of that id, the role assignments defined there that the document does not declare are
+  removed, unless an entry at that scope whose role or principal cannot be resolved there withholds
+  the prune. Which management group Azure Resource Manager reaches under the session's token is not
+  measured. If wrong (the step should close it), the engine also refuses a management group row whose
+  name is not in the session tenant's hierarchy: a new check the architect decides (R-28).
+- **R-26 (an export -Scope that cannot be resolved).** An export `-Scope` the resolver cannot resolve
+  is named `subscriptionHomeTenant at <scope as given>` in `IncompleteReads` and no longer in
+  `SkippedScopes`/`SkippedEligibilityScopes`, and the Lighthouse reader is not asked about it -- A19:
+  a scope whose subscription cannot be told is unread and named in `IncompleteReads`, one name per gap
+  (R-7); the export is partial either way. If wrong, the `-Scope` goes back to `SkippedScopes` in a
+  later step.
+- **R-27 (a scope a document could not declare).** A raw `-Scope` (one starting with `/`) for which
+  `Get-OERScopeSpellingProblem` returns any problem is `Undecided` with a `SubscriptionTenantMismatch`
+  record naming the problem, and nothing is resolved or read -- the ARM transport's `System.Uri`
+  turns `.`, `..`, `%2e` and `\` into another path than the text the owner decided on, and the
+  spelling owner already refuses exactly these spellings in a document, so the owner decides only on
+  text that is the path sent. If wrong, an export `-Scope` with a spelling a document could not
+  declare (a trailing `/`, for example), which was read before, is now unread (partial) until written
+  without it. The check stands after the owner's `mg:` early return and before the resolution; for a
+  `sub:` or `subscription:` form the spelling owner reports only a stray `/`, which makes that form
+  `Undecided` the same way. The engine is not affected, since the validator refuses these spellings
+  in a document first; the final whole-branch review found the gap in the export (an export `-Scope`
+  of `/subscriptions/<own>/../../subscriptions/<foreign>` was rated `Home` on the own subscription's
+  read and then read at the foreign one, and a management group path with `..` segments was rated
+  `NoSubscription` with no read).
+- **R-28 (the R-24 path stays open).** The R-24 `-Prune` path is an old path the step does not
+  worsen (it closed the same document's subscription half); it is reported to the architect with a
+  suggested follow-up: refuse a management group row whose id is not in the session tenant's
+  hierarchy, or keep `Get-OERInventory`'s inherited rows above its scope out of the document.
+- **R-29 (an export at the root scope).** A known limit, (h) below: a `/` `-Scope` export reads at the
+  root scope with no `atScope()` filter, as before; whether Azure Resource Manager returns rows of
+  delegated subscriptions there is not measured (it needs access at the root scope the test identity
+  does not hold).
+
+**Known limits.**
+
+- (a) R-1 is not measured in a managing tenant: no tenant here manages another. That a managing
+  tenant's subscription list reports a delegated customer subscription with the customer's
+  `tenantId` rests on Learn; the sprint's C-check P-15 records it.
+- (b) R-18 is not measured: whether an identity whose Azure role covers only a resource group is
+  refused Subscriptions - Get. The live checklist of the step covers only an identity with no Azure
+  role at all. If it is refused, such an identity's role assignment and policy entries are `Failed`
+  with that refusal, and its export `-Scope` is unread.
+- (c) The public cmdlets do not check (A19, R-11, R-24). `New-OERRoleAssignment`,
+  `Set-OERRoleManagementPolicy`, `Get-OERInventory` and the rest use the scope they are given, so a
+  write through them still reaches a delegated subscription. A document `Get-OERInventory` made at
+  such a subscription is refused row by row when it is applied, but only for its rows in that
+  subscription. Its role assignments are read with no filter, which returns the inherited ones too,
+  and only the root scope and the scopes no document can declare are left out, so it can also carry
+  rows at management groups above that subscription. Such a row lies in no subscription, and the
+  engine does not check it. Its principal is an object of the customer's tenant, which the session
+  tenant's directory does not return, so `Get-OERInventory` writes it with `principalStatus` (when the
+  lookup was read) and the engine never creates it; but under `-Prune` the engine still prunes at
+  that scope, so if the session's tenant holds a management group of that id, the role assignments
+  defined there that the document does not declare are removed (unless an entry there whose role or
+  principal cannot be resolved withholds the prune). Which management group Azure Resource Manager
+  reaches is not measured (R-24, R-28).
+- (d) A session whose token names no GUID tenant exports no subscription and applies no
+  `roleAssignments` or `roleManagementPolicies` entry in a subscription (R-3).
+- (e) A failed subscription read is cached for the document (R-4), so one transient failure fails
+  every entry in that subscription until the document is applied again.
+- (f) An export `-Scope` that `Resolve-OERScope` cannot resolve -- for example a raw scope that does
+  not start with `/`; a `sub:` name nobody carries, or one two subscriptions share, is named the same
+  way -- is now named `subscriptionHomeTenant at <scope>`, with the resolver's message in its cause,
+  and makes the bundle partial; before the step it reached `Get-OERInventory` and was skipped, which
+  made the bundle partial too (R-26). So is an export `-Scope` with a spelling no document can declare
+  (R-27): nothing is resolved or read for it, and its cause names the rules it breaks; one written with
+  a trailing `/` was read before the step. Such a scope need not lie in a subscription at all -- a
+  management group path with a stray `/` is refused the same way -- yet the tree's warning, the
+  `InventoryPartial` clause and the README label still call it a subscription whose tenant could not be
+  read. The export help names both cases among the causes.
+- (g) The engine's two owner calls stand outside the per-entry `try`, where the plan placed them. An
+  owner that threw would end the document instead of failing one row; it cannot throw for any scope
+  the validator admits, since every resolution and read sits in the owner's own `try`.
+- (h) A `/` `-Scope` export reads at the root scope with no `atScope()` filter, as before (R-29);
+  whether Azure Resource Manager returns rows of delegated subscriptions there is not measured (it
+  needs access at the root scope the test identity does not hold).
+
+**Mutation proofs.** Each mutation was made in a copy of `source/` in a scratch folder and run with
+the dev-mode test harness against the named test files, never in the worktree; a gate mutation ran
+the copied gate in a scratch project root. "N red" is the number of failed tests in that run. Every
+mutant turned at least one test red; for two of them, M8 and M6, one case is equivalent, which no test
+can tell apart (see below the second table).
+
+Task 1 (the owner, the tree, the README and the export; lines at `637c4ba`, M30 at `fe6e64c`, and
+the rows F1a, F1b, F6a and F6b of the final fix wave at `89d9c35`).
+Prefixes: HT is the Describe `Get-OERSubscriptionHomeTenant (BL-150, A19)`, TR is
+`Resolve-OERInventoryScopeTree`'s Describe "only the home tenant's subscriptions are walked", EX is
+`Export-OERInventory stays in the home tenant's subscriptions (BL-150, A19)` and RM is
+`Get-OERInventoryReadme (subscriptions delegated from another tenant, BL-150, A19)`; ST, in the F
+rows, is the engine's Describe named under the second table.
+
+| Id | Guard (file:line) | Mutant | Test that went red | Outcome |
+|---|---|---|---|---|
+| M01 | `Get-OERSubscriptionHomeTenant.ps1:158` | the no-session early return removed, so a GET goes out | HT "sends no request and is Undecided with the no-session reason when ..." (four cases), and the `-Subscription` set's no-session test | 5 red |
+| M01b | `Get-OERSubscriptionHomeTenant.ps1:158` | a GET sent inside the no-session branch, verdict unchanged | the same five, each on its `-Times 0` assertion alone | 5 red |
+| M02 | `Get-OERSubscriptionHomeTenant.ps1:192` | the GUID test of `tenantId` removed | HT "is never Home and is Undecided with the no-field reason when the tenantId is ..." (seven cases), and the `-Subscription` set's blank `TenantId` test | 8 red |
+| M03 | `Get-OERSubscriptionHomeTenant.ps1:198` | `-eq` made `-ceq` | HT "is Home when ... in any letter case" (upper case), and the `-Subscription` set's Home test | 2 red |
+| M04 | `Get-OERSubscriptionHomeTenant.ps1:169` | the cache read removed | HT "reads a subscription once per cache, however its id is written, ...", and "caches a failed read: a second call sends no GET and gives the same record" | 2 red |
+| M05 | `Get-OERSubscriptionHomeTenant.ps1:179` | the cache write removed | the same two cache tests | 2 red |
+| M06 | `Get-OERSubscriptionHomeTenant.ps1:179` | a failed read not cached | HT "caches a failed read: ..." | 1 red |
+| M07 | `Get-OERSubscriptionHomeTenant.ps1:132` | the `mg:` early return removed | HT "is NoSubscription with no request for an mg: form", in lower and in upper case | 2 red |
+| M08 | `Get-OERSubscriptionHomeTenant.ps1:176` | the scrub removed from the read's catch | HT "is Undecided with the read's own record, scrubbed first, when the read of the subscription fails" | 1 red |
+| M09 | `Get-OERSubscriptionHomeTenant.ps1:141` | the scrub removed from the resolution's catch | HT "is Undecided with the resolver's own record, scrubbed first, and sends no GET when the scope cannot be resolved" | 1 red |
+| M10 | `Get-OERSubscriptionHomeTenant.ps1:199,203` | Foreign and Home swapped | every Home and Foreign verdict test of the `-Scope`, cache and `-Subscription` sets | 14 red |
+| M28 | `Get-OERSubscriptionHomeTenant.ps1:148` | the `NoSubscription` test loosened, so `/` and a management group path are read as subscriptions | HT "is NoSubscription with no request for the root scope", and for a management group path | 2 red |
+| M29 | `Get-OERSubscriptionHomeTenant.ps1:168` | the cache key not lower-cased | HT "reads a subscription once per cache, however its id is written, ..." (called twice) | 1 red |
+| M30 | `Get-OERSubscriptionHomeTenant.ps1:95` | the message's old subject put back (the module, not the two commands; R-16) | the fifteen tests that assert the whole message | 15 red |
+| F1a | `Get-OERSubscriptionHomeTenant.ps1:153` | the spelling check removed (`if ($false)`; R-27) | HT "is Undecided with a SubscriptionTenantMismatch record naming ..., and resolves and reads nothing, for ..." (seven cases: `..` from the own subscription, `..` from a management group path, `%2e%2e`, backslash `..`, a trailing `/`, a doubled `/`, a `sub:` form with a trailing `/`) and "takes the spelling verdict before the session is asked ..."; TR "walks nothing in a -Scope spelled so that the request would not reach it as written ..." (three cases); EX "reads nothing at a -Scope whose subscription cannot be told from its text" (the spelling case) | 12 red |
+| F1b | `Get-OERSubscriptionHomeTenant.ps1:143` | the spelling check taken before the `mg:` early return | HT "leaves an mg: form to its own early return: NoSubscription, with no spelling verdict and no request" | 1 red |
+| F6a | `Get-OERSubscriptionHomeTenant.ps1:166` | the resolution's catch returns `Home` instead of `Undecided` | HT "is Undecided with the resolver's own record, ... when the scope cannot be resolved"; TR "walks nothing in a -Scope that cannot be resolved, ..."; EX "reads nothing at a -Scope whose subscription cannot be told from its text" (the unresolved case); ST "fails a roleManagementPolicies entry whose subscription name the subscription list does not resolve, ..." and the shared display name test (R-17) | 5 red |
+| F6b | `Get-OERSubscriptionHomeTenant.ps1:210` | the failed-read branch (`-not $Facts.Read`) removed | HT "is Undecided with the read's own record, scrubbed first, when the read of the subscription fails" and "caches a failed read: ..."; TR "walks nothing in a -Scope whose subscription could not be read, ..."; ST "fails the entries with the error of a subscription read that failed, as itself, ..." | 4 red |
+| M11 | `Resolve-OERInventoryScopeTree.ps1:166` | a foreign listed row added to `Scopes` too | TR "walks the own subscription only, names the foreign and the undecided one, warns once, and sends no request", for the full tree and a `-ManagementGroup` branch | 2 red |
+| M12 | `Resolve-OERInventoryScopeTree.ps1:175` | an undecided listed row added to `Scopes` too | the same two, and TR "walks no listed subscription, reads none, and names every one undecided in one warning when the session holds no tenant" | 3 red |
+| M12b | `Resolve-OERInventoryScopeTree.ps1:103` | an undecided `-Scope` row added to `Scopes` too | TR "walks nothing in a -Scope whose subscription could not be read, names it undecided and warns once" | 1 red |
+| M13 | `Resolve-OERInventoryScopeTree.ps1:166` | the hierarchy keeps a foreign row | TR "walks the own subscription only, ...", both cases | 2 red |
+| M14 | `Resolve-OERInventoryScopeTree.ps1:95` | the `-Scope` check skipped (verdict forced Home) | TR "reads the subscription of a -Scope once, and walks nothing in it when it belongs to another tenant", "returns a -Scope in the tenant's own subscription verbatim, after one read", and the undecided `-Scope` test | 3 red |
+| M15 | `Resolve-OERInventoryScopeTree.ps1:88` | the undecided warning removed | TR's two "walks the own subscription only" cases, the no-session test and the undecided `-Scope` test | 4 red |
+| M26 | `Resolve-OERInventoryScopeTree.ps1:165` | a listed subscription decided by `-Scope` (a read) instead of `-Subscription` | five tests, among them "returns every management group and subscription as scopes plus a hierarchy" | 5 red |
+| M16 | `Export-OERInventory.ps1:1385` | the foreign warning removed | EX "walks only the own subscription, names the foreign one in one warning and the README, and is not partial", "stops at its own warning under -WarningAction Stop, before any bundle file exists", "writes the warning under -WhatIf too, and no bundle", and the foreign `-Scope` test | 4 red |
+| M17 | `Export-OERInventory.ps1:1549` | the README handed no foreign subscription | EX "walks only the own subscription, ...", and the foreign `-Scope` test | 2 red |
+| M18 | `Export-OERInventory.ps1:1602` | the home tenant entries left out of the output's `IncompleteReads` | EX "names an undecided subscription after the role selection entries and before the Lighthouse ones, in a clause of its own with its causes", and "names a listed subscription that gave no tenantId as unread, through the real tree, ..." | 2 red |
+| M19 | `Export-OERInventory.ps1:1549` | the home tenant entries left out of the README call | the same two, on the README bullets | 2 red |
+| M20 | `Export-OERInventory.ps1:1612` | the home tenant entries left out of the `InventoryPartial` condition | EX "names a listed subscription that gave no tenantId as unread, through the real tree, ..." | 1 red |
+| M21 | `Export-OERInventory.ps1:1711` | the home tenant clause left out of the message | the same two as M18 | 2 red |
+| M21b | `Export-OERInventory.ps1:1720` | the causes not appended to the clause | the same two | 2 red |
+| M22a | `Export-OERInventory.ps1:1602` | the entries placed after the Lighthouse ones in the output | EX "names an undecided subscription after the role selection entries and before the Lighthouse ones, ..." | 1 red |
+| M22b | `Export-OERInventory.ps1:1549` | the entries placed after the Lighthouse ones in the README call | the same test, on the bullet order | 1 red |
+| M22c | `Export-OERInventory.ps1:1721,1738` | the home tenant clause placed after the Lighthouse clause | the same test, on the message order | 1 red |
+| M23 | `Get-OERInventoryReadme.ps1:896` | the section's placeholder not replaced | sixteen tests, among them every section placement test of the other README Describes, and RM's tests of the empty list, the count line and the bullets, the section's place and the other sections left as they were | 16 red |
+| M24 | `Get-OERInventoryReadme.ps1:390` | the label branch removed | RM "lists an IncompleteReads entry that starts with subscriptionHomeTenant and a space under the label Azure subscription whose tenant could not be read, ..." | 1 red |
+| M25 | `Get-OERInventoryReadme.ps1:375` | the prefix's trailing space removed | RM "keeps an entry that only resembles a home tenant entry under Entra ID", with no space and with a longer word | 2 red |
+
+Task 2 (the engine, the handler and gate 10). Prefixes: ST is the Describe `Invoke-OERStructure stays
+in the home tenant's subscriptions (BL-150, A19)` and HR the Context "the scope the engine resolved
+(-ResolvedScope, BL-150)" of `Sync-OERStructureRoleManagementPolicy`. The lines are those of
+`5080e69`, read from the file (the Task 2 report cites some a line or a few lines earlier, where the
+changed block starts);
+the outcome is the run at `5080e69` after the fix round, with the run at `0301145` in brackets where
+it differed. M10, M11, M12a, M12b and R1G4 were added in the fix round.
+
+| Id | Guard (file:line) | Mutant | Test that went red | Outcome |
+|---|---|---|---|---|
+| M1 | `Invoke-OERStructure.ps1:851-856` | the `roleAssignments` refusal removed, the owner call kept | ST "refuses a roleAssignments entry in a subscription of another tenant ..." in a run with `-Prune`, without it and in a plan with `-Prune`; "checks the foreign subscription once per document ..."; "fails the entries with the error of a subscription read that failed ..."; "fails the entry with SubscriptionTenantMismatch when the subscription names no tenant ID"; "fails every entry with the no-session reason ..."; the no-try Context's refusal `It`; and both token tenant cases (a domain, a braced GUID) | 10 red (8) |
+| M2 | `Invoke-OERStructure.ps1:855` | the `roleAssignments` refusal's `continue` removed | the same as M1 | 10 red (8) |
+| M3a | `Invoke-OERStructure.ps1:851` | `roleAssignments` lets `Undecided` through | ST's failed read, no `tenantId` and no-session tests, and both token tenant cases | 5 red (3) |
+| M3b | `Invoke-OERStructure.ps1:873` | `roleManagementPolicies` lets `Undecided` through | ST "fails every entry with the no-session reason ...", "fails a roleManagementPolicies entry whose subscription name the subscription list does not resolve ...", the display name two subscriptions share (R-17), and both token tenant cases | 5 red (2) |
+| M4 | `Invoke-OERStructure.ps1:873-878` | the `roleManagementPolicies` refusal removed | ST's three policy refusals (`sub:`, a path and `subscription:` with a name), "checks the foreign subscription once per document ...", the no-session test, the unresolved name, the shared name, the no-try refusal `It` and both token tenant cases | 10 red (6) |
+| M5 | `Invoke-OERStructure.ps1:877` | the `roleManagementPolicies` refusal's `continue` removed | the same as M4 | 10 red (6) |
+| M6 | `Invoke-OERStructure.ps1:879` | `-ResolvedScope` not passed | ST "applies the own subscription as before: ... updated at the scope the check resolved", and the no-try control | 2 red (1) |
+| M7a | `Invoke-OERStructure.ps1:850` | `-Cache` dropped in the `roleAssignments` call | among them ST "applies the own subscription as before ...", "checks the foreign subscription once per document ...", "checks the own subscription once for three entries in it" and the failed read test | 5 red (4) |
+| M7b | `Invoke-OERStructure.ps1:872` | `-Cache` dropped in the `roleManagementPolicies` call | among them the first three of M7a | 4 red (3) |
+| M8 | `Sync-OERStructureRoleManagementPolicy.ps1:115` | the handler ignores `-ResolvedScope` | ST "applies the own subscription as before ...", HR "reads and updates the policy at -ResolvedScope ..." for `sub:` and for `subscription:`, HR "names the document scope in the -WhatIf row too ...", and the no-try control | 5 red (4) |
+| M9 | `Invoke-OERStructure.ps1:672` | one cache per command instead of per document | ST "checks the foreign subscription once per document, ..., and again for the next piped document" | 1 red |
+| M10 | `Invoke-OERStructure.ps1:873-878` | the policy refusal publishes an `InvalidScope` record of its own | among them the shared name, the unresolved name, the no-try refusal `It` and both token tenant cases | 10 red |
+| M11 | `Invoke-OERStructure.ps1:873` | the policy refusal made `-ne 'Home'`, which refuses `NoSubscription` too | ST "reads no subscription for a roleManagementPolicies entry at a management group path, and dispatches the handler as before", and the management group and root test | 2 red |
+| M12a | `Invoke-OERStructure.ps1:854` | the `roleAssignments` Detail keeps the `Reason`'s closing period | ST "fails the entries with the error of a subscription read that failed ..." | 1 red |
+| M12b | `Invoke-OERStructure.ps1:876` | the policy Detail keeps the `Reason`'s closing period | the unresolved name and the shared name tests | 2 red |
+| G1 | `sourcehygiene.tests.ps1:1673` (at `0301145`) | the row's owner list emptied | "holds every row of the owner table: no caller outside its owners, and every owner really calls it", and "decides a subscription's home tenant with Get-OERSubscriptionHomeTenant only in ..." | 2 red |
+| G2 | `sourcehygiene.tests.ps1:1673` (at `0301145`) | a third caller added, in `Get-OERInventoryTenantId.ps1` | the same two | 2 red |
+| G3 | `sourcehygiene.tests.ps1:1673` (at `0301145`) | the row deleted | "decides a subscription's home tenant with Get-OERSubscriptionHomeTenant only in ..." (it asserts the call count first) | 1 red |
+| R1G4 | `sourcehygiene.tests.ps1:4307` | the `Get-OERDocumentTenantMismatch` row deleted, with the floor at fourteen | "holds every row of the owner table: ..." (before the floor rose, nothing saw this deletion) | 1 red |
+
+The unmutated copies of the scratch project root (G0, R1G0) ran 54 of 54 green. Two mutants have one
+equivalent case each, kept as such: M8 for a management group path written with a trailing `/`, which
+`ConvertTo-OERScopeSplat` trims to the same string (the `sub:` and `subscription:` cases catch M8),
+and M6 for a raw management group path, where the handler's own parse gives the same `-Scope`. Not
+run, since it cannot differ: the cache's `OrdinalIgnoreCase` comparer made ordinal, as the owner
+lower-cases the key and M29 pins that.
+
+The final fix wave added three ST tests (five cases) for shapes the whole-branch review found
+untested (M-4) and ran mutants against them at `89d9c35`, each on a copy: M7a (`Invoke-OERStructure.ps1:850`) turns
+both cases of "checks a subscription once per document when one entry names it by id and another by
+its display name" red, and M7b (`:872`) the policy case (a second GET of the subscription); M4 (the
+policy refusal at `:873` made `if ($false)`) turns that policy case and "refuses the foreign policy
+entry under -WhatIf too: Failed, no policy read and no ShouldProcess, ..." red, the second run in a
+runspace whose host records every `What if:` line; and the section filter at `:775` removed turns
+"never asks the owner and reads no subscription for Azure sections that -Include leaves out" red.
 
 ## sovereign-clouds
 

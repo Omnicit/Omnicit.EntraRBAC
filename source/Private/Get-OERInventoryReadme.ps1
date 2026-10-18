@@ -30,7 +30,13 @@ function Get-OERInventoryReadme {
     does not mean it has none, that the roleName of such a role is written null there, and that the
     entries 'lighthouseDelegations at <all Azure scopes: scope enumeration failed>' and
     'lighthouseDelegations at <subscriptions: the listing failed>' name no single scope but a walk, or
-    a subscription listing, that failed, so no subscription's delegations were read.
+    a subscription listing, that failed, so no subscription's delegations were read. An IncompleteReads
+    entry that starts with 'subscriptionHomeTenant ' (compared ordinally) names a subscription the Azure
+    walk did not enter since whether it belongs to this tenant could not be read, as
+    'subscriptionHomeTenant at <scope>' (BL-150, A19), and is listed under the label 'Azure subscription
+    whose tenant could not be read'; the section's prose says that none of its role assignments, role
+    management policies, PIM eligibilities or Azure Lighthouse delegations is in the bundle, which does
+    not mean it has none.
 
     Directly after it comes the section "Members and owners left out as PIM for Groups access"
     (BL-125, A3). It says that inventory.json and groups.json write a group's standing members and
@@ -123,24 +129,41 @@ function Get-OERInventoryReadme {
     read-only context (the eligible, just-in-time authorizations apart), that a scope whose delegations
     could not be read is named under "What this export could not read" and its delegations are absent
     from the file, which does not mean it has none, and that listing a delegation changes nothing in
-    the tenant. A second paragraph says that, when this tenant is itself a managing tenant, the Azure
-    walk also reaches the subscriptions other tenants delegated to it, and that a delegation naming
-    this tenant as the managing tenant (its managedByTenantId is the tenantId of inventory.json) is
-    marked whenever inventory.json carries a tenantId, as access this tenant holds over another tenant,
-    not the reverse (Ruling R-12). Then it gives the count and one bullet per -LighthouseDelegations
-    row, in the order given: the scope, the managing tenant (name and id), the offer and the roles as
-    code spans (the same fence rule as the entries above), how many authorizations and eligible
-    authorizations the row holds, and 'not given' for a managing tenant name, tenant id or offer the
-    row does not carry -- once, not twice, for a managing tenant with neither a name nor an id. The
-    roles are the distinct role names (the role definition id for an authorization whose name is not
-    known) over both lists, in the order first met. A bullet whose managedByTenantId equals -TenantId,
-    compared without regard to letter case, ends with the mark ' -- this tenant is the managing tenant:
-    access this tenant holds over another tenant's subscription or resource group'; a blank or absent
-    -TenantId marks no bullet. It never writes a principal. When -LighthouseDelegations is empty it
-    says that none was read, that delegations are read only when the export includes an Azure section,
-    at the subscriptions its Azure walk visits, and that a -Scope at a management group or the root
-    scope visits no subscription, so it reads no delegation. That parameter is mandatory for the same
-    reason as the nine above.
+    the tenant. A second paragraph says that the Azure walk reads only this tenant's own subscriptions,
+    and that Azure Lighthouse refuses a delegation whose managing tenant is the subscription's own
+    tenant, so every delegation listed is access another tenant holds over a subscription or resource
+    group of this tenant (BL-150, A19); no bullet is marked. Then it gives the count and one bullet per
+    -LighthouseDelegations row, in the order given: the scope, the managing tenant (name and id), the
+    offer and the roles as code spans (the same fence rule as the entries above), how many
+    authorizations and eligible authorizations the row holds, and 'not given' for a managing tenant
+    name, tenant id or offer the row does not carry -- once, not twice, for a managing tenant with
+    neither a name nor an id. The roles are the distinct role names (the role definition id for an
+    authorization whose name is not known) over both lists, in the order first met. It never writes a
+    principal. When -LighthouseDelegations is empty it says that none was read, that delegations are
+    read only when the export includes an Azure section, at the subscriptions its Azure walk visits,
+    and that a -Scope at a management group or the root scope visits no subscription, so it reads no
+    delegation. That parameter is mandatory for the same reason as the nine above.
+
+    Directly after it comes the section "Subscriptions delegated from another tenant (not read)"
+    (BL-150, A19). It says that the Azure walk reads only the subscriptions whose home tenant is this
+    tenant -- the tenant the session's Microsoft Graph token was issued for, which inventory.json names
+    as its tenantId -- and that a subscription whose home tenant is another tenant, which can still be
+    listed for the session (a customer subscription delegated through Azure Lighthouse, for example),
+    was not read: none of its role assignments, role management policies, PIM eligibilities or Azure
+    Lighthouse delegations is in the bundle, and scopeHierarchy.json does not list it. It says that this
+    is a deliberate selection, not a read that failed, that Invoke-OERStructure refuses a role
+    assignment or a role management policy at a scope in such a subscription
+    (SubscriptionTenantMismatch), and that a subscription whose home tenant could not be read is named
+    under "What this export could not read" instead. Then it gives the count and one bullet per
+    -ForeignSubscriptions row, in the order given: the scope, the display name and the home tenant as
+    code spans (the same fence rule as the entries above), and 'not given' for a display name or a home
+    tenant the row does not carry. When -ForeignSubscriptions is empty it says that the export named
+    none, that subscriptions are listed only when the export includes an Azure section and gives no
+    -Scope, that a -Scope names one scope and one at a management group or the root scope lies in no
+    subscription, and that a subscription listing that failed, a walk that could not start and a
+    subscription whose home tenant could not be read are named under "What this export could not read".
+    It claims nothing about subscriptions that were not listed. That parameter is mandatory for the same
+    reason as the ten above.
 
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
@@ -154,8 +177,11 @@ function Get-OERInventoryReadme {
     was kept, none of them left out (where the scope's role assignment read or eligibility read
     failed, that is every policy of a role neither used nor changed there), so
     roleManagementPolicies.json may hold policies of roles that are neither used nor changed there.
-    Last of all, after those, one entry per Azure scope whose Azure Lighthouse delegations could not
-    be read, reading 'lighthouseDelegations at <scope>' (for a walk with no scope tree,
+    Then one entry per subscription the Azure walk did not enter since whether it belongs to this
+    tenant could not be read (BL-150, A19), reading 'subscriptionHomeTenant at <scope>': none of its
+    role assignments, role management policies, PIM eligibilities or Azure Lighthouse delegations is in
+    the bundle. Last of all, after those, one entry per Azure scope whose Azure Lighthouse delegations
+    could not be read, reading 'lighthouseDelegations at <scope>' (for a walk with no scope tree,
     'lighthouseDelegations at <all Azure scopes: scope enumeration failed>', and for a subscription
     listing that failed, 'lighthouseDelegations at <subscriptions: the listing failed>'), and one per
     role whose name could not be read, reading 'lighthouseDelegations role <id>': the delegations of
@@ -227,15 +253,16 @@ function Get-OERInventoryReadme {
     entry with roleName, which is null when the name is not known, and roleDefinitionId). Any other
     property, such as a principal, is not written. Pass an empty array when there are none.
 
-    .PARAMETER TenantId
-    The tenant the export read: the tenantId that inventory.json names, which Export-OERInventory
-    captures in its begin block (Ruling R-12). Optional: blank or absent when the tenant is not known,
-    and then no bullet is marked. A -LighthouseDelegations row whose managedByTenantId equals it,
-    compared without regard to letter case, is a delegation that names this tenant as the managing
-    tenant -- access this tenant holds over another tenant -- and its bullet is marked so.
+    .PARAMETER ForeignSubscriptions
+    The subscriptions the export's Azure walk did not read since their home tenant is another tenant
+    (BL-150, A19), as Resolve-OERInventoryScopeTree names them in ForeignSubscriptions: one object per
+    subscription with Scope (the subscription's scope, or the -Scope the export was given),
+    SubscriptionId, DisplayName and HomeTenantId (the tenantId Azure Resource Manager returned for it).
+    A bullet writes the scope, the display name and the home tenant; no other property is written.
+    Pass an empty array when there are none.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @()
     Returns the README Markdown as a single string. Its "What this export could not read" section
     says that nothing was left unread, its "Members and owners left out as PIM for Groups access"
     section that none was left out, its "Role assignments at the root scope (elevated access)"
@@ -243,51 +270,50 @@ function Get-OERInventoryReadme {
     share a name, its "Role assignments whose principal the directory did not return" section that
     none was found, its "Role assignments at a scope no document can declare" section that none was
     read, its "Groups using PIM for Groups in a restricted management unit" section that none was
-    found, and its "Azure Lighthouse delegations (access from another tenant)" section that none was
-    read.
+    found, its "Azure Lighthouse delegations (access from another tenant)" section that none was read,
+    and its "Subscriptions delegated from another tenant (not read)" section that none was found.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
+    Get-OERInventoryReadme -IncompleteReads @('groupsRoster') -SkippedScopes @('<all Azure scopes: scope enumeration failed>') -SkippedEligibilityScopes @('<all Azure scopes: scope enumeration failed>') -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @()
     Returns the README Markdown with one bullet per entry under "What this export could not read".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut $GroupRead.PimLeftOut -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @()
     Returns the README Markdown with one bullet per group under "Members and owners left out as PIM
     for Groups access".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @([PSCustomObject]@{ Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' }) -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @([PSCustomObject]@{ Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' }) -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @()
     Returns the README Markdown with the count and one bullet per role assignment under "Role
     assignments at the root scope (elevated access)".
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @('groups/Admins') -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @([PSCustomObject]@{ Section = 'groups'; Name = 'Admins'; Count = 2 }) -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
+    Get-OERInventoryReadme -IncompleteReads @('groups/Admins') -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @([PSCustomObject]@{ Section = 'groups'; Name = 'Admins'; Count = 2 }) -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @()
     Returns the README Markdown with one bullet per name under "Names two or more objects share":
     the name, how many objects carry it and its section.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; Role = 'Reader'; Principal = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'User'; PrincipalStatus = 'Deleted'; StatusRead = $true }) -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; Role = 'Reader'; Principal = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'User'; PrincipalStatus = 'Deleted'; StatusRead = $true }) -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @()
     Returns the README Markdown with the count and one bullet per role assignment under "Role
     assignments whose principal the directory did not return": the role, the scope, the principal, its
     type and the status with its reason.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg1/providers/Microsoft.Sql/servers/srv1/databases/db#1'; Role = 'Reader'; Principal = 'person1@example.com'; PrincipalType = 'User'; Reason = 'the scope holds a question mark or a number sign' }) -RestrictedUnitPimGroups @() -LighthouseDelegations @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @([PSCustomObject]@{ Scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg1/providers/Microsoft.Sql/servers/srv1/databases/db#1'; Role = 'Reader'; Principal = 'person1@example.com'; PrincipalType = 'User'; Reason = 'the scope holds a question mark or a number sign' }) -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @()
     Returns the README Markdown with the count and one bullet per role assignment under "Role
     assignments at a scope no document can declare": the role, the scope, the principal, its type and
     the rules the scope breaks.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @([PSCustomObject]@{ Group = 'role_sec_pim'; Units = @('Restricted AU') }) -LighthouseDelegations @()
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @([PSCustomObject]@{ Group = 'role_sec_pim'; Units = @('Restricted AU') }) -LighthouseDelegations @() -ForeignSubscriptions @()
     Returns the README Markdown with the count and one bullet per group under "Groups using PIM for
     Groups in a restricted management unit": the group and the restricted units it is a member of.
 
     .EXAMPLE
-    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @([PSCustomObject]@{ scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; managedByTenantId = '22222222-2222-2222-2222-222222222222'; managedByTenantName = 'Contoso Corp.'; offerName = 'Managed Services'; authorizations = @([PSCustomObject]@{ roleName = 'Contributor'; roleDefinitionId = '33333333-3333-3333-3333-333333333333' }); eligibleAuthorizations = @() }) -TenantId '22222222-2222-2222-2222-222222222222'
+    Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @([PSCustomObject]@{ scope = '/subscriptions/11111111-1111-1111-1111-111111111111'; managedByTenantId = '22222222-2222-2222-2222-222222222222'; managedByTenantName = 'Contoso Corp.'; offerName = 'Managed Services'; authorizations = @([PSCustomObject]@{ roleName = 'Contributor'; roleDefinitionId = '33333333-3333-3333-3333-333333333333' }); eligibleAuthorizations = @() }) -ForeignSubscriptions @()
     Returns the README Markdown with the count and one bullet per delegation under "Azure Lighthouse
     delegations (access from another tenant)": the scope, the managing tenant, the offer, how many
-    authorizations it holds and the roles. The delegation names the tenant given to -TenantId as its
-    managing tenant, so its bullet ends with the mark that this tenant is the managing tenant.
+    authorizations it holds and the roles.
     #>
     [OutputType([string])]
     [CmdletBinding()]
@@ -302,7 +328,7 @@ function Get-OERInventoryReadme {
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$UndeclarableScopeAssignments,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RestrictedUnitPimGroups,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$LighthouseDelegations,
-        [string]$TenantId
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$ForeignSubscriptions
     )
 
     # A text written as a Markdown code span, so '<all Azure scopes: scope enumeration failed>' is
@@ -345,6 +371,12 @@ function Get-OERInventoryReadme {
     # InventoryPartial, so it gets its own label too.
     $LighthouseReadPrefix = 'lighthouseDelegations '
     $LighthouseReadLabel = 'Azure Lighthouse read that failed'
+    # BL-150 (A19): an IncompleteReads entry that starts with 'subscriptionHomeTenant ' is not an Entra ID
+    # entry either: it names a subscription the Azure walk did not enter since whether it belongs to this
+    # tenant could not be read ('subscriptionHomeTenant at <scope>'), which Export-OERInventory appends after
+    # the role selection entries and before the Lighthouse ones, so it gets its own label too.
+    $HomeTenantPrefix = 'subscriptionHomeTenant '
+    $HomeTenantLabel = 'Azure subscription whose tenant could not be read'
     # The two scope lists never hold such an entry: theirs start with '/' or '<'.
     $Lists = @(
         @{ Label = 'Entra ID'; Entries = $IncompleteReads }
@@ -358,6 +390,7 @@ function Get-OERInventoryReadme {
             if ($Entry.StartsWith($AzurePolicyPrefix, [System.StringComparison]::Ordinal)) { $Label = $AzurePolicyLabel }
             elseif ($Entry.StartsWith($PrincipalPrefix, [System.StringComparison]::Ordinal)) { $Label = $PrincipalLabel }
             elseif ($Entry.StartsWith($LighthouseReadPrefix, [System.StringComparison]::Ordinal)) { $Label = $LighthouseReadLabel }
+            elseif ($Entry.StartsWith($HomeTenantPrefix, [System.StringComparison]::Ordinal)) { $Label = $HomeTenantLabel }
             $Bullets.Add("- $($Label): $(Format-CodeSpan -Text $Entry)")
         }
     }
@@ -368,10 +401,11 @@ function Get-OERInventoryReadme {
 
 This bundle is PARTIAL: `Export-OERInventory` could not read, or could not write, everything it was
 asked to, so do not treat it as a full tenant snapshot. Apart from the entries labelled "Azure role
-management policies kept without being judged", "Role assignment principal that could not be read"
-and "Azure Lighthouse read that failed", each entry below names collections or objects that could
-not be read, could not be written without an empty name, or were left out because two or more live
-objects share a name; none of them is stated as a fact in this bundle. An entry labelled "Role
+management policies kept without being judged", "Role assignment principal that could not be read",
+"Azure Lighthouse read that failed" and "Azure subscription whose tenant could not be read", each
+entry below names collections or objects that could not be read, could not be written without an
+empty name, or were left out because two or more live objects share a name; none of them is stated
+as a fact in this bundle. An entry labelled "Role
 assignment principal that could not be read" names a row of `roleAssignments.json` as
 `roleAssignments/<role> -> <principal id> @ <scope>`, followed by `/principal` or `/principalStatus`.
 With `/principal`, the lookup of the principal failed: the row is written by the principal's object
@@ -395,7 +429,11 @@ mean the scope has none, or a role, as `lighthouseDelegations role <id>`, whose 
 read, so its `roleName` is written `null` there. Two such entries name no single scope:
 `lighthouseDelegations at <all Azure scopes: scope enumeration failed>` names a walk that could not
 start, and `lighthouseDelegations at <subscriptions: the listing failed>` a subscription listing
-that failed, so the delegations of no subscription were read.
+that failed, so the delegations of no subscription were read. An entry labelled "Azure subscription
+whose tenant could not be read" names a subscription, as `subscriptionHomeTenant at <scope>`, that
+the Azure walk did not enter since whether it belongs to this tenant could not be read: none of its
+role assignments, role management policies, PIM eligibilities or Azure Lighthouse delegations is in
+this bundle, which does not mean it has none.
 '@
         $Partial + "`n`n" + ($Bullets -join "`n")
     } else {
@@ -614,12 +652,9 @@ nothing out of the export.
     # given' once for a managing tenant with neither). The roles are the distinct role names (the role
     # definition id for an authorization whose name is not known) over both lists in the order first met.
     # Never a principal. The parameter is mandatory, so binding has already refused a null entry.
-    # Ruling R-12: when this tenant is itself a managing tenant, the walk also reaches the subscriptions
-    # other tenants delegated to it, and a delegation there may name THIS tenant as the managing tenant:
-    # access this tenant holds over another tenant, not the reverse. Such a bullet ends with the mark below,
-    # decided on managedByTenantId against -TenantId (the tenantId of inventory.json), letter case ignored.
-    # A blank -TenantId marks nothing, so a row with no managing tenant is never taken for this tenant's.
-    $LighthouseOwnTenantMark = " -- this tenant is the managing tenant: access this tenant holds over another tenant's subscription or resource group"
+    # BL-150 (A19): no bullet is marked. The walk reads only this tenant's own subscriptions, and Azure
+    # Lighthouse refuses a delegation whose managing tenant is the subscription's own tenant, so a
+    # delegation here never names this tenant as its managing tenant.
     $LighthouseBullets = [System.Collections.Generic.List[string]]::new()
     foreach ($Entry in @($LighthouseDelegations)) {
         $AuthorizationList = @($Entry.authorizations | Where-Object { $null -ne $_ })
@@ -635,8 +670,7 @@ nothing out of the export.
         $TenantText = if ([string]::IsNullOrWhiteSpace([string]$Entry.managedByTenantName) -and [string]::IsNullOrWhiteSpace([string]$Entry.managedByTenantId)) { 'not given' } else { "$TenantNameText ($TenantIdText)" }
         $OfferText = if (-not [string]::IsNullOrWhiteSpace([string]$Entry.offerName)) { Format-CodeSpan -Text ([string]$Entry.offerName) } else { 'not given' }
         $RolesText = if ($RoleSpans.Count -gt 0) { $RoleSpans -join ', ' } else { 'none' }
-        $MarkText = if (-not [string]::IsNullOrWhiteSpace($TenantId) -and [string]::Equals([string]$Entry.managedByTenantId, $TenantId, [System.StringComparison]::OrdinalIgnoreCase)) { $LighthouseOwnTenantMark } else { '' }
-        $LighthouseBullets.Add("- $(Format-CodeSpan -Text ([string]$Entry.scope)) -- managing tenant $TenantText, offer $($OfferText): $($AuthorizationList.Count) authorization(s) and $($EligibleList.Count) eligible authorization(s), roles $RolesText$MarkText")
+        $LighthouseBullets.Add("- $(Format-CodeSpan -Text ([string]$Entry.scope)) -- managing tenant $TenantText, offer $($OfferText): $($AuthorizationList.Count) authorization(s) and $($EligibleList.Count) eligible authorization(s), roles $RolesText")
     }
     $LighthouseIntro = @'
 ## Azure Lighthouse delegations (access from another tenant)
@@ -652,16 +686,45 @@ delegations could not be read is named under "What this export could not read", 
 are absent from the file, which does not mean it has none. Listing a delegation changes nothing in
 the tenant.
 
-When this tenant is itself a managing tenant, the Azure walk also reaches the subscriptions other
-tenants delegated to it. A delegation that names this tenant as the managing tenant (its
-`managedByTenantId` is the `tenantId` of `inventory.json`) is marked below as "this tenant is the
-managing tenant" whenever `inventory.json` carries a `tenantId`: it is access this tenant holds over
-another tenant, not the reverse.
+The Azure walk reads only this tenant's own subscriptions (see "Subscriptions delegated from
+another tenant (not read)" below), and Azure Lighthouse refuses a delegation whose managing tenant
+is the subscription's own tenant, so every delegation below is access another tenant holds over a
+subscription or resource group of this tenant.
 '@
     $LighthouseSection = if ($LighthouseBullets.Count -gt 0) {
         $LighthouseIntro + "`n`n" + "This export read $($LighthouseBullets.Count) delegation(s):" + "`n`n" + ($LighthouseBullets -join "`n")
     } else {
         $LighthouseIntro + "`n`n" + "None. This export read no Azure Lighthouse delegation. Delegations are read only when the export`nincludes ``RoleAssignments`` or ``RoleManagementPolicies``, at the subscriptions its Azure walk visits;`na ``-Scope`` at a management group or the root scope visits no subscription, so it reads no delegation.`nA scope whose delegations could not be read is named under `"What this export could not read`"."
+    }
+
+    # BL-150 (A19): the subscriptions the Azure walk did not read since their home tenant is another tenant,
+    # one bullet per row in the order the export holds them: the scope, the display name and the home tenant
+    # as code spans, and 'not given' for a display name or a home tenant the row does not carry. The
+    # parameter is mandatory, so binding has already refused a null entry.
+    $ForeignBullets = [System.Collections.Generic.List[string]]::new()
+    foreach ($Entry in @($ForeignSubscriptions)) {
+        $ForeignName = if (-not [string]::IsNullOrWhiteSpace([string]$Entry.DisplayName)) { Format-CodeSpan -Text ([string]$Entry.DisplayName) } else { 'not given' }
+        $ForeignTenant = if (-not [string]::IsNullOrWhiteSpace([string]$Entry.HomeTenantId)) { Format-CodeSpan -Text ([string]$Entry.HomeTenantId) } else { 'not given' }
+        $ForeignBullets.Add("- $(Format-CodeSpan -Text ([string]$Entry.Scope)) -- display name $ForeignName, home tenant $ForeignTenant")
+    }
+    $ForeignIntro = @'
+## Subscriptions delegated from another tenant (not read)
+
+The Azure walk reads only the subscriptions whose home tenant is this tenant: the tenant the
+session's Microsoft Graph token was issued for, which `inventory.json` names as its `tenantId`. A
+subscription whose home tenant is another tenant can still be listed for this session -- a customer
+subscription that tenant delegated to this one through Azure Lighthouse, for example. The export did
+not read it: no role assignment, role management policy, PIM eligibility or Azure Lighthouse
+delegation of it is in this bundle, and `scopeHierarchy.json` does not list it. That is a
+deliberate selection, not a read that failed. `Invoke-OERStructure` refuses a role assignment or a
+role management policy at a scope in such a subscription (`SubscriptionTenantMismatch`); manage it
+from its home tenant. A subscription whose home tenant could not be read is named under "What this
+export could not read" instead.
+'@
+    $ForeignSubscriptionSection = if ($ForeignBullets.Count -gt 0) {
+        $ForeignIntro + "`n`n" + "This export did not read $($ForeignBullets.Count) such subscription(s):" + "`n`n" + ($ForeignBullets -join "`n")
+    } else {
+        $ForeignIntro + "`n`n" + "None. This export named no subscription whose home tenant is another tenant. Subscriptions are listed only when`nthe export includes ``RoleAssignments`` or ``RoleManagementPolicies`` and gives no ``-Scope``; a ``-Scope`` names one scope, and one at a`nmanagement group or the root scope lies in no subscription. A subscription listing that failed, a walk that could`nnot start and a subscription whose home tenant could not be read are named under `"What this export could not read`"."
     }
 
     $Readme = @'
@@ -687,6 +750,8 @@ includes a predefined prompt that turns it into appliable improvement proposals.
 
 @@LIGHTHOUSE@@
 
+@@FOREIGN-SUBSCRIPTIONS@@
+
 ## Files
 
 - `inventory.json` -- the canonical, round-trippable inventory, in the exact apply-document shape,
@@ -707,8 +772,9 @@ includes a predefined prompt that turns it into appliable improvement proposals.
   a count would cost a request per group. A group left out of `inventory.json` and `groups.json`
   because another group shares its name has a `null` count too. So has a security group outside the
   export's `-GroupFilter`, which was not read.
-- `scopeHierarchy.json` -- the management group / subscription tree. Read-only context, not an
-  apply document.
+- `scopeHierarchy.json` -- the management group / subscription tree of this tenant; a subscription
+  of another tenant is not listed (see "Subscriptions delegated from another tenant (not read)").
+  Read-only context, not an apply document.
 - `azurePimEligibility.json` -- the Azure PIM eligible role assignments at the scopes in
   `scopeHierarchy.json`, written only when an Azure section (`RoleAssignments` or
   `RoleManagementPolicies`) is included. Read-only context, not an apply document -- see the
@@ -830,5 +896,5 @@ came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in anothe
 remove `tenantId` first.
 '@
 
-    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection).Replace('@@SHARED-NAMES@@', $SharedNameSection).Replace('@@UNRESOLVED-PRINCIPALS@@', $UnresolvedPrincipalSection).Replace('@@UNDECLARABLE-SCOPES@@', $UndeclarableScopeSection).Replace('@@RESTRICTED-UNIT-PIM@@', $RestrictedUnitSection).Replace('@@LIGHTHOUSE@@', $LighthouseSection)
+    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection).Replace('@@SHARED-NAMES@@', $SharedNameSection).Replace('@@UNRESOLVED-PRINCIPALS@@', $UnresolvedPrincipalSection).Replace('@@UNDECLARABLE-SCOPES@@', $UndeclarableScopeSection).Replace('@@RESTRICTED-UNIT-PIM@@', $RestrictedUnitSection).Replace('@@LIGHTHOUSE@@', $LighthouseSection).Replace('@@FOREIGN-SUBSCRIPTIONS@@', $ForeignSubscriptionSection)
 }

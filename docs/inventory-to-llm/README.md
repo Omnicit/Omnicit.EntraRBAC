@@ -27,7 +27,9 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
   `azurePimEligibility.json` (the Azure PIM eligible role assignments at the walked scopes) is
   written only when an Azure section (`RoleAssignments` or `RoleManagementPolicies`) is included,
   and so is `lighthouseDelegations.json` (the Azure Lighthouse delegations at the walked
-  subscriptions; see "Azure Lighthouse delegations" below).
+  subscriptions; see "Azure Lighthouse delegations" below). The Azure walk enters only the session
+  tenant's own subscriptions: a subscription of another tenant is named in `README.md` and read
+  into no file (see the same section).
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (e.g. `Test-Json -Json (Get-Content proposal.json -Raw) -Schema (Get-Content schema.json -Raw)`).
 - `rbac-architect-prompt.md` -- the predefined prompt.
@@ -38,7 +40,9 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
   two or more objects carry it (see below), lists under "Role assignments whose principal the
   directory did not return", "Role assignments at a scope no document can declare", "Groups using
   PIM for Groups in a restricted management unit" and "Azure Lighthouse delegations (access from
-  another tenant)" the findings described below, and holds the next steps. These lists are written
+  another tenant)" the findings described below, lists under "Subscriptions delegated from another
+  tenant (not read)" the subscriptions of another tenant the export did not read (see "Azure
+  Lighthouse delegations" below), and holds the next steps. These lists are written
   into this file only, never into `inventory.json` or any other JSON file, except the Azure
   Lighthouse delegations, which are the rows of `lighthouseDelegations.json`.
 
@@ -329,10 +333,10 @@ row per delegation with its `scope`, the managing tenant (`managedByTenantId`,
 `eligibleAuthorizations` (the just-in-time ones), each with the principal and the role. When it
 read any, it writes one warning with the count, and the bundle's `README.md` lists each delegation
 under "Azure Lighthouse delegations (access from another tenant)", by scope, managing tenant, offer
-and roles, never by principal. When this tenant is itself a managing tenant, the walk also reaches
-the subscriptions other tenants delegated to it: a row whose `managedByTenantId` is the `tenantId`
-of `inventory.json` is access this tenant holds over another tenant's subscription or resource
-group, not the reverse, and the README marks its bullet so.
+and roles, never by principal. The walk reads only this tenant's own subscriptions (see the last
+point below), and Azure Lighthouse refuses a delegation whose managing tenant is the subscription's
+own tenant, so every row is access another tenant holds over a subscription or resource group of
+this tenant.
 
 - **A finding, not an apply section.** The file is read-only context: no apply cmdlet reads it, and
   `Invoke-OERStructure` never creates or removes a delegation. The prompt tells the model never to
@@ -346,6 +350,21 @@ group, not the reverse, and the README marks its bullet so.
   named as `lighthouseDelegations at <all Azure scopes: scope enumeration failed>`, and a
   subscription listing that failed as `lighthouseDelegations at <subscriptions: the listing failed>`.
   Each raises `InventoryPartial`.
+- **Subscriptions of another tenant are not read.** The export's Azure walk reads only the
+  subscriptions whose home tenant -- the `tenantId` Azure Resource Manager returns for each -- is the
+  tenant the session's Microsoft Graph token was issued for, the `tenantId` of `inventory.json`. A
+  subscription of another tenant that is listed for the session, such as a customer subscription
+  delegated to this tenant through Azure Lighthouse, is not read: no role assignment, role
+  management policy, PIM eligibility or delegation of it is in the bundle, `scopeHierarchy.json`
+  does not list it, one warning names it, and the bundle's `README.md` lists it under "Subscriptions
+  delegated from another tenant (not read)". That is a deliberate selection, and it does not make the
+  bundle partial; nothing is read at a `-Scope` in such a subscription either. A subscription whose
+  home tenant could not be read is not walked: it is named under "What this export could not read"
+  as `subscriptionHomeTenant at <scope>`, labelled "Azure subscription whose tenant could not be
+  read", and raises `InventoryPartial`. A proposal must not declare a role assignment or a role
+  management policy at a scope in a subscription of another tenant: `Invoke-OERStructure` reports
+  such an entry `Failed` with `SubscriptionTenantMismatch`, reads no role assignment or policy there
+  and writes nothing for it, with or without `-Prune`, the same under `-WhatIf`.
 
 ## Renaming a group
 
@@ -880,8 +899,11 @@ or eligibility read failed, that is every policy of a role neither used nor chan
 `roleManagementPolicies.json` may hold policies of roles that are neither used nor changed at that
 scope, and such a policy is no evidence that its role is in use. The entry does not mean every
 policy at the scope was kept: when only one policy could not be judged, the other unused, unchanged
-ones are still left out. The Azure Lighthouse reads that failed follow those entries, labelled
-"Azure Lighthouse read that failed" (see "Azure Lighthouse delegations" above). When nothing was
+ones are still left out. An Azure subscription whose home tenant could not be read follows those
+entries, as `subscriptionHomeTenant at <scope>`, labelled "Azure subscription whose tenant could not
+be read": the Azure walk did not enter it, so nothing of it is in the bundle, which does not mean it
+holds nothing. The Azure Lighthouse reads that failed come last, labelled "Azure Lighthouse read
+that failed" (see "Azure Lighthouse delegations" above). When nothing was
 left unread, that section says so. The list is in the
 README alone: `inventory.json` and the other JSON files never carry it, so the apply document keeps
 exactly the shape the schema describes.

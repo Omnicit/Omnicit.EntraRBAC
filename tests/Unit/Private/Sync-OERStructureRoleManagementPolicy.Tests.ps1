@@ -641,4 +641,87 @@ Describe 'Sync-OERStructureRoleManagementPolicy' {
             }
         }
     }
+
+    Context 'the scope the engine resolved (-ResolvedScope, BL-150)' {
+        # Invoke-OERStructure resolves a roleManagementPolicies entry's scope once, in its home tenant check
+        # (Get-OERSubscriptionHomeTenant), and hands the canonical scope to the handler, so the policy read
+        # and written is the one the check decided on. The rows still name the scope as the document wrote
+        # it. Without -ResolvedScope the handler parses the document scope itself, as before.
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncRmpResolved {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [string]$ResolvedScope)
+                    $Extra = @{}
+                    if ($PSBoundParameters.ContainsKey('ResolvedScope')) { $Extra.ResolvedScope = $ResolvedScope }
+                    Sync-OERStructureRoleManagementPolicy -Item $Item -Caller $PSCmdlet @Extra
+                }
+                Mock Initialize-OERAuth {}
+                Mock Get-OERRoleManagementPolicy { [PSCustomObject]@{ ActivationMaxHours = 8; RequireApproval = $false; Approvers = @(); RoleName = $Role } }
+                Mock Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'p-1' } }
+                Mock Resolve-OERDeclaredApprover { param($Declared) $Declared }
+                Mock Invoke-OERArmRequest { throw "unexpected ARM call: $Path" }
+            }
+        }
+
+        It 'reads and updates the policy at -ResolvedScope with -Scope alone for <Name>, and names the document scope in its rows' -ForEach @(
+            @{ Name = 'a sub: scope'; DocScope = 'sub:Prod'; Resolved = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+                Filter = { $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -and -not $Subscription -and -not $ManagementGroup -and -not $ResourceGroup -and $Role -eq 'Reader' } }
+            @{ Name = 'a subscription: scope'; DocScope = 'subscription:aaaa1111-0000-0000-0000-000000000001'; Resolved = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+                Filter = { $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -and -not $Subscription -and -not $ManagementGroup -and -not $ResourceGroup -and $Role -eq 'Reader' } }
+            @{ Name = 'a management group path'; DocScope = '/providers/Microsoft.Management/managementGroups/mg1/'; Resolved = '/providers/Microsoft.Management/managementGroups/mg1'
+                Filter = { $Scope -ceq '/providers/Microsoft.Management/managementGroups/mg1' -and -not $Subscription -and -not $ManagementGroup -and -not $ResourceGroup -and $Role -eq 'Reader' } }
+        ) {
+            $Rows = @(InModuleScope $script:moduleName -Parameters @{ DocScope = $DocScope; Resolved = $Resolved } {
+                    param($DocScope, $Resolved)
+                    Invoke-SyncRmpResolved -Item ([PSCustomObject]@{ scope = $DocScope; role = 'Reader'; activationMaxHours = 4 }) -ResolvedScope $Resolved
+                })
+            # The read and the write both went to the resolved scope, and named no other scope parameter.
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter $Filter
+            Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter $Filter
+            Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter { $ActivationMaxHours -eq 4 }
+            $Rows.Count | Should -Be 1
+            $Rows[0].Action | Should -Be 'Updated'
+            $Rows[0].Item | Should -BeExactly "Reader @ $DocScope"
+            $Rows[0].Detail | Should -BeExactly "updated role management policy for 'Reader' at '$DocScope' (activationMaxHours=4)"
+        }
+
+        It 'names the document scope in the -WhatIf row too, after reading at -ResolvedScope' {
+            $Rows = @(InModuleScope $script:moduleName {
+                    Invoke-SyncRmpResolved -Item ([PSCustomObject]@{ scope = 'sub:Prod'; role = 'Reader'; activationMaxHours = 4 }) `
+                        -ResolvedScope '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -WhatIf
+                })
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
+                $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -and -not $Subscription
+            }
+            Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 0
+            $Rows.Count | Should -Be 1
+            $Rows[0].Action | Should -Be 'Skipped'
+            $Rows[0].Item | Should -BeExactly 'Reader @ sub:Prod'
+            $Rows[0].Detail | Should -BeExactly "would update role management policy for 'Reader' at 'sub:Prod'"
+        }
+
+        It 'parses the document scope as before without -ResolvedScope (<Name>)' -ForEach @(
+            @{ Name = 'a sub: scope'; DocScope = 'sub:Prod'
+                Filter = { $Subscription -ceq 'Prod' -and -not $Scope -and -not $ManagementGroup } }
+            @{ Name = 'an mg: scope'; DocScope = 'mg:mg1'
+                Filter = { $ManagementGroup -ceq 'mg1' -and -not $Scope -and -not $Subscription } }
+            @{ Name = 'a path with a trailing slash'; DocScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/'
+                Filter = { $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -and -not $Subscription -and -not $ManagementGroup } }
+        ) {
+            $Rows = @(InModuleScope $script:moduleName -Parameters @{ DocScope = $DocScope } {
+                    param($DocScope)
+                    Invoke-SyncRmpResolved -Item ([PSCustomObject]@{ scope = $DocScope; role = 'Reader'; activationMaxHours = 4 })
+                })
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter $Filter
+            Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter $Filter
+            $Rows.Count | Should -Be 1
+            $Rows[0].Action | Should -Be 'Updated'
+            $Rows[0].Item | Should -BeExactly "Reader @ $DocScope"
+        }
+    }
 }

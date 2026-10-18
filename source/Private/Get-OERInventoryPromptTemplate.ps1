@@ -64,7 +64,11 @@ PowerShell module.
   of their scope; "Groups using PIM for Groups in a restricted management unit" lists the groups
   inventory.json writes with PIM eligibility or a pimPolicy that are members of a restricted
   management administrative unit (see groups[] below); and "Azure Lighthouse delegations (access
-  from another tenant)" lists the delegations in lighthouseDelegations.json (see below). Under "What
+  from another tenant)" lists the delegations in lighthouseDelegations.json (see below). Its section
+  "Subscriptions delegated from another tenant (not read)" names each subscription whose home tenant
+  is another tenant: the export did not read it, so nothing from it is in inventory.json or any other
+  JSON file, and a proposal must not declare a role assignment or a role management policy at a scope
+  in it, since Invoke-OERStructure refuses one there. Under "What
   this export could not read", an entry labelled "Role assignment principal that could not be read"
   names a role assignment whose principal could not be looked up (written by its object id with no
   principalStatus) or whose deleted items could not be read (written with principalStatus
@@ -86,10 +90,10 @@ PowerShell module.
 - lighthouseDelegations.json -- read-only context, written when the export read the Azure sections:
   one row per Azure Lighthouse delegation, which gives principals of a managing tenant Azure roles
   over a delegated subscription or resource group, with the managing tenant, the offer, the
-  authorizations and the eligible (just-in-time) authorizations. Tell the direction from
-  managedByTenantId: a row whose managedByTenantId is the tenantId of inventory.json is access THIS
-  tenant holds, as the managing tenant, over another tenant's subscription or resource group (the
-  README marks it), not access another tenant holds here. That access is not a role assignment of
+  authorizations and the eligible (just-in-time) authorizations. The export's Azure walk reads only
+  this tenant's own subscriptions, and Azure Lighthouse refuses a delegation whose managing tenant is
+  the subscription's own tenant, so every row is access another tenant holds over a subscription or
+  resource group of this tenant. That access is not a role assignment of
   this tenant and not part of the apply document: never declare it in roleAssignments[], and never
   propose to create or remove it through the document. Name each delegation in your rationale as a
   finding: the managing tenant, its roles, and whether each authorization is eligible or permanent.

@@ -55,6 +55,9 @@ plans it as new.
 subscriptions it reads, access a managing tenant holds that no role assignment shows, as read-only
 findings the README lists. A failed read makes it partial.
 
+`Export-OERInventory` reads only the session tenant's own subscriptions and names the others in its
+README; `Invoke-OERStructure` refuses a role assignment or policy in another tenant's subscription.
+
 ## [1.2.0] - 2026-10-11
 
 A permanent group eligibility grant refused after `Add-OERGroupEligibility` opened the group's PIM

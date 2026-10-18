@@ -2564,7 +2564,10 @@ Describe 'Export-OERInventory (help documents the bundle nesting)' {
         $Description | Should -Match ([regex]::Escape('Last of all, IncompleteReads carries the Azure Lighthouse entries (see AZURE LIGHTHOUSE DELEGATIONS above)'))
         $Description | Should -Match ([regex]::Escape('It does not mean every policy at the scope was kept: when only one row could not be judged, the other unused, unchanged policies there are still left out.'))
         $Description | Should -Not -Match 'nothing is missing for it'
-        $Description | Should -Match ([regex]::Escape('plus one per Azure scope where a role management policy could not be judged, plus one per Azure Lighthouse entry, and not the number of unread collections'))
+        # BL-150 (A19): the subscriptions whose home tenant could not be read stand between the role selection
+        # entries and the Azure Lighthouse ones.
+        $Description | Should -Match ([regex]::Escape('plus one per Azure scope where a role management policy could not be judged, plus one per subscription whose home tenant could not be read, plus one per Azure Lighthouse entry, and not the number of unread collections'))
+        $Description | Should -Match ([regex]::Escape("After those, IncompleteReads carries one entry per subscription the Azure walk did not enter since whether it belongs to this tenant could not be read (see SUBSCRIPTIONS OF ANOTHER TENANT above), reading 'subscriptionHomeTenant at <scope>'."))
         $Description | Should -Match ([regex]::Escape('Invoke-OERStructure reads and writes only the policies a document declares'))
 
         $Param = @($script:ExportHelp.Parameters.Parameter) | Where-Object { $_.Name -eq 'AllRolePolicies' }
@@ -5142,7 +5145,7 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
         $Description | Should -Match ([regex]::Escape('A principal is looked for among the deleted items once for the whole export when that read succeeds, however many Azure scopes read the assignment; a read that fails is not kept, and is sent again by the next scope that needs it.'))
         # The README lists the principal entries under a label of their own, and they are IncompleteReads
         # entries, as the help says.
-        $Description | Should -Match ([regex]::Escape('one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes entry -- among the IncompleteReads entries, those of a role assignment principal that could not be read, those of an Azure scope where role management policies could not be judged and those of an Azure Lighthouse read that failed each under a label of its own -- or the statement that nothing was left unread'))
+        $Description | Should -Match ([regex]::Escape('one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes entry -- among the IncompleteReads entries, those of a role assignment principal that could not be read, those of an Azure scope where role management policies could not be judged, those of a subscription whose home tenant could not be read and those of an Azure Lighthouse read that failed each under a label of its own -- or the statement that nothing was left unread'))
     }
 
     Context 'the rows the per-scope calls hand over' {
@@ -6227,17 +6230,18 @@ Describe 'Export-OERInventory (Azure Lighthouse delegations, Sprint 11 step 6b, 
         $script:LhxPrincipalOne = 'aaaaaaaa-1111-1111-1111-111111111111'
         $script:LhxPrincipalTwo = 'bbbbbbbb-2222-2222-2222-222222222222'
         $script:LhxPrincipalThree = 'cccccccc-3333-3333-3333-333333333333'
-        # The warning names no direction (Ruling R-12): a delegation can give another tenant access here, or
-        # give this tenant access over another tenant's subscription, which the walk of a managing tenant reaches.
+        # BL-150 (A19): the walk reads only this tenant's own subscriptions, so every delegation it reads gives
+        # another tenant access here; the warning marks none (the Ruling R-12 mark is gone).
         function script:Get-LhxWarning {
             param([int]$Count)
             "Export-OERInventory: read $Count Azure Lighthouse delegation(s): access that principals of a managing tenant hold over a delegated subscription or resource group, " +
             'which is not listed as a role assignment there. lighthouseDelegations.json holds them as read-only context, and README.md lists them under ' +
-            "'Azure Lighthouse delegations (access from another tenant)', marking each one whose managing tenant is the tenant inventory.json names; review them as a finding."
+            "'Azure Lighthouse delegations (access from another tenant)'; review them as a finding."
         }
         # The real scope tree, taken before any test mocks it, so a mock can call through to it.
         $script:LhxRealScopeTree = InModuleScope $script:moduleName { Get-Command Resolve-OERInventoryScopeTree -CommandType Function }
-        $script:LhxMark = ' -- this tenant is the managing tenant: access this tenant holds over another tenant''s subscription or resource group'
+        # The real README builder, so a spy can call through to it.
+        $script:LhxRealReadme = InModuleScope $script:moduleName { Get-Command Get-OERInventoryReadme -CommandType Function }
         # The two rows the reader hands over: a delegation at a subscription with two authorizations and one
         # eligible authorization, and one at a resource group.
         function script:New-LhxRows {
@@ -6341,9 +6345,12 @@ Describe 'Export-OERInventory (Azure Lighthouse delegations, Sprint 11 step 6b, 
         $Description | Should -Match ([regex]::Escape('a -Scope at a management group or the root scope reads no delegation'))
         $Description | Should -Match ([regex]::Escape('in a section "Azure Lighthouse delegations (access from another tenant)", directly after "Groups using PIM for Groups in a restricted management unit"'))
         $Description | Should -Match ([regex]::Escape("A read that fails is never left unnamed: each scope of a subscription whose delegations could not be read is named in IncompleteReads as 'lighthouseDelegations at <scope>' and has no row in the file"))
-        # Ruling R-12: the direction of a delegation, and the README's mark.
-        $Description | Should -Match ([regex]::Escape("When this tenant is itself a managing tenant, the walk also reaches the subscriptions other tenants delegated to it, and a row whose managedByTenantId is the tenantId of inventory.json is access this tenant holds over another tenant's subscription or resource group, not the reverse."))
-        $Description | Should -Match ([regex]::Escape('and it marks each whose managedByTenantId is the tenantId of inventory.json (compared without regard to letter case; nothing is marked when inventory.json names no tenant)'))
+        # BL-150 (A19): the walk reads only this tenant's own subscriptions, so every row is access another tenant
+        # holds here, and the README marks none (the Ruling R-12 sentences are gone).
+        $Description | Should -Match ([regex]::Escape('Since the walk reads only this tenant''s own subscriptions (see SUBSCRIPTIONS OF ANOTHER TENANT below), and Azure Lighthouse refuses a delegation whose managing tenant is the subscription''s own tenant, every row is access another tenant holds over a subscription or resource group of this tenant.'))
+        $Description | Should -Not -Match 'When this tenant is itself a managing tenant'
+        $Description | Should -Not -Match 'it marks each whose managedByTenantId'
+        $Description | Should -Not -Match 'nothing is marked'
         # azurePimEligibility.json is no longer the only bundle file that is sometimes not written.
         $Description | Should -Not -Match 'the one bundle file that is sometimes not written'
     }
@@ -6485,9 +6492,10 @@ Describe 'Export-OERInventory (Azure Lighthouse delegations, Sprint 11 step 6b, 
         $Readme | Should -Not -Match $script:LhxPrincipalTwo
     }
 
-    It 'hands the README the tenant inventory.json names, so a delegation this tenant manages is marked and another is not' {
-        # The session's Graph token was issued for the managing tenant of the first row: this tenant manages
-        # that subscription for another tenant (Ruling R-12).
+    It 'hands the README the foreign subscriptions and no tenant, so no delegation is marked, not even one whose managing tenant is the tenant inventory.json names' {
+        # The session's Graph token was issued for the managing tenant of the first row. Azure Lighthouse refuses
+        # such a delegation in the tenant's own subscriptions, and the walk reads no other (BL-150, A19), so the
+        # README is not told the tenant and marks nothing (the Ruling R-12 mark is gone).
         Mock -ModuleName $script:moduleName Initialize-OERAuth {
             & (Get-Module Omnicit.EntraRBAC) {
                 $script:_OERAuthState = @{
@@ -6496,14 +6504,17 @@ Describe 'Export-OERInventory (Azure Lighthouse delegations, Sprint 11 step 6b, 
                 }
             }
         }
+        Mock -ModuleName $script:moduleName Get-OERInventoryReadme { & $script:LhxRealReadme @PesterBoundParameters }
         $Run = Invoke-LhxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'lhx-own-tenant'); Include = @('RoleAssignments') }
-        # The tenant inventory.json names is the one the README compared with.
         (Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json).tenantId | Should -BeExactly '33333333-3333-3333-3333-333333333333'
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryReadme -Times 1 -Exactly -ParameterFilter {
+            $PesterBoundParameters.ContainsKey('ForeignSubscriptions') -and -not $PesterBoundParameters.ContainsKey('TenantId')
+        }
         $Bullets = @((Get-LhxReadmeSection -BundlePath $Run.Result.BundlePath) -split '\r?\n' | Where-Object { $_ -like '- *' })
         $Bullets.Count | Should -Be 2
-        $Bullets[0] | Should -BeExactly ('- `/subscriptions/s1` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Contoso Managed Services`: 2 authorization(s) and 1 eligible authorization(s), roles `Contributor`, `User Access Administrator`' + $script:LhxMark)
+        $Bullets[0] | Should -BeExactly '- `/subscriptions/s1` -- managing tenant `Contoso Corp.` (`33333333-3333-3333-3333-333333333333`), offer `Contoso Managed Services`: 2 authorization(s) and 1 eligible authorization(s), roles `Contributor`, `User Access Administrator`'
         $Bullets[1] | Should -BeExactly '- `/subscriptions/s2/resourceGroups/rg-app` -- managing tenant not given (`99999999-9999-9999-9999-999999999999`), offer `Operations`: 1 authorization(s) and 0 eligible authorization(s), roles `ffffffff-ffff-ffff-ffff-ffffffffffff`'
-        # The warning is the same either way: it names no direction.
+        (Get-Content (Join-Path $Run.Result.BundlePath 'README.md') -Raw) | Should -Not -Match 'this tenant is the managing tenant'
         @($Run.Warnings | Where-Object { $_ -like '*Lighthouse*' }) | Should -Be @(Get-LhxWarning -Count 2)
     }
 
@@ -6762,5 +6773,309 @@ Describe 'Export-OERInventory (Azure Lighthouse delegations, Sprint 11 step 6b, 
             @(Get-LhxBullet -BundlePath $Run.Result.BundlePath).Count | Should -Be 0
             (Get-ReadmeCouldNotReadSection -BundlePath $Run.Result.BundlePath) | Should -Match 'Nothing\.'
         }
+    }
+}
+
+Describe 'Export-OERInventory stays in the home tenant''s subscriptions (BL-150, A19)' {
+    # The Azure walk enters only the subscriptions whose home tenant (the tenantId Azure Resource Manager
+    # returns for the subscription) is the tenant the session's Microsoft Graph token was issued for. A
+    # subscription of another tenant -- a customer subscription delegated to this one through Azure
+    # Lighthouse -- is named in ONE warning and the README and read for nothing; one whose home tenant could
+    # not be read is named in IncompleteReads and makes the bundle partial. Unless a test says otherwise, the
+    # REAL scope tree and the REAL owner run; only the listings, the per-scope reads and the transport are
+    # mocked. The warnings are counted on the warning STREAM (3>&1). No id below is version-4 shaped.
+    BeforeAll {
+        $script:HtxSession = 'eeee0000-0000-0000-0000-000000000001'
+        $script:HtxOther = 'eeee0000-0000-0000-0000-000000000002'
+        $script:HtxOwnScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:HtxForeignScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'
+        $script:HtxBlankScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000003'
+        $script:HtxOwn = [PSCustomObject]@{ ResourceId = $script:HtxOwnScope; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; DisplayName = 'Own'; State = 'Enabled'; TenantId = $script:HtxSession }
+        $script:HtxForeign = [PSCustomObject]@{ ResourceId = $script:HtxForeignScope; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; DisplayName = 'Customer'; State = 'Enabled'; TenantId = $script:HtxOther }
+        $script:HtxBlank = [PSCustomObject]@{ ResourceId = $script:HtxBlankScope; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000003'; DisplayName = 'Blank'; State = 'Enabled'; TenantId = '' }
+        $script:HtxHeading = '## Subscriptions delegated from another tenant (not read)'
+        $script:HtxPartialTail = '. Do not treat it as a full tenant snapshot.'
+        function script:Get-HtxWarning {
+            param([string[]]$Scopes)
+            "Export-OERInventory: did not read $($Scopes.Count) subscription(s) whose home tenant is another tenant, such as a subscription another tenant delegated to this one through Azure Lighthouse: " +
+            (($Scopes | ForEach-Object { "'$_'" }) -join ', ') +
+            ". README.md names them under 'Subscriptions delegated from another tenant (not read)'. Nothing was read from them, and Invoke-OERStructure refuses a role assignment or role management policy there (SubscriptionTenantMismatch)."
+        }
+        function script:Invoke-HtxExport {
+            param([hashtable]$Splat)
+            $ExErr = $null
+            $All = @(Export-OERInventory @Splat -WarningAction Continue -ErrorAction SilentlyContinue -ErrorVariable ExErr 3>&1)
+            [PSCustomObject]@{
+                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                Partial  = @($ExErr | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+            }
+        }
+        function script:Get-HtxReadmeSection {
+            param([string]$BundlePath, [string]$Heading = $script:HtxHeading)
+            $Readme = Get-Content (Join-Path $BundlePath 'README.md') -Raw
+            $Start = $Readme.IndexOf($Heading)
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
+        }
+        function script:Get-HtxEmptyInventory {
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        # The session's Graph token was issued for the session tenant.
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; TokenTenantId = 'eeee0000-0000-0000-0000-000000000001' }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Get-OERManagementGroupList {}
+        Mock -ModuleName $script:moduleName Get-OERManagementGroup {}
+        Mock -ModuleName $script:moduleName Get-OERSubscription { $script:HtxOwn; $script:HtxForeign }
+        Mock -ModuleName $script:moduleName Get-OERInventory { Get-HtxEmptyInventory }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @(); RoleScopes = @() } }
+        Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation { [PSCustomObject]@{ Delegations = @(); Unread = @(); Causes = @() } }
+        # A listed subscription costs no request: any request is counted.
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest { [PSCustomObject]@{ subscriptionId = 'unexpected'; tenantId = 'eeee0000-0000-0000-0000-000000000001' } }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'states the rule in the help' {
+        $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('SUBSCRIPTIONS OF ANOTHER TENANT.'))
+        # Placed directly after the Azure Lighthouse paragraphs, before the role policy selection.
+        $Description.IndexOf('AZURE LIGHTHOUSE DELEGATIONS.') | Should -BeLessThan $Description.IndexOf('SUBSCRIPTIONS OF ANOTHER TENANT.')
+        $Description.IndexOf('SUBSCRIPTIONS OF ANOTHER TENANT.') | Should -BeLessThan $Description.IndexOf('WHICH AZURE ROLE MANAGEMENT POLICIES ARE EXPORTED.')
+        $Description | Should -Match ([regex]::Escape('This is a deliberate selection, and it makes no bundle partial.'))
+        $Description | Should -Match ([regex]::Escape('README.md lists them under "Subscriptions delegated from another tenant (not read)", directly after "Azure Lighthouse delegations (access from another tenant)".'))
+        $Description | Should -Match ([regex]::Escape("named in IncompleteReads as 'subscriptionHomeTenant at <scope>'"))
+        $Description | Should -Match ([regex]::Escape('Invoke-OERStructure refuses a role assignment or a role management policy at a scope in a subscription of another tenant (SubscriptionTenantMismatch).'))
+        $Description | Should -Match ([regex]::Escape('Of the subscriptions, ScopesEnumerated counts only those of this tenant'))
+        # A -Scope the resolver refuses is the fourth cause (docs/development/rationale.md#home-tenant-subscriptions,
+        # limit (f)).
+        $Description | Should -Match ([regex]::Escape("So is a -Scope that cannot be resolved, a raw -Scope that does not start with '/', for example: nothing is read at it, and it is named 'subscriptionHomeTenant at <the scope as given>', with a cause that gives the resolver's message."))
+        # And a -Scope with a spelling a document could not declare (docs/development/rationale.md#home-tenant-subscriptions,
+        # Ruling R-27).
+        $Description | Should -Match ([regex]::Escape("So is a -Scope spelled so that a request would not reach it as written, a management group path included: one that breaks a scope spelling rule a structure document must keep, such as a '.' or '..' segment or a trailing '/' (about_Omnicit.EntraRBAC lists every rule under RENAMES, MAIL ALIASES AND SCOPE SPELLING)."))
+        $Description | Should -Match ([regex]::Escape('A -Scope at a management group or the root scope, spelled as a structure document may spell it, is not in a subscription and is read as before.'))
+        $Description | Should -Match ([regex]::Escape('so nothing is resolved or read for it, and it is named the same way, with a cause that names the rules it breaks; write it without them.'))
+        # The -Scope parameter says what a scope in another tenant's subscription, or an undecided one, gets.
+        $ScopeParam = @((Get-Help Export-OERInventory -Full).Parameters.Parameter) | Where-Object { $_.Name -eq 'Scope' }
+        $ScopeText = ((@($ScopeParam.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $ScopeText | Should -Match ([regex]::Escape('A scope in a subscription of another tenant is not read: the warning and README.md name it'))
+        $ScopeText | Should -Match ([regex]::Escape('or the scope cannot be resolved -- is not read either, and is named in IncompleteReads, so the bundle is partial.'))
+        $ScopeText | Should -Match ([regex]::Escape("So is a scope spelled so that a request would not reach it as written, a management group path included: one that breaks a scope spelling rule a structure document must keep, such as a '.' or '..' segment or a trailing '/' (about_Omnicit.EntraRBAC lists every rule); nothing is resolved or read for it."))
+        $ScopeText | Should -Match ([regex]::Escape('Any other scope at a management group or the root scope lies in no subscription and is read as before.'))
+    }
+
+    It 'walks only the own subscription, names the foreign one in one warning and the README, and is not partial' {
+        $Run = Invoke-HtxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'htx-real'); Include = @('RoleAssignments') }
+
+        # The per-scope read, the eligibility read and the Lighthouse read got the own scope only.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Times 1 -Exactly -ParameterFilter {
+            @($Scope).Count -eq 1 -and $Scope[0] -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly -ParameterFilter {
+            @($Scope).Count -eq 1 -and $Scope[0] -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscription -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+
+        # scopeHierarchy.json lists the own subscription only.
+        $HierarchyRaw = Get-Content (Join-Path $Run.Result.BundlePath 'scopeHierarchy.json') -Raw
+        $Hierarchy = $HierarchyRaw | ConvertFrom-Json
+        @($Hierarchy.subscriptions | ForEach-Object { $_.subscriptionId }) | Should -Be @('aaaa1111-0000-0000-0000-000000000001')
+        $HierarchyRaw | Should -Not -Match 'aaaa1111-0000-0000-0000-000000000002'
+
+        $Run.Warnings | Should -Be @(Get-HtxWarning -Scopes @($script:HtxForeignScope))
+
+        # README.md names it, in its own section directly after the Lighthouse section.
+        $Readme = Get-Content (Join-Path $Run.Result.BundlePath 'README.md') -Raw
+        $Headings = @([regex]::Matches($Readme, '(?m)^## .*$') | ForEach-Object { $_.Value.TrimEnd("`r") })
+        $Index = [array]::IndexOf($Headings, $script:HtxHeading)
+        $Index | Should -BeGreaterThan 0
+        $Headings[$Index - 1] | Should -BeExactly '## Azure Lighthouse delegations (access from another tenant)'
+        $Section = Get-HtxReadmeSection -BundlePath $Run.Result.BundlePath
+        $Section | Should -Match '(?m)^This export did not read 1 such subscription\(s\):\r?$'
+        @($Section -split '\r?\n' | Where-Object { $_ -like '- *' }) | Should -Be @('- `/subscriptions/aaaa1111-0000-0000-0000-000000000002` -- display name `Customer`, home tenant `eeee0000-0000-0000-0000-000000000002`')
+
+        # A foreign subscription alone makes no bundle partial.
+        $Run.Partial.Count | Should -Be 0
+        @($Run.Result.IncompleteReads).Count | Should -Be 0
+        @($Run.Result.SkippedScopes).Count | Should -Be 0
+        $Run.Result.ScopesEnumerated | Should -Be 1
+        $Run.Result.ScopeCount | Should -Be 1
+        (Get-HtxReadmeSection -BundlePath $Run.Result.BundlePath -Heading '## What this export could not read') | Should -Match 'Nothing\.'
+    }
+
+    It 'stops at its own warning under -WarningAction Stop, before any bundle file exists' {
+        $Out = Join-Path $TestDrive 'htx-stop'
+        $Thrown = { Export-OERInventory -OutputPath $Out -Include RoleAssignments -WarningAction Stop } | Should -Throw -PassThru
+        $Thrown.Exception.Message | Should -Match ([regex]::Escape((Get-HtxWarning -Scopes @($script:HtxForeignScope))))
+        # Reach proof: the walk read the own scope, and the warning stopped the export before any file.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        Test-Path -LiteralPath $Out | Should -BeFalse
+    }
+
+    It 'writes the warning under -WhatIf too, and no bundle' {
+        $Run = Invoke-HtxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'htx-whatif'); Include = @('RoleAssignments'); WhatIf = $true }
+        $Run.Warnings | Should -Be @(Get-HtxWarning -Scopes @($script:HtxForeignScope))
+        Test-Path -LiteralPath $Run.Result.BundlePath | Should -BeFalse
+    }
+
+    It 'names an undecided subscription after the role selection entries and before the Lighthouse ones, in a clause of its own with its causes' {
+        $script:HtxUndecidedReason = "the read of subscription 'aaaa1111-0000-0000-0000-000000000003' failed: Service unavailable (503)."
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes                 = @('/subscriptions/aaaa1111-0000-0000-0000-000000000001')
+                Hierarchy              = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+                SkippedScopes          = @()
+                ForeignSubscriptions   = @()
+                UndecidedSubscriptions = @([PSCustomObject]@{ SubscriptionId = 'aaaa1111-0000-0000-0000-000000000003'; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000003'; Reason = $script:HtxUndecidedReason })
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryRolePolicy {}
+        Mock -ModuleName $script:moduleName Select-OERInventoryRolePolicy { [PSCustomObject]@{ Kept = @(); UnjudgedScopes = @('/subscriptions/aaaa1111-0000-0000-0000-000000000001') } }
+        $script:HtxLhCause = [PSCustomObject]@{ Cause = 'Forbidden (403) reading the registration assignments'; Target = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation {
+            [PSCustomObject]@{ Delegations = @(); Unread = @('lighthouseDelegations at /subscriptions/aaaa1111-0000-0000-0000-000000000001'); Causes = @($script:HtxLhCause) }
+        }
+        $Run = Invoke-HtxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'htx-undecided'); Include = @('RoleAssignments', 'RoleManagementPolicies') }
+
+        Should -Invoke -ModuleName $script:moduleName Select-OERInventoryRolePolicy -Times 1 -Exactly
+        $Expected = @(
+            'roleManagementPolicies/role selection at /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            'subscriptionHomeTenant at /subscriptions/aaaa1111-0000-0000-0000-000000000003'
+            'lighthouseDelegations at /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        )
+        (@($Run.Result.IncompleteReads) -join '|') | Should -BeExactly ($Expected -join '|')
+
+        $Run.Partial.Count | Should -Be 1
+        $Message = $Run.Partial[0].Exception.Message
+        $Clause = '1 Azure subscription(s) were not walked, since whether each belongs to this tenant could not be read, so none of their role assignments, role management policies, PIM eligibilities or Azure Lighthouse delegations is in the bundle: subscriptionHomeTenant at /subscriptions/aaaa1111-0000-0000-0000-000000000003. ' +
+            "Causes of the unread subscription tenants: $($script:HtxUndecidedReason.TrimEnd('.'))"
+        $Message | Should -Match ([regex]::Escape($Clause + '. 1 Azure Lighthouse read(s) failed'))
+        $Message.IndexOf('every role management policy that could not be judged') | Should -BeGreaterThan -1
+        $Message.IndexOf('every role management policy that could not be judged') | Should -BeLessThan $Message.IndexOf('1 Azure subscription(s) were not walked')
+        $Message.IndexOf('1 Azure subscription(s) were not walked') | Should -BeLessThan $Message.IndexOf('1 Azure Lighthouse read(s) failed')
+        $Message | Should -Not -BeLike '*partial Entra ID read entry*'
+
+        # README.md names it under its own label, in the same order.
+        $Bullets = @((Get-HtxReadmeSection -BundlePath $Run.Result.BundlePath -Heading '## What this export could not read') -split '\r?\n' | Where-Object { $_ -like '- *' })
+        ($Bullets -join "`n") | Should -BeExactly (@(
+                '- Azure role management policies kept without being judged: `roleManagementPolicies/role selection at /subscriptions/aaaa1111-0000-0000-0000-000000000001`'
+                '- Azure subscription whose tenant could not be read: `subscriptionHomeTenant at /subscriptions/aaaa1111-0000-0000-0000-000000000003`'
+                '- Azure Lighthouse read that failed: `lighthouseDelegations at /subscriptions/aaaa1111-0000-0000-0000-000000000001`'
+            ) -join "`n")
+        # No subscription of another tenant: no such warning, and the README says none.
+        @($Run.Warnings | Where-Object { $_ -like '*did not read*subscription(s) whose home tenant*' }).Count | Should -Be 0
+        (Get-HtxReadmeSection -BundlePath $Run.Result.BundlePath) | Should -Match '(?m)^None\.'
+    }
+
+    It 'names a listed subscription that gave no tenantId as unread, through the real tree, with its cause and the tree''s one warning' {
+        Mock -ModuleName $script:moduleName Get-OERSubscription { $script:HtxOwn; $script:HtxBlank }
+        $Run = Invoke-HtxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'htx-blank'); Include = @('RoleAssignments') }
+        $Reason = "Azure Resource Manager gave no home tenant (tenantId) for subscription 'aaaa1111-0000-0000-0000-000000000003'"
+        @($Run.Result.IncompleteReads) | Should -Be @('subscriptionHomeTenant at /subscriptions/aaaa1111-0000-0000-0000-000000000003')
+        $Run.Partial.Count | Should -Be 1
+        $Run.Partial[0].Exception.Message | Should -BeExactly ('This inventory bundle is PARTIAL: 1 Azure subscription(s) were not walked, since whether each belongs to this tenant could not be read, so none of their role assignments, role management policies, PIM eligibilities or Azure Lighthouse delegations is in the bundle: subscriptionHomeTenant at /subscriptions/aaaa1111-0000-0000-0000-000000000003. ' +
+            "Causes of the unread subscription tenants: $Reason" + $script:HtxPartialTail)
+        $Run.Warnings | Should -Be @("Could not tell whether 1 subscription(s) belong to this tenant, so none of them is walked: '/subscriptions/aaaa1111-0000-0000-0000-000000000003' ($Reason)")
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        $Run.Result.ScopesEnumerated | Should -Be 1
+        $Bullets = @((Get-HtxReadmeSection -BundlePath $Run.Result.BundlePath -Heading '## What this export could not read') -split '\r?\n' | Where-Object { $_ -like '- *' })
+        $Bullets | Should -Be @('- Azure subscription whose tenant could not be read: `subscriptionHomeTenant at /subscriptions/aaaa1111-0000-0000-0000-000000000003`')
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+    }
+
+    It 'reads nothing at a -Scope in a subscription of another tenant: one read of the subscription, the warning and the README name the scope, and it is not partial' {
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest { [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; displayName = 'Customer'; tenantId = 'eeee0000-0000-0000-0000-000000000002' } }
+        $Given = '/subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg1'
+        $Run = Invoke-HtxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'htx-scope'); Include = @('RoleAssignments'); Scope = $Given }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscription -Times 0
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000002?api-version=2022-12-01' }
+        $Run.Warnings | Should -Be @(Get-HtxWarning -Scopes @($Given))
+        @((Get-HtxReadmeSection -BundlePath $Run.Result.BundlePath) -split '\r?\n' | Where-Object { $_ -like '- *' }) | Should -Be @('- `/subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg1` -- display name `Customer`, home tenant `eeee0000-0000-0000-0000-000000000002`')
+        $Run.Partial.Count | Should -Be 0
+        @($Run.Result.IncompleteReads).Count | Should -Be 0
+        $Run.Result.ScopesEnumerated | Should -Be 0
+        # Nor did the eligibility read or the Lighthouse read get a scope: each was asked once, about none.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Times 1 -Exactly -ParameterFilter { @($Scope).Count -eq 0 }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly -ParameterFilter { @($Scope).Count -eq 0 }
+    }
+
+    It 'reads nothing at a -Scope whose subscription cannot be told from its text (<Name>): it is named unread, as given, and the bundle is partial' -ForEach @(
+        # Ruling R-27: '..' segments that a request's System.Uri would take from the own subscription to another.
+        @{ Name = 'a raw -Scope spelled so that the request would not reach it as written'
+            Given = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/../../subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg1'
+            Reason = "scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001/../../subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg1' is written in a spelling no structure document can declare (DotSegment), so the path a request sends for it may name another scope than its text; nothing was resolved or read for it" }
+        # Limit (f), Ruling R-26: a raw -Scope that does not start with '/' cannot be resolved.
+        @{ Name = 'a raw -Scope that cannot be resolved'
+            Given = 'subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            Reason = "scope 'subscriptions/aaaa1111-0000-0000-0000-000000000001' could not be resolved: Scope 'subscriptions/aaaa1111-0000-0000-0000-000000000001' is not a valid ARM resource id: it must start with '/'." }
+    ) {
+        # A subscription GET would answer the session's tenant, so a read would have walked the scope.
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest { [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Own'; tenantId = 'eeee0000-0000-0000-0000-000000000001' } }
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord {}
+        $Run = Invoke-HtxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'htx-unread-scope'); Include = @('RoleAssignments'); Scope = $Given }
+
+        # Named once, under the scope as given, in IncompleteReads only (R-26): not in SkippedScopes or
+        # SkippedEligibilityScopes.
+        @($Run.Result.IncompleteReads) | Should -Be @("subscriptionHomeTenant at $Given")
+        @($Run.Result.SkippedScopes).Count | Should -Be 0
+        @($Run.Result.SkippedEligibilityScopes).Count | Should -Be 0
+        $Run.Partial.Count | Should -Be 1
+        $Run.Partial[0].Exception.Message | Should -BeExactly ("This inventory bundle is PARTIAL: 1 Azure subscription(s) were not walked, since whether each belongs to this tenant could not be read, so none of their role assignments, role management policies, PIM eligibilities or Azure Lighthouse delegations is in the bundle: subscriptionHomeTenant at $Given. " +
+            "Causes of the unread subscription tenants: $($Reason.TrimEnd('.'))" + $script:HtxPartialTail)
+        # Reached: the tree's one warning names it, and the README lists it under its label.
+        $Run.Warnings | Should -Be @("Could not tell whether 1 subscription(s) belong to this tenant, so none of them is walked: '$Given' ($Reason)")
+        $Bullets = @((Get-HtxReadmeSection -BundlePath $Run.Result.BundlePath -Heading '## What this export could not read') -split '\r?\n' | Where-Object { $_ -like '- *' })
+        $Bullets | Should -Be @("- Azure subscription whose tenant could not be read: ``subscriptionHomeTenant at $Given``")
+        # Nothing was read: no subscription, no scope, and the eligibility and Lighthouse reads were given none.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscription -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Times 1 -Exactly -ParameterFilter { @($Scope).Count -eq 0 }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Times 1 -Exactly -ParameterFilter { @($Scope).Count -eq 0 }
+        $Run.Result.ScopesEnumerated | Should -Be 0
+        $Run.Result.ScopeCount | Should -Be 0
+        # No subscription of another tenant was named.
+        @($Run.Warnings | Where-Object { $_ -like '*did not read*subscription(s) whose home tenant*' }).Count | Should -Be 0
+    }
+
+    It 'never asks the owner, and adds nothing, for a pure-Entra export' {
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { [PSCustomObject]@{ Verdict = 'Foreign' } }
+        $Run = Invoke-HtxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'htx-entra'); Include = @('Groups') }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscription -Times 0
+        @($Run.Warnings | Where-Object { $_ -like '*subscription(s)*' }).Count | Should -Be 0
+        @($Run.Result.IncompleteReads).Count | Should -Be 0
+        $Run.Partial.Count | Should -Be 0
+        (Get-HtxReadmeSection -BundlePath $Run.Result.BundlePath) | Should -Match '(?m)^None\.'
     }
 }

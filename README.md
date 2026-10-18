@@ -1002,15 +1002,23 @@ hold, permanently or as eligible (just-in-time) authorizations. The file is read
 `azurePimEligibility.json`: written exactly when that file is, always a JSON array (`[]` when none
 was read), and never part of the apply document, so `Invoke-OERStructure` never creates or removes
 a delegation. The export warns once with the count, and its `README.md` lists each delegation under
-"Azure Lighthouse delegations (access from another tenant)", as a finding to review. When this
-tenant is itself a managing tenant, the walk also reaches the subscriptions other tenants delegated
-to it, and a row whose `managedByTenantId` is the `tenantId` of `inventory.json` is access this
-tenant holds over another tenant, which that README marks. A subscription whose delegations could
-not be read has no row in the file and is named in `IncompleteReads`
+"Azure Lighthouse delegations (access from another tenant)", as a finding to review. The walk reads
+only this tenant's own subscriptions, and Azure Lighthouse refuses a delegation whose managing tenant
+is the subscription's own tenant, so every row is access another tenant holds here. A subscription
+whose delegations could not be read has no row in the file and is named in `IncompleteReads`
 (`lighthouseDelegations at <scope>`) and in `InventoryPartial`, and so is a role whose name could
 not be read (`lighthouseDelegations role <id>`, its `roleName` written `null`). The read costs two
 paged lists per subscription and one read per distinct role, plus a listing of the subscription's
 resource groups and one read per group only when a delegation may sit at one; `Reader` covers it.
+
+`Export-OERInventory`'s Azure walk reads only the session tenant's own subscriptions, judged by the
+`tenantId` Azure Resource Manager returns for each: a subscription of another tenant (one delegated
+to this tenant through Azure Lighthouse, say) is not read, and one warning and the bundle's
+`README.md` name it under "Subscriptions delegated from another tenant (not read)", while one whose
+home tenant could not be read is named in `IncompleteReads` (`subscriptionHomeTenant at <scope>`)
+and makes the bundle partial. `Invoke-OERStructure` refuses a role assignment or a role management
+policy at a scope in another tenant's subscription (`SubscriptionTenantMismatch`): it reads no role
+assignment or policy there and writes nothing for it.
 
 ---
 

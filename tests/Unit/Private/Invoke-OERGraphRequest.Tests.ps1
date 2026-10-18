@@ -3657,6 +3657,12 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
             # Initialize-OERAuth raises GraphTokenAcquisitionFailed. Removed again below, before the
             # runspace check reads the module scope. Hang guard: exit past five calls.
             & (Get-Module Omnicit.EntraRBAC) {
+                # BL-150: the subscription home tenant check answers Home, so the role assignment entry takes the
+                # path this scenario is about. It replaces the module's own function in this runspace's copy of
+                # the module, which ends with the runspace.
+                function script:Get-OERSubscriptionHomeTenant {
+                    [pscustomobject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null }
+                }
                 function script:Get-AzToken {
                     $global:OERLatchTokenCalls++
                     if ($global:OERLatchTokenCalls -gt 5) { exit }
@@ -3741,6 +3747,12 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
             $global:OERLatchGraphCalls = 0
             # Module-scope stubs, removed again below. Hang guards: exit past five calls.
             & (Get-Module Omnicit.EntraRBAC) {
+                # BL-150: the subscription home tenant check answers Home, so the role assignment entry takes the
+                # path this scenario is about. It replaces the module's own function in this runspace's copy of
+                # the module, which ends with the runspace.
+                function script:Get-OERSubscriptionHomeTenant {
+                    [pscustomobject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null }
+                }
                 function script:Get-AzToken {
                     $global:OERLatchTokenCalls++
                     if ($global:OERLatchTokenCalls -gt 5) { exit }
@@ -3874,6 +3886,12 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
             # real one, so a nested sign-in that got past the check would renew tenant A's session and
             # connect. Connect-MgGraph only counts. Hang guards: exit past five calls.
             & (Get-Module Omnicit.EntraRBAC) {
+                # BL-150: the subscription home tenant check answers Home, so the role assignment entry takes the
+                # path this scenario is about. It replaces the module's own function in this runspace's copy of
+                # the module, which ends with the runspace.
+                function script:Get-OERSubscriptionHomeTenant {
+                    [pscustomobject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null }
+                }
                 function script:Get-AzToken {
                     [CmdletBinding()]
                     param([string]$Tenant, [string]$Resource, [string[]]$Scope, [string]$ClientId, [string]$Claim,
@@ -4221,6 +4239,12 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
             # function in this runspace's copy of the module, which ends with the runspace, and it stands
             # between the module and Invoke-RestMethod, so no lookup is sent. Hang guards: exit past five calls.
             & (Get-Module Omnicit.EntraRBAC) {
+                # BL-150: the subscription home tenant check answers Home, so the role assignment entry takes the
+                # path this scenario is about. It replaces the module's own function in this runspace's copy of
+                # the module, which ends with the runspace.
+                function script:Get-OERSubscriptionHomeTenant {
+                    [pscustomobject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null }
+                }
                 function script:Get-AzToken {
                     $global:OERLatchTokenCalls++
                     if ($global:OERLatchTokenCalls -gt 5) { exit }
@@ -4324,6 +4348,12 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
             # with the runspace, and it stands between the module and Invoke-RestMethod, so no lookup is
             # sent. Hang guards: exit past five calls.
             & (Get-Module Omnicit.EntraRBAC) {
+                # BL-150: the subscription home tenant check answers Home, so the role assignment entry takes the
+                # path this scenario is about. It replaces the module's own function in this runspace's copy of
+                # the module, which ends with the runspace.
+                function script:Get-OERSubscriptionHomeTenant {
+                    [pscustomobject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null }
+                }
                 function script:Get-AzToken {
                     [CmdletBinding()]
                     param([string]$Tenant, [string]$Resource, [string[]]$Scope, [string]$ClientId, [string]$Claim,
@@ -4455,6 +4485,12 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
             # runspace's copy of the module, which ends with the runspace, and it stands between the module
             # and Invoke-RestMethod, so no lookup is sent. Hang guards: exit past a bound no step reaches.
             & (Get-Module Omnicit.EntraRBAC) {
+                # BL-150: the subscription home tenant check answers Home, so the role assignment entry takes the
+                # path this scenario is about. It replaces the module's own function in this runspace's copy of
+                # the module, which ends with the runspace.
+                function script:Get-OERSubscriptionHomeTenant {
+                    [pscustomobject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null }
+                }
                 function script:Get-AzToken {
                     [CmdletBinding()]
                     param([string]$Tenant, [string]$Resource, [string[]]$Scope, [string]$ClientId, [string]$Claim,
@@ -4658,6 +4694,12 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
             # counts. Resolve-OERTenantDomain stands between the module and Invoke-RestMethod, so no lookup
             # is sent. Hang guards: exit past a bound no step reaches.
             & (Get-Module Omnicit.EntraRBAC) {
+                # BL-150: the subscription home tenant check answers Home, so the role assignment entry takes the
+                # path this scenario is about. It replaces the module's own function in this runspace's copy of
+                # the module, which ends with the runspace.
+                function script:Get-OERSubscriptionHomeTenant {
+                    [pscustomobject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null }
+                }
                 function script:Get-AzToken {
                     [CmdletBinding()]
                     param([string]$Tenant, [string]$Resource, [string[]]$Scope, [string]$ClientId, [string]$Claim,
@@ -4837,6 +4879,12 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
             # expected to request a token, connect or look a tenant up -- tenant A's session answers from
             # the cache -- so each of those stubs only counts. Hang guards: exit past a bound no step reaches.
             & (Get-Module Omnicit.EntraRBAC) {
+                # BL-150: the subscription home tenant check answers Home, so the role assignment entry takes the
+                # path this scenario is about. It replaces the module's own function in this runspace's copy of
+                # the module, which ends with the runspace.
+                function script:Get-OERSubscriptionHomeTenant {
+                    [pscustomobject]@{ Scope = $null; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null }
+                }
                 function script:Get-AzToken {
                     [CmdletBinding()]
                     param([string]$Tenant, [string]$Resource, [string[]]$Scope, [string]$ClientId, [string]$Claim,

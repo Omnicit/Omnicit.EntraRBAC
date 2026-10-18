@@ -9204,3 +9204,16 @@ Describe 'Get-OERInventory help documents the tenantId (BL-88, A14)' {
         $ParamText | Should -Match ([regex]::Escape("The inventory's tenantId is the tenant ID the session's Microsoft Graph token was issued for, not this value."))
     }
 }
+
+Describe 'Get-OERInventory help documents the subscriptions of another tenant (BL-150, A19)' {
+    It 'says it reads a scope in a subscription of another tenant, unlike the export''s walk, that Invoke-OERStructure refuses one, and that a management group row read there as inherited is not checked' {
+        # Whitespace collapsed first, so the assertion does not depend on where the prose wraps.
+        $Help = Get-Help Get-OERInventory -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+
+        $Description | Should -Match ([regex]::Escape("This cmdlet reads the Azure scope it is given, a scope in a subscription of another tenant included (it does not check a subscription's home tenant, while Export-OERInventory's Azure walk enters only the subscriptions of the tenant the session's Microsoft Graph token was issued for), and Invoke-OERStructure refuses a role assignment or a role management policy at a scope in a subscription of another tenant with SubscriptionTenantMismatch."))
+        # A row read at such a subscription as inherited from a management group above it is not checked
+        # (docs/development/rationale.md#home-tenant-subscriptions, limit (c)).
+        $Description | Should -Match ([regex]::Escape('A role assignment row that an inventory of such a subscription carries at a management group above it, read at the subscription as inherited, lies in no subscription and is not checked: Invoke-OERStructure applies it like any management group row.'))
+    }
+}

@@ -19,6 +19,8 @@ function Sync-OERStructureRoleManagementPolicy {
     - 'mg:<name>' -> -ManagementGroup <name>
     - 'subscription:<name>' or 'sub:<name>' -> -Subscription <name>
     - Any other value -> -Scope <value>, where a raw Azure Resource Manager path loses a trailing '/'
+    When the engine passes -ResolvedScope (the scope its home tenant check resolved, BL-150), both cmdlets
+    take -Scope <ResolvedScope> instead, and the document scope is not parsed here.
 
     Presence semantics: an OMITTED field in the document means "leave untouched", NOT "set to
     $false". Only the fields the document actually declares are compared and, when they differ,
@@ -71,6 +73,13 @@ function Sync-OERStructureRoleManagementPolicy {
     Optional Tenant Profile alias forwarded for context. Accepted for handler signature uniformity
     but not used by this handler.
 
+    .PARAMETER ResolvedScope
+    Optional. The canonical scope the engine's home tenant check (Get-OERSubscriptionHomeTenant, BL-150)
+    resolved the entry's scope to. When given, Get-OERRoleManagementPolicy and
+    Set-OERRoleManagementPolicy are called with -Scope set to it instead of the splat
+    ConvertTo-OERScopeSplat builds from the document scope, so the policy read and written is the one
+    the check decided on. Every row still names the scope as the document wrote it.
+
     .EXAMPLE
     Sync-OERStructureRoleManagementPolicy -Item $DocItem -Caller $PSCmdlet
     Reconciles one role management policy entry from the document against the live Azure PIM policy.
@@ -93,14 +102,21 @@ function Sync-OERStructureRoleManagementPolicy {
         [Parameter(Mandatory)][PSCustomObject]$Item,
         [Parameter(Mandatory)][System.Management.Automation.PSCmdlet]$Caller,
         [switch]$Prune,
-        [string]$TenantAlias
+        [string]$TenantAlias,
+        [string]$ResolvedScope
     )
 
     process {
         $Label   = "$($Item.role) @ $($Item.scope)"
         $Section = 'roleManagementPolicies'
 
-        $ScopeSplat = ConvertTo-OERScopeSplat -Scope $Item.scope
+        # BL-150: the engine resolved the scope once, in its home tenant check, and the policy read and
+        # written must be at the scope that check decided on. The rows keep the document's own spelling.
+        $ScopeSplat = if (-not [string]::IsNullOrEmpty($ResolvedScope)) {
+            @{ Scope = $ResolvedScope }
+        } else {
+            ConvertTo-OERScopeSplat -Scope $Item.scope
+        }
 
         # -- Read the current policy --------------------------------------------------------
         $Cur = $null

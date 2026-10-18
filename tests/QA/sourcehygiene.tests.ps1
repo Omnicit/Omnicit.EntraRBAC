@@ -1506,9 +1506,15 @@ BeforeAll {
         Get-OERDocumentTenantMismatch, the single owner of the comparison of a document's tenantId
         (BL-88, A14), is called only by Invoke-OERStructure, so a second apply path cannot compare -- or
         skip comparing -- on rules of its own.
+        Get-OERSubscriptionHomeTenant, the single owner of whether a subscription belongs to the tenant
+        the session's Microsoft Graph token was issued for (BL-150, A19), is called only by
+        Resolve-OERInventoryScopeTree, which keeps another tenant's subscriptions out of the export's
+        Azure walk, and Invoke-OERStructure, which refuses a role assignment or role management policy at
+        a scope in one; a third caller would decide on rules of its own which tenant's subscription it
+        may read or write in.
         Every row of $script:transportGateOwners is enforced by the It that reads the table as a whole
         (BL-101): for each row, no caller outside its owners and every owner really calling it, with
-        at least thirteen rows, one row per command, and a call found for every row's command. So a
+        at least fourteen rows, one row per command, and a call found for every row's command. So a
         row added without an It of its own is enforced all the same -- before BL-101 such a row was
         inert, since each row was asserted only by its own It. The per-row Its below still assert
         their own row and carry that row's reason: a new row still gets one, for its explanation, but
@@ -1664,6 +1670,7 @@ BeforeAll {
         [PSCustomObject]@{ Command = 'Resolve-OERTenantDomain'; Owners = @($script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Set-OERSessionUncertain'; Owners = @('source\Private\Initialize-OERAuth.ps1', 'source\Public\Connect-OER.ps1', 'source\Public\Disconnect-OER.ps1') }
         [PSCustomObject]@{ Command = 'Get-OERDocumentTenantMismatch'; Owners = @('source\Public\Invoke-OERStructure.ps1') }
+        [PSCustomObject]@{ Command = 'Get-OERSubscriptionHomeTenant'; Owners = @('source\Private\Resolve-OERInventoryScopeTree.ps1', 'source\Public\Invoke-OERStructure.ps1') }
     )
     # The command a call really names, through Resolve-OERTransportCommandName -- defined once, ahead of
     # Pass 1, and shared with the bearer-scrub gate's transport detection.
@@ -4283,20 +4290,22 @@ rest on, so fix it rather than the case; a case is changed only when the rule it
             without an It of its own is enforced all the same. Measured in Sprint 9 step 6b, before this
             It existed: the Get-OERDocumentTenantMismatch row alone, with its owner list emptied, left
             the gate green, since nothing read the row. Non-vacuity: the table holds at least the
-            thirteen rows it held when this It was written. A row deleted from the table is seen by its
-            own It only where that It also asserts the row's call count (Get-MgContext, Lock-OERSignIn,
-            Unlock-OERSignIn, Invoke-MgGraphRequest, Invoke-WebRequest, Invoke-RestMethod), which then
-            reads $null; the Its of the other seven rows read those rows only through the violation
-            and stale lists, whose missing key joins to an empty string, and stay green (all thirteen
-            measured, BL-101). For those seven only this count sees a deletion, and not when a new row
-            is added in the same edit. One row per command (a second row for a command replaces the
-            first one's owners in the scan above), and the owners of every row really call its
-            command, so no row is a rule over nothing. That last check is the only one that sees a row
-            with no owner at all for a command nothing calls: such a row reports neither a foreign
-            caller nor a stale owner.
+            fourteen rows it holds since the Get-OERSubscriptionHomeTenant row was added (BL-150; it
+            held thirteen when this It was written). A row deleted from the table is seen by its own It
+            only where that It also asserts the row's call count (Get-MgContext, Lock-OERSignIn,
+            Unlock-OERSignIn, Invoke-MgGraphRequest, Invoke-WebRequest, Invoke-RestMethod,
+            Get-OERSubscriptionHomeTenant), which then reads $null; the Its of the other seven rows read
+            those rows only through the violation and stale lists, whose missing key joins to an empty
+            string, and stay green (all thirteen measured, BL-101, and the fourteenth in Sprint 11 step
+            6c). For those seven only this count sees a deletion, and not when a new row is added in the
+            same edit, so the floor moves with every row added. One row per command (a second row for a
+            command replaces the first one's owners in the scan above), and the owners of every row
+            really call its command, so no row is a rule over nothing. That last check is the only one
+            that sees a row with no owner at all for a command nothing calls: such a row reports neither
+            a foreign caller nor a stale owner.
         #>
-        @($script:transportGateOwners).Count | Should -BeGreaterOrEqual 13 -Because (
-            'the owner table held thirteen rows when this It was written; fewer means a rule was dropped, and a new row is enforced here without a further edit')
+        @($script:transportGateOwners).Count | Should -BeGreaterOrEqual 14 -Because (
+            'the owner table holds fourteen rows since the Get-OERSubscriptionHomeTenant row was added (BL-150); fewer means a rule was dropped, and a new row is enforced here without a further edit')
         $Commands = @($script:transportGateOwners | ForEach-Object { $_.Command })
         $Duplicates = @($Commands | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
         $Duplicates -join ', ' | Should -BeNullOrEmpty -Because (
@@ -4425,6 +4434,25 @@ were issued for, and refuses the document with DocumentTenantMismatch before any
 for it. A second caller is a second apply path that compares -- or skips comparing -- on rules of its
 own, so a document exported from one tenant could be applied in another through it. Apply a document
 only through Invoke-OERStructure.
+'@
+    }
+
+    It 'decides a subscription''s home tenant with Get-OERSubscriptionHomeTenant only in Resolve-OERInventoryScopeTree.ps1 and Invoke-OERStructure.ps1' {
+        # The call count is read first, so a row deleted from the table (whose violation and stale lists
+        # would then be empty) turns this It red as well.
+        $script:transportOwnerSites['Get-OERSubscriptionHomeTenant'] | Should -BeGreaterThan 0 -Because (
+            'the owner table must hold a row for Get-OERSubscriptionHomeTenant and its owners must really call it, or this rule has nothing to be the only owner of')
+        $script:transportOwnerStale['Get-OERSubscriptionHomeTenant'] -join "`n" | Should -BeNullOrEmpty -Because (
+            'Resolve-OERInventoryScopeTree and Invoke-OERStructure must each really call Get-OERSubscriptionHomeTenant, or this rule has nothing to be the only owner of; an owner listed here that calls it nowhere is a stale rule, not a pass')
+        $script:transportOwnerViolations['Get-OERSubscriptionHomeTenant'] -join "`n" | Should -BeNullOrEmpty -Because @'
+Get-OERSubscriptionHomeTenant is the single owner of whether an Azure subscription belongs to the tenant
+the session's Microsoft Graph token was issued for (BL-150, A19), by the tenantId Azure Resource Manager
+returns for it: Resolve-OERInventoryScopeTree keeps another tenant's subscriptions, and those it cannot
+decide, out of the export's Azure walk, and Invoke-OERStructure refuses a role assignment or a role
+management policy at a scope in one with SubscriptionTenantMismatch before anything is read or written
+for it. A third caller decides on rules of its own which tenant's subscription it may read or write in,
+so a customer subscription delegated through Azure Lighthouse could be exported or changed through it.
+Decide it only through those two callers.
 '@
     }
 

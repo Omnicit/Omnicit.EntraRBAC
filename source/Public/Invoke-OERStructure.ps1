@@ -231,6 +231,25 @@ function Invoke-OERStructure {
     any other tenant, while a document without tenantId is applied in whatever tenant that session
     holds, so name -TenantId there.
 
+    Subscriptions of another tenant (BL-150): before the engine looks up a principal or role, or reads or
+    writes a role assignment or policy, for a roleAssignments or roleManagementPolicies entry at a scope
+    in an Azure subscription, it reads that subscription (Subscriptions - Get) once per subscription and
+    document and compares its home tenant (tenantId) with the tenant the session's Microsoft Graph token
+    was issued for. An entry in a subscription whose home tenant is another tenant -- one another tenant
+    delegated to this one through Azure Lighthouse, for example -- is reported Failed with
+    SubscriptionTenantMismatch, and nothing more is read and nothing is written for it, with or without
+    -Prune: its scope is never pruned. When the home tenant cannot be told, the entry is reported Failed
+    too, and nothing more is read or written for it: with the error itself when the subscription cannot
+    be read or a roleManagementPolicies scope cannot be resolved, and with SubscriptionTenantMismatch when
+    the subscription names no tenant ID, or when the session's Microsoft Graph token names none (then the
+    subscription is not read). No ShouldProcess is involved, so -WhatIf and a real run report the same
+    row. An entry at a management group or at the root scope lies in no subscription: no subscription is
+    read for it, and it is handled as before. The public role assignment and policy cmdlets
+    (New-OERRoleAssignment, Set-OERRoleManagementPolicy and the rest) and Get-OERInventory do not make
+    this check, so a scope named to them is used as named. A roleManagementPolicies entry whose scope the
+    check resolved is applied at that scope, so the policy read and written is the one the check decided
+    on.
+
     RoleAssignments scope grouping: before the first role assignment item is dispatched, the engine
     resolves every item's scope once (Resolve-OERStructureRoleAssignmentScope) and groups the items on
     the canonical RESOLVED scope, compared without regard to letter case -- never on the scope text
@@ -392,8 +411,10 @@ function Invoke-OERStructure {
 
     The Azure root scope '/' is never pruned. A roleAssignments entry at the root scope is reported
     Skipped, with a warning, and nothing is read or removed there, with or without -Prune (see
-    RoleAssignments scope grouping above). Every other scope the document declares is pruned as
-    described here.
+    RoleAssignments scope grouping above). A roleAssignments scope in a subscription whose home tenant
+    is another tenant, or cannot be told, is never pruned: its entries are reported Failed, and no role
+    assignment there is read or removed (see Subscriptions of another tenant above). Every other scope
+    the document declares is pruned as described here.
 
     directoryRoleAssignments is reconciled per pair of directory role and assignmentType, and only
     for the pairs the document declares: a directory role the document does not name, or names only
@@ -640,6 +661,18 @@ function Invoke-OERStructure {
         # the five handlers. docs/development/rationale.md#review-package-in-the-same-run
         $RenameMap = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
+        # SEC (BL-150, A19): the apply engine reads and writes a role assignment or a role management
+        # policy in a subscription only when it can show that the subscription belongs to the tenant the
+        # session's Microsoft Graph token was issued for -- never in one another tenant delegated to it,
+        # for example through Azure Lighthouse. Get-OERSubscriptionHomeTenant owns the decision; this cache holds what one read of a
+        # subscription gave, a failed read included, so the check is made once per subscription and
+        # document, before the first read or write for a scope there. A new document, a piped one included,
+        # checks again. A refused entry is reported Failed by the engine itself and never dispatched, so
+        # nothing is read at its scope, written for it or pruned there; the public cmdlets do not check.
+        $SubscriptionTenantCache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        # A refused entry's Detail is the owner's Reason, its own closing period dropped, then '; ' and this.
+        $ForeignScopeDetail = 'the apply engine reads and writes a role assignment or a role management policy in a subscription only when it can show that the subscription belongs to this session''s tenant, so none was read or written for this entry'
+
         # R12: a section -Include leaves out decides none of its renames, so a reference to an entry's new
         # name -- a group created into a unit, an access package in a catalog, an access review of a
         # package or of one of its assignment policies -- could only be looked up by name, and while
@@ -810,6 +843,17 @@ function Invoke-OERStructure {
                                     -ErrorRecord $RaEntry.ErrorRecord))
                         continue
                     }
+                    # SEC (BL-150, A19): a scope in another tenant's subscription, or in one whose home
+                    # tenant cannot be told, is refused before the entry is dispatched: no principal or
+                    # role lookup, no read of the scope, no write, and its scope's prune pass never runs.
+                    # The entry is not an unresolved scope (its scope is known), so it withholds no prune.
+                    $HomeTenant = Get-OERSubscriptionHomeTenant -Scope $RaEntry.Scope -Cache $SubscriptionTenantCache
+                    if ($HomeTenant.Verdict -eq 'Foreign' -or $HomeTenant.Verdict -eq 'Undecided') {
+                        $PSCmdlet.WriteError($HomeTenant.ErrorRecord)
+                        $Results.Add((ConvertTo-OERStructureResult -Section $Section.DocKey -Item $RaEntry.Label -Action 'Failed' `
+                                    -Detail "$(([string]$HomeTenant.Reason).TrimEnd('.')); $ForeignScopeDetail" -ErrorRecord $HomeTenant.ErrorRecord))
+                        continue
+                    }
                     $RaGroupOfItem = $RaGroup[$RaEntry.Scope]
                     $ExtraParams.ResolvedScope   = $RaGroupOfItem.Scope
                     $ExtraParams.DeclaredAtScope = @($RaGroupOfItem.Items)
@@ -819,6 +863,20 @@ function Invoke-OERStructure {
                     $ExtraParams.DeclaredAtScopeIndex = @($RaGroupOfItem.Indices)
                     $ExtraParams.SiblingKeyCache      = $RaGroupOfItem.KeyCache
                     $RaGroupOfItem.Reconciled = $true
+                }
+                # SEC (BL-150, A19): the same check for a roleManagementPolicies entry, which resolves its
+                # scope here (a subscription named by its display name costs one read of the subscription
+                # list). An entry it lets through is applied at the scope it resolved; an 'mg:' entry,
+                # which it does not resolve, is resolved by the handler as before.
+                if ($Section.IncludeName -eq 'RoleManagementPolicies') {
+                    $HomeTenant = Get-OERSubscriptionHomeTenant -Scope ([string]$It.scope) -Cache $SubscriptionTenantCache
+                    if ($HomeTenant.Verdict -eq 'Foreign' -or $HomeTenant.Verdict -eq 'Undecided') {
+                        $PSCmdlet.WriteError($HomeTenant.ErrorRecord)
+                        $Results.Add((ConvertTo-OERStructureResult -Section $Section.DocKey -Item "$($It.role) @ $($It.scope)" -Action 'Failed' `
+                                    -Detail "$(([string]$HomeTenant.Reason).TrimEnd('.')); $ForeignScopeDetail" -ErrorRecord $HomeTenant.ErrorRecord))
+                        continue
+                    }
+                    if ($HomeTenant.Scope) { $ExtraParams.ResolvedScope = $HomeTenant.Scope }
                 }
                 if ($Section.IncludeName -eq 'DirectoryRoleAssignments') {
                     $ExtraParams.DeclaredInSection = $Items

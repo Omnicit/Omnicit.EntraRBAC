@@ -5,10 +5,14 @@ function Get-OERScopeSpellingProblem {
 
     .DESCRIPTION
     The single owner of the two scope spelling rules that Test-OERStructureSchema applies to the scope
-    of a roleAssignments and a roleManagementPolicies entry, and that Get-OERInventory applies to the
-    scope of every role assignment it reads (A13, A15; docs/development/rationale.md#undeclarable-scope).
-    The validator refuses a scope that breaks either rule, so a document can never declare it, and the
-    inventory leaves a role assignment at such a scope out of the document it writes.
+    of a roleAssignments and a roleManagementPolicies entry, that Get-OERInventory applies to the
+    scope of every role assignment it reads (A13, A15; docs/development/rationale.md#undeclarable-scope),
+    and that Get-OERSubscriptionHomeTenant applies to every scope it is asked about other than an 'mg:'
+    form (BL-150, Ruling R-27; docs/development/rationale.md#home-tenant-subscriptions). The validator
+    refuses a scope that breaks either rule, so a document can never declare it; the inventory leaves a
+    role assignment at such a scope out of the document it writes; and the home tenant owner rates such
+    a scope Undecided, resolving and reading nothing for it, so an Export-OERInventory -Scope spelled so
+    is not read and is named in IncompleteReads.
 
     The first rule (A15): a scope that ends with '/' (other than the root '/' itself) or contains '//'
     anywhere. ConvertTo-OERCanonicalScope strips every trailing '/', so such a spelling would be merged
@@ -30,8 +34,9 @@ function Get-OERScopeSpellingProblem {
     ConvertTo-OERScopeSplat owns that syntax, so the exemption asks it: only a scope it returns as
     @{ Scope = ... } is checked.
 
-    This help is the reference list of the rules. Seven texts hold no full list and point elsewhere:
+    This help is the reference list of the rules. Eight texts hold no full list and point elsewhere:
     the help of Test-OERStructureSchema and of Get-OERStructureSchemaJson point at this help; the help
+    of Get-OERSubscriptionHomeTenant gives an example and points at this help; the help
     of Get-OERInventory and of Export-OERInventory give an example and point at the about topic
     (about_Omnicit.EntraRBAC, RENAMES, MAIL ALIASES AND SCOPE SPELLING), and the help of
     Get-OERInventory points at Test-OERStructure as well; the bundle README Get-OERInventoryReadme
