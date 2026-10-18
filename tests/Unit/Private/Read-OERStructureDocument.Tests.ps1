@@ -391,7 +391,7 @@ Describe 'Read-OERStructureDocument directoryRoleAssignments' {
 Describe 'Read-OERStructureDocument administrativeUnits scopedRoles principalType (Sprint 11 step 8, R-7)' {
     # The validator's casing Warning says Invoke-OERStructure normalizes the case, so the reader
     # canonicalizes a scoped role row's principalType the way it canonicalizes a role assignment's,
-    # although the apply engine does not read it. Every row of every unit is visited.
+    # although the apply engine does not use it to match or write. Every row of every unit is visited.
     It 'canonicalizes the principalType of every scoped role row of every unit' {
         InModuleScope $script:moduleName {
             $Json = '{ "version": "1.0", "administrativeUnits": [ ' +

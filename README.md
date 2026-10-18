@@ -1112,7 +1112,8 @@ assignment or policy there and writes nothing for it.
 section reads a `-Scope` or a `-Subscription`, once per call, with one read of the subscription (and
 of the subscription list for one named by display name). A subscription of another tenant is not
 read: each of those sections it includes is written empty, with one `SubscriptionTenantMismatch`
-error. One whose home tenant cannot be told (its read failed, or the scope cannot be resolved or is
+error. One whose home tenant cannot be told (its read failed or gave no `tenantId` that is a GUID,
+the session holds no Graph token whose tenant ID is a GUID, or the scope cannot be resolved or is
 spelled in a way no document can declare) is not read either, and those sections are named in
 `InventoryPartial`. A `-ManagementGroup`, and a `-Scope` at a management group or the root scope, lie
 in no subscription and are not checked. Whenever either section is included with a `-Scope` or a

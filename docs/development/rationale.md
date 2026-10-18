@@ -2084,8 +2084,11 @@ and no output property was added; the other public cmdlets are unchanged.
 - **The check.** A local function of `Get-OERInventory` asks the owner, for each of `-Scope` and
   `-Subscription` (as `sub:<value>`) that is not blank, ONCE per invocation -- by the first of the two
   sections that asks -- after that section's own guards and before its reader runs; the second
-  section reuses the verdicts. `-ManagementGroup` is never checked: a management group lies in the
-  session's tenant, and the owner rates a management group or the root scope `NoSubscription` anyway.
+  section reuses the verdicts. `-ManagementGroup` is never checked: a management group scope lies in
+  no subscription, so there is no subscription home tenant to compare, and the owner rates a
+  management group or the root scope `NoSubscription` anyway. Which management group Azure Resource
+  Manager reaches under the session's token, the session tenant's own or another's, is not measured:
+  that is the residual risk R-24 describes, and this check does not close it.
 - **Foreign.** Any `Foreign` verdict refuses both sections: nothing is read there and no row is
   written. The owner's `SubscriptionTenantMismatch` record is written ONCE per invocation, after the
   inventory object (the place `InventoryPartial` takes), and the sections are not reported unread:

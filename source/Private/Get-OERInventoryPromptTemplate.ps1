@@ -51,7 +51,8 @@ function Get-OERInventoryPromptTemplate {
     }
 
     # Sprint 11 step 8: the servicePrincipalAccess.json input, only for a bundle that holds the file. It
-    # stands at the start of the line of the next bullet, so without the switch the prompt is unchanged.
+    # stands at the start of the line of the next bullet, so without the switch the prompt names no such
+    # file.
     $SpAccessInput = ''
     if ($IncludeServicePrincipalAccess) {
         $SpAccessInput = @'

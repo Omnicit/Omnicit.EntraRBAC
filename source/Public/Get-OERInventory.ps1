@@ -677,9 +677,12 @@ function Get-OERInventory {
         # -Scope or a -Subscription only in a subscription of the tenant the session's Microsoft Graph token
         # was issued for. Get-OERSubscriptionHomeTenant decides it (the single owner; nothing here decides
         # a tenant), for each of -Scope and -Subscription that is given and not blank, the second as
-        # 'sub:<value>'. -ManagementGroup is never checked: a management group lies in the session's tenant,
-        # and the owner answers NoSubscription for one. The decision is made ONCE per invocation, by the
-        # first section that asks, and reused by the second, so the subscription is read at most once.
+        # 'sub:<value>'. -ManagementGroup is never checked: a management group scope lies in no
+        # subscription, and the owner answers NoSubscription for one (which management group ARM reaches
+        # under the session's token is not measured: R-24 in
+        # docs/development/rationale.md#home-tenant-subscriptions). The decision is made ONCE per
+        # invocation, by the first section that asks, and reused by the second, so the subscription is
+        # read at most once.
         #
         # The owner's cache: under Export-OERInventory the run context's SubscriptionTenant, which the
         # export's scope tree has filled for every scope it hands this call, so the check sends no request;

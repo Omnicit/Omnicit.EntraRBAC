@@ -21,9 +21,9 @@ function Test-OERStructureSchema {
     absent one is still reported as required, since an empty name identifies nothing and would
     throw at apply (Get-OERInventory never writes one). An administrative unit scopedRoles entry
     may also carry principalType, which Get-OERInventory writes for a principal the directory
-    returned and the apply engine never reads: when present it must be User, Group or
-    ServicePrincipal (in any casing, with the casing Warning described below), and an entry without
-    it is valid. Intra-document
+    returned and the apply engine does not use to match or write: when present it must be User,
+    Group or ServicePrincipal (in any casing, with the casing Warning described below), and an entry
+    without it is valid. Intra-document
     cross-reference gaps (for example an access package whose catalog is not declared) are reported as
     Warning-severity entries that do not fail validation, since the referenced object may already exist
     in the tenant. A roleManagementPolicies item validates the settable Azure PIM policy surface except
@@ -1010,7 +1010,7 @@ function Test-OERStructureSchema {
                             # the directory returned, is held to the enum roleAssignments uses, as there: a value
                             # outside it is an Error, and one in another letter case is the casing Warning, since
                             # schema.json declares the enum case-sensitively. An entry without it is valid as
-                            # before, and the apply engine never reads it.
+                            # before, and the apply engine does not use it to match or write.
                             if (Test-HasProp -Node $SR -Name 'principalType') {
                                 $ValidSrPrincipalTypes = @(Resolve-OERStructureEnumCasing -EnumName 'principalType' -List)
                                 if ($ValidSrPrincipalTypes -inotcontains $SR.principalType) {
