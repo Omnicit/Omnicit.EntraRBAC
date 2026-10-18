@@ -227,7 +227,7 @@ function Save-S118Export {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, the base build is in place, and the main clone is on `main`, never switched. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, the base build is in place, and the main clone is on `main`, never switched. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -259,13 +259,30 @@ worktree on this branch with 0 tracked changes; the branch build `True` on every
 `False` mark on the branch build -- build the worktree first (`./build.ps1 -Tasks build`), never while the gate
 runs; a `True` mark on the base build -- the copy is not the base.
 
-Result:
+Result: 2026-10-18 14:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree is on this branch at c896f61 with 0 tracked changes, and its build (built from 0de35b9, the last commit under source/; the commits after it change only this checklist) carries every mark; the base build (12d9901) carries none. (The first run printed True for the last mark on the base build too: Invoke-OERStructure uses the same cache variable name, so the mark was not distinctive. The checklist was changed to two marks only this branch carries, and to build them outside the string after a parser error; this third run is the one kept.)
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s118] The module loads from a worktree that is not the main clone: True
+[oer-s118] Main clone: branch main; HEAD 491e72e
+[oer-s118] Worktree: branch feat/service-principal-access; HEAD c896f61 docs: build the first check's marks outside the string so the block parses; tracked changes: 0
+[oer-s118] The branch build: reads service principal access: True; has the switch: True; maps principal types: True; checks the home tenant in Get-OERInventory: True; shares the export's answers: True
+[oer-s118] The base build: reads service principal access: False; has the switch: False; maps principal types: False; checks the home tenant in Get-OERInventory: False; shares the export's answers: False
+
+RUNNER: check-S.1 exit code 0; started 2026-10-18T14:18:59Z; took 4 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, the module is this branch's build, and the switch is the one new parameter. #type/subtask
+- [x] **0.1** The module session passes the identity check, the module is this branch's build, and the switch is the one new parameter. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -280,13 +297,37 @@ Disconnect-OerLive
 the switch line `True`.
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), or `False`.
 
-Result:
+Result: 2026-10-18 14:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only, certificate); identity check passed; the module is the worktree's build (1.2.1); Export-OERInventory has -IncludeServicePrincipalAccess as a switch.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s118] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg8\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s118] The module is the worktree's build: True; version 1.2.1
+[oer-s118] Export-OERInventory has -IncludeServicePrincipalAccess, a switch: True
+
+RUNNER: check-0.1 exit code 0; started 2026-10-18T14:19:21Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 1. Service principal access in an export of the test tenant
 
 ### 1.1. The export with the switch reads only, and names the identity's own permissions
 
-- [ ] **1.1** `Export-OERInventory -Include AdministrativeUnits, RoleAssignments -IncludeServicePrincipalAccess` sends no write, writes `servicePrincipalAccess.json` with its four parts, every row naming its objects by id and name, and the identity's own application permissions with the resource's name and the permission's value; the requests per part are counted. #type/subtask
+- [x] **1.1** `Export-OERInventory -Include AdministrativeUnits, RoleAssignments -IncludeServicePrincipalAccess` sends no write, writes `servicePrincipalAccess.json` with its four parts, every row naming its objects by id and name, and the identity's own application permissions with the resource's name and the permission's value; the requests per part are counted. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -341,11 +382,54 @@ this identity cannot read, as in earlier steps); README has the section.
 **Failure looks like:** a write, a token request, a part `null`, a row without an id or a name, an own
 permission without a value, or a service principal access entry in `IncompleteReads`.
 
-Result:
+Result: 2026-10-18 15:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (second run, after live fix round 1). The export of AdministrativeUnits and RoleAssignments with -IncludeServicePrincipalAccess wrote nothing to the tenant (0 writes, 0 token requests) and wrote servicePrincipalAccess.json with its four parts in order: 133 application permissions, 156 delegated permission grants (102 AllPrincipals, 54 Principal, each with a user principal name), 37 app registration owners and 1 service principal owner (31 service principals and 7 users as owners), every row naming its objects by id and name, the key orders as planned. The identity's own 19 application permissions are all on Microsoft Graph, each with its value (listed above). The read cost 29 Microsoft Graph requests (35 with the switch, against the 6 of the same export without it in 1.2a/1.2b): 12 pages of the service principal list with app role assignments, 2 full app role assignment re-reads, 12 pages with owners, 1 app registration page, 1 grant page and 1 getByIds. One permission has appRoleValue null: its resource (762 app roles) does not declare that role. No service principal access part is unread; the export is partial only for the management group listing this identity cannot read, as without the switch. The first run (on c896f61) wrote 2 application permission rows with no resourceId and no resource name and with appRoleValue null: Microsoft Graph's expanded list returned those two assignments with resourceId null, while the per-client read of the same assignment ids returned the resource, which exists, is named and declares the role. Live fix round 1 (ad8f418, Ruling R-14) re-reads such a service principal in full; the first run's output is not kept.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s118] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg8\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s118] token requests: 0; Microsoft Graph requests: 35, writes: 0; Azure Resource Manager requests: 12, writes: 0
+[oer-s118]   service principal list with app role assignments: 12
+[oer-s118]   full app role assignment re-reads: 2
+[oer-s118]   service principal list with owners: 12
+[oer-s118]   full service principal owner re-reads: 0
+[oer-s118]   app registration list with owners: 1
+[oer-s118]   full app registration owner re-reads: 0
+[oer-s118]   delegated permission grant list: 1
+[oer-s118]   directoryObjects/getByIds (all callers): 3
+[oer-s118] servicePrincipalAccess.json exists: True; in Files: True; keys in order: applicationPermissions, delegatedPermissionGrants, applicationOwners, servicePrincipalOwners
+[oer-s118] applicationPermissions: 133 row(s); rows missing an id or a name: 0; key order of the first row: servicePrincipalId, servicePrincipalDisplayName, resourceId, resourceDisplayName, appRoleId, appRoleValue
+[oer-s118] delegatedPermissionGrants: 156 row(s); rows missing an id or a name: 0; key order of the first row: clientId, clientDisplayName, resourceId, resourceDisplayName, consentType, principalId, principalDisplayName, principalUserPrincipalName, scope
+[oer-s118] applicationOwners: 37 row(s); rows missing an id or a name: 0; key order of the first row: applicationId, appId, applicationDisplayName, ownerId, ownerType, ownerDisplayName, ownerUserPrincipalName
+[oer-s118] servicePrincipalOwners: 1 row(s); rows missing an id or a name: 0; key order of the first row: servicePrincipalId, servicePrincipalDisplayName, ownerId, ownerType, ownerDisplayName, ownerUserPrincipalName
+[oer-s118] Application permissions whose role the resource does not declare (appRoleValue null): 1
+[oer-s118] Grants: AllPrincipals 102, Principal 54; Principal grants with a user principal name: 54; AllPrincipals grants naming a principal: 0
+[oer-s118] Owner types: ServicePrincipal 31, User 7
+[oer-s118] The identity's own application permissions: 19; resources: Microsoft Graph; every one with a value: True
+[oer-s118] Their values: AccessReview.Read.All, AccessReview.ReadWrite.All, AccessReview.ReadWrite.Membership, AdministrativeUnit.ReadWrite.All, Application.Read.All, Application.ReadWrite.OwnedBy, AuthenticationContext.Read.All, Directory.Read.All, EntitlementManagement.ReadWrite.All, Group.ReadWrite.All, Organization.Read.All, PrivilegedAssignmentSchedule.Read.AzureADGroup, PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup, RoleAssignmentSchedule.ReadWrite.Directory, RoleEligibilitySchedule.ReadWrite.Directory, RoleManagement.ReadWrite.Directory, RoleManagementPolicy.ReadWrite.AzureADGroup, RoleManagementPolicy.ReadWrite.Directory, User.ReadWrite.All
+[oer-s118] IncompleteReads: 0, of them service principal access parts: 0; errors: AuthorizationFailed, InventoryPartial; export warnings (counted, not printed): 3
+[oer-s118] README has the section: True
+
+RUNNER: check-1.1 exit code 0; started 2026-10-18T15:47:54Z; took 24 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.2a. The base build's export, without the switch (the measurement to compare with)
 
-- [ ] **1.2a** The base build (`12d9901`) exports the same sections without the switch; its requests, files and texts are saved for 1.2b. #type/subtask
+- [x] **1.2a** The base build (`12d9901`) exports the same sections without the switch; its requests, files and texts are saved for 1.2b. #type/subtask
 
 ```powershell
 Use-S118BaseBuild
@@ -361,11 +445,36 @@ Disconnect-OerLive
 **Expect:** both lines `True`; the request totals with `writes: 0`; the counts printed.
 **Failure looks like:** the branch build loaded (the comparison would compare the branch with itself).
 
-Result:
+Result: 2026-10-18 14:24 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The base build (12d9901) loaded from the copy under raw\s118 and has no -IncludeServicePrincipalAccess; its export of AdministrativeUnits and RoleAssignments sent 6 Microsoft Graph and 12 Azure Resource Manager requests, 0 writes, 0 token requests, wrote 17 files, and is partial for the management group listing this identity cannot read (AuthorizationFailed, InventoryPartial), as in earlier steps. Its requests, files, README and prompt are saved for 1.2b.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2a ===
+[oer-s118] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg8\docs\live-verification\raw\s118\before-12d9901\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s118] The module is the base build: True; Export-OERInventory has no -IncludeServicePrincipalAccess: True
+[oer-s118] token requests: 0; Microsoft Graph requests: 6, writes: 0; Azure Resource Manager requests: 12, writes: 0
+[oer-s118] Files: 17; IncompleteReads: 0; errors: AuthorizationFailed, InventoryPartial
+
+RUNNER: check-1.2a exit code 0; started 2026-10-18T14:23:37Z; took 15 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.2b. The branch's export without the switch: no new file and the same requests as before
 
-- [ ] **1.2b** The branch build exports the same sections without the switch: no `servicePrincipalAccess.json`, the same files, the same Graph and Azure Resource Manager requests as the base, an unchanged README, a prompt that differs only in part B's `scopedRoles` keys, and an `inventory.json` that differs only where part B adds `principalType`. #type/subtask
+- [x] **1.2b** The branch build exports the same sections without the switch: no `servicePrincipalAccess.json`, the same files, the same Graph and Azure Resource Manager requests as the base, an unchanged README, a prompt that differs only in part B's `scopedRoles` keys, and an `inventory.json` that differs only where part B adds `principalType`. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -400,11 +509,44 @@ or the same once part B's keys are taken out; IncompleteReads the same.
 **Failure looks like:** the file, another file list, any other request difference (above all an extra
 subscription GET), a changed README or prompt.
 
-Result:
+Result: 2026-10-18 15:49 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Without the switch the branch build's export of AdministrativeUnits and RoleAssignments wrote no servicePrincipalAccess.json (not in Files), the same 17 files in the same order as the base build, and sent exactly the base's requests: the same 6 Microsoft Graph and the same 12 Azure Resource Manager requests, request for request (so the home-tenant check inside the export cost nothing, and no part B lookup was sent: the test tenant holds no scoped role, see 2.1). README.md is byte-identical to the base's; rbac-architect-prompt.md differs only in part B's scopedRoles key line (principalType added as optional), as expected; inventory.json and IncompleteReads are the same as the base's. 0 writes, 0 token requests.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2b ===
+[oer-s118] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg8\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s118] token requests: 0; Microsoft Graph requests: 6, writes: 0; Azure Resource Manager requests: 12, writes: 0
+[oer-s118] servicePrincipalAccess.json written: False; in Files: False
+[oer-s118] Same files as the base, in order: True
+[oer-s118] Same Microsoft Graph requests as the base: True (6 vs 6); same Azure Resource Manager requests: True (12 vs 12)
+[oer-s118] README.md the same as the base: True
+[oer-s118] rbac-architect-prompt.md lines that differ from the base: 4
+[oer-s118]   branch: role id GUID when the name could not be resolved), principal (required), principalType (User | Group |
+[oer-s118]   branch: ServicePrincipal; optional -- the export writes it for a principal the directory returned, and the
+[oer-s118]   branch: apply engine does not use it to match or write a scoped role) } }
+[oer-s118]   base: role id GUID when the name could not be resolved), principal (required) } }
+[oer-s118] inventory.json the same as the base: True; the same once scoped-role principalType keys are taken out: True; IncompleteReads the same: True
+
+RUNNER: check-1.2b exit code 0; started 2026-10-18T15:48:38Z; took 12 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.3. A 403 on every part is a part that was not read, never an empty list
 
-- [ ] **1.3** As `oer-live-cc-noperm`, which holds no permission, the export with the switch completes: every part is `null` in the file, each is named in `IncompleteReads`, the export reports `InventoryPartial`, and the grant list is not requested since the service principal list was not read. #type/subtask
+- [x] **1.3** As `oer-live-cc-noperm`, which holds no permission, the export with the switch completes: every part is `null` in the file, each is named in `IncompleteReads`, the export reports `InventoryPartial`, and the grant list is not requested since the service principal list was not read. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm -NoPerm
@@ -432,13 +574,57 @@ app registration list 1, the grant list 0, getByIds 0; the file written; every p
 `[]: False`, named `True`; one `InventoryPartial` from the export whose message names the parts.
 **Failure looks like:** a part written `[]`, a part not named, the export stopping, or a grant request.
 
-Result:
+Result: 2026-10-18 15:49 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. As oer-live-cc-noperm, which holds no permission, the export of AdministrativeUnits with -IncludeServicePrincipalAccess completed and wrote servicePrincipalAccess.json with every part null (none written as []), each part named in IncompleteReads, and one InventoryPartial from the export whose message names the service principal access parts. It sent 4 Microsoft Graph requests and no write: the administrative unit list, the service principal list with app role assignments, the one with owners and the app registration list, each refused; the grant list was not requested and no getByIds sent, since the service principal list the grants are named through was not read. The administrative unit list's own refusal (Authorization_RequestDenied) is reported by the inner Get-OERInventory's InventoryPartial, printed above as the redacted error stream; it is the expected 403 of this check.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.3 ===
+[oer-s118] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg8\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s118] token requests: 0; Microsoft Graph requests: 4, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s118]   service principal list with app role assignments: 1
+[oer-s118]   full app role assignment re-reads: 0
+[oer-s118]   service principal list with owners: 1
+[oer-s118]   full service principal owner re-reads: 0
+[oer-s118]   app registration list with owners: 1
+[oer-s118]   full app registration owner re-reads: 0
+[oer-s118]   delegated permission grant list: 0
+[oer-s118]   directoryObjects/getByIds (all callers): 0
+[oer-s118] The export completed and wrote the file: True
+[oer-s118] applicationPermissions: null in the file: True; [] in the file: False; named in IncompleteReads: True
+[oer-s118] delegatedPermissionGrants: null in the file: True; [] in the file: False; named in IncompleteReads: True
+[oer-s118] applicationOwners: null in the file: True; [] in the file: False; named in IncompleteReads: True
+[oer-s118] servicePrincipalOwners: null in the file: True; [] in the file: False; named in IncompleteReads: True
+[oer-s118] InventoryPartial from the export: 1; its message names the service principal access parts: True
+
+Get-OERInventory: This inventory is PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name,
+or were left out because two or more live objects share a name, and are not stated as facts in the document (an
+accessReviews entry named as unread may still carry an id where a name could not be read). Unread: administrativeUnits.
+A section reported here by its name alone could not be read at all and is written as an empty array, which does not
+mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null,
+which the apply engine reads as leave untouched; do not hand-edit it to an empty array, and do not treat this document
+as a full tenant snapshot. An entry ending in scopedRoles/principalType is not such a key: it names a unit some or all
+of whose scoped role rows are written without principalType, since their principals' type could not be read. Causes:
+Could not read administrative units: Authorization_RequestDenied: Insufficient privileges to complete the operation..
+
+RUNNER: check-1.3 exit code 0; started 2026-10-18T15:49:01Z; took 9 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 2. Scoped-role principal types
 
 ### 2.1. The test tenant's scoped roles carry principalType
 
-- [ ] **2.1** Every `administrativeUnits[].scopedRoles` row of the 1.1 export whose principal is an object id carries a `principalType` of the schema's enum; if the test tenant holds no scoped role, that is recorded and B.2 holds the rule. #type/subtask
+- [~] **2.1** Every `administrativeUnits[].scopedRoles` row of the 1.1 export whose principal is an object id carries a `principalType` of the schema's enum; if the test tenant holds no scoped role, that is recorded and B.2 holds the rule. #type/subtask
 
 ```powershell
 $Inv = Get-Content -LiteralPath (Join-Path (Get-S118Bundle -Folder (Join-Path $Work 'export-branch-switch')).FullName 'inventory.json') -Raw | ConvertFrom-Json
@@ -452,13 +638,26 @@ Write-OerLiveStep "Administrative units: $($Units.Count); with scopedRoles null:
 tenant holds none (S114 created one and removed it): mark `[~]` with that reason and rely on B.2.
 **Failure looks like:** a row with an object id principal and no `principalType`, or a type outside the enum.
 
-Result:
+Result: 2026-10-18 15:49 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: NOT RUN LIVE (no scoped role in the test tenant), so B.2 holds the rule. The 1.1 export's inventory.json holds 1 administrative unit, its scopedRoles read (not null) and empty: the test tenant holds no scoped role (the AU-scoped role an earlier step created was removed in its teardown), so there is no row to type. The rule is held offline (B.2): user, group and service principal types, a principal not found, a failed lookup and one batch, and the round trip that applies an export with principalType Unchanged, with and without -Prune. 1.2b shows the branch sent no scoped-role lookup for this tenant, as expected with no scoped role.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s118] Administrative units: 1; with scopedRoles null: 0; scoped role rows: 0; with a principalType of the enum: 0; per type:
+
+RUNNER: check-2.1 exit code 0; started 2026-10-18T15:49:23Z; took 1 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 3. Get-OERInventory and the session's own subscription
 
 ### 3.1a. The base build's inventory of the test subscription
 
-- [ ] **3.1a** The base build reads `RoleAssignments` of the test subscription by `-Subscription` and by `-Scope`, without `-IncludeARM`; its rows and requests are saved for 3.1b. #type/subtask
+- [x] **3.1a** The base build reads `RoleAssignments` of the test subscription by `-Subscription` and by `-Scope`, without `-IncludeARM`; its rows and requests are saved for 3.1b. #type/subtask
 
 ```powershell
 Use-S118BaseBuild
@@ -481,11 +680,35 @@ Disconnect-OerLive
 `writes: 0`, no error.
 **Failure looks like:** an error, or no row (the comparison would compare nothing).
 
-Result:
+Result: 2026-10-18 14:24 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The base build read RoleAssignments of the test subscription without -IncludeARM, by -Subscription and by -Scope: 13 rows each, 3 Microsoft Graph and 7 Azure Resource Manager requests each, 0 writes, 0 token requests, no error. Rows and requests are saved for 3.1b.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.1a ===
+[oer-s118] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg8\docs\live-verification\raw\s118\before-12d9901\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s118] subscription: token requests: 0; Microsoft Graph requests: 3, writes: 0; Azure Resource Manager requests: 7, writes: 0; rows 13; errors: 
+[oer-s118] scope: token requests: 0; Microsoft Graph requests: 3, writes: 0; Azure Resource Manager requests: 7, writes: 0; rows 13; errors:
+
+RUNNER: check-3.1a exit code 0; started 2026-10-18T14:24:04Z; took 11 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.1b. The branch reads the session's own subscription exactly as before, plus one read of the subscription
 
-- [ ] **3.1b** The branch build reads the same rows for both cases, without `-IncludeARM`, writes no error, is not partial, and sends the base's Azure Resource Manager requests plus exactly one `GET /subscriptions/{id}` (the home-tenant check). #type/subtask
+- [x] **3.1b** The branch build reads the same rows for both cases, without `-IncludeARM`, writes no error, is not partial, and sends the base's Azure Resource Manager requests plus exactly one `GET /subscriptions/{id}` (the home-tenant check). #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -511,11 +734,37 @@ Disconnect-OerLive
 `SubscriptionTenantMismatch`), and exactly one extra ARM request, `GET /subscriptions/{id}`, with none missing.
 **Failure looks like:** fewer rows, an error, a partial inventory, or another extra request.
 
-Result:
+Result: 2026-10-18 15:49 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The branch build read RoleAssignments of the test subscription without -IncludeARM, by -Subscription and by -Scope: the same 13 rows as the base build each time, no error (no InventoryPartial, no SubscriptionTenantMismatch), 0 writes, 0 token requests; it sent the base's 7 Azure Resource Manager requests, none missing, plus exactly one more, GET /subscriptions/{id}, the home-tenant check (8 in all), and the same 3 Microsoft Graph requests.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.1b ===
+[oer-s118] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg8\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s118] subscription: token requests: 0; Microsoft Graph requests: 3, writes: 0; Azure Resource Manager requests: 8, writes: 0; rows 13 (base 13); the same rows as the base: True; errors: 
+[oer-s118]   ARM requests the base did not send: GET /subscriptions/{id}; base requests missing: 0
+[oer-s118] scope: token requests: 0; Microsoft Graph requests: 3, writes: 0; Azure Resource Manager requests: 8, writes: 0; rows 13 (base 13); the same rows as the base: True; errors: 
+[oer-s118]   ARM requests the base did not send: GET /subscriptions/{id}; base requests missing: 0
+
+RUNNER: check-3.1b exit code 0; started 2026-10-18T15:49:36Z; took 10 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.2. A subscription that cannot be decided is reported unread, with no row
 
-- [ ] **3.2** `Get-OERInventory -Include RoleAssignments -Subscription 00000000-0000-0000-0000-000000000099` (the register's deliberately non-existent id) reads no role assignment, writes no row, reports `InventoryPartial` naming `roleAssignments`, and writes no `SubscriptionTenantMismatch`. #type/subtask
+- [x] **3.2** `Get-OERInventory -Include RoleAssignments -Subscription 00000000-0000-0000-0000-000000000099` (the register's deliberately non-existent id) reads no role assignment, writes no row, reports `InventoryPartial` naming `roleAssignments`, and writes no `SubscriptionTenantMismatch`. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -536,11 +785,36 @@ the verdict is undecided), and no role assignment request; `Rows: 0`; one `Inven
 **Failure looks like:** a role assignment request, a row, no partial, or a mismatch error (that would claim a
 tenant the read never established).
 
-Result:
+Result: 2026-10-18 15:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Get-OERInventory -Include RoleAssignments -Subscription 00000000-0000-0000-0000-000000000099 (the register's deliberately non-existent id) sent exactly one request, the home-tenant read GET /subscriptions/{id}, which Azure Resource Manager refused, and no role assignment request; it wrote no row, reported one InventoryPartial naming roleAssignments, and wrote no SubscriptionTenantMismatch (the read established no tenant). 0 writes, 0 token requests.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.2 ===
+[oer-s118] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg8\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s118] token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 1, writes: 0
+[oer-s118] ARM requests: GET /subscriptions/{id}
+[oer-s118] Rows: 0; InventoryPartial: 1, naming roleAssignments: True; SubscriptionTenantMismatch: 0
+
+RUNNER: check-3.2 exit code 0; started 2026-10-18T15:49:56Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 3.3. A management group scope is not checked
 
-- [ ] **3.3** `Get-OERInventory -Include RoleAssignments -ManagementGroup oer-s118-no-such-group` sends no subscription read (a management group is not checked); the reader's own refusal or not-found is all that comes back. #type/subtask
+- [x] **3.3** `Get-OERInventory -Include RoleAssignments -ManagementGroup oer-s118-no-such-group` sends no subscription read (a management group is not checked); the reader's own refusal or not-found is all that comes back. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -559,7 +833,32 @@ the reader's own error (this identity cannot read management groups, and the nam
 `SubscriptionTenantMismatch`.
 **Failure looks like:** a subscription read, or a mismatch error.
 
-Result:
+Result: 2026-10-18 15:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Get-OERInventory -Include RoleAssignments -ManagementGroup oer-s118-no-such-group sent no subscription read: its 2 Azure Resource Manager requests are the reader's own management group requests (the list and the group by name), which this identity may not read and which name a group that does not exist; no row, the reader's own errors (AuthorizationFailed, InvalidScope; the empty entry is a record without an error id, which -ErrorVariable also collects), and no SubscriptionTenantMismatch. 0 writes, 0 token requests.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.3 ===
+[oer-s118] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg8\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s118] token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 2, writes: 0
+[oer-s118] Subscription reads: 0; ARM request kinds: GET /providers/Microsoft.Management/managementGroups; GET /providers/Microsoft.Management/managementGroups/oer-s118-no-such-group
+[oer-s118] Rows: 0; errors: , AuthorizationFailed, InvalidScope
+
+RUNNER: check-3.3 exit code 0; started 2026-10-18T15:50:10Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## B. Proved offline (class B)
 
@@ -586,7 +885,7 @@ Each item is held by unit tests on this branch, run by `./build.ps1 -Tasks test`
 
 ### T.1. Nothing was created, and the step's raw folders are gone
 
-- [ ] **T.1** No object with the prefix `oer-s118-` exists, and the step's raw folders are deleted (the export bundles and the base build with them). The redaction map is deleted with `Clear-OerLiveRedactionMap` once every result is written up, after this check. #type/subtask
+- [x] **T.1** No object with the prefix `oer-s118-` exists, and the step's raw folders are deleted (the export bundles and the base build with them). The redaction map is deleted with `Clear-OerLiveRedactionMap` once every result is written up, after this check. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -604,4 +903,30 @@ foreach ($Dir in @($MainRaw, $Work) | Select-Object -Unique) {
 **Failure looks like:** a prefixed object (this checklist creates none: STOP and find who made it), or a folder
 left behind.
 
-Result:
+Result: 2026-10-18 15:50 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Nothing was created: the prefix sweep finds no user, group, administrative unit, catalog, access package or app registration starting with oer-s118- (0 objects). The step's raw folders under the main clone and the worktree are deleted (the export bundles, the comparison files and the base build copy with them). The redaction map is deleted after the write-up.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[oer-s118] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg8\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s118] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s118] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s118-' is left.
+[oer-s118] Objects carrying the prefix oer-s118-: 0
+[oer-s118] Raw folder deleted: True
+[oer-s118] Raw folder deleted: True
+
+RUNNER: check-T.1 exit code 0; started 2026-10-18T15:50:26Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
