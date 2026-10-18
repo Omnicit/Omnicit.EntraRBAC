@@ -240,7 +240,7 @@ Write-OerLiveStep "Worktree: branch $(git -C $Cfg.Repo branch --show-current); H
 foreach ($Pair in @(@('branch', $Cfg.Repo), @('base', $Base))) {
     $Psm1 = Get-ChildItem -Path (Join-Path $Pair[1] 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psm1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     $Has = { param($Text) [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch $Text -Quiet) }
-    Write-OerLiveStep "The $($Pair[0]) build: reads service principal access: $(& $Has 'function Get-OERServicePrincipalAccess'); has the switch: $(& $Has '[switch]$IncludeServicePrincipalAccess'); maps principal types: $(& $Has 'function ConvertTo-OERPrincipalType'); checks the home tenant in Get-OERInventory with a shared cache: $(& $Has '-Cache $SubscriptionTenantCache')"
+    Write-OerLiveStep "The $($Pair[0]) build: reads service principal access: $(& $Has 'function Get-OERServicePrincipalAccess'); has the switch: $(& $Has '[switch]$IncludeServicePrincipalAccess'); maps principal types: $(& $Has 'function ConvertTo-OERPrincipalType'); checks the home tenant in Get-OERInventory: $(& $Has 'Given = $SubscriptionScope; Verdict = (Get-OERSubscriptionHomeTenant'); shares the export's answers: $(& $Has 'SubscriptionTenant   = [System.Collections.Generic.Dictionary')"
 }
 ```
 
