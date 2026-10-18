@@ -296,6 +296,18 @@ Describe 'Read-OERNamingStandard' {
             }
         }
 
+        It 'says only that a segment is not an object: <Text>' -ForEach @(
+            @{ Text = 'a string'; Segments = '[ "x" ]'; Expected = "segments[0] must be an object; found 'x'." }
+            @{ Text = 'null'; Segments = '[ { "name": "a" }, null ]'; Expected = 'segments[1] must be an object; found null.' }
+            @{ Text = 'a number'; Segments = '[ 7 ]'; Expected = 'segments[0] must be an object; found 7.' }
+            @{ Text = 'an array'; Segments = '[ [ "x" ] ]'; Expected = 'segments[0] must be an object; found an array.' }
+        ) {
+            $Json = $script:MinimalJson.Replace('[ { "name": "x" } ]', $Segments)
+            $File = Write-StandardFile -Json $Json
+            $Message = Get-ReadFailure -Path $File
+            $Message | Should -Be "The naming standard at '$File' is not valid: $Expected" -Because 'the segment is not read as an object, so no key problem may follow'
+        }
+
         It 'reports a pattern that does not compile once, as itself, and does not wrap it' {
             $Json = $script:MinimalJson.Replace('{ "name": "x" }', '{ "name": "x", "pattern": "a)(b" }')
             $Message = Get-ReadFailure -Path (Write-StandardFile -Json $Json)
