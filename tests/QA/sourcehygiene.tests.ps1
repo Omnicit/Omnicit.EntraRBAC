@@ -1509,8 +1509,9 @@ BeforeAll {
         Get-OERSubscriptionHomeTenant, the single owner of whether a subscription belongs to the tenant
         the session's Microsoft Graph token was issued for (BL-150, A19), is called only by
         Resolve-OERInventoryScopeTree, which keeps another tenant's subscriptions out of the export's
-        Azure walk, and Invoke-OERStructure, which refuses a role assignment or role management policy at
-        a scope in one; a third caller would decide on rules of its own which tenant's subscription it
+        Azure walk, Invoke-OERStructure, which refuses a role assignment or role management policy at
+        a scope in one, and Get-OERInventory, which reads neither at a -Scope or -Subscription in one
+        (A20, BL-152); a fourth caller would decide on rules of its own which tenant's subscription it
         may read or write in.
         Every row of $script:transportGateOwners is enforced by the It that reads the table as a whole
         (BL-101): for each row, no caller outside its owners and every owner really calling it, with
@@ -1670,7 +1671,7 @@ BeforeAll {
         [PSCustomObject]@{ Command = 'Resolve-OERTenantDomain'; Owners = @($script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Set-OERSessionUncertain'; Owners = @('source\Private\Initialize-OERAuth.ps1', 'source\Public\Connect-OER.ps1', 'source\Public\Disconnect-OER.ps1') }
         [PSCustomObject]@{ Command = 'Get-OERDocumentTenantMismatch'; Owners = @('source\Public\Invoke-OERStructure.ps1') }
-        [PSCustomObject]@{ Command = 'Get-OERSubscriptionHomeTenant'; Owners = @('source\Private\Resolve-OERInventoryScopeTree.ps1', 'source\Public\Invoke-OERStructure.ps1') }
+        [PSCustomObject]@{ Command = 'Get-OERSubscriptionHomeTenant'; Owners = @('source\Private\Resolve-OERInventoryScopeTree.ps1', 'source\Public\Invoke-OERStructure.ps1', 'source\Public\Get-OERInventory.ps1') }
     )
     # The command a call really names, through Resolve-OERTransportCommandName -- defined once, ahead of
     # Pass 1, and shared with the bearer-scrub gate's transport detection.
@@ -4437,22 +4438,23 @@ only through Invoke-OERStructure.
 '@
     }
 
-    It 'decides a subscription''s home tenant with Get-OERSubscriptionHomeTenant only in Resolve-OERInventoryScopeTree.ps1 and Invoke-OERStructure.ps1' {
+    It 'decides a subscription''s home tenant with Get-OERSubscriptionHomeTenant only in Resolve-OERInventoryScopeTree.ps1, Invoke-OERStructure.ps1 and Get-OERInventory.ps1' {
         # The call count is read first, so a row deleted from the table (whose violation and stale lists
         # would then be empty) turns this It red as well.
         $script:transportOwnerSites['Get-OERSubscriptionHomeTenant'] | Should -BeGreaterThan 0 -Because (
             'the owner table must hold a row for Get-OERSubscriptionHomeTenant and its owners must really call it, or this rule has nothing to be the only owner of')
         $script:transportOwnerStale['Get-OERSubscriptionHomeTenant'] -join "`n" | Should -BeNullOrEmpty -Because (
-            'Resolve-OERInventoryScopeTree and Invoke-OERStructure must each really call Get-OERSubscriptionHomeTenant, or this rule has nothing to be the only owner of; an owner listed here that calls it nowhere is a stale rule, not a pass')
+            'Resolve-OERInventoryScopeTree, Invoke-OERStructure and Get-OERInventory must each really call Get-OERSubscriptionHomeTenant, or this rule has nothing to be the only owner of; an owner listed here that calls it nowhere is a stale rule, not a pass')
         $script:transportOwnerViolations['Get-OERSubscriptionHomeTenant'] -join "`n" | Should -BeNullOrEmpty -Because @'
 Get-OERSubscriptionHomeTenant is the single owner of whether an Azure subscription belongs to the tenant
 the session's Microsoft Graph token was issued for (BL-150, A19), by the tenantId Azure Resource Manager
 returns for it: Resolve-OERInventoryScopeTree keeps another tenant's subscriptions, and those it cannot
-decide, out of the export's Azure walk, and Invoke-OERStructure refuses a role assignment or a role
+decide, out of the export's Azure walk, Invoke-OERStructure refuses a role assignment or a role
 management policy at a scope in one with SubscriptionTenantMismatch before anything is read or written
-for it. A third caller decides on rules of its own which tenant's subscription it may read or write in,
-so a customer subscription delegated through Azure Lighthouse could be exported or changed through it.
-Decide it only through those two callers.
+for it, and Get-OERInventory reads neither at a -Scope or -Subscription in one (A20, BL-152). A fourth
+caller decides on rules of its own which tenant's subscription it may read or write in, so a customer
+subscription delegated through Azure Lighthouse could be exported or changed through it. Decide it only
+through those three callers.
 '@
     }
 

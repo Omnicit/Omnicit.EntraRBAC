@@ -1215,9 +1215,13 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Why: docs/development/rationale.md#roster-identity-and-shared-names`
 - **`Export-OERInventory` is the only command that sets and clears the export run context
   (`$script:_OERInventoryRunContext`)**, the one object its `Get-OERInventory` calls share (the group
-  name index, the deleted items answers, the role assignment principals that could not be read);
+  name index, the deleted items answers, the role assignment principals that could not be read, and
+  the subscription home tenant answers, `SubscriptionTenant`);
   `Get-OERInventory` fills its members, `Get-OERDeletedPrincipalStatus` through the `PrincipalStatus`
-  dictionary it is handed. Export creates it in ONE place, directly before its Entra ID
+  dictionary it is handed, except `SubscriptionTenant`, which the export hands to
+  `Resolve-OERInventoryScopeTree -Cache` and `Get-OERInventory` to the owner the same way, so
+  `Get-OERSubscriptionHomeTenant -Cache` is what fills it (a context without the member reads as
+  none). Export creates it in ONE place, directly before its Entra ID
   `Get-OERInventory` call, with `Owner` set to its own `$MyInvocation`, and sets it back to `$null`
   with a plain statement directly after the Azure walk -- never in a `finally`, which turns a
   statement-terminating error into a skip of the rest of the walk. `Get-OERInventory` reads it once
@@ -1230,8 +1234,12 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Get-OERDeletedPrincipalStatus` is the single read of `directory/deletedItems`, and
   `Resolve-OERPrincipalName -Detailed` the lookup that tells a principal the directory returned from
   one it did not return and from one whose lookup failed** (BL-133, A18). Only the `roleAssignments`
-  section of `Get-OERInventory` uses them: a principal not returned is written by its object id with
-  `principalStatus` `Deleted` or `Unresolved`, and a failed lookup or a failed deleted items read is
+  section of `Get-OERInventory` uses both. `-Detailed` alone has two more callers since Sprint 11
+  step 8, neither of which reads the deleted items: the `administrativeUnits` section's scoped role
+  type lookup, and `Get-OERServicePrincipalAccess` for the users named in delegated permission
+  grants (see the next bullet). In the `roleAssignments` section a principal not returned is written
+  by its object id with `principalStatus` `Deleted` or `Unresolved`, and a failed lookup or a failed
+  deleted items read is
   never a fact -- it is named unread (`.../principal`, `.../principalStatus`; the second still written
   `Unresolved`, never as a principal that exists). The read never throws, never writes an error
   record, and caches only an answer that was read. `Sync-OERStructureRoleAssignment` looks no principal
@@ -1239,6 +1247,33 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `ShouldProcess`). The other sections keep `Resolve-OERPrincipalName`'s default map, which is
   unchanged. Never read `directory/deletedItems` anywhere else.
   `Why: docs/development/rationale.md#unresolved-principals`
+- **`Get-OERServicePrincipalAccess` is the single reader of what `servicePrincipalAccess.json`
+  holds** (Sprint 11 step 8, A7): the service principal list with `$expand=appRoleAssignments` (the
+  application permissions, read from the client side), the service principal and app registration
+  lists with `$expand=owners(...)`, and one paged `oauth2PermissionGrants` list whose users it looks
+  up with ONE `Resolve-OERPrincipalName -Detailed` call. An object whose expanded collection holds
+  20 or more entries, or one of whose expanded entries lacks the id its row needs (an app role
+  assignment without `resourceId` or `appRoleId`, an owner without `id`), is read again in full with
+  a paged read of its own, since Microsoft Graph documents at most 20 for an expanded directory
+  relationship and was measured to return an expanded app role assignment with a null `resourceId`.
+  An app role assignment the full read still returns without them leaves only
+  `applicationPermissions` unread (R-14). A part is read whole or not at all: any failure inside it
+  leaves it `$null`, never `[]`, and names it `servicePrincipalAccess/<part>`; the grants are not
+  read when the service principal list was not. It never throws, never writes an error record or a
+  warning, and sends GET requests only, with no `-Method` (the requiredscope gate would judge every
+  literal of a function that writes as a write). `Export-OERInventory` calls it once, only with
+  `-IncludeServicePrincipalAccess` (A9), and nothing reads the file back: never add its content to
+  `inventory.json`, `schema.json` or the apply engine. **`ConvertTo-OERPrincipalType` is the single
+  owner of mapping a Microsoft Graph object type to the document's principal type** (`User`, `Group`
+  or `ServicePrincipal`, the `#microsoft.graph.` prefix optional, letter case ignored; anything else
+  `$null`, never guessed), used for the owner rows and for the `principalType` `Get-OERInventory`
+  writes on an `administrativeUnits[].scopedRoles` row whose principal the directory returned.
+  `ConvertTo-OERDirectoryRoleAssignment` keeps the mapping it had before this one (a named
+  exception, not a precedent); never map a Graph type inline anywhere else. The validator holds the
+  scoped role `principalType` to the enum and `Read-OERStructureDocument` canonicalises it, but
+  `Sync-OERStructureAdministrativeUnit` never uses it to match or write.
+  `Why: docs/development/rationale.md#service-principal-access`,
+  `docs/development/rationale.md#scoped-role-principal-type`
 - **A group that uses PIM for Groups in a restricted management administrative unit is a Warning,
   never an Error or a refusal**: `Export-OERInventory` warns before its `ShouldProcess` (with `Groups`
   and `AdministrativeUnits` included, from what it read, with no request) and lists the groups in the
@@ -1299,9 +1334,24 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Get-OERSubscriptionHomeTenant` is the single owner of whether a subscription's home tenant is
   the session's tenant (A19, BL-150)** -- ARM's subscription `tenantId` (Subscriptions - Get or List,
   api-version `2022-12-01`) against `Get-OERInventoryTenantId`, compared without regard to letter
-  case and only when both are canonical GUIDs. It is called only by `Resolve-OERInventoryScopeTree`
-  and `Invoke-OERStructure` (gate 10), never by another public cmdlet: the role assignment and policy
-  cmdlets and `Get-OERInventory` use the scope they are given. `Export-OERInventory`'s walk enters
+  case and only when both are canonical GUIDs. It is called only by `Resolve-OERInventoryScopeTree`,
+  `Invoke-OERStructure` and `Get-OERInventory` (gate 10), never by another public cmdlet: the role
+  assignment and policy cmdlets use the scope they are given. `Get-OERInventory` (A20, BL-152) checks
+  each of `-Scope` and `-Subscription` (as `sub:<value>`) that is given, ONCE per invocation, before
+  the first read of RoleAssignments or RoleManagementPolicies; `-ManagementGroup` is never checked.
+  That check reads through the ARM transport, so its `begin` asks for the ARM token in its one
+  `Initialize-OERAuth` call, exactly as `-IncludeARM` does, whenever RoleAssignments, or
+  RoleManagementPolicies with exactly one of `-Role`, `-CommonRoles` and `-AllRolesAtScope`
+  (the rule that section reads by, from the one `$RoleSources` list), is included with a `-Scope` or
+  `-Subscription` that is not blank (R-9); a `-ManagementGroup` alone keeps the readers'
+  acquisition on first use, and a call with neither section asks for none. A
+  foreign subscription is read for nothing -- each included section empty, the owner's
+  `SubscriptionTenantMismatch` record written once (the first foreign verdict's), after the inventory,
+  and not unread; an undecided
+  one is read for nothing too, each included section named unread by its own name through
+  `InventoryPartial`. Inside an export the answers are shared through the run context's
+  `SubscriptionTenant`, which the tree fills (`-Cache`, the listed facts included), so the check sends
+  no extra request. `Export-OERInventory`'s walk enters
   only a subscription of the session's tenant, names one of another tenant with one warning and in
   its README, and names one it cannot decide in `IncompleteReads` (partial). The engine checks once
   per subscription and document, before the first read or write of a `roleAssignments` or
@@ -1551,8 +1601,8 @@ bug.
   `Resolve-OERTenantDomain` and `Resolve-OERTenantDomain` only in `Initialize-OERAuth`,
   `Set-OERSessionUncertain` only in `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`,
   `Get-OERDocumentTenantMismatch` only in `Invoke-OERStructure`, and
-  `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree` and `Invoke-OERStructure`,
-  every listed owner really calling it; the tenant lookup's one `Invoke-RestMethod` call carrying only
+  `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree`, `Invoke-OERStructure` and
+  `Get-OERInventory`, every listed owner really calling it; the tenant lookup's one `Invoke-RestMethod` call carrying only
   `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`, with no splat; `$script:_OERSessionUncertain`
   read and written only in `Set-OERSessionUncertain`, and in `Initialize-OERAuth` exactly three
   `Set-OERSessionUncertain` calls -- the statement directly after the `Lock-OERSignIn` assignment and

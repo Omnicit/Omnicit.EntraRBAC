@@ -30,6 +30,10 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
   subscriptions; see "Azure Lighthouse delegations" below). The Azure walk enters only the session
   tenant's own subscriptions: a subscription of another tenant is named in `README.md` and read
   into no file (see the same section).
+- `servicePrincipalAccess.json` -- read-only context, written only when the export runs with
+  `-IncludeServicePrincipalAccess`: the application permissions, delegated permission grants and
+  owners of the tenant's service principals and app registrations (see "Service principal access"
+  below).
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (e.g. `Test-Json -Json (Get-Content proposal.json -Raw) -Schema (Get-Content schema.json -Raw)`).
 - `rbac-architect-prompt.md` -- the predefined prompt.
@@ -42,7 +46,9 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
   PIM for Groups in a restricted management unit" and "Azure Lighthouse delegations (access from
   another tenant)" the findings described below, lists under "Subscriptions delegated from another
   tenant (not read)" the subscriptions of another tenant the export did not read (see "Azure
-  Lighthouse delegations" below), and holds the next steps. These lists are written
+  Lighthouse delegations" below), gives under "Service principal access (read-only)" the row count
+  of each part of `servicePrincipalAccess.json` when the export wrote it, and holds the next steps.
+  These lists are written
   into this file only, never into `inventory.json` or any other JSON file, except the Azure
   Lighthouse delegations, which are the rows of `lighthouseDelegations.json`.
 
@@ -364,7 +370,62 @@ this tenant.
   read", and raises `InventoryPartial`. A proposal must not declare a role assignment or a role
   management policy at a scope in a subscription of another tenant: `Invoke-OERStructure` reports
   such an entry `Failed` with `SubscriptionTenantMismatch`, reads no role assignment or policy there
-  and writes nothing for it, with or without `-Prune`, the same under `-WhatIf`.
+  and writes nothing for it, with or without `-Prune`, the same under `-WhatIf`. A document built
+  with `Get-OERInventory -Scope` or `-Subscription` instead of the export follows the same rule:
+  `Get-OERInventory` writes no `roleAssignments` or `roleManagementPolicies` row in a subscription
+  of another tenant, and reports `SubscriptionTenantMismatch` once; where it cannot tell the
+  subscription's tenant, it writes none either and names those sections in `InventoryPartial`.
+
+## Service principal access
+
+With `-IncludeServicePrincipalAccess`, the export also writes `servicePrincipalAccess.json`:
+read-only context on the app roles and delegated permission grants of the tenant's service
+principals and on the owners of its service principals and app registrations, which the apply
+document does not model. A service principal's Microsoft Entra directory roles and Azure roles are
+not in it but in `directoryRoleAssignments.json` and `roleAssignments.json`, each within its own
+coverage, so a service principal this file does not name is not shown to be without privilege. It
+is one JSON object with four parts, in this order:
+
+- `applicationPermissions` -- one row per app role a service principal holds on a resource,
+  application permissions among them, read from the client side: `servicePrincipalId`,
+  `servicePrincipalDisplayName`, `resourceId`, `resourceDisplayName`, `appRoleId` and
+  `appRoleValue`, which is `null` for a role the resource does not declare (the default access
+  role, for one) or declares without a value, and for a resource the service principal list did not
+  return (its `resourceDisplayName` is then the assignment's own, else `null`).
+- `delegatedPermissionGrants` -- one row per delegated permission grant: `clientId`,
+  `clientDisplayName`, `resourceId`, `resourceDisplayName`, `consentType`, `principalId`,
+  `principalDisplayName` and `principalUserPrincipalName` (the user's display name and user
+  principal name, all three `null` for `AllPrincipals` and the two names `null` for a user the
+  directory did not return) and `scope`, the space-separated delegated permissions.
+- `applicationOwners` -- one row per owner of an app registration: `applicationId`, `appId`,
+  `applicationDisplayName`, `ownerId`, `ownerType`, `ownerDisplayName` and
+  `ownerUserPrincipalName`.
+- `servicePrincipalOwners` -- one row per owner of a service principal: `servicePrincipalId`,
+  `servicePrincipalDisplayName` and the same four owner keys.
+
+Every blank value is `null`, and each part is sorted, so two exports of an unchanged tenant write the
+same file. The bundle's `README.md` gives each part's row count under "Service principal access
+(read-only)".
+
+- **Context, never a proposal target.** `inventory.json` and `schema.json` do not carry the file, no
+  apply cmdlet reads it back, and `Invoke-OERStructure` never grants, revokes or changes any of it.
+  The prompt names the file among its inputs only when the export wrote it, and tells the model
+  never to declare this access in a proposal and never to propose granting, revoking or changing it
+  through the document, but to name what stands out in its rationale as a finding.
+- **`null` is not `[]`.** A part is read whole or not at all. A part that could not be read is
+  written `null`, never `[]`, and is named under "What this export could not read" as
+  `servicePrincipalAccess/<part>`, labelled "Service principal access part that could not be read",
+  and in `InventoryPartial`. The grants are not read when the service principal list they are named
+  through was not, so that failure leaves both `applicationPermissions` and
+  `delegatedPermissionGrants` `null`. An empty `[]` is a part that was read and holds nothing.
+- **What it costs.** One request per page of each of three lists (the service principals with their
+  app role assignments, the service principals with their owners, and the app registrations with
+  their owners) and of the grants, one `directoryObjects/getByIds` per 1,000 users named in grants,
+  and one more paged read per object with 20 or more expanded entries or with an expanded entry that
+  lacks the id its row needs: 29 requests for a test tenant of 1,129 service principals and 67 app
+  registrations. `Directory.Read.All`, which the export already requires, covers every read.
+- **Without the switch** none of it is read or written, and neither `README.md` nor
+  `rbac-architect-prompt.md` mentions it.
 
 ## Group names from a template
 
@@ -713,6 +774,18 @@ directory role's policy always exists, so there is nothing to create or remove a
 effect on `directoryRoleManagementPolicies`; `directoryRoleAssignments` reconciles, and can be
 pruned, only for the `(role, assignmentType)` pairs the document declares.
 
+**Administrative unit scoped roles.** A directory role scoped to an administrative unit is declared
+in that unit's `administrativeUnits[].scopedRoles`, as `role` and `principal`, which together are
+its match key. The export also writes `principalType` (`User`, `Group` or `ServicePrincipal`) on a
+row whose principal is an object id that the directory returns as one of those types, all of them
+looked up together through `directoryObjects/getByIds`; a row whose principal the directory did not
+return, of another type, or named by its display name carries none. A lookup that fails leaves those
+rows without it and names the unit under "What this export could not read" as
+`administrativeUnits/<name>/scopedRoles/principalType`, which raises `InventoryPartial`; the unit's
+`scopedRoles` is still written. The key is optional: `Test-OERStructure` refuses a value outside the
+three (another letter case is a warning), and `Invoke-OERStructure` does not use it to match or
+write a scoped role, so a proposal may keep it, leave it out, or add it for a new row.
+
 ## Access reviews are matched by name
 
 An `accessReviews[]` entry is matched to a live review by `displayName`, looked up in the whole
@@ -971,7 +1044,10 @@ administrative unit list or the access review list) is reported by a warning and
 `accessReviews`), and is written as an empty array, never `null`. The group roster that could not be
 read is named `groupsRoster` in the bundle's `IncompleteReads` and written as an empty array in
 `groupsRoster.json`. An empty section reported that way is not evidence the tenant has none, so no
-deletion is proposed from it.
+deletion is proposed from it. A path ending in `scopedRoles/principalType` is not such a collection:
+it names an administrative unit whose `scopedRoles` is written, not `null`, and some or all of whose
+rows carry no `principalType`, since the type of their principals could not be looked up (see
+"Administrative unit scoped roles" under "Directory roles").
 
 The bundle's `README.md` lists every such report, and every Azure scope the export could not read
 (for `roleAssignments.json` and `roleManagementPolicies.json`, or for `azurePimEligibility.json`),
@@ -989,8 +1065,11 @@ policy at the scope was kept: when only one policy could not be judged, the othe
 ones are still left out. An Azure subscription whose home tenant could not be read follows those
 entries, as `subscriptionHomeTenant at <scope>`, labelled "Azure subscription whose tenant could not
 be read": the Azure walk did not enter it, so nothing of it is in the bundle, which does not mean it
-holds nothing. The Azure Lighthouse reads that failed come last, labelled "Azure Lighthouse read
-that failed" (see "Azure Lighthouse delegations" above). When nothing was
+holds nothing. The Azure Lighthouse reads that failed come next, labelled "Azure Lighthouse read
+that failed" (see "Azure Lighthouse delegations" above), and, for an export run with
+`-IncludeServicePrincipalAccess`, the parts of `servicePrincipalAccess.json` that could not be read
+come last, labelled "Service principal access part that could not be read" (see "Service principal
+access" above). When nothing was
 left unread, that section says so. The list is in the
 README alone: `inventory.json` and the other JSON files never carry it, so the apply document keeps
 exactly the shape the schema describes.

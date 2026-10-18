@@ -7,9 +7,10 @@ function Get-OERSubscriptionHomeTenant {
     .DESCRIPTION
     The single owner of decision A19 (BL-150): whether the Azure subscription a scope lies in, or a
     subscription the subscription list returned, belongs to the tenant the module's session works in.
-    The export's Azure walk enters only such a subscription, and Invoke-OERStructure reads and writes a
+    The export's Azure walk enters only such a subscription, Invoke-OERStructure reads and writes a
     role assignment or a role management policy at a scope in a subscription only when the subscription
-    is one.
+    is one, and Get-OERInventory reads its RoleAssignments and RoleManagementPolicies sections at a
+    -Scope or -Subscription in a subscription only when it is one (decision A20, BL-152).
 
     The subscription's home tenant is read from the tenantId field Azure Resource Manager returns for
     it (Subscriptions - Get and Subscriptions - List, api-version 2022-12-01, documented as "The
@@ -53,7 +54,11 @@ function Get-OERSubscriptionHomeTenant {
     written; without -Cache every call reads.
 
     -Subscription takes an object Get-OERSubscription returns (SubscriptionId, ResourceId,
-    DisplayName, TenantId) and decides on its TenantId. It reads nothing.
+    DisplayName, TenantId) and decides on its TenantId. It reads nothing. With -Cache it also stores
+    what the list gave -- the facts a read of the subscription would have given, its TenantId and
+    DisplayName -- under the subscription id in lower case, so a later -Scope call with the same cache
+    in that subscription is answered with no request. That is how Export-OERInventory's Get-OERInventory
+    calls share the answers of its scope tree (decision A20, BL-152).
 
     It never writes an error record and never throws for a scope it cannot decide: the caller decides
     what an Undecided or Foreign verdict means for it.
@@ -63,13 +68,16 @@ function Get-OERSubscriptionHomeTenant {
     'subscription:<id or name>' or 'mg:<name>'.
 
     .PARAMETER Cache
-    A dictionary the caller keeps for one run (Invoke-OERStructure keeps one per document). The facts
-    one read of a subscription gave -- a failed read included -- are stored under the subscription id
-    in lower case and reused, so the subscription is read once per cache.
+    A dictionary the caller keeps for one run (Invoke-OERStructure keeps one per document, and
+    Export-OERInventory one per export, in its run context's SubscriptionTenant, which its scope tree
+    and its Get-OERInventory calls share; a standalone Get-OERInventory keeps one per invocation). The
+    facts one read of a subscription gave -- a failed read included -- are stored under the
+    subscription id in lower case and reused, so the subscription is read once per cache. With
+    -Subscription, the facts the list gave are stored the same way, and nothing is read.
 
     .PARAMETER Subscription
     A subscription object as Get-OERSubscription returns it. Its TenantId is the home tenant compared;
-    nothing is read.
+    nothing is read. With -Cache, its facts are stored there (see -Cache).
 
     .EXAMPLE
     $Verdict = Get-OERSubscriptionHomeTenant -Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' -Cache $Cache
@@ -82,6 +90,12 @@ function Get-OERSubscriptionHomeTenant {
     Get-OERSubscription | ForEach-Object { Get-OERSubscriptionHomeTenant -Subscription $_ }
 
     Decides each listed subscription from the tenantId the list returned, with no request of its own.
+
+    .EXAMPLE
+    Get-OERSubscription | ForEach-Object { Get-OERSubscriptionHomeTenant -Subscription $_ -Cache $Cache }
+
+    Decides each listed subscription as above and stores what the list gave in $Cache, so a later
+    -Scope call with $Cache at a scope in one of them sends no request.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding(DefaultParameterSetName = 'Scope')]
@@ -91,6 +105,7 @@ function Get-OERSubscriptionHomeTenant {
         [string]$Scope,
 
         [Parameter(ParameterSetName = 'Scope')]
+        [Parameter(ParameterSetName = 'Listed')]
         [System.Collections.IDictionary]$Cache,
 
         [Parameter(Mandatory, ParameterSetName = 'Listed')]
@@ -102,7 +117,7 @@ function Get-OERSubscriptionHomeTenant {
     function Get-SubscriptionTenantMismatchRecord {
         param([string]$ScopeText, [string]$Reason)
         [System.Management.Automation.ErrorRecord]::new(
-            [System.Exception]::new((("Scope '{0}' was refused: {1}. Invoke-OERStructure reads and writes, and Export-OERInventory reads, a role assignment or a role management policy in a subscription only when they can show that the subscription belongs to the tenant the session's Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription's home tenant to manage it there.") -f $ScopeText, $Reason)),
+            [System.Exception]::new((("Scope '{0}' was refused: {1}. Invoke-OERStructure reads and writes, and Export-OERInventory and Get-OERInventory read, a role assignment or a role management policy in a subscription only when they can show that the subscription belongs to the tenant the session's Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription's home tenant to manage it there.") -f $ScopeText, $Reason)),
             'SubscriptionTenantMismatch',
             [System.Management.Automation.ErrorCategory]::InvalidOperation,
             $ScopeText)
@@ -134,6 +149,12 @@ function Get-OERSubscriptionHomeTenant {
         if ([string]::IsNullOrEmpty($SubscriptionId)) { $SubscriptionId = $null }
         $VerdictScope = $ScopeText
         $Facts = @{ Read = $true; TenantId = [string]$Subscription.TenantId; DisplayName = [string]$Subscription.DisplayName; ErrorRecord = $null }
+        # A20 (BL-152): the facts the list gave are the facts a read would give, so they are stored in the
+        # caller's cache under the same key a -Scope call reads (the subscription id in lower case): a
+        # later -Scope call with this cache, in this subscription, is answered with no request. Nothing
+        # is read here, and the decision below is the one it always was. A listed subscription with no id
+        # has no key and is not stored.
+        if ($null -ne $Cache -and $null -ne $SubscriptionId) { $Cache[$SubscriptionId.ToLowerInvariant()] = $Facts }
     } else {
         $ScopeText = $Scope
         # 1. A management group named in the document's syntax lies in no subscription: nothing is resolved

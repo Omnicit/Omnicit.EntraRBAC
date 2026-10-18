@@ -181,6 +181,13 @@ function Read-OERStructureDocument {
         }
         foreach ($Unit in @($Doc.administrativeUnits)) {
             Write-OEREnumValue -Node $Unit -Key 'membershipRuleProcessingState' -EnumName 'membershipRuleProcessingState'
+            # Sprint 11 step 8: a scoped role row's principalType is canonicalised like a role assignment's,
+            # so the validator's casing Warning ("Invoke-OERStructure normalizes the casing") stays true,
+            # although the apply engine does not use it to match or write. A null unit, or a row that is
+            # not an object, is no node that declares the key, so Write-OEREnumValue leaves it alone.
+            foreach ($ScopedRole in @($Unit.scopedRoles)) {
+                Write-OEREnumValue -Node $ScopedRole -Key 'principalType' -EnumName 'principalType'
+            }
         }
         foreach ($Catalog in @($Doc.catalogs)) {
             if ($null -eq $Catalog) { continue }

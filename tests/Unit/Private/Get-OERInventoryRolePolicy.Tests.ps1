@@ -80,6 +80,11 @@ Describe 'Get-OERInventoryRolePolicy' {
     }
 
     It 'returns exactly the entries Get-OERInventory -AllRolesAtScope returns for the same answer' {
+        # A20 (BL-152): Get-OERInventory reads the scope only in the session tenant's own subscription, which
+        # this one is; the decision is Get-OERSubscriptionHomeTenant's, tested in its own suite.
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERSubscriptionHomeTenant {
+            [PSCustomObject]@{ Scope = $Scope; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null }
+        }
         $Rows = @(InModuleScope Omnicit.EntraRBAC -Parameters @{ S = $script:RpScope } {
                 param($S)
                 Get-OERInventoryRolePolicy -Scope $S

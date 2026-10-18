@@ -1772,3 +1772,262 @@ Describe 'Get-OERInventoryReadme apply-document section list' {
         }
     }
 }
+
+Describe 'Get-OERInventoryReadme (service principal access, Sprint 11 step 8)' {
+    # Export-OERInventory -IncludeServicePrincipalAccess writes servicePrincipalAccess.json and passes the
+    # reader's object as -ServicePrincipalAccess; without the switch it passes nothing, and the README must be
+    # byte-identical to one built before the parameter existed (Ruling R-4). With it, a section gives each
+    # part's row count, or says it was not read, and the Files section lists the file. An IncompleteReads entry
+    # that starts with 'servicePrincipalAccess/' gets a label of its own, and the sentence that explains the
+    # label is added only when such an entry is present.
+    BeforeAll {
+        $script:SpHeading = '## Service principal access (read-only)'
+        $script:SpLabelSentence = 'An entry labelled "Service principal access part that could not be read" names a part of `servicePrincipalAccess.json`, as `servicePrincipalAccess/<part>`, that could not be read: the part is written `null` there, never `[]`, which does not mean the tenant has none of it.'
+        # The README with the given IncompleteReads and, when -Access is bound, -ServicePrincipalAccess; -Full
+        # fills every other list with one entry, so the comparison covers every section.
+        function Get-SpReadme {
+            param([string[]]$Incomplete = @(), [object]$Access, [switch]$PassAccess, [switch]$Full)
+            InModuleScope $script:moduleName -Parameters @{ I = $Incomplete; A = $Access; Pass = [bool]$PassAccess; Full = [bool]$Full } {
+                param($I, $A, $Pass, $Full)
+                $P = @{
+                    IncompleteReads = $I; SkippedScopes = @(); SkippedEligibilityScopes = @(); PimLeftOut = @(); RootScopeAssignments = @()
+                    SharedNames = @(); UnresolvedPrincipalAssignments = @(); UndeclarableScopeAssignments = @(); RestrictedUnitPimGroups = @()
+                    LighthouseDelegations = @(); ForeignSubscriptions = @()
+                }
+                if ($Full) {
+                    $P.SkippedScopes = @('/subscriptions/aaaa1111-0000-0000-0000-000000000005')
+                    $P.SkippedEligibilityScopes = @('<all Azure scopes: scope enumeration failed>')
+                    $P.PimLeftOut = @([PSCustomObject]@{ Group = 'role_sec_pim'; Members = 1; Owners = 0; Basis = 'Assignments' })
+                    $P.RootScopeAssignments = @([PSCustomObject]@{ Role = 'User Access Administrator'; Principal = 'person1@example.com'; PrincipalType = 'User' })
+                    $P.SharedNames = @([PSCustomObject]@{ Section = 'groups'; Name = 'Admins'; Count = 2 })
+                    $P.RestrictedUnitPimGroups = @([PSCustomObject]@{ Group = 'role_sec_pim'; Units = @('Restricted AU') })
+                    $P.ForeignSubscriptions = @([PSCustomObject]@{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; DisplayName = 'Customer Prod'; HomeTenantId = 'eeee0000-0000-0000-0000-000000000002' })
+                }
+                if ($Pass) { $P.ServicePrincipalAccess = $A }
+                Get-OERInventoryReadme @P
+            }
+        }
+        function Get-SpSection {
+            param([string]$Readme, [string]$Heading = $script:SpHeading)
+            $Start = $Readme.IndexOf($Heading)
+            if ($Start -lt 0) { return $null }
+            $Next = $Readme.IndexOf("`n## ", $Start)
+            if ($Next -lt 0) { return $Readme.Substring($Start) }
+            $Readme.Substring($Start, $Next - $Start)
+        }
+        function Get-SpBullets {
+            param([string]$Section)
+            @($Section -split '\r?\n' | Where-Object { $_ -like '- *' })
+        }
+        # The reader's object: rows of any shape, since only their count is written.
+        function New-SpAccess {
+            param($Permissions = @('row-a', 'row-b', 'row-c'), $Grants = @(), $AppOwners = @('row-d'), $SpOwners = @('row-e', 'row-f'))
+            [PSCustomObject]@{ ApplicationPermissions = $Permissions; DelegatedPermissionGrants = $Grants; ApplicationOwners = $AppOwners; ServicePrincipalOwners = $SpOwners; Unread = @(); Causes = @() }
+        }
+        $script:SpFileBullet = @(
+            '- `servicePrincipalAccess.json` -- the application permissions, delegated permission grants and'
+            '  owners of the tenant''s service principals and app registrations, written only when the export ran'
+            '  with `-IncludeServicePrincipalAccess`. Read-only context, not an apply document -- see "Service'
+            '  principal access (read-only)" above.'
+        ) -join "`n"
+    }
+
+    It 'is byte-identical without -ServicePrincipalAccess and with it $null (<Name>)' -ForEach @(
+        @{ Name = 'nothing unread'; Full = $false; Incomplete = @() }
+        @{ Name = 'every list filled'; Full = $true; Incomplete = @('groupsRoster', 'lighthouseDelegations at /subscriptions/aaaa1111-0000-0000-0000-000000000001') }
+    ) {
+        $Without = Get-SpReadme -Incomplete $Incomplete -Full:$Full
+        $WithNull = Get-SpReadme -Incomplete $Incomplete -Full:$Full -PassAccess -Access $null
+        $WithNull | Should -BeExactly $Without
+        $Without | Should -Not -Match ([regex]::Escape($script:SpHeading))
+        $Without | Should -Not -Match 'servicePrincipalAccess'
+        $Without | Should -Not -Match '@@'
+    }
+
+    It 'writes the section after the foreign subscriptions and before Files, with a row count per part, in the file''s order' {
+        $Md = (Get-SpReadme -PassAccess -Access (New-SpAccess)) -replace '\r\n', "`n"
+        $Headings = @([regex]::Matches($Md, '(?m)^## .*$') | ForEach-Object { $_.Value.TrimEnd("`r") })
+        $Index = [array]::IndexOf($Headings, $script:SpHeading)
+        $Index | Should -BeGreaterThan 0
+        $Headings[$Index - 1] | Should -BeExactly '## Subscriptions delegated from another tenant (not read)'
+        $Headings[$Index + 1] | Should -BeExactly '## Files'
+        ([regex]::Matches($Md, '(?m)^## Service principal access \(read-only\)$')).Count | Should -Be 1
+        $Section = Get-SpSection -Readme $Md
+        $Section | Should -Match '(?m)^The four parts, as this export wrote them:$'
+        ((Get-SpBullets -Section $Section) -join "`n") | Should -BeExactly (@(
+                '- `applicationPermissions`: 3 row(s)'
+                '- `delegatedPermissionGrants`: 0 row(s)'
+                '- `applicationOwners`: 1 row(s)'
+                '- `servicePrincipalOwners`: 2 row(s)'
+            ) -join "`n")
+        # Never a row: the counts only.
+        $Md | Should -Not -Match 'row-a'
+    }
+
+    It 'says a part that is null was not read, and points at What this export could not read' {
+        $Section = Get-SpSection -Readme (Get-SpReadme -PassAccess -Access (New-SpAccess -Permissions $null -Grants $null))
+        ((Get-SpBullets -Section $Section) -join "`n") | Should -BeExactly (@(
+                '- `applicationPermissions`: not read -- see "What this export could not read"'
+                '- `delegatedPermissionGrants`: not read -- see "What this export could not read"'
+                '- `applicationOwners`: 1 row(s)'
+                '- `servicePrincipalOwners`: 2 row(s)'
+            ) -join "`n")
+    }
+
+    It 'says what the file holds, that it is never applied, how an unread part is written, and the cost' {
+        $Collapsed = (Get-SpSection -Readme (Get-SpReadme -PassAccess -Access (New-SpAccess))) -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape('`servicePrincipalAccess.json` holds, as read-only context, the app roles and delegated permission grants of the tenant''s service principals and the owners of its service principals and app registrations, in four parts:'))
+        # It names only what the file holds, and where a service principal's other roles are, so a service
+        # principal the file does not name is never read as one without privilege.
+        $Collapsed | Should -Not -Match ([regex]::Escape('the permissions of the tenant''s service principals'))
+        $Collapsed | Should -Match ([regex]::Escape('A service principal''s Microsoft Entra directory roles and Azure roles are not in it but in `directoryRoleAssignments.json` and `roleAssignments.json`, each within its own coverage, so a service principal this file does not name is not shown to be without privilege.'))
+        $Collapsed | Should -Match ([regex]::Escape('It is never applied: none of it is in `inventory.json` or `schema.json`, and `Invoke-OERStructure` never grants, revokes or changes any of it.'))
+        $Collapsed | Should -Match ([regex]::Escape('A part that could not be read is written `null`, never `[]`, and is named under "What this export could not read"; a part that was read and holds nothing is `[]`.'))
+        $Collapsed | Should -Match ([regex]::Escape('The read cost one request per page of each of the three lists (the service principals with their app role assignments, the service principals with their owners, and the app registrations with their owners) and of the grants, one `directoryObjects/getByIds` per 1,000 users named in grants, and one extra paged read per object with 20 or more expanded entries or with an expanded entry that lacks the id its row needs.'))
+        # Markdown: no bare angle bracket GitHub would swallow as a tag.
+        ($Collapsed -replace '`[^`]*`', '') | Should -Not -Match '[<>]'
+    }
+
+    It 'lists servicePrincipalAccess.json in Files directly after lighthouseDelegations.json and before schema.json' {
+        $Md = (Get-SpReadme -PassAccess -Access (New-SpAccess)) -replace '\r\n', "`n"
+        $Files = Get-SpSection -Readme $Md -Heading '## Files'
+        $Files | Should -Match ([regex]::Escape("  (access from another tenant)`" above.`n" + $script:SpFileBullet + "`n- ``schema.json`` --"))
+        $Bullets = @(Get-SpBullets -Section $Files)
+        $Lighthouse = [array]::IndexOf(@($Bullets | ForEach-Object { $_.StartsWith('- `lighthouseDelegations.json` --') }), $true)
+        $Lighthouse | Should -BeGreaterThan 0
+        $Bullets[$Lighthouse + 1].StartsWith('- `servicePrincipalAccess.json` --') | Should -BeTrue
+        $Bullets[$Lighthouse + 2].StartsWith('- `schema.json` --') | Should -BeTrue
+    }
+
+    It 'changes nothing else: without its section and its Files bullet the README is the one built without it' {
+        # Line breaks compared as LF: the built module's here-strings carry the build platform's.
+        $Without = (Get-SpReadme -Full -Incomplete @('groupsRoster')) -replace '\r\n', "`n"
+        $With = (Get-SpReadme -Full -Incomplete @('groupsRoster') -PassAccess -Access (New-SpAccess)) -replace '\r\n', "`n"
+        $With | Should -Not -BeExactly $Without
+        $Start = $With.IndexOf("`n`n" + $script:SpHeading)
+        $Start | Should -BeGreaterThan 0
+        $Cut = $With.Remove($Start, $With.IndexOf("`n`n## Files", $Start) - $Start)
+        $Cut.Replace($script:SpFileBullet + "`n", '') | Should -BeExactly $Without
+    }
+
+    It 'lists an IncompleteReads entry that starts with servicePrincipalAccess/ under a label of its own, last, and adds the sentence that explains it' {
+        $Md = Get-SpReadme -Incomplete @(
+            'groupsRoster'
+            'lighthouseDelegations at /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            'servicePrincipalAccess/delegatedPermissionGrants'
+            'servicePrincipalAccess/applicationOwners'
+        ) -PassAccess -Access (New-SpAccess -Grants $null -AppOwners $null)
+        $Section = Get-SpSection -Readme $Md -Heading '## What this export could not read'
+        ((Get-SpBullets -Section $Section) -join "`n") | Should -BeExactly (@(
+                '- Entra ID: `groupsRoster`'
+                '- Azure Lighthouse read that failed: `lighthouseDelegations at /subscriptions/aaaa1111-0000-0000-0000-000000000001`'
+                '- Service principal access part that could not be read: `servicePrincipalAccess/delegatedPermissionGrants`'
+                '- Service principal access part that could not be read: `servicePrincipalAccess/applicationOwners`'
+            ) -join "`n")
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape($script:SpLabelSentence))
+        # It follows the home tenant sentence, the last of the fixed prose.
+        $Collapsed.IndexOf('An entry labelled "Azure subscription whose tenant could not be read"') | Should -BeLessThan $Collapsed.IndexOf('An entry labelled "Service principal access part that could not be read"')
+        ($Collapsed -replace '`[^`]*`', '') | Should -Not -Match '[<>]'
+    }
+
+    It 'adds the sentence only when such an entry is present (<Name>)' -ForEach @(
+        @{ Name = 'another entry'; Incomplete = @('groupsRoster'); Pass = $true }
+        @{ Name = 'the object without an unread part'; Incomplete = @('lighthouseDelegations at /subscriptions/aaaa1111-0000-0000-0000-000000000001'); Pass = $true }
+        @{ Name = 'without the object'; Incomplete = @('groupsRoster'); Pass = $false }
+    ) {
+        $Md = Get-SpReadme -Incomplete $Incomplete -PassAccess:$Pass -Access (New-SpAccess)
+        $Section = Get-SpSection -Readme $Md -Heading '## What this export could not read'
+        $Section | Should -Match 'This bundle is PARTIAL'
+        ($Section -replace '\s+', ' ') | Should -Not -Match ([regex]::Escape('Service principal access part that could not be read'))
+        # The section reads exactly as it does without the parameter.
+        $Section | Should -BeExactly (Get-SpSection -Readme (Get-SpReadme -Incomplete $Incomplete) -Heading '## What this export could not read')
+    }
+
+    It 'keeps an entry that only resembles a service principal access entry under Entra ID: it must start with servicePrincipalAccess/, in that letter case (<Name>)' -ForEach @(
+        @{ Name = 'no slash'; Entry = 'servicePrincipalAccess' }
+        @{ Name = 'another letter case'; Entry = 'ServicePrincipalAccess/applicationOwners' }
+        @{ Name = 'not at the start'; Entry = 'groups/servicePrincipalAccess/applicationOwners' }
+    ) {
+        $Section = Get-SpSection -Readme (Get-SpReadme -Incomplete @($Entry)) -Heading '## What this export could not read'
+        ((Get-SpBullets -Section $Section) -join "`n") | Should -BeExactly ('- Entra ID: `' + $Entry + '`')
+        ($Section -replace '\s+', ' ') | Should -Not -Match ([regex]::Escape($script:SpLabelSentence))
+    }
+
+    It 'declares ServicePrincipalAccess optional, unlike the eleven lists, so the existing calls keep binding' {
+        $Parameter = InModuleScope $script:moduleName {
+            $Meta = (Get-Command Get-OERInventoryReadme).Parameters['ServicePrincipalAccess']
+            [PSCustomObject]@{
+                Type      = $Meta.ParameterType
+                Mandatory = @($Meta.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Where-Object { $_.Mandatory }).Count
+            }
+        }
+        $Parameter.Type | Should -Be ([object])
+        $Parameter.Mandatory | Should -Be 0
+    }
+
+    It 'contains only ASCII characters with the section and the label' {
+        $Md = Get-SpReadme -Incomplete @('servicePrincipalAccess/applicationOwners') -PassAccess -Access (New-SpAccess -AppOwners $null)
+        $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Md)
+        ($Bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
+    }
+}
+
+Describe 'Get-OERInventoryReadme (scoped role principalType entries, Sprint 11 step 8)' {
+    # Get-OERInventory names a unit whose scoped role principals' type could not be looked up as
+    # 'administrativeUnits/<name>/scopedRoles/principalType'. That path names no null collection, so the
+    # README explains it in a sentence of its own, added only when an Entra ID entry holds such a path --
+    # where it ends the entry or is followed by a comma, since one entry joins one report's paths with ', '.
+    BeforeAll {
+        $script:SrTypeSentence = 'An Entra ID entry that names a path ending in `/scopedRoles/principalType` names an administrative unit whose `scopedRoles` is written, not `null`: the type of some or all of its scoped role principals could not be looked up, so those rows carry no `principalType`, which `Invoke-OERStructure` does not use to match or write a scoped role.'
+        function Get-SrTypeSection {
+            param([string[]]$Incomplete = @(), [string[]]$Skipped = @())
+            $Md = InModuleScope $script:moduleName -Parameters @{ I = $Incomplete; S = $Skipped } {
+                param($I, $S)
+                Get-OERInventoryReadme -IncompleteReads $I -SkippedScopes $S -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @()
+            }
+            $Md = $Md -replace '\r\n', "`n"
+            $Start = $Md.IndexOf('## What this export could not read')
+            $Md.Substring($Start, $Md.IndexOf("`n## ", $Start) - $Start)
+        }
+        # The section's prose: the section without its bullets.
+        function Get-SrTypeProse {
+            param([string]$Section)
+            (@($Section -split "`n" | Where-Object { $_ -notlike '- *' }) -join "`n").TrimEnd()
+        }
+    }
+
+    It 'adds the sentence for an entry whose path <Name>, and lists the entry under Entra ID' -ForEach @(
+        @{ Name = 'ends the entry'; Entry = 'administrativeUnits/AU-A/scopedRoles/principalType' }
+        @{ Name = 'is followed by a comma'; Entry = 'administrativeUnits/AU-A/scopedRoles/principalType, groups/G/members' }
+        @{ Name = 'stands among other paths'; Entry = 'groups/G/members, administrativeUnits/AU-A/scopedRoles/principalType, administrativeUnits/AU-B/scopedRoles' }
+    ) {
+        $Section = Get-SrTypeSection -Incomplete @($Entry)
+        @($Section -split "`n" | Where-Object { $_ -like '- *' }) | Should -BeExactly @('- Entra ID: `' + $Entry + '`')
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape($script:SrTypeSentence))
+        # It follows the home tenant sentence, the last of the fixed prose.
+        $Collapsed.IndexOf('An entry labelled "Azure subscription whose tenant could not be read"') | Should -BeLessThan $Collapsed.IndexOf('An Entra ID entry that names a path ending in')
+        ($Collapsed -replace '`[^`]*`', '') | Should -Not -Match '[<>]'
+    }
+
+    It 'adds no sentence and keeps the prose as it is for <Name>' -ForEach @(
+        @{ Name = 'a null scopedRoles collection'; Incomplete = @('administrativeUnits/AU-A/scopedRoles'); Skipped = @() }
+        @{ Name = 'a path that only starts the same way'; Incomplete = @('administrativeUnits/AU-A/scopedRoles/principalTypeX'); Skipped = @() }
+        @{ Name = 'a role assignment principal entry'; Incomplete = @('roleAssignments/Reader -> 11111111-0000-0000-0000-000000000001 @ /scopedRoles/principalType'); Skipped = @() }
+        @{ Name = 'an Azure scope that is not an Entra ID entry'; Incomplete = @(); Skipped = @('/x/scopedRoles/principalType') }
+    ) {
+        $Section = Get-SrTypeSection -Incomplete $Incomplete -Skipped $Skipped
+        $Section | Should -Match 'This bundle is PARTIAL'
+        ($Section -replace '\s+', ' ') | Should -Not -Match ([regex]::Escape('An Entra ID entry that names a path ending in'))
+        # The prose reads exactly as it does for another entry.
+        Get-SrTypeProse -Section $Section | Should -BeExactly (Get-SrTypeProse -Section (Get-SrTypeSection -Incomplete @('groupsRoster')))
+    }
+
+    It 'puts the sentence before the service principal access sentence when both entries are present' {
+        $Collapsed = (Get-SrTypeSection -Incomplete @('administrativeUnits/AU-A/scopedRoles/principalType', 'servicePrincipalAccess/applicationOwners')) -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape($script:SrTypeSentence))
+        $Collapsed.IndexOf('An entry labelled "Service principal access part that could not be read"') | Should -BeGreaterThan 0
+        $Collapsed.IndexOf('An Entra ID entry that names a path ending in') | Should -BeLessThan $Collapsed.IndexOf('An entry labelled "Service principal access part that could not be read"')
+    }
+}

@@ -400,10 +400,50 @@ BeforeAll {
             Write    = '^(User\.ReadWrite\.All|Directory\.ReadWrite\.All)$'
         }
         @{
-            Endpoint = 'servicePrincipals'
+            <#
+                One rule for every service principal path the module reads, the lookups by name and the
+                service principal access reads of Get-OERServicePrincipalAccess (Sprint 11 step 8) alike:
+                the list with $expand=appRoleAssignments or $expand=owners(...), and the paged
+                servicePrincipals/{id}/appRoleAssignments and servicePrincipals/{id}/owners re-reads.
+                Microsoft Learn, "List servicePrincipals", "List appRoleAssignments granted to a service
+                principal" and "List owners of a service principal" (read 2026-10-18): least privileged
+                Application.Read.All, higher Application.ReadWrite.All, Directory.Read.All and
+                Directory.ReadWrite.All (and, for an application, Application.ReadWrite.OwnedBy, which
+                this rule does not accept: it lets an app manage only the applications it owns, and the
+                module never asks for it).
+            #>
+            Endpoint = 'servicePrincipals, servicePrincipals/{id}/appRoleAssignments, servicePrincipals/{id}/owners'
             Match    = 'v1.0/servicePrincipals'
             Read     = '^(Application\.(Read|ReadWrite)\.All|Directory\.Read(Write)?\.All)$'
             Write    = '^(Application\.ReadWrite\.All|Directory\.ReadWrite\.All)$'
+        }
+        @{
+            <#
+                The app registrations and their owners (Get-OERServicePrincipalAccess, Sprint 11 step 8):
+                the list with $expand=owners(...) and the paged applications/{id}/owners re-read.
+                Microsoft Learn, "List applications" and "List owners of an application" (read
+                2026-10-18): least privileged Application.Read.All, higher Application.ReadWrite.OwnedBy,
+                Application.ReadWrite.All, Directory.Read.All and Directory.ReadWrite.All -- the same set
+                as the servicePrincipals rule above, which does not accept Application.ReadWrite.OwnedBy
+                either, for the reason given there.
+            #>
+            Endpoint = 'applications, applications/{id}/owners'
+            Match    = 'v1.0/applications'
+            Read     = '^(Application\.(Read|ReadWrite)\.All|Directory\.Read(Write)?\.All)$'
+            Write    = '^(Application\.ReadWrite\.All|Directory\.ReadWrite\.All)$'
+        }
+        @{
+            <#
+                The delegated permission grants (Get-OERServicePrincipalAccess, Sprint 11 step 8).
+                Microsoft Learn, "List oauth2PermissionGrants" (read 2026-10-18): least privileged
+                Directory.Read.All, higher DelegatedPermissionGrant.ReadWrite.All and
+                Directory.ReadWrite.All. Application.Read.All is NOT in that table, so it does not
+                satisfy this rule although it satisfies the two above.
+            #>
+            Endpoint = 'oauth2PermissionGrants'
+            Match    = 'v1.0/oauth2PermissionGrants'
+            Read     = '^(Directory\.Read(Write)?\.All|DelegatedPermissionGrant\.ReadWrite\.All)$'
+            Write    = '^(DelegatedPermissionGrant\.ReadWrite\.All|Directory\.ReadWrite\.All)$'
         }
         @{
             <#
@@ -639,6 +679,150 @@ Describe 'Required scope table' -Tags 'helpQuality' {
                 'Directory.Read.All' | Should -Not -Match $pattern -Because (
                     'a write needs the read-write permission, which the read permission does not satisfy; pattern {0}' -f $pattern)
             }
+        }
+
+        <#
+            Sprint 11 step 8: the service principal access reads of Get-OERServicePrincipalAccess. The
+            URIs are the literals that function sends, as the AST scan reads them (a re-read is a -f
+            format string, so its {0} stands where the object id goes).
+        #>
+        It 'Should hold a service principal read <Uri> to exactly one rule that Application.Read.All and Directory.Read.All satisfy' -ForEach @(
+            @{ Uri = 'v1.0/servicePrincipals?$select=id,appId,displayName,appRoles&$expand=appRoleAssignments&$top=999' }
+            @{ Uri = 'v1.0/servicePrincipals/{0}/appRoleAssignments?$top=999' }
+            @{ Uri = 'v1.0/servicePrincipals?$select=id,displayName&$expand=owners($select=id,displayName,userPrincipalName)&$top=999' }
+            @{ Uri = 'v1.0/servicePrincipals/{0}/owners?$select=id,displayName,userPrincipalName&$top=999' }
+        ) {
+            $patterns = @(Get-RequiredScopePattern -Uri $Uri -Write $false)
+
+            $patterns.Count | Should -Be 1 -Because (
+                'a service principal read must map to exactly one permission rule, the servicePrincipals one; {0} matched' -f $patterns.Count)
+
+            foreach ($pattern in $patterns)
+            {
+                'Application.Read.All' | Should -Match $pattern -Because (
+                    'Application.Read.All is the least privileged permission Microsoft Learn names for this read; pattern {0}' -f $pattern)
+                'Directory.Read.All' | Should -Match $pattern -Because (
+                    'Directory.Read.All is a higher permission Microsoft Learn names for this read, and the one the export requires; pattern {0}' -f $pattern)
+                'User.Read.All' | Should -Not -Match $pattern -Because (
+                    'a user permission reads no service principal; pattern {0}' -f $pattern)
+            }
+        }
+
+        It 'Should hold an app registration read <Uri> to exactly one rule that Application.Read.All and Directory.Read.All satisfy' -ForEach @(
+            @{ Uri = 'v1.0/applications?$select=id,appId,displayName&$expand=owners($select=id,displayName,userPrincipalName)&$top=999' }
+            @{ Uri = 'v1.0/applications/{0}/owners?$select=id,displayName,userPrincipalName&$top=999' }
+        ) {
+            $patterns = @(Get-RequiredScopePattern -Uri $Uri -Write $false)
+
+            $patterns.Count | Should -Be 1 -Because (
+                'an app registration read must map to exactly one permission rule, the applications one; {0} matched' -f $patterns.Count)
+
+            foreach ($pattern in $patterns)
+            {
+                'Application.Read.All' | Should -Match $pattern -Because (
+                    'Application.Read.All is the least privileged permission Microsoft Learn names for this read; pattern {0}' -f $pattern)
+                'Directory.Read.All' | Should -Match $pattern -Because (
+                    'Directory.Read.All is a higher permission Microsoft Learn names for this read, and the one the export requires; pattern {0}' -f $pattern)
+                foreach ($narrow in 'User.Read.All', 'Group.Read.All')
+                {
+                    $narrow | Should -Not -Match $pattern -Because (
+                        '{0} reads no app registration; pattern {1}' -f $narrow, $pattern)
+                }
+            }
+        }
+
+        It 'Should hold a write to the app registrations to a read-write permission, which a read permission does not satisfy' {
+            $patterns = @(Get-RequiredScopePattern -Uri 'v1.0/applications/{0}/owners' -Write $true)
+
+            $patterns.Count | Should -Be 1 -Because (
+                'a write to applications must map to exactly one permission rule, its own; {0} matched' -f $patterns.Count)
+
+            foreach ($pattern in $patterns)
+            {
+                'Application.ReadWrite.All' | Should -Match $pattern
+                'Directory.ReadWrite.All' | Should -Match $pattern
+                foreach ($read in 'Application.Read.All', 'Directory.Read.All')
+                {
+                    $read | Should -Not -Match $pattern -Because (
+                        'a write needs a read-write permission, which {0} is not; pattern {1}' -f $read, $pattern)
+                }
+            }
+        }
+
+        It 'Should hold a delegated permission grant read to Directory.Read.All, which Application.Read.All does not satisfy' {
+            # The literal Get-OERServicePrincipalAccess sends.
+            $patterns = @(Get-RequiredScopePattern -Uri 'v1.0/oauth2PermissionGrants?$top=999' -Write $false)
+
+            $patterns.Count | Should -Be 1 -Because (
+                'a read of oauth2PermissionGrants must map to exactly one permission rule, its own; {0} matched' -f $patterns.Count)
+
+            foreach ($pattern in $patterns)
+            {
+                'Directory.Read.All' | Should -Match $pattern -Because (
+                    'Directory.Read.All is the least privileged permission Microsoft Learn names for this read; pattern {0}' -f $pattern)
+                'DelegatedPermissionGrant.ReadWrite.All' | Should -Match $pattern
+                'Directory.ReadWrite.All' | Should -Match $pattern
+                foreach ($narrow in 'Application.Read.All', 'User.Read.All')
+                {
+                    $narrow | Should -Not -Match $pattern -Because (
+                        'Microsoft Learn does not name {0} for a read of the delegated permission grants; pattern {1}' -f $narrow, $pattern)
+                }
+            }
+        }
+
+        It 'Should hold a write to the delegated permission grants to a read-write permission, which a read permission does not satisfy' {
+            $patterns = @(Get-RequiredScopePattern -Uri 'v1.0/oauth2PermissionGrants' -Write $true)
+
+            $patterns.Count | Should -Be 1 -Because (
+                'a write to oauth2PermissionGrants must map to exactly one permission rule, its own; {0} matched' -f $patterns.Count)
+
+            foreach ($pattern in $patterns)
+            {
+                'DelegatedPermissionGrant.ReadWrite.All' | Should -Match $pattern
+                'Directory.ReadWrite.All' | Should -Match $pattern
+                'Directory.Read.All' | Should -Not -Match $pattern -Because (
+                    'a write needs a read-write permission, which the read permission does not satisfy; pattern {0}' -f $pattern)
+            }
+        }
+
+        It 'Should match the service principal access literals Export-OERInventory reaches against a rule each' {
+            <#
+                The per-cmdlet case above accepts a literal no rule matches, since such a literal asks
+                for nothing. So this case holds that the call graph really carries the service principal
+                access literals to Export-OERInventory, through Get-OERServicePrincipalAccess, and that
+                each one of them asks for a permission: a deleted rule, or a reader the export no longer
+                reaches, turns it red. The counts are those of the reader's literals: the four
+                servicePrincipals paths, the two applications paths and the one oauth2PermissionGrants
+                path (its directoryObjects/getByIds target text is a literal too, matched by the
+                directoryObjects rule).
+            #>
+            $calls = @($script:derived['Export-OERInventory'].GraphUri | Where-Object Owner -EQ 'Get-OERServicePrincipalAccess')
+
+            $expected = [ordered]@{
+                'v1.0/servicePrincipals'      = 4
+                'v1.0/applications'           = 2
+                'v1.0/oauth2PermissionGrants' = 1
+                'v1.0/directoryObjects'       = 1
+            }
+            foreach ($Root in $expected.Keys)
+            {
+                $hits = @($calls | Where-Object { $_.Uri.StartsWith($Root, [System.StringComparison]::Ordinal) })
+
+                $hits.Count | Should -Be $expected[$Root] -Because (
+                    'Export-OERInventory reaches {0} {1} literal(s) through Get-OERServicePrincipalAccess; the scan found {2}' -f
+                        $expected[$Root], $Root, $hits.Count)
+
+                foreach ($hit in $hits)
+                {
+                    $hit.Write | Should -BeFalse -Because (
+                        'Get-OERServicePrincipalAccess sends GET requests only, so its literals are judged as reads; {0}' -f $hit.Uri)
+                    @(Get-RequiredScopePattern -Uri $hit.Uri -Write $hit.Write).Count | Should -Be 1 -Because (
+                        'every literal of the service principal access read must ask for exactly one permission rule; {0}' -f $hit.Uri)
+                }
+            }
+
+            $calls.Count | Should -Be (($expected.Values | Measure-Object -Sum).Sum) -Because (
+                'every literal of Get-OERServicePrincipalAccess is one of the roots counted above; found: {0}' -f (($calls.Uri) -join ' | '))
         }
     }
 }

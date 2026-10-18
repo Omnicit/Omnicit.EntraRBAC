@@ -387,3 +387,41 @@ Describe 'Read-OERStructureDocument directoryRoleAssignments' {
         }
     }
 }
+
+Describe 'Read-OERStructureDocument administrativeUnits scopedRoles principalType (Sprint 11 step 8, R-7)' {
+    # The validator's casing Warning says Invoke-OERStructure normalizes the case, so the reader
+    # canonicalizes a scoped role row's principalType the way it canonicalizes a role assignment's,
+    # although the apply engine does not use it to match or write. Every row of every unit is visited.
+    It 'canonicalizes the principalType of every scoped role row of every unit' {
+        InModuleScope $script:moduleName {
+            $Json = '{ "version": "1.0", "administrativeUnits": [ ' +
+                '{ "displayName": "AU-One", "scopedRoles": [ { "role": "User Administrator", "principal": "p-1", "principalType": "user" }, ' +
+                '{ "role": "User Administrator", "principal": "p-2", "principalType": "GROUP" } ] }, ' +
+                '{ "displayName": "AU-Two", "scopedRoles": [ { "role": "Helpdesk Administrator", "principal": "p-3", "principalType": "serviceprincipal" } ] } ] }'
+            $Doc = Read-OERStructureDocument -Json $Json
+            @($Doc.administrativeUnits[0].scopedRoles | ForEach-Object { $_.principalType }) | Should -BeExactly @('User', 'Group')
+            $Doc.administrativeUnits[1].scopedRoles[0].principalType | Should -BeExactly 'ServicePrincipal'
+        }
+    }
+
+    It 'leaves the casing as written under -SkipEnumNormalization, an out-of-enum value for the validator, and a row without the key or with a null as it was' {
+        InModuleScope $script:moduleName {
+            $Json = '{ "version": "1.0", "administrativeUnits": [ null, { "displayName": "AU-One", "scopedRoles": [ ' +
+                '{ "role": "User Administrator", "principal": "p-1", "principalType": "user" }, ' +
+                '{ "role": "User Administrator", "principal": "p-2", "principalType": "Device" }, ' +
+                '{ "role": "User Administrator", "principal": "p-3" }, ' +
+                '{ "role": "User Administrator", "principal": "p-4", "principalType": null } ] }, ' +
+                '{ "displayName": "AU-Two", "scopedRoles": null } ] }'
+            $Raw = Read-OERStructureDocument -Json $Json -SkipEnumNormalization
+            $Raw.administrativeUnits[1].scopedRoles[0].principalType | Should -BeExactly 'user'
+            $Doc = Read-OERStructureDocument -Json $Json
+            # Positive control: the walk reached this unit's rows.
+            $Doc.administrativeUnits[1].scopedRoles[0].principalType | Should -BeExactly 'User'
+            $Doc.administrativeUnits[1].scopedRoles[1].principalType | Should -BeExactly 'Device'
+            $Doc.administrativeUnits[1].scopedRoles[2].PSObject.Properties.Name | Should -Not -Contain 'principalType'
+            $Doc.administrativeUnits[1].scopedRoles[3].PSObject.Properties.Name | Should -Contain 'principalType'
+            $null -eq $Doc.administrativeUnits[1].scopedRoles[3].principalType | Should -BeTrue
+            $null -eq $Doc.administrativeUnits[2].scopedRoles | Should -BeTrue
+        }
+    }
+}

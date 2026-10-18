@@ -8,9 +8,13 @@ function Get-OERInventory {
     shape matches the Phase 5 JSON document schema, so the output round-trips into the orchestration
     apply engine. Select which building blocks to read with -Include (default: Groups,
     AdministrativeUnits, Catalogs and AccessPackages).
-    Azure sections (RoleAssignments, RoleManagementPolicies) need an ARM token: pass -IncludeARM to
-    acquire it up front (the Azure sections otherwise acquire it on first use) and supply their
-    targeting parameters. Names are emitted by default for portability;
+    Azure sections (RoleAssignments, RoleManagementPolicies) need an ARM token and their targeting
+    parameters. With either section and a -Scope or a -Subscription, the token is acquired up front,
+    in the command's one sign-in, as -IncludeARM does, since the subscription is checked before
+    either section reads (see below) -- for RoleManagementPolicies only with exactly one of -Role,
+    -CommonRoles and -AllRolesAtScope, since with none or more than one that section is skipped with
+    a warning and reads nothing; with a -ManagementGroup alone, pass -IncludeARM to acquire it
+    up front, or the Azure sections acquire it on first use. Names are emitted by default for portability;
     -IncludeId additionally stamps each top-level object with its id.
     The Groups section is SECURITY-ENABLED-SCOPED unless you say otherwise: with no -GroupFilter it
     reads 'securityEnabled eq true', so a distribution group and a Microsoft 365 group whose
@@ -99,6 +103,16 @@ function Get-OERInventory {
     package's resourceRoles, the catalog's resources or the unit's scopedRoles) is written as an
     explicit null and named in the InventoryPartial error, the way an unread collection is, since
     a declared set that quietly left the entry out would have Invoke-OERStructure -Prune remove it.
+    In AdministrativeUnits, a scoped role row whose principal is an object id carries principalType
+    (User, Group or ServicePrincipal) when the directory returns that principal as one of those three
+    types, all such principals being looked up together through directoryObjects/getByIds, in
+    batches of up to 1000 ids, one request per batch: a row whose principal is not returned, is of
+    another type or is named by its display name carries none. A lookup that failed leaves the rows
+    of the principals it held without principalType -- some or all of a unit's scoped role rows,
+    since a batch can fail while another succeeds -- and reports each such unit once as
+    'administrativeUnits/<name>/scopedRoles/principalType' through the InventoryPartial error.
+    Invoke-OERStructure validates principalType and normalizes its letter case, but does not use it
+    to match or write a scoped role: it matches one by role and principal.
     A group, administrative unit or access review LIST that could not be read at all is reported
     through the same InventoryPartial error by the section's own name alone (groups,
     administrativeUnits or accessReviews) and is written as an empty array, which does not mean the
@@ -167,14 +181,32 @@ function Get-OERInventory {
     when a section holds a group principal whose name was read (one whose name could not be read is
     written by its object id with no listing), and shared by both; when it fails, the verbose stream
     says so and no group principal is reported unread, since an object id names the group exactly.
-    This cmdlet reads the Azure scope it is given, a scope in a subscription of another tenant included
-    (it does not check a subscription's home tenant, while Export-OERInventory's Azure walk enters only
-    the subscriptions of the tenant the session's Microsoft Graph token was issued for), and
-    Invoke-OERStructure refuses a role assignment or a role management policy at a scope in a
-    subscription of another tenant with SubscriptionTenantMismatch. A role assignment row that an
-    inventory of such a subscription carries at a management group above it, read at the
-    subscription as inherited, lies in no subscription and is not checked: Invoke-OERStructure applies
-    it like any management group row.
+    The RoleAssignments and RoleManagementPolicies sections read a -Scope or a -Subscription only when
+    the subscription it lies in belongs to the tenant the session's Microsoft Graph token was issued
+    for, by the tenantId Azure Resource Manager returns for the subscription: the rule
+    Export-OERInventory's Azure walk and Invoke-OERStructure apply too. The subscription is checked once
+    per call, before either section reads anything, with one read of it (a subscription named by its
+    display name also costs one read of the subscription list); with both -Scope and -Subscription,
+    each is checked. The Azure Resource Manager token that read needs is acquired in the command's
+    sign-in, as -IncludeARM does, whenever RoleAssignments, or RoleManagementPolicies with exactly one
+    of -Role, -CommonRoles and -AllRolesAtScope, is included with a -Scope or a -Subscription. A -Scope
+    at a management group or the root scope '/', and a -ManagementGroup, lie
+    in no subscription and are read as before. A subscription of another tenant -- a customer
+    subscription another tenant delegated to this one through Azure Lighthouse, for example -- is not
+    read: each included section is written empty, and one non-terminating SubscriptionTenantMismatch
+    error, written after the inventory object, names the scope and the tenant, however many of the two
+    sections were included; with both -Scope and -Subscription in subscriptions of another tenant,
+    that one error names the -Scope. The inventory is not reported partial for it. A subscription whose tenant could not be
+    told -- its read failed, it gave no tenantId, the session's token names no tenant ID, or the scope
+    cannot be resolved or is spelled in a way no structure document can declare, a trailing '/' for
+    example -- is not read either: each included section is written empty and reported by its name
+    (roleAssignments, roleManagementPolicies) through the InventoryPartial error below, with the reason
+    as its cause. Under Export-OERInventory the scopes it hands this cmdlet were already decided by its
+    walk, and the answers are shared, so the check costs the export no request. Invoke-OERStructure
+    refuses a role assignment or a role management policy at a scope in a subscription of another
+    tenant with SubscriptionTenantMismatch. A role assignment row that an inventory of a subscription
+    carries at a management group above it, read at the subscription as inherited, lies in no
+    subscription and is not checked: Invoke-OERStructure applies it like any management group row.
     A role assignment at the Azure root scope '/', above every management group and subscription in
     the tenant, is left out of the RoleAssignments section: it is elevated
     access, a finding to review rather than part of the RBAC model a document describes, and
@@ -321,8 +353,11 @@ function Get-OERInventory {
     definitions (optionally narrowed by -AccessReviewFilter); a group, application, directory-role
     or multi-stage review is skipped with a warning. DirectoryRoleManagementPolicies and
     DirectoryRoleAssignments read Microsoft Entra directory roles through Microsoft Graph and need no
-    ARM token. RoleAssignments and RoleManagementPolicies require -IncludeARM plus their targeting
-    parameters.
+    ARM token. RoleAssignments and RoleManagementPolicies need an ARM token and their targeting
+    parameters: with a -Scope or a -Subscription the token is acquired up front, as -IncludeARM does
+    (for RoleManagementPolicies only with exactly one of -Role, -CommonRoles and -AllRolesAtScope,
+    without which it reads nothing); with a -ManagementGroup alone they acquire it on first use unless
+    -IncludeARM is passed.
 
     .PARAMETER GroupFilter
     An OData filter (without the $filter= prefix) selecting which groups to read. When omitted,
@@ -342,13 +377,16 @@ function Get-OERInventory {
     the section then warns and is skipped without failing the rest of the run.
 
     .PARAMETER Scope
-    A raw ARM scope for the Azure sections (e.g. '/subscriptions/{id}').
+    A raw ARM scope for the Azure sections (e.g. '/subscriptions/{id}'). A scope in a subscription of
+    another tenant, or in one whose tenant could not be told, is not read (see above).
 
     .PARAMETER Subscription
-    A subscription GUID or display name for the Azure sections.
+    A subscription GUID or display name for the Azure sections. A subscription of another tenant, or
+    one whose tenant could not be told, is not read (see above).
 
     .PARAMETER ManagementGroup
-    A management group name or display name for the Azure sections.
+    A management group name or display name for the Azure sections. A management group lies in no
+    subscription, so it is read without that check.
 
     .PARAMETER Role
     One or more roles (display name, GUID, or full ARM id) whose role management policy to read.
@@ -377,7 +415,12 @@ function Get-OERInventory {
     Stamp each top-level object with its id property (handy for same-tenant round-trips).
 
     .PARAMETER IncludeARM
-    Acquire an ARM token and read the Azure sections. Forwarded to Initialize-OERAuth.
+    Acquire an ARM token up front, in the command's sign-in. Forwarded to Initialize-OERAuth. It is
+    implied when RoleAssignments, or RoleManagementPolicies with exactly one of -Role, -CommonRoles and
+    -AllRolesAtScope, is included with a -Scope or a -Subscription, since the subscription is checked
+    before either section reads; with a
+    -ManagementGroup alone the Azure sections otherwise acquire the token on first use. A call that
+    includes neither section acquires no ARM token without it.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. The
@@ -426,7 +469,27 @@ function Get-OERInventory {
     begin {
         $AuthParams = @{}
         if ($TenantId) { $AuthParams.TenantId = $TenantId }
-        if ($IncludeARM) { $AuthParams.IncludeARM = $true }
+        # A20 (BL-152, R-9): RoleAssignments and RoleManagementPolicies check the subscription of a -Scope or a
+        # -Subscription (Get-OERSubscriptionHomeTenant) before either reader runs, and that check reads the
+        # subscription through the ARM transport, which sends nothing without an ARM token. The readers
+        # acquire the token on first use, which is after the check, so it is acquired here, in this one
+        # sign-in, exactly as -IncludeARM does. A -ManagementGroup alone is never checked and keeps the
+        # readers' acquisition on first use, and a call that includes neither section acquires none, as
+        # before: an ARM token asked for without an -AuthMethod can turn an app-only session into an
+        # interactive prompt (see Export-OERInventory's begin).
+        # RoleManagementPolicies reads only with exactly one of -Role, -CommonRoles and -AllRolesAtScope:
+        # with none or more than one it skips with a warning before the check (process, below) and reads
+        # nothing, so it asks for the token only then. $RoleSources is computed here once and is the list
+        # that section decides by, so the two cannot drift apart.
+        $RoleSources = @(
+            if ($Role) { 'Role' }
+            if ($CommonRoles) { 'CommonRoles' }
+            if ($AllRolesAtScope) { 'AllRolesAtScope' }
+        )
+        $RolePoliciesRead = $Include -contains 'RoleManagementPolicies' -and $RoleSources.Count -eq 1
+        $ChecksSubscription = ($Include -contains 'RoleAssignments' -or $RolePoliciesRead) -and
+            (-not [string]::IsNullOrWhiteSpace($Scope) -or -not [string]::IsNullOrWhiteSpace($Subscription))
+        if ($IncludeARM -or $ChecksSubscription) { $AuthParams.IncludeARM = $true }
         Initialize-OERAuth @AuthParams
         # BL-88 (A14): the tenant this inventory names, captured here under the session this command
         # signed in under, never read again where the document is assembled.
@@ -624,6 +687,75 @@ function Get-OERInventory {
             }
             Add-UnreadCause -Cause $Cause -Target $Target
             $UnreadCollections.Add($Path)
+        }
+
+        # Sprint 11 step 8 (A20, BL-152): the RoleAssignments and RoleManagementPolicies sections read a
+        # -Scope or a -Subscription only in a subscription of the tenant the session's Microsoft Graph token
+        # was issued for. Get-OERSubscriptionHomeTenant decides it (the single owner; nothing here decides
+        # a tenant), for each of -Scope and -Subscription that is given and not blank, the second as
+        # 'sub:<value>'. -ManagementGroup is never checked: a management group scope lies in no
+        # subscription, and the owner answers NoSubscription for one (which management group ARM reaches
+        # under the session's token is not measured: R-24 in
+        # docs/development/rationale.md#home-tenant-subscriptions). The decision is made ONCE per
+        # invocation, by the first section that asks, and reused by the second, so the subscription is
+        # read at most once.
+        #
+        # The owner's cache: under Export-OERInventory the run context's SubscriptionTenant, which the
+        # export's scope tree has filled for every scope it hands this call, so the check sends no request;
+        # otherwise, and for a run context without that member (an older shape), this invocation's own.
+        # The member is read through PSObject.Properties, so its absence reads as none.
+        $SubscriptionTenantCache = $null
+        if ($null -ne $RunContext) {
+            $SubscriptionTenantMember = $RunContext.PSObject.Properties['SubscriptionTenant']
+            if ($null -ne $SubscriptionTenantMember -and $SubscriptionTenantMember.Value -is [System.Collections.IDictionary]) {
+                $SubscriptionTenantCache = $SubscriptionTenantMember.Value
+            }
+        }
+        if ($null -eq $SubscriptionTenantCache) {
+            $SubscriptionTenantCache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        }
+        # Kept in a holder, since a local function cannot assign a variable of this block. Foreign holds the
+        # verdicts whose subscription is another tenant's: their SubscriptionTenantMismatch records are
+        # written once, after the inventory object, however many sections were refused.
+        $SubscriptionCheck = @{ Decided = $false; Verdicts = @(); Foreign = @() }
+        # Returns $true when the section may read as it always has (every checked scope is Home or
+        # NoSubscription, or none was checked), and $false otherwise, when it reads nothing and writes no
+        # row: for a Foreign verdict the refusal is recorded once, and the section is not unread (it is a
+        # refusal, not a failed read); for an Undecided one, with no Foreign verdict, the section is named
+        # unread under its own name, with the verdict's reason as its cause, so InventoryPartial names it.
+        function Test-SubscriptionInSessionTenant {
+            param([string]$Section)
+            if (-not $SubscriptionCheck.Decided) {
+                $SubscriptionCheck.Decided = $true
+                $SubscriptionCheck.Verdicts = @(
+                    if (-not [string]::IsNullOrWhiteSpace($Scope)) {
+                        [PSCustomObject]@{ Given = $Scope; Verdict = (Get-OERSubscriptionHomeTenant -Scope $Scope -Cache $SubscriptionTenantCache) }
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace($Subscription)) {
+                        $SubscriptionScope = "sub:$Subscription"
+                        [PSCustomObject]@{ Given = $SubscriptionScope; Verdict = (Get-OERSubscriptionHomeTenant -Scope $SubscriptionScope -Cache $SubscriptionTenantCache) }
+                    }
+                )
+                $SubscriptionCheck.Foreign = @($SubscriptionCheck.Verdicts | Where-Object { [string]$_.Verdict.Verdict -eq 'Foreign' } | ForEach-Object { $_.Verdict })
+            }
+            if ($SubscriptionCheck.Foreign.Count -gt 0) {
+                Write-Verbose "Get-OERInventory: $Section was not read: $(@($SubscriptionCheck.Foreign | ForEach-Object { [string]$_.Reason }) -join '; ')."
+                return $false
+            }
+            $Undecided = @($SubscriptionCheck.Verdicts | Where-Object { [string]$_.Verdict.Verdict -notin @('Home', 'NoSubscription') })
+            if ($Undecided.Count -gt 0) {
+                foreach ($One in $Undecided) {
+                    # The reason of a failed read ends in that read's own message, which may end with a period,
+                    # and the causes clause and the verbose line add their own: trimmed here, so neither ends in
+                    # '..'. The owner's Reason itself is left as it is.
+                    $UndecidedCause = ([string]$One.Verdict.Reason).TrimEnd().TrimEnd('.')
+                    Write-Verbose "Get-OERInventory: $Section was not read: $UndecidedCause."
+                    Add-UnreadCause -Cause $UndecidedCause -Target ([string]$One.Given)
+                }
+                if (-not $UnreadCollections.Contains($Section)) { $UnreadCollections.Add($Section) }
+                return $false
+            }
+            $true
         }
 
         $GroupNameIndexHolder = @{ Index = $null }
@@ -931,6 +1063,66 @@ function Get-OERInventory {
                     $UnreadCollections.Add("administrativeUnits/$($Au.DisplayName)/scopedRoles")
                 }
                 $AdministrativeUnits.Add([PSCustomObject]$Proj)
+            }
+
+            # Sprint 11 step 8: principalType on a scoped role row whose principal the directory returned.
+            # A Graph scopedRoleMembership does not say what kind of object its member is, so the distinct
+            # principals the rows above name by object id, over EVERY unit, are looked up ONCE through
+            # Resolve-OERPrincipalName -Detailed (one batched getByIds request per 1000 ids, and none at all
+            # when no row names a principal by object id), into this section's own answers -- the shared
+            # $PrincipalNameCache is not read or written here. A principal the directory returned as a
+            # user, a group or a service principal gets principalType after principal, in the casing
+            # ConvertTo-OERPrincipalType owns. One a successful lookup did not return, one of another type
+            # (a device, for one), one named by its display name and a unit whose scopedRoles is null keep
+            # their rows as they are, and nothing is reported: the type is information, since
+            # Invoke-OERStructure matches a scoped role by role and principal alone. A failed lookup leaves
+            # the rows of the principals it held without principalType (some or all of a unit's rows, since
+            # one batch can fail while another succeeds) and names each affected unit unread ONCE, as
+            # 'administrativeUnits/<name>/scopedRoles/principalType', with its cause; the scopedRoles
+            # collection itself was read, so it stays written. A unit whose scopedRoles is null needs no
+            # test of its own: @($null) holds one $null, whose principal is no object id.
+            $SrPrincipalIds = [System.Collections.Generic.List[string]]::new()
+            $SrPrincipalSeen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($AuEntry in $AdministrativeUnits) {
+                foreach ($SrRow in @($AuEntry.scopedRoles)) {
+                    $SrRowPrincipal = [string]$SrRow.principal
+                    if ((Test-OERGuid -Value $SrRowPrincipal) -and $SrPrincipalSeen.Add($SrRowPrincipal)) { $SrPrincipalIds.Add($SrRowPrincipal) }
+                }
+            }
+            if ($SrPrincipalIds.Count -gt 0) {
+                $SrPrincipalAnswers = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                foreach ($SrAnswer in @(Resolve-OERPrincipalName -Id $SrPrincipalIds.ToArray() -Detailed)) {
+                    $SrPrincipalAnswers[[string]$SrAnswer.Id] = $SrAnswer
+                }
+                foreach ($AuEntry in $AdministrativeUnits) {
+                    # The first principal of this unit whose lookup failed, with its cause: the unit is
+                    # named once however many of its principals the failed lookup held.
+                    $SrTypeUnread = $null
+                    foreach ($SrRow in @($AuEntry.scopedRoles)) {
+                        $SrRowPrincipal = [string]$SrRow.principal
+                        if (-not (Test-OERGuid -Value $SrRowPrincipal)) { continue }
+                        # An id the lookup gave no answer for (the dictionary then returns $null) was not
+                        # looked up: it is read as a failed lookup, never as one the directory did not return.
+                        $SrAnswer = $SrPrincipalAnswers[$SrRowPrincipal]
+                        if ($null -eq $SrAnswer -or $SrAnswer.Read -ne $true) {
+                            if ($null -eq $SrTypeUnread) {
+                                $SrTypeCause = if ($null -ne $SrAnswer) { [string]$SrAnswer.Cause } else { 'the lookup returned no answer for this principal.' }
+                                $SrTypeUnread = [PSCustomObject]@{ Id = $SrRowPrincipal; Cause = $SrTypeCause }
+                            }
+                            continue
+                        }
+                        if ($SrAnswer.Found -ne $true) { continue }
+                        $SrType = ConvertTo-OERPrincipalType -ODataType ([string]$SrAnswer.ObjectType)
+                        if ($null -eq $SrType) { continue }
+                        $SrRow | Add-Member -NotePropertyName 'principalType' -NotePropertyValue $SrType
+                    }
+                    if ($null -ne $SrTypeUnread) {
+                        $SrUnreadCause = "Could not look up the type of a scoped role principal through directoryObjects/getByIds: $($SrTypeUnread.Cause)"
+                        Write-Verbose "Get-OERInventory: $SrUnreadCause"
+                        Add-UnreadCause -Cause $SrUnreadCause -Target $SrTypeUnread.Id
+                        $UnreadCollections.Add("administrativeUnits/$($AuEntry.displayName)/scopedRoles/principalType")
+                    }
+                }
             }
         }
 
@@ -1344,6 +1536,11 @@ function Get-OERInventory {
         if ($Include -contains 'RoleAssignments') {
             if (-not ($Scope -or $Subscription -or $ManagementGroup)) {
                 Write-Warning 'RoleAssignments requires a target scope (-Scope, -Subscription or -ManagementGroup); section skipped.'
+            }
+            elseif (-not (Test-SubscriptionInSessionTenant -Section 'roleAssignments')) {
+                # A20 (BL-152): the subscription of -Scope or -Subscription is another tenant's, or could not
+                # be decided, so nothing is read there and the section is written empty (see the check above).
+                Write-Verbose 'Get-OERInventory: roleAssignments is written empty, since its subscription was not shown to belong to this tenant.'
             }
             else {
                 $RaParams = @{ ResolveNames = $true }
@@ -2195,10 +2392,8 @@ function Get-OERInventory {
         }
 
         if ($Include -contains 'RoleManagementPolicies') {
-            $RoleSources = @()
-            if ($Role) { $RoleSources += 'Role' }
-            if ($CommonRoles) { $RoleSources += 'CommonRoles' }
-            if ($AllRolesAtScope) { $RoleSources += 'AllRolesAtScope' }
+            # $RoleSources is begin's list (-Role, -CommonRoles, -AllRolesAtScope given), which also decides
+            # whether the sign-in asks for the ARM token: this section reads only with exactly one.
             $HasScope = [bool]($Scope -or $Subscription -or $ManagementGroup)
 
             if ($RoleSources.Count -gt 1) {
@@ -2209,6 +2404,11 @@ function Get-OERInventory {
             }
             elseif (-not $HasScope) {
                 Write-Warning "RoleManagementPolicies: -$($RoleSources[0]) requires a target scope (-Scope, -Subscription or -ManagementGroup); section skipped."
+            }
+            elseif (-not (Test-SubscriptionInSessionTenant -Section 'roleManagementPolicies')) {
+                # A20 (BL-152): as for RoleAssignments, with the decision that section made, when it was
+                # included: nothing is read there and the section is written empty.
+                Write-Verbose 'Get-OERInventory: roleManagementPolicies is written empty, since its subscription was not shown to belong to this tenant.'
             }
             else {
                 $ScopeParams = @{}
@@ -2269,6 +2469,15 @@ function Get-OERInventory {
             -RoleAssignments $RoleAssignments.ToArray() `
             -RoleManagementPolicies $RoleManagementPolicies.ToArray()
 
+        # A20 (BL-152): the refusal of a subscription of another tenant, the owner's own
+        # SubscriptionTenantMismatch record, written ONCE per invocation however many of the two Azure
+        # sections were refused, after the inventory object for the reason InventoryPartial is (below).
+        # With both -Scope and -Subscription another tenant's, only the first verdict's record is written
+        # (R-10): the -Scope's, which is checked first.
+        if ($SubscriptionCheck.Foreign.Count -gt 0 -and $null -ne $SubscriptionCheck.Foreign[0].ErrorRecord) {
+            $PSCmdlet.WriteError($SubscriptionCheck.Foreign[0].ErrorRecord)
+        }
+
         # Emitted AFTER the inventory object so a caller still receives the document it has to
         # inspect, then learns that part of it was never read -- the same ordering
         # Export-OERInventory already uses for its own InventoryPartial.
@@ -2283,7 +2492,8 @@ function Get-OERInventory {
                 -Message ([System.Exception]::new(
                     "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
                     "Unread: $($UnreadCollections -join ', '). A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as " +
-                    'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot.' +
+                    'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot. ' +
+                    'An entry ending in scopedRoles/principalType is not such a key: it names a unit some or all of whose scoped role rows are written without principalType, since their principals'' type could not be read.' +
                     $CauseClause)) `
                 -ErrorId 'InventoryPartial' `
                 -Category LimitsExceeded `

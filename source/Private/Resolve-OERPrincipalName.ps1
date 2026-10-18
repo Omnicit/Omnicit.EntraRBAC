@@ -23,13 +23,17 @@ function Resolve-OERPrincipalName {
     -Detailed (Sprint 11 step 6, BL-133, A18) answers the question the map cannot: whether an id was
     returned, not returned, or not looked up at all. It omits the 'types' filter, as -PreferDisplayName
     does, so every directory object type is searched, and returns one object per distinct input id, in
-    input order: Id, Read, Found, Name, ObjectType and Cause. Read is false for every id of a batch whose
-    request failed, with the failure's message as Cause (the record is scrubbed first) -- the failure is
-    reported, never swallowed -- and for every id of a batch whose answer carries no value collection,
-    which says nothing about them. Read true and Found true is an id the directory returned, with Name (a
-    user's userPrincipalName, else the displayName, else the id) and ObjectType (the @odata.type without
-    its '#microsoft.graph.' prefix, for example user, group, servicePrincipal or device). Read true and
-    Found false is an id a successful batch did not return: deleted, or not readable. -Detailed and
+    input order: Id, Read, Found, Name, ObjectType, DisplayName, UserPrincipalName and Cause. Read is
+    false for every id of a batch whose request failed, with the failure's message as Cause (the record
+    is scrubbed first) -- the failure is reported, never swallowed -- and for every id of a batch whose
+    answer carries no value collection, which says nothing about them. Read true and Found true is an id
+    the directory returned, with Name (a user's userPrincipalName, else the displayName, else the id),
+    ObjectType (the @odata.type without its '#microsoft.graph.' prefix, for example user, group,
+    servicePrincipal or device), and DisplayName and UserPrincipalName (the object's own displayName and
+    userPrincipalName as the directory returned them, each $null when absent or blank, so a caller can
+    name a user by both; a group or a service principal has no userPrincipalName). Read true and Found
+    false is an id a successful batch did not return: deleted, or not readable. DisplayName and
+    UserPrincipalName are $null for every id that was not found or not read. -Detailed and
     -PreferDisplayName belong to two parameter sets and cannot be combined. The default map, without
     -Detailed, is exactly what it was.
 
@@ -46,9 +50,10 @@ function Resolve-OERPrincipalName {
     matching the coverage of the per-principal GET this batching replaced.
 
     .PARAMETER Detailed
-    Return one object per distinct id (Id, Read, Found, Name, ObjectType, Cause) instead of the map, so a
-    caller can tell an id the directory returned from one it did not return and from one whose lookup
-    failed. Omits the getByIds 'types' filter. Cannot be combined with -PreferDisplayName.
+    Return one object per distinct id (Id, Read, Found, Name, ObjectType, DisplayName, UserPrincipalName,
+    Cause) instead of the map, so a caller can tell an id the directory returned from one it did not
+    return and from one whose lookup failed. Omits the getByIds 'types' filter. Cannot be combined with
+    -PreferDisplayName.
 
     .EXAMPLE
     Resolve-OERPrincipalName -Id @('11111111-1111-1111-1111-111111111111')
@@ -61,8 +66,9 @@ function Resolve-OERPrincipalName {
 
     .EXAMPLE
     Resolve-OERPrincipalName -Id @('11111111-1111-1111-1111-111111111111') -Detailed
-    Returns one object for the id: Found true with its Name and ObjectType when the directory returned
-    it, Found false when a successful lookup did not, and Read false with the Cause when the lookup failed.
+    Returns one object for the id: Found true with its Name, ObjectType, DisplayName and
+    UserPrincipalName when the directory returned it, Found false when a successful lookup did not, and
+    Read false with the Cause when the lookup failed.
     #>
     [OutputType([hashtable], ParameterSetName = 'Map')]
     [OutputType([PSCustomObject], ParameterSetName = 'Detailed')]
@@ -116,7 +122,10 @@ function Resolve-OERPrincipalName {
             if ($Detailed) {
                 $BatchCause = [string]$PSItem.Exception.Message
                 foreach ($Single in $Chunk) {
-                    $Answers[$Single] = [PSCustomObject]@{ Id = $Single; Read = $false; Found = $false; Name = $null; ObjectType = $null; Cause = $BatchCause }
+                    $Answers[$Single] = [PSCustomObject]@{
+                        Id = $Single; Read = $false; Found = $false; Name = $null; ObjectType = $null
+                        DisplayName = $null; UserPrincipalName = $null; Cause = $BatchCause
+                    }
                 }
             }
             continue
@@ -130,6 +139,7 @@ function Resolve-OERPrincipalName {
             foreach ($Single in $Chunk) {
                 $Answers[$Single] = [PSCustomObject]@{
                     Id = $Single; Read = $false; Found = $false; Name = $null; ObjectType = $null
+                    DisplayName = $null; UserPrincipalName = $null
                     Cause = 'Microsoft Graph returned no value for directoryObjects/getByIds.'
                 }
             }
@@ -151,9 +161,15 @@ function Resolve-OERPrincipalName {
             $Map[$ObjId] = $Name
             if ($Detailed) {
                 $ObjectType = ([string]$Obj.'@odata.type') -replace '^#microsoft\.graph\.', ''
+                # The object's own two names, as the directory returned them; a blank one is none.
+                $DisplayName = [string]$Obj.displayName
+                $UserPrincipalName = [string]$Obj.userPrincipalName
                 $Answers[$ObjId] = [PSCustomObject]@{
                     Id = $ObjId; Read = $true; Found = $true; Name = $Name
-                    ObjectType = $(if ($ObjectType) { $ObjectType } else { $null }); Cause = $null
+                    ObjectType = $(if ($ObjectType) { $ObjectType } else { $null })
+                    DisplayName = $(if ([string]::IsNullOrWhiteSpace($DisplayName)) { $null } else { $DisplayName })
+                    UserPrincipalName = $(if ([string]::IsNullOrWhiteSpace($UserPrincipalName)) { $null } else { $UserPrincipalName })
+                    Cause = $null
                 }
             }
         }
@@ -165,9 +181,15 @@ function Resolve-OERPrincipalName {
         foreach ($Single in $ToLookup) {
             if ($Answers.ContainsKey($Single)) {
                 $Answer = $Answers[$Single]
-                [PSCustomObject]@{ Id = $Single; Read = $Answer.Read; Found = $Answer.Found; Name = $Answer.Name; ObjectType = $Answer.ObjectType; Cause = $Answer.Cause }
+                [PSCustomObject]@{
+                    Id = $Single; Read = $Answer.Read; Found = $Answer.Found; Name = $Answer.Name; ObjectType = $Answer.ObjectType
+                    DisplayName = $Answer.DisplayName; UserPrincipalName = $Answer.UserPrincipalName; Cause = $Answer.Cause
+                }
             } else {
-                [PSCustomObject]@{ Id = $Single; Read = $true; Found = $false; Name = $null; ObjectType = $null; Cause = $null }
+                [PSCustomObject]@{
+                    Id = $Single; Read = $true; Found = $false; Name = $null; ObjectType = $null
+                    DisplayName = $null; UserPrincipalName = $null; Cause = $null
+                }
             }
         }
         return

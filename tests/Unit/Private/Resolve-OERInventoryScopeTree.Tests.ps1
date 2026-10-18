@@ -433,4 +433,68 @@ Describe 'Resolve-OERInventoryScopeTree' {
             Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
         }
     }
+
+    # A20 (BL-152): -Cache reaches every Get-OERSubscriptionHomeTenant call, which leaves there what it
+    # learned about each subscription, so Export-OERInventory's Get-OERInventory calls at the scopes the tree
+    # returns are answered from it. The REAL owner runs; the tree's requests and decisions are unchanged.
+    Context 'what the tree learned is left in -Cache (A20, BL-152)' {
+        BeforeAll {
+            $script:TcOwn = [PSCustomObject]@{ ResourceId = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; DisplayName = 'Own'; State = 'Enabled'; TenantId = 'eeee0000-0000-0000-0000-000000000001' }
+            $script:TcForeign = [PSCustomObject]@{ ResourceId = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; DisplayName = 'Customer'; State = 'Enabled'; TenantId = 'eeee0000-0000-0000-0000-000000000002' }
+            function script:Invoke-TcTree {
+                param([hashtable]$Splat = @{})
+                InModuleScope $script:moduleName -Parameters @{ S = $Splat } { param($S) Resolve-OERInventoryScopeTree @S 3>$null }
+            }
+        }
+
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERManagementGroupList { }
+            Mock -ModuleName $script:moduleName Get-OERSubscription { $script:TcOwn; $script:TcForeign }
+            Mock -ModuleName $script:moduleName Invoke-OERArmRequest { [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000003'; displayName = 'Third'; tenantId = 'eeee0000-0000-0000-0000-000000000001' } }
+        }
+
+        It 'stores the facts the list gave for every listed subscription, the foreign one included, with no request' {
+            $Cache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $Tree = Invoke-TcTree -Splat @{ Cache = $Cache }
+            @($Tree.Scopes) | Should -Be @('/subscriptions/aaaa1111-0000-0000-0000-000000000001')
+            @($Tree.ForeignSubscriptions).Count | Should -Be 1
+            (@($Cache.Keys) | Sort-Object) -join ',' | Should -BeExactly 'aaaa1111-0000-0000-0000-000000000001,aaaa1111-0000-0000-0000-000000000002'
+            $Cache['aaaa1111-0000-0000-0000-000000000001'].TenantId | Should -BeExactly 'eeee0000-0000-0000-0000-000000000001'
+            $Cache['aaaa1111-0000-0000-0000-000000000002'].TenantId | Should -BeExactly 'eeee0000-0000-0000-0000-000000000002'
+            $Cache['aaaa1111-0000-0000-0000-000000000002'].DisplayName | Should -BeExactly 'Customer'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+        }
+
+        It 'stores the one read of the subscription of a -Scope' {
+            $Cache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $Tree = Invoke-TcTree -Splat @{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000003/resourceGroups/rg1'; Cache = $Cache }
+            @($Tree.Scopes) | Should -Be @('/subscriptions/aaaa1111-0000-0000-0000-000000000003/resourceGroups/rg1')
+            @($Cache.Keys) | Should -Be @('aaaa1111-0000-0000-0000-000000000003')
+            $Cache['aaaa1111-0000-0000-0000-000000000003'].Read | Should -BeTrue
+            $Cache['aaaa1111-0000-0000-0000-000000000003'].DisplayName | Should -BeExactly 'Third'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERSubscription -Times 0
+        }
+
+        It 'answers a -Scope in a listed subscription from the cache the same call filled, with no request' {
+            # The cache is the caller's: a second tree call with it is answered from what the first left.
+            $Cache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $null = Invoke-TcTree -Splat @{ Cache = $Cache }
+            $Tree = Invoke-TcTree -Splat @{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg1'; Cache = $Cache }
+            @($Tree.Scopes).Count | Should -Be 0
+            $Tree.ForeignSubscriptions[0].HomeTenantId | Should -BeExactly 'eeee0000-0000-0000-0000-000000000002'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+        }
+
+        It 'decides and requests the same without -Cache (<Name>)' -ForEach @(
+            @{ Name = 'the listed walk'; Splat = @{}; Requests = 0 }
+            @{ Name = 'a -Scope'; Splat = @{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000003/resourceGroups/rg1' }; Requests = 1 }
+        ) {
+            $Cache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $With = Invoke-TcTree -Splat ($Splat + @{ Cache = $Cache })
+            $Without = Invoke-TcTree -Splat $Splat
+            ($With | ConvertTo-Json -Depth 6 -Compress) | Should -BeExactly ($Without | ConvertTo-Json -Depth 6 -Compress)
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times (2 * $Requests) -Exactly
+        }
+    }
 }
