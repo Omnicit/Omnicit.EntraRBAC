@@ -128,19 +128,20 @@ function Test-OERStructure {
     'tokens'."). A group synchronized from on-premises (onPremisesSynced true) is skipped unless
     includeSyncedGroups is true, and its Warning says so.
 
-    A file that cannot be used (a path that is not a file, malformed JSON, a key or value the standard
-    does not allow, a pattern that does not compile) is refused with the non-terminating error
-    InvalidNamingStandard, which says what is wrong. The standard is read once, before the first
-    document, so the refusal comes once however many documents are piped, and nothing is validated:
-    no result is returned.
+    A file that cannot be used (a path that is not a file, a file that exists but cannot be read,
+    malformed JSON, a key or value the standard does not allow, a pattern that does not compile) is
+    refused with the non-terminating error InvalidNamingStandard, which says what is wrong. The
+    standard is read once, before the first document, so the refusal comes once however many
+    documents are piped, and nothing is validated: no result is returned.
 
     The same check runs on the inventory.json of an Export-OERInventory bundle, and its Warnings are
     the list a rename map is written from. It covers the groups inventory.json holds, by default the
-    RBAC-relevant security groups: Export-OERInventory -AllGroupsDetailed keeps every security group
-    in full detail and its -IncludeSyncedGroups keeps the synchronized ones, while a Microsoft 365
-    group is in groupsRoster.json only. So the standard's includeSyncedGroups matters for an export
-    only when the export was made with Export-OERInventory -IncludeSyncedGroups, a different switch
-    with a similar name. An example standard is kept in the repository at
+    RBAC-relevant security groups: Export-OERInventory -AllGroupsDetailed keeps every group
+    inventory.json covers in full detail and its -IncludeSyncedGroups keeps the synchronized ones,
+    while a Microsoft 365 group whose securityEnabled is false is in groupsRoster.json only. So the
+    standard's includeSyncedGroups matters for an export only when the export was made with
+    Export-OERInventory -IncludeSyncedGroups (or -AllGroupsDetailed), a different switch with a
+    similar name. An example standard is kept in the repository at
     docs/examples/naming-standard.json, with its schema at docs/examples/naming-standard.schema.json;
     neither ships inside the installed module. Invoke-OERStructure takes no naming standard.
 

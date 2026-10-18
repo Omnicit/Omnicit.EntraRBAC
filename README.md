@@ -929,10 +929,11 @@ expected. `Valid` does not change, and `Invoke-OERStructure`, which takes no nam
 the document as before. The warnings are the list a rename map is written from. The check covers the
 groups `inventory.json` holds: by default the RBAC-relevant security groups (a role-assignable group,
 one with PIM eligibility, one with a `pimPolicy`). `Export-OERInventory -AllGroupsDetailed` keeps every
-security group in full detail and `-IncludeSyncedGroups` keeps the synchronized ones; a Microsoft 365
-group is in `groupsRoster.json` only. The standard's `includeSyncedGroups` therefore matters for an
-export only when the export was made with `Export-OERInventory -IncludeSyncedGroups`, a different
-switch with a similar name.
+group `inventory.json` covers in full detail and `-IncludeSyncedGroups` keeps the synchronized ones; a
+Microsoft 365 group whose `securityEnabled` is false is in `groupsRoster.json` only. The standard's
+`includeSyncedGroups` therefore matters for an export only when the export was made with
+`Export-OERInventory -IncludeSyncedGroups` (or `-AllGroupsDetailed`), a different switch with a similar
+name.
 
 ```powershell
 # The names that break the standard, each with the rule it breaks (a group that was not checked, a
@@ -971,12 +972,12 @@ module. A warning names one of six rules: `maxLength`, `separator`, `segmentCoun
   `includeSyncedGroups` to true; its one warning says so. When it is checked, each warning says that
   its name can only change in the on-premises directory.
 
-A file that cannot be used (a path that is not a file, malformed JSON, a key or value the standard
-does not allow, a pattern that does not compile) is refused once with the error
-`InvalidNamingStandard`, which says what is wrong, and nothing is validated. A known limit: the JSON
-parser reads a string that holds an ISO 8601 date and time, such as `2024-01-01T10:00:00`, as a date (a
-date alone, such as `2024-01-01`, stays a string), so such a value in the file is refused as not a
-string.
+A file that cannot be used (a path that is not a file, a file that exists but cannot be read, malformed
+JSON, a key or value the standard does not allow, a pattern that does not compile) is refused once with
+the error `InvalidNamingStandard`, which says what is wrong, and nothing is validated. A known limit:
+the JSON parser reads a string that holds an ISO 8601 date and time, such as `2024-01-01T10:00:00`, as
+a date (a date alone, such as `2024-01-01`, stays a string), so such a value in the file is refused as
+not a string.
 
 A group's mail alias does not follow a rename: declare `mailNickname` for the new name, and the
 validator warns when a renamed group keeps the alias derived from its old name or declares none. A

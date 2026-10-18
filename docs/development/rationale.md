@@ -10343,16 +10343,16 @@ the document and so is not checked: a name two or more objects share, a role ass
 document can declare (the bundle's `README.md` lists those), and a group the export does not keep. By
 default `inventory.json` holds the RBAC-relevant security groups only (a role-assignable group, one
 with PIM eligibility, one with a `pimPolicy`); `Export-OERInventory -AllGroupsDetailed` keeps every
-security group in full detail, `-IncludeSyncedGroups` keeps the synchronized ones, and a group whose
-`securityEnabled` is false, a Microsoft 365 group or a distribution group, is in `groupsRoster.json`
-only at every detail level, as is every other group the export did not keep. So the standard's
-`includeSyncedGroups` changes an export's findings only when the export was made with
+group `inventory.json` covers in full detail, `-IncludeSyncedGroups` keeps the synchronized ones, and
+a group whose `securityEnabled` is false, a Microsoft 365 group or a distribution group, is in
+`groupsRoster.json` only at every detail level, as is every other group the export did not keep. So
+the standard's `includeSyncedGroups` changes an export's findings only when the export was made with
 `Export-OERInventory -IncludeSyncedGroups` (or `-AllGroupsDetailed`), a different switch with a
 similar name. (c) The standard does not model Microsoft Graph's own limits on a display name: it is
 advisory, and a name that follows it can still be refused when it is applied, as one that breaks it can
-be accepted. (d) A `values` entry that breaks its own segment's `case` (for example `sg` under
-`UPPERCASE`) is accepted by the reader, although no name can then follow that segment: every such name
-gets the `values` or the `case` Warning, so the output shows it. The reader refuses only a value that
-contains the separator. (e) Patterns are compiled without a match timeout, so a pattern with
+be accepted. (d) Of the conflicts between a `values` entry and the rest of the standard, the reader
+refuses only a value that contains the separator. A value that breaks its own segment's `case` (for
+example `sg` under `UPPERCASE`) is accepted, and a name that carries it gets the `values` or the `case`
+Warning, so the output shows it. (e) Patterns are compiled without a match timeout, so a pattern with
 catastrophic backtracking (such as `(a+)+b`) can make the offline check slow on a long name (measured:
 about 1.5 s at 24 characters, growing exponentially). The check is offline and sends nothing.

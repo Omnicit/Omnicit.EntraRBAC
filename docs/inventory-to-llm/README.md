@@ -433,10 +433,12 @@ tells you which names to change, and the apply engine applies the document as wr
   file sets `includeSyncedGroups` to true.
 - **The groups an export holds.** The check covers the groups `inventory.json` holds: by default the
   RBAC-relevant security groups (a role-assignable group, one with PIM eligibility, one with a
-  `pimPolicy`). `Export-OERInventory -AllGroupsDetailed` keeps every security group in full detail and
-  `-IncludeSyncedGroups` keeps the synchronized ones; a Microsoft 365 group is in `groupsRoster.json`
-  only. The standard's `includeSyncedGroups` therefore matters for an export only when the export was
-  made with `Export-OERInventory -IncludeSyncedGroups`, a different switch with a similar name.
+  `pimPolicy`). `Export-OERInventory -AllGroupsDetailed` keeps every group `inventory.json` covers in
+  full detail and `-IncludeSyncedGroups` keeps the synchronized ones; a Microsoft 365 group whose
+  `securityEnabled` is false is in `groupsRoster.json` only. The standard's `includeSyncedGroups`
+  therefore matters for an export only when the export was made with
+  `Export-OERInventory -IncludeSyncedGroups` (or `-AllGroupsDetailed`), a different switch with a
+  similar name.
 - **A proposal.** The bundle's prompt tells the model to propose names that follow the operator's
   naming standard (the `Naming convention` line of its `USER PREFERENCES (optional)` block) and that a
   name that does not is a Warning, never a refusal. The model never sees the standard file: write the
@@ -444,12 +446,12 @@ tells you which names to change, and the apply engine applies the document as wr
   let `Test-OERStructure -NamingStandard` tell you which proposed names still break them. On an
   exported `inventory.json` the warnings are the list a rename map is written from: declare the new
   name as `displayName` and the current one as `previousDisplayName` (see "Renaming a group" below).
-- **A file that cannot be used.** A path that is not a file, malformed JSON, a key or value the
-  standard does not allow or a pattern that does not compile is refused once with the error
-  `InvalidNamingStandard`, which says what is wrong, and nothing is validated. A known limit: the
-  JSON parser reads a string that holds an ISO 8601 date and time, such as `2024-01-01T10:00:00`, as a
-  date (a date alone, such as `2024-01-01`, stays a string), so such a value in the file is refused as
-  not a string.
+- **A file that cannot be used.** A path that is not a file, a file that exists but cannot be read,
+  malformed JSON, a key or value the standard does not allow or a pattern that does not compile is
+  refused once with the error `InvalidNamingStandard`, which says what is wrong, and nothing is
+  validated. A known limit: the JSON parser reads a string that holds an ISO 8601 date and time, such
+  as `2024-01-01T10:00:00`, as a date (a date alone, such as `2024-01-01`, stays a string), so such a
+  value in the file is refused as not a string.
 
 ## Renaming a group
 

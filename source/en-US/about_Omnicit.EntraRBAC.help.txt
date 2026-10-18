@@ -474,12 +474,12 @@ NAMING STANDARD
     The check covers the groups inventory.json holds: by default the
     RBAC-relevant security groups (a role-assignable group, one with PIM
     eligibility, one with a pimPolicy). Export-OERInventory
-    -AllGroupsDetailed keeps every security group in full detail and
-    -IncludeSyncedGroups keeps the synchronized ones; a Microsoft 365 group
-    is in groupsRoster.json only. The standard's includeSyncedGroups
-    therefore matters for an export only when the export was made with
-    Export-OERInventory -IncludeSyncedGroups, a different switch with a
-    similar name.
+    -AllGroupsDetailed keeps every group inventory.json covers in full
+    detail and -IncludeSyncedGroups keeps the synchronized ones; a Microsoft
+    365 group whose securityEnabled is false is in groupsRoster.json only.
+    The standard's includeSyncedGroups therefore matters for an export only
+    when the export was made with Export-OERInventory -IncludeSyncedGroups
+    (or -AllGroupsDetailed), a different switch with a similar name.
 
     The standard is a JSON file: version ("1.0"), separator, maxLength,
     sections (the ones to check: groups, administrativeUnits, catalogs,
@@ -516,13 +516,14 @@ NAMING STANDARD
     each Warning says that its name can only change in the on-premises
     directory.
 
-    A file that cannot be used (a path that is not a file, malformed JSON, a
-    key or value the standard does not allow, a pattern that does not
-    compile) is refused once with the error InvalidNamingStandard, which says
-    what is wrong, and nothing is validated. Known limit: the JSON parser
-    reads a string that holds an ISO 8601 date and time, such as
-    2024-01-01T10:00:00, as a date (a date alone, such as 2024-01-01, stays a
-    string), so such a value in the file is refused as not a string.
+    A file that cannot be used (a path that is not a file, a file that
+    exists but cannot be read, malformed JSON, a key or value the standard
+    does not allow, a pattern that does not compile) is refused once with the
+    error InvalidNamingStandard, which says what is wrong, and nothing is
+    validated. Known limit: the JSON parser reads a string that holds an ISO
+    8601 date and time, such as 2024-01-01T10:00:00, as a date (a date alone,
+    such as 2024-01-01, stays a string), so such a value in the file is
+    refused as not a string.
 
 PERMISSIONS
 

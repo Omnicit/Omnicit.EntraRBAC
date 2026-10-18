@@ -296,7 +296,7 @@ function Test-OERStructureSchema {
     The parsed document object (from Read-OERStructureDocument or ConvertFrom-Json) to validate.
     .PARAMETER NamingStandard
     The naming standard object Read-OERNamingStandard returns. When given, Rule 17 checks the names of
-    the sections it lists and adds a Warning for each name that breaks it. When omitted, no name is
+    the sections it lists and adds one Warning for each rule a name breaks. When omitted, no name is
     checked and the findings are exactly what they were without Rule 17.
     .EXAMPLE
     Test-OERStructureSchema -Document ($json | ConvertFrom-Json)
