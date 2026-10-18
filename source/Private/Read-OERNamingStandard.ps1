@@ -18,8 +18,11 @@ function Read-OERNamingStandard {
     object per entry with Pattern [string] and Regex [regex] (compiled the same way). A segment key
     the file omits is $null on the object (Values, Pattern, Regex, Case) or its default (Optional is false).
 
-    Anything wrong with the file THROWS one exception; nothing is written to the error stream. A path
-    that is not a file throws "The naming standard was not found at path '<path>'.", an empty or blank
+    Anything wrong with the file THROWS one exception; nothing is written to the error stream, a file
+    that cannot be opened included: Get-Content runs with -ErrorAction Stop, so the non-terminating
+    read error it would write is caught here instead. A path that is not a file throws "The naming
+    standard was not found at path '<path>'.", a file that exists but cannot be read (locked, or no
+    read permission) "The naming standard at '<path>' could not be read: <reason>", an empty or blank
     file "The naming standard at '<path>' is empty.", malformed JSON "The naming standard at '<path>' is
     not valid JSON: <parser message>", and a root that is not one JSON object "The naming standard at
     '<path>' must be a single JSON object.". A file that parses but breaks the standard throws "The
@@ -51,7 +54,15 @@ function Read-OERNamingStandard {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "The naming standard was not found at path '$Path'."
     }
-    $Json = Get-Content -LiteralPath $Path -Raw
+    try {
+        # -ErrorAction Stop: for a file it cannot open (a lock, no read permission) Get-Content writes a
+        # NON-terminating GetContentReaderIOError and returns nothing, which would reach the operator as a
+        # second error and then read as an empty file.
+        $Json = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+    } catch {
+        Remove-OERErrorRecord -Record $PSItem
+        throw "The naming standard at '$Path' could not be read: $($PSItem.Exception.Message)"
+    }
     if ([string]::IsNullOrWhiteSpace($Json)) {
         throw "The naming standard at '$Path' is empty."
     }

@@ -469,6 +469,53 @@ Describe 'Test-OERStructure -NamingStandard (Sprint 11 step 7)' {
             $Own[0].Exception.Message | Should -BeExactly "Could not read the naming standard: The naming standard was not found at path '$Given'."
         }
 
+        # Get-Content writes a non-terminating GetContentReaderIOError for a file it cannot open (a lock, no read
+        # permission) and returns nothing. The reader reads with -ErrorAction Stop, so that error never reaches
+        # the caller and the file is not called empty: the caller sees ONE error, the command's own. What the
+        # caller sees is the error STREAM (redirected here, with -ErrorAction pinned to Continue so a global Stop
+        # preference does not turn the first write into a throw) and $Error. -ErrorVariable is no measure: it
+        # also holds the records the command's inner layers raised and caught (measured: seven for one refusal).
+        It 'gives one error, with its reason, for a naming standard Get-Content throws on' {
+            Mock -ModuleName $script:moduleName Get-Content {
+                param($LiteralPath, $Raw)
+                throw [System.IO.IOException]::new("The process cannot access the file '$LiteralPath' as another process is using it.")
+            }
+            $Stream = @(Test-OERStructure -Path $script:NsDoc -NamingStandard $script:NsStd -ErrorAction Continue 2>&1)
+
+            @($Stream | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0 -Because 'no result reaches the pipeline'
+            $Records = @($Stream | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Records.Count | Should -Be 1
+            $Records[0].FullyQualifiedErrorId | Should -BeExactly 'InvalidNamingStandard,Test-OERStructure'
+            $Records[0].Exception.Message | Should -BeExactly "Could not read the naming standard: The naming standard at '$script:NsStd' could not be read: The process cannot access the file '$script:NsStd' as another process is using it."
+            Should -Invoke -ModuleName $script:moduleName Get-Content -Exactly -Times 1
+        }
+
+        It 'gives one error, not two, and does not call the file empty, for a naming standard another process holds open' {
+            $Held = [System.IO.File]::Open($script:NsStd, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+            try {
+                # Whether the lock is honoured is the platform's: a system that ignores it reads the file. The
+                # probe opens the file the way Get-Content does, with .NET so that no GetContentReaderIOError
+                # of its own lands in $Error, which is checked below.
+                $Honoured = $false
+                try { [System.IO.File]::Open($script:NsStd, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite).Dispose() } catch [System.IO.IOException] { $Honoured = $true }
+                if (-not $Honoured) {
+                    Set-ItResult -Skipped -Because 'this platform does not enforce FileShare.None against another reader'
+                    return
+                }
+                $Stream = @(Test-OERStructure -Path $script:NsDoc -NamingStandard $script:NsStd -ErrorAction Continue 2>&1)
+            } finally {
+                $Held.Dispose()
+            }
+
+            @($Stream | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0 -Because 'no result reaches the pipeline'
+            $Records = @($Stream | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Records.Count | Should -Be 1
+            $Records[0].FullyQualifiedErrorId | Should -BeExactly 'InvalidNamingStandard,Test-OERStructure'
+            $Records[0].Exception.Message | Should -BeLike "Could not read the naming standard: The naming standard at '$script:NsStd' could not be read: *"
+            $Records[0].Exception.Message | Should -Not -BeLike '*is empty*'
+            @($global:Error | Where-Object { [string]$_.FullyQualifiedErrorId -like 'GetContentReaderIOError*' -and $_.Exception.Message -like '*standard.json*' }).Count | Should -Be 0
+        }
+
         It 'throws a message that names the naming standard under -ErrorAction Stop' {
             { Test-OERStructure -Path $script:NsDoc -NamingStandard $script:NsBadStd -ErrorAction Stop } | Should -Throw '*naming standard*'
         }

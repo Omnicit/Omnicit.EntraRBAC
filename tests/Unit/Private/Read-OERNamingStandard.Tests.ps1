@@ -121,12 +121,14 @@ BeforeAll {
         $Path
     }
 
-    # Reads a file with the reader and returns the thrown message, or $null when it did not throw.
+    # Reads a file with the reader and returns the thrown message, or $null when it did not throw. The
+    # reader runs with -ErrorAction Continue, so a non-terminating error it left unhandled would not be
+    # turned into a throw by a GLOBAL Stop preference (GitHub Actions and Azure Pipelines set one).
     function Get-ReadFailure {
         param([string]$Path)
         InModuleScope $script:moduleName -Parameters @{ Path = $Path } {
             $Message = $null
-            try { $null = Read-OERNamingStandard -Path $Path } catch { $Message = $PSItem.Exception.Message }
+            try { $null = Read-OERNamingStandard -Path $Path -ErrorAction Continue } catch { $Message = $PSItem.Exception.Message }
             $Message
         }
     }
@@ -362,6 +364,63 @@ Describe 'Read-OERNamingStandard' {
         It 'throws for a file that holds only white space' {
             $File = Write-StandardFile -Json "  `r`n  " -Name 'blank.json'
             Get-ReadFailure -Path $File | Should -Be "The naming standard at '$File' is empty."
+        }
+
+        # Get-Content on a file it cannot open (a lock, no read permission) writes its own NON-terminating
+        # GetContentReaderIOError and returns nothing. Measured on a file held open with FileShare.None:
+        # without -ErrorAction Stop the reader saw no text and threw "is empty" for a file that is not
+        # empty, after the operator had already been shown the raw read error. A mocked Get-Content cannot
+        # stand in for that write: Pester runs a mock body under its own Stop preference, so even a
+        # Write-Error in it ends the call. The Its below therefore prove the halves apart -- the message and
+        # the scrub with a mock that throws, the -ErrorAction Stop the reader passes with a parameter
+        # filter (which sees the common parameter), and the whole path with a real file another process
+        # holds open.
+        It 'throws one message that says the file could not be read, with the reason, when Get-Content throws an IOException' {
+            Mock -ModuleName $script:moduleName Get-Content {
+                param($LiteralPath, $Raw)
+                throw [System.IO.IOException]::new("The process cannot access the file '$LiteralPath' as another process is using it.")
+            }
+            $File = Write-StandardFile -Json $script:MinimalJson -Name 'locked.json'
+            Get-ReadFailure -Path $File | Should -BeExactly "The naming standard at '$File' could not be read: The process cannot access the file '$File' as another process is using it."
+            Should -Invoke -ModuleName $script:moduleName Get-Content -Exactly -Times 1
+        }
+
+        It 'reads the file with -ErrorAction Stop, so a non-terminating read error cannot read as an empty file' {
+            Mock -ModuleName $script:moduleName Get-Content { '{ "version": "1.0", "separator": "-", "sections": [ "groups" ], "segments": [ { "name": "x" } ] }' }
+            $File = Write-StandardFile -Json $script:MinimalJson -Name 'stop.json'
+            Get-ReadFailure -Path $File | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Get-Content -ParameterFilter { $ErrorAction -ceq 'Stop' } -Exactly -Times 1
+        }
+
+        It 'removes the read error record before it throws for a file Get-Content cannot read' {
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord {}
+            Mock -ModuleName $script:moduleName Get-Content {
+                param($LiteralPath, $Raw)
+                throw [System.IO.IOException]::new('read refused')
+            }
+            $File = Write-StandardFile -Json $script:MinimalJson -Name 'locked3.json'
+            Get-ReadFailure -Path $File | Should -BeExactly "The naming standard at '$File' could not be read: read refused"
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
+        }
+
+        It 'throws that the file could not be read, not that it is empty, for a file another process holds open' {
+            $File = Write-StandardFile -Json $script:MinimalJson -Name 'held.json'
+            $Held = [System.IO.File]::Open($File, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+            try {
+                # Whether the lock is honoured is the platform's: a system that ignores it reads the file. The
+                # probe opens the file the way Get-Content does, with FileShare.ReadWrite.
+                $Honoured = $false
+                try { [System.IO.File]::Open($File, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite).Dispose() } catch [System.IO.IOException] { $Honoured = $true }
+                if (-not $Honoured) {
+                    Set-ItResult -Skipped -Because 'this platform does not enforce FileShare.None against another reader'
+                    return
+                }
+                $Message = Get-ReadFailure -Path $File
+            } finally {
+                $Held.Dispose()
+            }
+            $Message | Should -BeLike "The naming standard at '$File' could not be read: *"
+            $Message | Should -Not -BeLike '*is empty*'
         }
 
         It 'throws for malformed JSON' {
