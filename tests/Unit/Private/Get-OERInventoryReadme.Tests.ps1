@@ -1968,3 +1968,62 @@ Describe 'Get-OERInventoryReadme (service principal access, Sprint 11 step 8)' {
         ($Bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
     }
 }
+
+Describe 'Get-OERInventoryReadme (scoped role principalType entries, Sprint 11 step 8)' {
+    # Get-OERInventory names a unit whose scoped role principals' type could not be looked up as
+    # 'administrativeUnits/<name>/scopedRoles/principalType'. That path names no null collection, so the
+    # README explains it in a sentence of its own, added only when an Entra ID entry holds such a path --
+    # where it ends the entry or is followed by a comma, since one entry joins one report's paths with ', '.
+    BeforeAll {
+        $script:SrTypeSentence = 'An Entra ID entry that names a path ending in `/scopedRoles/principalType` names an administrative unit whose `scopedRoles` is written, not `null`: the type of some or all of its scoped role principals could not be looked up, so those rows carry no `principalType`, which `Invoke-OERStructure` does not use to match or write a scoped role.'
+        function Get-SrTypeSection {
+            param([string[]]$Incomplete = @(), [string[]]$Skipped = @())
+            $Md = InModuleScope $script:moduleName -Parameters @{ I = $Incomplete; S = $Skipped } {
+                param($I, $S)
+                Get-OERInventoryReadme -IncompleteReads $I -SkippedScopes $S -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @()
+            }
+            $Md = $Md -replace '\r\n', "`n"
+            $Start = $Md.IndexOf('## What this export could not read')
+            $Md.Substring($Start, $Md.IndexOf("`n## ", $Start) - $Start)
+        }
+        # The section's prose: the section without its bullets.
+        function Get-SrTypeProse {
+            param([string]$Section)
+            (@($Section -split "`n" | Where-Object { $_ -notlike '- *' }) -join "`n").TrimEnd()
+        }
+    }
+
+    It 'adds the sentence for an entry whose path <Name>, and lists the entry under Entra ID' -ForEach @(
+        @{ Name = 'ends the entry'; Entry = 'administrativeUnits/AU-A/scopedRoles/principalType' }
+        @{ Name = 'is followed by a comma'; Entry = 'administrativeUnits/AU-A/scopedRoles/principalType, groups/G/members' }
+        @{ Name = 'stands among other paths'; Entry = 'groups/G/members, administrativeUnits/AU-A/scopedRoles/principalType, administrativeUnits/AU-B/scopedRoles' }
+    ) {
+        $Section = Get-SrTypeSection -Incomplete @($Entry)
+        @($Section -split "`n" | Where-Object { $_ -like '- *' }) | Should -BeExactly @('- Entra ID: `' + $Entry + '`')
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape($script:SrTypeSentence))
+        # It follows the home tenant sentence, the last of the fixed prose.
+        $Collapsed.IndexOf('An entry labelled "Azure subscription whose tenant could not be read"') | Should -BeLessThan $Collapsed.IndexOf('An Entra ID entry that names a path ending in')
+        ($Collapsed -replace '`[^`]*`', '') | Should -Not -Match '[<>]'
+    }
+
+    It 'adds no sentence and keeps the prose as it is for <Name>' -ForEach @(
+        @{ Name = 'a null scopedRoles collection'; Incomplete = @('administrativeUnits/AU-A/scopedRoles'); Skipped = @() }
+        @{ Name = 'a path that only starts the same way'; Incomplete = @('administrativeUnits/AU-A/scopedRoles/principalTypeX'); Skipped = @() }
+        @{ Name = 'a role assignment principal entry'; Incomplete = @('roleAssignments/Reader -> 11111111-0000-0000-0000-000000000001 @ /scopedRoles/principalType'); Skipped = @() }
+        @{ Name = 'an Azure scope that is not an Entra ID entry'; Incomplete = @(); Skipped = @('/x/scopedRoles/principalType') }
+    ) {
+        $Section = Get-SrTypeSection -Incomplete $Incomplete -Skipped $Skipped
+        $Section | Should -Match 'This bundle is PARTIAL'
+        ($Section -replace '\s+', ' ') | Should -Not -Match ([regex]::Escape('An Entra ID entry that names a path ending in'))
+        # The prose reads exactly as it does for another entry.
+        Get-SrTypeProse -Section $Section | Should -BeExactly (Get-SrTypeProse -Section (Get-SrTypeSection -Incomplete @('groupsRoster')))
+    }
+
+    It 'puts the sentence before the service principal access sentence when both entries are present' {
+        $Collapsed = (Get-SrTypeSection -Incomplete @('administrativeUnits/AU-A/scopedRoles/principalType', 'servicePrincipalAccess/applicationOwners')) -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape($script:SrTypeSentence))
+        $Collapsed.IndexOf('An entry labelled "Service principal access part that could not be read"') | Should -BeGreaterThan 0
+        $Collapsed.IndexOf('An Entra ID entry that names a path ending in') | Should -BeLessThan $Collapsed.IndexOf('An entry labelled "Service principal access part that could not be read"')
+    }
+}

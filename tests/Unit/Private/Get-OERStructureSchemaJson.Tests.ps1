@@ -164,7 +164,7 @@ Describe 'Get-OERStructureSchemaJson' {
         }
     }
 
-    It 'declares administrativeUnits[].scopedRoles[].principalType as the optional User/Group/ServicePrincipal enum, and says the engine does not read it (Sprint 11 step 8)' {
+    It 'declares administrativeUnits[].scopedRoles[].principalType as the optional User/Group/ServicePrincipal enum, and says the engine does not use it to match or write (Sprint 11 step 8)' {
         InModuleScope $script:moduleName {
             $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
             $ScopedRoles = $Schema.properties.administrativeUnits.items.properties.scopedRoles
@@ -175,7 +175,7 @@ Describe 'Get-OERStructureSchemaJson' {
             # The key sits after principal, and does not join the required keys.
             @($ScopedRoles.items.properties.PSObject.Properties.Name) | Should -BeExactly @('role', 'principal', 'principalType')
             @($ScopedRoles.items.required) | Should -BeExactly @('role', 'principal')
-            $ScopedRoles.description | Should -Match ([regex]::Escape("An entry's principalType (User, Group or ServicePrincipal) is optional: Get-OERInventory writes it for a principal the directory returned as one of those types, and Invoke-OERStructure does not read it, since it matches a scoped role by role and principal."))
+            $ScopedRoles.description | Should -Match ([regex]::Escape("An entry's principalType (User, Group or ServicePrincipal) is optional: Get-OERInventory writes it for a principal the directory returned as one of those types, and Invoke-OERStructure validates it but does not use it to match or write a scoped role, which it matches by role and principal."))
         }
     }
 

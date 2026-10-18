@@ -419,6 +419,14 @@ Describe 'Get-OERInventoryPromptTemplate apply-document section list' {
             $T | Should -Match ([regex]::Escape('Entra directory roles (directoryRoleManagementPolicies[].role, directoryRoleAssignments[].role, administrativeUnits[].scopedRoles[].role):'))
         }
     }
+
+    It 'lists the optional principalType of a scoped role, which the apply engine does not use to match or write (Sprint 11 step 8)' {
+        InModuleScope $script:moduleName {
+            # Without the switch: the key is part of the document every export writes.
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('scopedRoles[] { role (required -- a directory role display name, or a role id GUID when the name could not be resolved), principal (required), principalType (User | Group | ServicePrincipal; optional -- the export writes it for a principal the directory returned, and the apply engine does not use it to match or write a scoped role) } }'))
+        }
+    }
 }
 
 Describe 'Get-OERInventoryPromptTemplate group rename through previousDisplayName' {
@@ -716,7 +724,7 @@ Describe 'Get-OERInventoryPromptTemplate Azure Lighthouse delegations (Sprint 11
 Describe 'Get-OERInventoryPromptTemplate service principal access (Sprint 11 step 8)' {
     # Export-OERInventory -IncludeServicePrincipalAccess writes servicePrincipalAccess.json and asks the prompt
     # to name it among the inputs, as read-only context that is never a proposal target. Without the switch the
-    # prompt is byte-identical to one built before it existed (Ruling R-4).
+    # prompt is byte-identical to one built with it $false (Ruling R-4), and names no such file.
     BeforeAll {
         $script:SpPromptBullet = @(
             '- servicePrincipalAccess.json -- read-only context, written when the export ran with'

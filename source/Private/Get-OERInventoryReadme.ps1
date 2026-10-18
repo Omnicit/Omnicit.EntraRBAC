@@ -42,6 +42,13 @@ function Get-OERInventoryReadme {
     principal access part that could not be read'. Only when such an entry is present does the
     section's prose add the sentence that says such a part is written null in that file, never [],
     which does not mean the tenant has none of it; without one the section reads exactly as before.
+    In the same way, only when an Entra ID entry names a path ending in '/scopedRoles/principalType'
+    (Sprint 11 step 8) -- a path that ends the entry or is followed by a comma, since one entry joins
+    the paths of one Get-OERInventory report with ', ' -- does the prose add the sentence that says
+    such a path names an administrative unit whose scopedRoles is written, not null, and some or all
+    of whose rows carry no principalType, since their principals' type could not be looked up, which
+    Invoke-OERStructure does not use to match or write a scoped role; without one the section reads
+    exactly as before.
 
     Directly after it comes the section "Members and owners left out as PIM for Groups access"
     (BL-125, A3). It says that inventory.json and groups.json write a group's standing members and
@@ -423,6 +430,14 @@ function Get-OERInventoryReadme {
     $SpAccessPrefix = 'servicePrincipalAccess/'
     $SpAccessLabel = 'Service principal access part that could not be read'
     $HasSpAccessEntry = $false
+    # Sprint 11 step 8: an Entra ID entry can name a path ending in '/scopedRoles/principalType' -- a unit
+    # whose scoped role rows are written, some or all of them without principalType, since the type of
+    # their principals could not be looked up -- which is not an unread or null collection. One entry is
+    # the Get-OERInventory report's paths joined with ', ', so the path is found where it ends the entry
+    # or is followed by a comma. Its sentence joins the prose only when such an entry is present, so the
+    # section is otherwise as it was.
+    $ScopedRoleTypePattern = '/scopedRoles/principalType(?:,|$)'
+    $HasScopedRoleTypeEntry = $false
     # The two scope lists never hold such an entry: theirs start with '/' or '<'.
     $Lists = @(
         @{ Label = 'Entra ID'; Entries = $IncompleteReads }
@@ -438,6 +453,7 @@ function Get-OERInventoryReadme {
             elseif ($Entry.StartsWith($LighthouseReadPrefix, [System.StringComparison]::Ordinal)) { $Label = $LighthouseReadLabel }
             elseif ($Entry.StartsWith($HomeTenantPrefix, [System.StringComparison]::Ordinal)) { $Label = $HomeTenantLabel }
             elseif ($Entry.StartsWith($SpAccessPrefix, [System.StringComparison]::Ordinal)) { $Label = $SpAccessLabel; $HasSpAccessEntry = $true }
+            if ($Label -ceq 'Entra ID' -and [regex]::IsMatch($Entry, $ScopedRoleTypePattern)) { $HasScopedRoleTypeEntry = $true }
             $Bullets.Add("- $($Label): $(Format-CodeSpan -Text $Entry)")
         }
     }
@@ -482,6 +498,14 @@ the Azure walk did not enter since whether it belongs to this tenant could not b
 role assignments, role management policies, PIM eligibilities or Azure Lighthouse delegations is in
 this bundle, which does not mean it has none.
 '@
+        if ($HasScopedRoleTypeEntry) {
+            $Partial += "`n" + @'
+An Entra ID entry that names a path ending in `/scopedRoles/principalType` names an administrative
+unit whose `scopedRoles` is written, not `null`: the type of some or all of its scoped role
+principals could not be looked up, so those rows carry no `principalType`, which
+`Invoke-OERStructure` does not use to match or write a scoped role.
+'@
+        }
         if ($HasSpAccessEntry) {
             $Partial += "`n" + @'
 An entry labelled "Service principal access part that could not be read" names a part of

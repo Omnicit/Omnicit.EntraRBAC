@@ -48,21 +48,29 @@ function Format-OERUnreadCauseClause {
         [string]$Label = 'Causes'
     )
 
-    # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits
-    # twenty-three cause message shapes (group members, group owners, group PIM eligibility,
-    # group PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
-    # eligibility schedules, directory role assignment schedules, directory role policies,
-    # access package resource role bindings, catalog resources, the catalog resource-name map,
-    # the catalog list, a catalog's package list, an access package's assignment policies, an
-    # access review's access package name, an access review's assignment policy name, objects
-    # not written because two of them share a name, the group list, the administrative unit
-    # list, the access review list and an entry written as null because it has no name), so
-    # twenty-three admits one of each
-    # and a normal partial run is still reported in full; only a genuinely heterogeneous
-    # large-tenant failure is truncated, and the dropped count is stated rather than silently
-    # lost. Nothing is discarded either way -- every cause is written to the verbose stream as
-    # it is seen. Raise this with the shape count when a twenty-fourth cause message is added, or
-    # one shape starts crowding out another purely by ordering.
+    # Cap on the DISTINCT causes named in one clause -- one call of this function, so each clause
+    # of Export-OERInventory's InventoryPartial message and Get-OERInventory's own has a cap of its
+    # own. It bounds the length of the message; it is NOT one per cause message shape. It was set
+    # at twenty-three when that was the number of shapes Get-OERInventory could add (group members,
+    # group owners, group PIM eligibility, group PIM-in-use criterion, group PIM policy, AU members,
+    # AU scoped roles, directory role eligibility schedules, directory role assignment schedules,
+    # directory role policies, access package resource role bindings, catalog resources, the
+    # catalog resource-name map, the catalog list, a catalog's package list, an access package's
+    # assignment policies, an access review's access package name, an access review's assignment
+    # policy name, objects not written because two of them share a name, the group list, the
+    # administrative unit list, the access review list and an entry written as null because it has
+    # no name). Later steps added more, to Get-OERInventory's clause or to the export's group clause,
+    # and the list was not kept (recounted in Sprint 11 step 8):
+    # the group PIM for Groups assignments, the group relevance reads, the group name index, the
+    # access review name uniqueness checks, the scoped role principal type lookup, and, in a
+    # standalone call, the role assignment principal lookups and the subscription home tenant
+    # reasons -- so one call can now differ in more ways than the cap, and a cause message that
+    # carries a raw error text is a key of its own per text anyway. The cap is kept: a partial run
+    # with one or a few failure kinds is still reported in full, a run that fails in more than
+    # twenty-three distinct ways names the first twenty-three in the order they were found and
+    # states how many more were dropped, and nothing is discarded either way -- every cause is
+    # written to the verbose stream as it is seen. Do not raise it for each new shape; raise it
+    # only when a normal partial run is seen to be truncated.
     $UnreadCauseCap = 23
 
     # The dedupe KEYS, and the causes the clause will show. The dedupe used to compare whole

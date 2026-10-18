@@ -2919,6 +2919,8 @@ Describe 'Export-OERInventory (an unread collection is never applied as empty)' 
         $Partial.Count | Should -Be 1
         $Partial[0].Exception.Message | Should -Match 'accessPackages/AP-Sales/resourceRoles'
         $Partial[0].Exception.Message | Should -Match 'members, scopedRoles, resources or resourceRoles key reported here is an explicit null'
+        # Sprint 11 step 8: a scoped role principalType path names no null collection, and the message says so.
+        $Partial[0].Exception.Message | Should -Match ([regex]::Escape('leave untouched; a path ending in scopedRoles/principalType is not such a key: it names a unit some or all of whose scoped role rows were written without principalType, and whose scopedRoles is not null. A section named alone'))
     }
 
     It 'writes a read that succeeded with nothing in it as [] and raises no partial' {
@@ -7164,8 +7166,8 @@ Describe 'Export-OERInventory shares the subscription answers with its Get-OERIn
         InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
     }
 
-    # Paths: exactly the ARM requests the same export sent on 1e62be4, before Get-OERInventory checked a
-    # subscription at all (measured with this test): the listed walk reads the role assignments and the
+    # Paths: exactly the ARM requests the same export sent before this step's subscription check (Sprint 11
+    # step 8), when Get-OERInventory checked no subscription at all (measured with this test): the listed walk reads the role assignments and the
     # policies at the management group and at the subscription, and the -Scope export reads the subscription
     # once, in the tree, and then the role assignments and the policies at the resource group.
     It 'sends <SubGets> subscription GET(s) and the same ARM requests as before for <Name>, reads every scope and is not partial' -ForEach @(
@@ -7469,7 +7471,7 @@ Describe 'Export-OERInventory (service principal access, Sprint 11 step 8)' {
         $Description | Should -Match ([regex]::Escape('A part that could not be read never stops another, except that the grants are not read when the service principal list they are named through was not; the export writes no warning for any of it.'))
         $Description | Should -Match ([regex]::Escape('a service principal listed without its app roles'))
         $Description | Should -Match ([regex]::Escape('Directory.Read.All, which the export already requires, covers every read.'))
-        $Description | Should -Match ([regex]::Escape('Without the switch none of it is read or written, and README.md and rbac-architect-prompt.md are exactly what they were.'))
+        $Description | Should -Match ([regex]::Escape('Without the switch none of it is read or written, and README.md and rbac-architect-prompt.md say nothing of it.'))
         $Description | Should -Match ([regex]::Escape('and, last, the service principal access parts that could not be read, whose clause names each part and gives the causes.'))
 
         $Param = @($Help.Parameters.Parameter) | Where-Object { $_.Name -eq 'IncludeServicePrincipalAccess' }

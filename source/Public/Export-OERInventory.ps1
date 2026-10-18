@@ -380,7 +380,7 @@ function Export-OERInventory {
     part's row count in a section "Service principal access (read-only)", directly after
     "Subscriptions delegated from another tenant (not read)". Directory.Read.All, which the export
     already requires, covers every read. Without the switch none of it is read or written, and
-    README.md and rbac-architect-prompt.md are exactly what they were.
+    README.md and rbac-architect-prompt.md say nothing of it.
 
     Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
     Groups read when it left anything unread, then one entry per partial report from
@@ -440,7 +440,10 @@ function Export-OERInventory {
     that has members when neither its PIM for Groups assignments nor its eligibility could be read, as
     described above). Do not hand-edit that null to
     [] -- under Invoke-OERStructure -Prune an empty declared collection deletes every live member,
-    binding or resource. Any other collection IncompleteReads names is left out of the document or
+    binding or resource. A path ending in scopedRoles/principalType names no such null: the unit's
+    scopedRoles is written, and some or all of its rows carry no principalType, since the type of
+    their principals could not be looked up (the Get-OERInventory help describes the rule).
+    Any other collection IncompleteReads names is left out of the document or
     written only as far as it was read, as the Get-OERInventory help describes; Invoke-OERStructure
     never removes a catalog, access package or assignment policy that is absent from the document.
 
@@ -1834,7 +1837,7 @@ function Export-OERInventory {
                 # this message disagree with the seven triples printed right after it, and with
                 # Get-OERInventory's own "7 collection(s)" on the same run. The help already states
                 # the entry-per-report rule; the message now agrees with it.
-                $IncompletePart = "$($IncompleteReads.Count) partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle -- one entry can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched. A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read"
+                $IncompletePart = "$($IncompleteReads.Count) partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle -- one entry can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched; a path ending in scopedRoles/principalType is not such a key: it names a unit some or all of whose scoped role rows were written without principalType, and whose scopedRoles is not null. A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read"
                 # WHY the group collections are missing. The group reader writes no error record, so
                 # this message is the only error that carries its causes (the verbose stream shows
                 # each as it is seen, and Get-OERInventory's own partial message carries the causes of

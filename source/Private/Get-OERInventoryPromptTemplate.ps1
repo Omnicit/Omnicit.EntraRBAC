@@ -14,7 +14,8 @@ function Get-OERInventoryPromptTemplate {
     it ran with its own -IncludeServicePrincipalAccess, the Inputs list carries one more bullet,
     directly after lighthouseDelegations.json: servicePrincipalAccess.json as read-only context -- its
     four parts, that a part written as null could not be read, and that it is never a proposal
-    target. Without the switch the prompt is byte-identical to one built before it existed.
+    target. Without the switch, or with -IncludeServicePrincipalAccess:$false, the prompt names no
+    such file.
 
     .PARAMETER NamingConvention
     An optional naming-standard hint (for example 'role_sec_{area}_{tier}') seeded from the tenant's
@@ -22,7 +23,7 @@ function Get-OERInventoryPromptTemplate {
 
     .PARAMETER IncludeServicePrincipalAccess
     Add the servicePrincipalAccess.json bullet to the Inputs list, for a bundle that holds the file.
-    Leave it out for a bundle without it: the prompt is then exactly what it was.
+    Leave it out for a bundle without it: the prompt then names no such file.
 
     .EXAMPLE
     Get-OERInventoryPromptTemplate
@@ -373,7 +374,9 @@ document. Declare each assignment policy once per access package, the same way.
   membershipRule), membershipRule, membershipRuleProcessingState (On|Paused), hiddenMembership (bool;
   freely declare it in either direction -- the apply engine both hides a public unit and reverts a hidden
   unit back to public), members[], scopedRoles[] { role (required -- a directory role display name, or a
-  role id GUID when the name could not be resolved), principal (required) } }
+  role id GUID when the name could not be resolved), principal (required), principalType (User | Group |
+  ServicePrincipal; optional -- the export writes it for a principal the directory returned, and the
+  apply engine does not use it to match or write a scoped role) } }
   - displayName is the match key: an existing unit is matched and updated by it. To rename a unit,
     declare its new name as displayName and its current name (or object id) as
     previousDisplayName: the unit found under previousDisplayName alone is renamed in place. When

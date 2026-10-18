@@ -105,10 +105,12 @@ function Get-OERInventory {
     (User, Group or ServicePrincipal) when the directory returns that principal as one of those three
     types, all such principals being looked up together through directoryObjects/getByIds, in
     batches of up to 1000 ids, one request per batch: a row whose principal is not returned, is of
-    another type or is named by its display name carries none, a failed lookup leaves the unit's rows
-    without it and reports 'administrativeUnits/<name>/scopedRoles/principalType' through the
-    InventoryPartial error, and Invoke-OERStructure, which matches a scoped role by role and
-    principal, does not read it.
+    another type or is named by its display name carries none. A lookup that failed leaves the rows
+    of the principals it held without principalType -- some or all of a unit's scoped role rows,
+    since a batch can fail while another succeeds -- and reports each such unit once as
+    'administrativeUnits/<name>/scopedRoles/principalType' through the InventoryPartial error.
+    Invoke-OERStructure validates principalType and normalizes its letter case, but does not use it
+    to match or write a scoped role: it matches one by role and principal.
     A group, administrative unit or access review LIST that could not be read at all is reported
     through the same InventoryPartial error by the section's own name alone (groups,
     administrativeUnits or accessReviews) and is written as an empty array, which does not mean the
@@ -1055,7 +1057,8 @@ function Get-OERInventory {
             # (a device, for one), one named by its display name and a unit whose scopedRoles is null keep
             # their rows as they are, and nothing is reported: the type is information, since
             # Invoke-OERStructure matches a scoped role by role and principal alone. A failed lookup leaves
-            # the rows without principalType and names each affected unit unread ONCE, as
+            # the rows of the principals it held without principalType (some or all of a unit's rows, since
+            # one batch can fail while another succeeds) and names each affected unit unread ONCE, as
             # 'administrativeUnits/<name>/scopedRoles/principalType', with its cause; the scopedRoles
             # collection itself was read, so it stays written. A unit whose scopedRoles is null needs no
             # test of its own: @($null) holds one $null, whose principal is no object id.
@@ -2473,7 +2476,7 @@ function Get-OERInventory {
                     "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
                     "Unread: $($UnreadCollections -join ', '). A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as " +
                     'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot. ' +
-                    'An entry ending in scopedRoles/principalType is not such a key: it names a unit whose scoped role rows are written without principalType, since their principals'' type could not be read.' +
+                    'An entry ending in scopedRoles/principalType is not such a key: it names a unit some or all of whose scoped role rows are written without principalType, since their principals'' type could not be read.' +
                     $CauseClause)) `
                 -ErrorId 'InventoryPartial' `
                 -Category LimitsExceeded `

@@ -996,7 +996,7 @@ Describe 'Get-OERInventory' {
             [string]$Partial[0].TargetObject | Should -BeExactly 'administrativeUnits/AU-A/scopedRoles/principalType, administrativeUnits/AU-B/scopedRoles/principalType'
             $Message = $Partial[0].Exception.Message
             $Message | Should -Match ([regex]::Escape('Could not look up the type of a scoped role principal through directoryObjects/getByIds: TooManyRequests (injected)'))
-            $Message | Should -Match ([regex]::Escape('An entry ending in scopedRoles/principalType is not such a key: it names a unit whose scoped role rows are written without principalType, since their principals'' type could not be read.'))
+            $Message | Should -Match ([regex]::Escape('An entry ending in scopedRoles/principalType is not such a key: it names a unit some or all of whose scoped role rows are written without principalType, since their principals'' type could not be read.'))
         }
 
         It 'names a unit with the cause of its first principal whose lookup failed' {
@@ -1055,7 +1055,12 @@ Describe 'Get-OERInventory' {
         It 'states the rule in its help' {
             $Help = (Get-Command -Name Get-OERInventory -Module $script:moduleName).ScriptBlock.Ast.GetHelpContent().Description
             $Help | Should -Match 'In AdministrativeUnits, a scoped role row whose principal is an object id carries principalType'
-            $Help | Should -Match ([regex]::Escape("reports 'administrativeUnits/<name>/scopedRoles/principalType' through the"))
+            $Collapsed = $Help -replace '\s+', ' '
+            # A failed batch leaves the rows of the principals it held without the type: some or all of a unit's.
+            $Collapsed | Should -Match ([regex]::Escape("A lookup that failed leaves the rows of the principals it held without principalType -- some or all of a unit's scoped role rows, since a batch can fail while another succeeds -- and reports each such unit once as 'administrativeUnits/<name>/scopedRoles/principalType' through the InventoryPartial error."))
+            # The engine validates and canonicalises the key, so the help does not say it is not read.
+            $Collapsed | Should -Match ([regex]::Escape('Invoke-OERStructure validates principalType and normalizes its letter case, but does not use it to match or write a scoped role: it matches one by role and principal.'))
+            $Collapsed | Should -Not -Match ([regex]::Escape('principal, does not read it'))
         }
     }
 
@@ -9861,23 +9866,24 @@ $Inv = Get-OERInventory -Include RoleAssignments, RoleManagementPolicies -Scope 
 }
 
 Describe 'Get-OERInventory asks for the ARM token in its sign-in when it checks a subscription (BL-152, A20, R-9)' {
-    # On 1e62be4 a call without -IncludeARM signed in for Microsoft Graph only, and the two readers acquired the
+    # Before the subscription check (Sprint 11 step 8) a call without -IncludeARM signed in for Microsoft Graph
+    # only, and the two readers acquired the
     # ARM token on first use, through their own Initialize-OERAuth -IncludeARM. The subscription check now reads
     # the subscription before either reader runs, so begin asks for the token whenever either section is
     # included with a -Scope or a -Subscription that is not blank, exactly as -IncludeARM does. The REAL owner
     # and the REAL readers run here: the sign-in mock records each call and puts an ARM token in the module's
     # state only when -IncludeARM is passed, and the transport mock refuses every request with
     # ArmTokenAcquisitionFailed, as the real one does, while the state holds none. The rows pinned below are the
-    # rows the same calls returned on 1e62be4, and the requests are the ones it sent there with the check's
-    # subscription GET (and, for a display name, its subscription list) before them -- measured with these
-    # calls on a dev-mode import of 1e62be4. No id below is version-4 shaped.
+    # rows the same calls returned before the check, and the requests are the ones they sent then with the
+    # check's subscription GET (and, for a display name, its subscription list) before them -- measured with
+    # these calls on a dev-mode import of the code before the check. No id below is version-4 shaped.
     BeforeAll {
         $script:AtSub = 'aaaa1111-0000-0000-0000-000000000001'
         $script:AtGet = '/subscriptions/aaaa1111-0000-0000-0000-000000000001?api-version=2022-12-01'
         $script:AtList = '/subscriptions?api-version=2022-12-01'
         $script:AtMgGet = '/providers/Microsoft.Management/managementGroups/mg1?api-version=2020-05-01'
         $script:AtRoleDef = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/bbbb8888-0000-0000-0000-000000000001'
-        # The rows each section writes for one role assignment and one policy at #SCOPE#, as 1e62be4 wrote them.
+        # The rows each section writes for one role assignment and one policy at #SCOPE#, as written before the check.
         $script:AtRaJson = '{"scope":"#SCOPE#","role":"Reader","principal":"person1@example.com","principalType":"User"}'
         $script:AtRmpJson = '{"scope":"#SCOPE#","role":"Reader","allowPermanentEligibility":null,"activationMaxHours":null,"requireMfaOnActivation":false,"requireJustificationOnActivation":false,"requireTicketOnActivation":false,"requireApproval":false,"requireMfaOnActiveAssignment":false,"requireJustificationOnActiveAssignment":false}'
         # One call with -ErrorAction Continue pinned, so its records reach the output through 2>&1 whatever the
@@ -9953,7 +9959,7 @@ Describe 'Get-OERInventory asks for the ARM token in its sign-in when it checks 
         InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
     }
 
-    It 'asks for the token in the sign-in and reads <Name> as 1e62be4 did, with no -IncludeARM' -ForEach @(
+    It 'asks for the token in the sign-in and reads <Name> as before the subscription check, with no -IncludeARM' -ForEach @(
         @{ Name = 'a -Scope on a resource group'; Splat = @{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' }
             ReadScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
             Paths = @(
@@ -9983,7 +9989,7 @@ Describe 'Get-OERInventory asks for the ARM token in its sign-in when it checks 
             ) }
     ) {
         $Run = Invoke-AtInventory -Splat $Splat
-        # The rows 1e62be4 read, both sections, and no record: the subscription was shown to be the session's own.
+        # The rows read before the check, both sections, and no record: the subscription was shown to be the session's own.
         ($Run.Inventory.RoleAssignments | ConvertTo-Json -Depth 8 -Compress) | Should -BeExactly $script:AtRaJson.Replace('#SCOPE#', $ReadScope)
         ($Run.Inventory.RoleManagementPolicies | ConvertTo-Json -Depth 8 -Compress) | Should -BeExactly $script:AtRmpJson.Replace('#SCOPE#', $ReadScope)
         $Run.Records.Count | Should -Be 0
@@ -10003,7 +10009,7 @@ Describe 'Get-OERInventory asks for the ARM token in its sign-in when it checks 
         Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq $script:AtGet }
     }
 
-    It 'does not ask for the token in the sign-in for a -ManagementGroup alone: the readers acquire it on first use, as on 1e62be4' {
+    It 'does not ask for the token in the sign-in for a -ManagementGroup alone: the readers acquire it on first use, as before the subscription check' {
         $Run = Invoke-AtInventory -Splat @{ ManagementGroup = 'mg1' }
         @($script:AtAuthCalls) | Should -Be @($false, $true, $true)
         ($Run.Inventory.RoleAssignments | ConvertTo-Json -Depth 8 -Compress) | Should -BeExactly $script:AtRaJson.Replace('#SCOPE#', '/providers/Microsoft.Management/managementGroups/mg1')
