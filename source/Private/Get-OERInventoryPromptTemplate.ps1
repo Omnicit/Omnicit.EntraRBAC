@@ -636,5 +636,10 @@ The user will save a proposal and run, from the Omnicit.EntraRBAC module:
   Invoke-OERStructure -Path ./proposal.json -WhatIf
   Invoke-OERStructure -Path ./proposal.json
 So every json block you emit must validate against schema.json and apply cleanly against the schema above.
+
+An operator who keeps a naming standard file can also check the names in a proposal with:
+  Test-OERStructure -Path ./proposal.json -NamingStandard ./naming-standard.json
+Propose names that follow the operator's naming standard (the Naming convention line of USER PREFERENCES).
+A name that does not follow it is a Warning there, never a refusal.
 "@
 }

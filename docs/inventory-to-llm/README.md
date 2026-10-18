@@ -366,6 +366,93 @@ this tenant.
   such an entry `Failed` with `SubscriptionTenantMismatch`, reads no role assignment or policy there
   and writes nothing for it, with or without `-Prune`, the same under `-WhatIf`.
 
+## Group names from a template
+
+A `groups` entry carries its name in one of two ways: a literal `displayName`, or a `template` with a
+`tokens` object that the apply engine turns into the name:
+
+```json
+{
+  "template": "role_sec_{area}_{tier}",
+  "tokens": { "area": "identity", "tier": "administrator" }
+}
+```
+
+This entry is the group `role_sec_identity_administrator`.
+
+- **Placeholders.** Each `{token}` in the template is replaced by the value of the token of that
+  name. Token names are matched ignoring letter case.
+- **Every placeholder must resolve.** A placeholder without a token leaves the name unbuilt: the
+  entry is reported `Failed` with the message "Naming template ... has unresolved token(s)" and
+  nothing is created or changed for it. `Test-OERStructure` raises no `Error` for it (with
+  `-NamingStandard` it adds only a `Warning` saying the name was not checked), so in the LLM loop
+  `Invoke-OERStructure -WhatIf` is the first step that shows the entry as `Failed`.
+- **`template` and `displayName` are mutually exclusive.** `Test-OERStructure` refuses, as an
+  `Error`, an entry that declares both, one that declares neither, and a `template` without a `tokens`
+  object.
+- **The export always writes `displayName`.** `Get-OERInventory` and `Export-OERInventory` never
+  write `template` or `tokens`, so a template appears only in a document written by hand or proposed
+  by a model.
+
+`Test-OERStructure -NamingStandard` checks the name a template gives, not the template (see the next
+section).
+
+## Checking names against a naming standard
+
+A naming standard kept as a file lets the names in an exported inventory, or in a proposal an LLM
+wrote, be checked instead of read by eye:
+
+```powershell
+Test-OERStructure -Path .\proposal.json -NamingStandard .\naming-standard.json
+```
+
+A name gets one `Warning` for each rule it breaks, with `Section`, `Item`, `Path` and a message that
+says which rule the name breaks and what was expected, for example:
+
+```text
+Name 'SG-Legal-Readers' at groups[2].displayName does not follow the naming standard (rule 'values', segment 2 'area'): 'Legal' is not one of the allowed values 'Finance', 'Sales', 'IT'.
+```
+
+It never makes a document invalid, and `Invoke-OERStructure` takes no naming standard: the check
+tells you which names to change, and the apply engine applies the document as written.
+
+- **The file.** `docs/examples/naming-standard.json` is a neutral example (`kind-area-purpose`, with
+  an optional environment at the end) and `docs/examples/naming-standard.schema.json` is its JSON
+  Schema. Copy the example and edit it: a `version` (`"1.0"`), a `separator`, the ordered `segments`
+  (each has a `name` and may have a closed list of `values` or a `pattern`, a letter `case` and
+  `optional`), a `maxLength`, `exceptions` for names that keep their names, and the `sections` to
+  check. The six rules a warning names are `maxLength`, `separator`, `segmentCount`, `values`,
+  `pattern` and `case`.
+- **Patterns match the whole text.** A segment `pattern` and an `exceptions` entry are anchored at
+  both ends and are case-sensitive unless they carry `(?i)`; a `values` entry is compared
+  exactly and is never a pattern.
+- **What is checked.** The name an object carries after the step: `displayName`, or the name a
+  group's `template` and `tokens` give (a template that cannot be turned into a name gets one warning
+  saying it was not checked). A `previousDisplayName` is never checked, so a rename is judged by its
+  new name. A group with `onPremisesSynced` true is skipped, with a warning that says so, unless the
+  file sets `includeSyncedGroups` to true.
+- **The groups an export holds.** The check covers the groups `inventory.json` holds: by default the
+  RBAC-relevant security groups (a role-assignable group, one with PIM eligibility, one with a
+  `pimPolicy`). `Export-OERInventory -AllGroupsDetailed` keeps every group `inventory.json` covers in
+  full detail and `-IncludeSyncedGroups` keeps the synchronized ones; a Microsoft 365 group whose
+  `securityEnabled` is false is in `groupsRoster.json` only. The standard's `includeSyncedGroups`
+  therefore matters for an export only when the export was made with
+  `Export-OERInventory -IncludeSyncedGroups` (or `-AllGroupsDetailed`), a different switch with a
+  similar name.
+- **A proposal.** The bundle's prompt tells the model to propose names that follow the operator's
+  naming standard (the `Naming convention` line of its `USER PREFERENCES (optional)` block) and that a
+  name that does not is a Warning, never a refusal. The model never sees the standard file: write the
+  standard's rules into that line of `rbac-architect-prompt.md` before you hand the prompt over, and
+  let `Test-OERStructure -NamingStandard` tell you which proposed names still break them. On an
+  exported `inventory.json` the warnings are the list a rename map is written from: declare the new
+  name as `displayName` and the current one as `previousDisplayName` (see "Renaming a group" below).
+- **A file that cannot be used.** A path that is not a file, a file that exists but cannot be read,
+  malformed JSON, a key or value the standard does not allow or a pattern that does not compile is
+  refused once with the error `InvalidNamingStandard`, which says what is wrong, and nothing is
+  validated. A known limit: the JSON parser reads a string that holds an ISO 8601 date and time, such
+  as `2024-01-01T10:00:00`, as a date (a date alone, such as `2024-01-01`, stays a string), so such a
+  value in the file is refused as not a string.
+
 ## Renaming a group
 
 `displayName` is the match key for a group. To rename a group through the apply document, declare

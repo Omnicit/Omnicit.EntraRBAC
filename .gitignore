@@ -20,6 +20,8 @@ package-lock.json
 # negation below for each example that is genuinely meant to be tracked.
 docs/examples/*
 !docs/examples/example-structure.json
+!docs/examples/naming-standard.json
+!docs/examples/naming-standard.schema.json
 !docs/examples/README.md
 
 # Internal planning and design material: session plans, design specs and audit reports. These are

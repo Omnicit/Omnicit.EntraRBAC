@@ -458,6 +458,73 @@ RENAMES, MAIL ALIASES AND SCOPE SPELLING
     A -WhatIf plan reports an access package declared in a catalog the same
     document creates as 'would create access package' instead of Failed.
 
+NAMING STANDARD
+
+    Test-OERStructure -NamingStandard checks the names in a document, or in
+    the inventory.json of an Export-OERInventory bundle, against a naming
+    standard file. A name gets one Warning for each rule it breaks, with
+    Section, Item, Path and a message that says which rule the name breaks
+    and what was expected. Valid does not change, and Invoke-OERStructure,
+    which takes no naming standard, applies the document as before. An
+    example standard is kept in the repository at
+    docs/examples/naming-standard.json, with its JSON Schema at
+    docs/examples/naming-standard.schema.json; neither ships inside the
+    installed module.
+
+    The check covers the groups inventory.json holds: by default the
+    RBAC-relevant security groups (a role-assignable group, one with PIM
+    eligibility, one with a pimPolicy). Export-OERInventory
+    -AllGroupsDetailed keeps every group inventory.json covers in full
+    detail and -IncludeSyncedGroups keeps the synchronized ones; a Microsoft
+    365 group whose securityEnabled is false is in groupsRoster.json only.
+    The standard's includeSyncedGroups therefore matters for an export only
+    when the export was made with Export-OERInventory -IncludeSyncedGroups
+    (or -AllGroupsDetailed), a different switch with a similar name.
+
+    The standard is a JSON file: version ("1.0"), separator, maxLength,
+    sections (the ones to check: groups, administrativeUnits, catalogs,
+    accessPackages, assignmentPolicies and accessReviews),
+    includeSyncedGroups, segments (in order) and exceptions. A segment has a
+    name and may have values (a closed list) or pattern, but not both, a case
+    (PascalCase, camelCase, UPPERCASE or lowercase) and optional. $schema and
+    description are free text. A Warning names one of six rules: maxLength,
+    separator, segmentCount, values, pattern and case.
+
+    A pattern, in a segment or in exceptions, has to match the whole text,
+    and is case-sensitive unless it carries (?i): Fin does not match the
+    segment Finance, and the exception 'All Users' does not exempt 'All Users
+    Copy'. A values entry is compared exactly, letter case included, and is
+    never read as a pattern. PascalCase is an uppercase letter first and then
+    only letters and digits; camelCase is the same with a lowercase letter
+    first; UPPERCASE holds no lowercase letter and lowercase no uppercase
+    letter. Letters are Unicode letters.
+
+    A name is split at the separator, as text. An optional segment is present
+    when the number of parts needs it, and otherwise when the part fits the
+    segment. A name with an empty segment, no separator where one is needed,
+    or too few or too many segments is reported for that and not checked
+    segment by segment. A name that matches an exception is never checked.
+
+    The name checked is the one an object carries after the step: its
+    displayName, or for a group declared with template and tokens the name
+    they give. A group whose template cannot be turned into a name gets one
+    Warning saying it was not checked. A previousDisplayName is never checked.
+    The assignment policies of an access package are checked when
+    assignmentPolicies is listed, and their Warnings carry the section
+    accessPackages. A group with onPremisesSynced true is not checked unless
+    includeSyncedGroups is true; its one Warning says so. When it is checked,
+    each Warning says that its name can only change in the on-premises
+    directory.
+
+    A file that cannot be used (a path that is not a file, a file that
+    exists but cannot be read, malformed JSON, a key or value the standard
+    does not allow, a pattern that does not compile) is refused once with the
+    error InvalidNamingStandard, which says what is wrong, and nothing is
+    validated. Known limit: the JSON parser reads a string that holds an ISO
+    8601 date and time, such as 2024-01-01T10:00:00, as a date (a date alone,
+    such as 2024-01-01, stays a string), so such a value in the file is
+    refused as not a string.
+
 PERMISSIONS
 
     Ask the module rather than reading a table kept in step by hand:

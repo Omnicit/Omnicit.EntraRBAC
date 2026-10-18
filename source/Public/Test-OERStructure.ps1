@@ -86,6 +86,12 @@ function Test-OERStructure {
     the key is valid). The check is offline: Test-OERStructure does not compare tenantId with any
     session, while Invoke-OERStructure does and refuses a document that names another tenant.
 
+    A naming standard, given with -NamingStandard, is held against the document as well: the names of
+    the sections the standard lists are checked, and each name that breaks it is a Warning, one per
+    object and broken rule, never an Error. Valid does not change, and Invoke-OERStructure, which takes
+    no naming standard, applies the document as it always did. The -NamingStandard parameter describes
+    the file, the rules and what happens to a file that cannot be read.
+
     A worked apply document showing every section the engine understands is kept in the repository
     at docs/examples/example-structure.json, and the full export to apply walkthrough is documented
     in the repository at docs/inventory-to-llm/README.md. Neither ships inside the installed module,
@@ -104,6 +110,41 @@ function Test-OERStructure {
     Get-ChildItem or Get-Item), read from disk exactly like -Path. A System.IO.DirectoryInfo is an
     error.
 
+    .PARAMETER NamingStandard
+    Path to a naming standard file (JSON). The document's names are then checked against it as well
+    as validated: one Warning per object and broken rule, with Section, Item, Path and a Message that
+    says which rule the name breaks and what was expected. A name never makes a document invalid
+    (Valid does not change), and a previousDisplayName is never checked.
+
+    The file's keys are version ("1.0"), separator, maxLength, sections (the ones to check:
+    groups, administrativeUnits, catalogs, accessPackages, assignmentPolicies and accessReviews),
+    includeSyncedGroups, segments (in order; each has a name and may have values, pattern, case and
+    optional) and exceptions (patterns for names that keep their names); $schema and description are
+    free text. The rules a Warning names are maxLength, separator, segmentCount, values, pattern and
+    case. A pattern has to match the whole segment or name, and a value is compared exactly. A group's
+    name is its displayName, or the name its template and tokens give; a group whose template cannot
+    be turned into a name is not checked, and its Warning says so ("Group at groups[i].template was
+    not checked against the naming standard: its name could not be computed from 'template' and
+    'tokens'."). A group synchronized from on-premises (onPremisesSynced true) is skipped unless
+    includeSyncedGroups is true, and its Warning says so.
+
+    A file that cannot be used (a path that is not a file, a file that exists but cannot be read,
+    malformed JSON, a key or value the standard does not allow, a pattern that does not compile) is
+    refused with the non-terminating error InvalidNamingStandard, which says what is wrong. The
+    standard is read once, before the first document, so the refusal comes once however many
+    documents are piped, and nothing is validated: no result is returned.
+
+    The same check runs on the inventory.json of an Export-OERInventory bundle, and its Warnings are
+    the list a rename map is written from. It covers the groups inventory.json holds, by default the
+    RBAC-relevant security groups: Export-OERInventory -AllGroupsDetailed keeps every group
+    inventory.json covers in full detail and its -IncludeSyncedGroups keeps the synchronized ones,
+    while a Microsoft 365 group whose securityEnabled is false is in groupsRoster.json only. So the
+    standard's includeSyncedGroups matters for an export only when the export was made with
+    Export-OERInventory -IncludeSyncedGroups (or -AllGroupsDetailed), a different switch with a
+    similar name. An example standard is kept in the repository at
+    docs/examples/naming-standard.json, with its schema at docs/examples/naming-standard.schema.json;
+    neither ships inside the installed module. Invoke-OERStructure takes no naming standard.
+
     .EXAMPLE
     Test-OERStructure -Path ./example-structure.json
     Validates the document and returns the validation result.
@@ -119,6 +160,10 @@ function Test-OERStructure {
     .EXAMPLE
     Get-ChildItem ./structures/*.json | Test-OERStructure
     Validates every JSON file in the folder, one StructureValidation result per file.
+
+    .EXAMPLE
+    Test-OERStructure -Path ./exports/oer-inventory-contoso-20261018-120000/inventory.json -NamingStandard ./naming-standard.json
+    Validates the exported inventory and adds one Warning for each rule a name breaks, saying which rule it is.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding(DefaultParameterSetName = 'Path')]
@@ -127,9 +172,29 @@ function Test-OERStructure {
         [Parameter(ParameterSetName = 'Json', Mandatory)][string]$Json,
         [Parameter(ParameterSetName = 'InputObject', Mandatory, ValueFromPipeline)]
         [Alias('Inventory', 'Document')]
-        [object]$InputObject
+        [object]$InputObject,
+        [ValidateNotNullOrEmpty()][string]$NamingStandard
     )
+    begin {
+        # The naming standard is read ONCE per invocation, here, and never per piped document. A standard
+        # that cannot be read is refused with one error and every document after it is left alone: process
+        # returns before it reads or validates anything, so no result reaches the pipeline. The error is
+        # non-terminating, like the unreadable structure document's, so a script with no try goes on.
+        $NamingStandardObject = $null
+        $NamingStandardRefused = $false
+        if ($PSBoundParameters.ContainsKey('NamingStandard')) {
+            try {
+                $NamingStandardObject = Read-OERNamingStandard -Path $NamingStandard
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                Write-CmdletError -Message ([System.Exception]::new("Could not read the naming standard: $($PSItem.Exception.Message)")) `
+                    -ErrorId 'InvalidNamingStandard' -Category InvalidData -TargetObject $NamingStandard -Cmdlet $PSCmdlet
+                $NamingStandardRefused = $true
+            }
+        }
+    }
     process {
+        if ($NamingStandardRefused) { return }
         $ReadParams = @{}
         if ($PSCmdlet.ParameterSetName -eq 'Path') { $ReadParams.Path = $Path }
         elseif ($PSCmdlet.ParameterSetName -eq 'Json') { $ReadParams.Json = $Json }
@@ -144,6 +209,10 @@ function Test-OERStructure {
                 -ErrorId 'InvalidStructureDocument' -Category InvalidData -TargetObject $DocumentTarget -Cmdlet $PSCmdlet
             return
         }
-        Test-OERStructureSchema -Document $Document
+        if ($null -ne $NamingStandardObject) {
+            Test-OERStructureSchema -Document $Document -NamingStandard $NamingStandardObject
+        } else {
+            Test-OERStructureSchema -Document $Document
+        }
     }
 }

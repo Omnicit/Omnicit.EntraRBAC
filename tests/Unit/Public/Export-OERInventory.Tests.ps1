@@ -7079,3 +7079,155 @@ Describe 'Export-OERInventory stays in the home tenant''s subscriptions (BL-150,
         (Get-HtxReadmeSection -BundlePath $Run.Result.BundlePath) | Should -Match '(?m)^None\.'
     }
 }
+
+Describe 'Export-OERInventory (the exported inventory.json is checked against a naming standard, Sprint 11 step 7)' {
+    # The check Test-OERStructure -NamingStandard makes works on the document an export wrote, not only on a
+    # hand-written one: the real Export-OERInventory writes inventory.json from mocked reads of every section
+    # a naming standard can list, and the real Test-OERStructure (with the real Test-OERStructureSchema and
+    # Read-OERNamingStandard) reads it back. Neither validator is mocked, since a mock of
+    # Test-OERStructureSchema in module scope would stand in the check too. Each section holds one name that
+    # follows the standard and one that breaks exactly one rule. No id below is version-4 shaped.
+    BeforeAll {
+        $script:NsxStandardJson = @'
+{
+  "$schema": "./naming-standard.schema.json",
+  "version": "1.0",
+  "description": "A neutral standard for the tests.",
+  "separator": "-",
+  "maxLength": 64,
+  "sections": [ "groups", "administrativeUnits", "catalogs", "accessPackages", "assignmentPolicies", "accessReviews" ],
+  "includeSyncedGroups": false,
+  "segments": [
+    { "name": "kind", "values": [ "SG", "AU", "CAT", "AP", "POL", "AR" ], "case": "UPPERCASE" },
+    { "name": "area", "values": [ "Finance", "Sales", "IT" ] },
+    { "name": "purpose", "case": "PascalCase" },
+    { "name": "environment", "values": [ "Prod", "Test" ], "optional": true }
+  ],
+  "exceptions": [ "All Users", "(?i)legacy-.*" ]
+}
+'@
+        function script:New-NsxStandardFile {
+            param([string]$Name, [string]$Text = $script:NsxStandardJson)
+            $Path = Join-Path -Path $TestDrive -ChildPath $Name
+            [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
+            $Path
+        }
+        # What Get-OERInventory hands over for the Entra ID sections: an administrative unit, a catalog, two
+        # access packages (the first with two assignment policies) and an access review each follow the
+        # standard once and break it once.
+        function script:Get-NsxInventory {
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @()
+                AdministrativeUnits = @(
+                    [PSCustomObject]@{ displayName = 'AU-Finance-Staff'; description = $null; restricted = $false; dynamic = $false; hiddenMembership = $false; members = @(); scopedRoles = @() }
+                    [PSCustomObject]@{ displayName = 'AU-Legal-Staff'; description = $null; restricted = $false; dynamic = $false; hiddenMembership = $false; members = @(); scopedRoles = @() }
+                )
+                Catalogs = @(
+                    [PSCustomObject]@{ displayName = 'CAT-Finance-Main'; description = $null; externallyVisible = $false; resources = @() }
+                    [PSCustomObject]@{ displayName = 'CAT-Finance-access'; description = $null; externallyVisible = $false; resources = @() }
+                )
+                AccessPackages = @(
+                    [PSCustomObject]@{
+                        displayName = 'AP-Finance-Standard'; catalog = 'CAT-Finance-Main'; description = $null; hidden = $false; resourceRoles = @()
+                        assignmentPolicies = @(
+                            [PSCustomObject]@{ displayName = 'POL-Finance-Default' }
+                            [PSCustomObject]@{ displayName = 'Default' }
+                        )
+                    }
+                    [PSCustomObject]@{
+                        displayName = 'AP_Sales_Premium'; catalog = 'CAT-Finance-Main'; description = $null; hidden = $false; resourceRoles = @()
+                        assignmentPolicies = @([PSCustomObject]@{ displayName = 'POL-Sales-Default' })
+                    }
+                )
+                AccessReviews = @(
+                    [PSCustomObject]@{ displayName = 'AR-Finance-Quarterly'; accessPackage = 'AP-Finance-Standard'; assignmentPolicy = 'POL-Finance-Default'; reviewers = @('manager'); recurrence = 'Quarterly' }
+                    [PSCustomObject]@{ displayName = 'Quarterly review'; accessPackage = 'AP-Finance-Standard'; assignmentPolicy = 'POL-Finance-Default'; reviewers = @('manager'); recurrence = 'Quarterly' }
+                )
+                RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        # Two role-assignable groups, so inventory.json keeps both: one follows the standard, one does not.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            [PSCustomObject]@{
+                Groups = @(
+                    [PSCustomObject]@{ displayName = 'SG-Finance-Readers'; roleAssignable = $true; dynamic = $false; members = @(); eligibility = @() }
+                    [PSCustomObject]@{ displayName = 'SG_Finance_Readers'; roleAssignable = $true; dynamic = $false; members = @(); eligibility = @() }
+                )
+                Unread = @(); Causes = @(); PimLeftOut = @(); SharedNames = @()
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventory { Get-NsxInventory }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'gives a Warning for each exported name that breaks the standard, at its exact path, and none for a name that follows it' {
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'nsx-bundle') -Include Groups, AdministrativeUnits, Catalogs, AccessPackages, AccessReviews -WarningAction SilentlyContinue
+        $InventoryPath = Join-Path $Bundle.BundlePath 'inventory.json'
+        # Reach proofs: the real export wrote the file, and the file holds every name the fixture handed over.
+        Test-Path -LiteralPath $InventoryPath | Should -BeTrue
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        $Written = Get-Content -LiteralPath $InventoryPath -Raw | ConvertFrom-Json
+        @($Written.groups | ForEach-Object { $_.displayName }) | Should -Be @('SG-Finance-Readers', 'SG_Finance_Readers')
+        @($Written.administrativeUnits | ForEach-Object { $_.displayName }) | Should -Be @('AU-Finance-Staff', 'AU-Legal-Staff')
+        @($Written.catalogs | ForEach-Object { $_.displayName }) | Should -Be @('CAT-Finance-Main', 'CAT-Finance-access')
+        @($Written.accessPackages | ForEach-Object { $_.displayName }) | Should -Be @('AP-Finance-Standard', 'AP_Sales_Premium')
+        @($Written.accessPackages[0].assignmentPolicies | ForEach-Object { $_.displayName }) | Should -Be @('POL-Finance-Default', 'Default')
+        @($Written.accessReviews | ForEach-Object { $_.displayName }) | Should -Be @('AR-Finance-Quarterly', 'Quarterly review')
+
+        $Standard = New-NsxStandardFile -Name 'nsx-standard.json'
+        $Result = @(Test-OERStructure -Path $InventoryPath -NamingStandard $Standard -ErrorAction SilentlyContinue)
+
+        $Result.Count | Should -Be 1
+        $Result[0].Valid | Should -BeTrue
+        $Naming = @($Result[0].Errors | Where-Object { $_.Message -like '*the naming standard*' })
+        # The six naming Warnings are all the standard added: the document's other findings are the ones
+        # it has without a standard, none of them an Error.
+        $Plain = @(Test-OERStructure -Path $InventoryPath)
+        $Plain[0].Valid | Should -BeTrue
+        @($Result[0].Errors).Count | Should -Be (@($Plain[0].Errors).Count + 6)
+        @($Result[0].Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        ($Naming | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.Section, $_.Path, $_.Item, $_.Severity }) | Should -Be @(
+            'groups|groups[1].displayName|SG_Finance_Readers|Warning'
+            'administrativeUnits|administrativeUnits[1].displayName|AU-Legal-Staff|Warning'
+            'catalogs|catalogs[1].displayName|CAT-Finance-access|Warning'
+            'accessPackages|accessPackages[0].assignmentPolicies[1].displayName|Default|Warning'
+            'accessPackages|accessPackages[1].displayName|AP_Sales_Premium|Warning'
+            'accessReviews|accessReviews[1].displayName|Quarterly review|Warning'
+        )
+        $Naming | ForEach-Object { $_.Message | Should -BeLike "Name '*' at * does not follow the naming standard (rule '*'*" }
+        # The rule each name breaks.
+        $Naming[0].Message | Should -BeLike "*(rule 'separator'):*"
+        $Naming[1].Message | Should -BeLike "*(rule 'values', segment 2 'area'):*"
+        $Naming[2].Message | Should -BeLike "*(rule 'case', segment 3 'purpose'):*"
+        $Naming[3].Message | Should -BeLike "*(rule 'separator'):*"
+        $Naming[4].Message | Should -BeLike "*(rule 'separator'):*"
+        $Naming[5].Message | Should -BeLike "*(rule 'separator'):*"
+        # No name that follows the standard is named by any finding.
+        $Named = @($Naming | ForEach-Object { $_.Item })
+        foreach ($Following in 'SG-Finance-Readers', 'AU-Finance-Staff', 'CAT-Finance-Main', 'AP-Finance-Standard', 'POL-Finance-Default', 'POL-Sales-Default', 'AR-Finance-Quarterly') {
+            $Named | Should -Not -Contain $Following
+        }
+    }
+
+    It 'checks only the sections the standard lists, in the same inventory.json' {
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'nsx-sections') -Include Groups, AdministrativeUnits, Catalogs, AccessPackages, AccessReviews -WarningAction SilentlyContinue
+        $InventoryPath = Join-Path $Bundle.BundlePath 'inventory.json'
+        $Only = New-NsxStandardFile -Name 'nsx-only-policies.json' -Text $script:NsxStandardJson.Replace('"sections": [ "groups", "administrativeUnits", "catalogs", "accessPackages", "assignmentPolicies", "accessReviews" ]', '"sections": [ "assignmentPolicies" ]')
+        $Result = @(Test-OERStructure -Path $InventoryPath -NamingStandard $Only -ErrorAction SilentlyContinue)
+        $Result[0].Valid | Should -BeTrue
+        $Naming = @($Result[0].Errors | Where-Object { $_.Message -like '*the naming standard*' })
+        ($Naming | ForEach-Object { $_.Path }) | Should -Be @('accessPackages[0].assignmentPolicies[1].displayName')
+    }
+}

@@ -922,6 +922,63 @@ access review's `assignmentPolicy` included. It refuses, as an `Error`, an acces
 by its name alone, so it cannot tell which package the review means. Name the package by its object
 id.
 
+`Test-OERStructure -NamingStandard` checks the names in a document, or in an exported
+`inventory.json`, against a naming standard file. A name gets one `Warning` for each rule it breaks,
+with `Section`, `Item`, `Path` and a message that says which rule the name breaks and what was
+expected. `Valid` does not change, and `Invoke-OERStructure`, which takes no naming standard, applies
+the document as before. The warnings are the list a rename map is written from. The check covers the
+groups `inventory.json` holds: by default the RBAC-relevant security groups (a role-assignable group,
+one with PIM eligibility, one with a `pimPolicy`). `Export-OERInventory -AllGroupsDetailed` keeps every
+group `inventory.json` covers in full detail and `-IncludeSyncedGroups` keeps the synchronized ones; a
+Microsoft 365 group whose `securityEnabled` is false is in `groupsRoster.json` only. The standard's
+`includeSyncedGroups` therefore matters for an export only when the export was made with
+`Export-OERInventory -IncludeSyncedGroups` (or `-AllGroupsDetailed`), a different switch with a similar
+name.
+
+```powershell
+# The names that break the standard, each with the rule it breaks (a group that was not checked, a
+# synchronized one or a template whose name cannot be computed, is listed too, with the reason)
+(Test-OERStructure -Path ./exports/<bundle>/inventory.json -NamingStandard ./naming-standard.json).Errors |
+    Where-Object { $_.Message -like '*naming standard*' } |
+    Select-Object Section, Path, Message
+```
+
+The standard is a JSON file: a `version` (`"1.0"`), a `separator`, the ordered `segments` of a name
+(each has a `name` and may have a closed list of `values` or a `pattern`, a letter `case` and
+`optional`), an optional
+`maxLength`, `exceptions` (patterns for names that keep their names) and the `sections` to check
+(`groups`, `administrativeUnits`, `catalogs`, `accessPackages`, `assignmentPolicies` and
+`accessReviews`). `docs/examples/naming-standard.json` is a neutral example and
+`docs/examples/naming-standard.schema.json` is its JSON Schema; neither ships inside the installed
+module. A warning names one of six rules: `maxLength`, `separator`, `segmentCount`, `values`,
+`pattern` and `case`.
+
+- **A pattern matches the whole text.** A segment `pattern` and an `exceptions` entry are anchored at
+  both ends and are case-sensitive unless they carry `(?i)`: `Fin` does not match the segment
+  `Finance`, and the exception `All Users` does not exempt `All Users Copy`. A `values` entry is
+  compared exactly, letter case included, and is never read as a pattern, so `C++` means `C++`.
+- **Letter case.** `PascalCase` is an uppercase letter first and then only letters and digits,
+  `camelCase` the same with a lowercase letter first, `UPPERCASE` holds no lowercase letter and
+  `lowercase` no uppercase letter. Letters are Unicode letters.
+- **Optional segments.** An optional segment is present when the number of parts in the name needs
+  it, and otherwise when the part fits the segment. A name with an empty segment, no separator where
+  one is needed, or too few or too many segments is reported for that and not checked segment by
+  segment.
+- **The name checked.** The name an object carries after the step: its `displayName`, or for a group
+  declared with `template` and `tokens` the name they give. A group whose template cannot be turned
+  into a name gets one warning saying it was not checked. A `previousDisplayName` is never checked.
+  The assignment policies of an access package are checked when `assignmentPolicies` is listed.
+- **Synchronized groups.** A group with `onPremisesSynced` true is not checked unless the file sets
+  `includeSyncedGroups` to true; its one warning says so. When it is checked, each warning says that
+  its name can only change in the on-premises directory.
+
+A file that cannot be used (a path that is not a file, a file that exists but cannot be read, malformed
+JSON, a key or value the standard does not allow, a pattern that does not compile) is refused once with
+the error `InvalidNamingStandard`, which says what is wrong, and nothing is validated. A known limit:
+the JSON parser reads a string that holds an ISO 8601 date and time, such as `2024-01-01T10:00:00`, as
+a date (a date alone, such as `2024-01-01`, stays a string), so such a value in the file is refused as
+not a string.
+
 A group's mail alias does not follow a rename: declare `mailNickname` for the new name, and the
 validator warns when a renamed group keeps the alias derived from its old name or declares none. A
 `mailNickname` that is empty, longer than 64 characters or holds one of `@ ( ) \ [ ] " ; : < > ,`, a
@@ -1031,6 +1088,9 @@ repository (or browse it on GitHub) to read it.
   validate -> apply loop in full, including the `schema.json` / `Test-Json` escape hatch.
 - [docs/examples/example-structure.json](docs/examples/example-structure.json) -- a worked apply
   document showing every section the engine understands.
+- [docs/examples/naming-standard.json](docs/examples/naming-standard.json) -- a neutral example
+  naming standard for `Test-OERStructure -NamingStandard`, with its JSON Schema in
+  [docs/examples/naming-standard.schema.json](docs/examples/naming-standard.schema.json).
 - `Get-Help about_Omnicit.EntraRBAC` -- the in-box overview: command cohorts, Azure scope forms,
   the Tenant Profile schema, access package policy settings and the duration vocabulary. This one
   ships inside the module.

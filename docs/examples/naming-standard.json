@@ -1,0 +1,16 @@
+{
+  "$schema": "./naming-standard.schema.json",
+  "version": "1.0",
+  "description": "A neutral example naming standard: kind-area-purpose, with an optional environment at the end.",
+  "separator": "-",
+  "maxLength": 64,
+  "sections": [ "groups", "administrativeUnits", "catalogs", "accessPackages", "assignmentPolicies", "accessReviews" ],
+  "includeSyncedGroups": false,
+  "segments": [
+    { "name": "kind", "description": "What the object is: SG group, AU administrative unit, CAT catalog, AP access package, POL assignment policy, AR access review.", "values": [ "SG", "AU", "CAT", "AP", "POL", "AR" ], "case": "UPPERCASE" },
+    { "name": "area", "description": "The part of the organization the object belongs to.", "values": [ "Finance", "Sales", "IT" ] },
+    { "name": "purpose", "description": "What the object is for, written in PascalCase.", "case": "PascalCase" },
+    { "name": "environment", "description": "Optional: Prod or Test. A name may leave it out.", "values": [ "Prod", "Test" ], "optional": true }
+  ],
+  "exceptions": [ "All Users", "(?i)legacy-.*" ]
+}
