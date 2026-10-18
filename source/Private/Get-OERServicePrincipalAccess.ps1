@@ -40,15 +40,16 @@ function Get-OERServicePrincipalAccess {
 
     A part is read whole or not at all: any failure inside a part leaves it $null, never an empty
     array, and names it in Unread. Read 1 failing -- the list, the full read of one of its objects, or
-    an object listed without an id or without an appRoleAssignments collection (the expansion did
-    not happen, which is never read as none) -- leaves applicationPermissions AND
-    delegatedPermissionGrants unread, since the grants are named through that list, and the grants are
-    then not read at all. Read 2 failing, the same way with its owners, leaves servicePrincipalOwners
-    unread, read 3 applicationOwners, and read 4, or a user lookup that answers Read false for any
-    user (or gives no answer for one), delegatedPermissionGrants. A list answer that carries no value
-    collection is a failed read too. One part failing never stops another, and a part that was read
-    and holds nothing is an empty array. An object listed twice (by id, letter case ignored) counts
-    once.
+    an object listed without an id, without an appRoles collection (the roles it declares are then
+    not known) or without an appRoleAssignments collection (the expansion did not happen), neither of
+    which is ever read as none -- leaves applicationPermissions AND delegatedPermissionGrants unread,
+    since the grants are named through that list, and the grants are then not read at all. Read 2
+    failing, the same way with its owners, leaves servicePrincipalOwners unread, read 3
+    applicationOwners, and read 4, or a user lookup that answers Read false for any user (or gives no
+    answer for one), delegatedPermissionGrants. A list answer that carries no value collection is a
+    failed read too. One part failing never stops another, except that the grants are not read when
+    read 1 was not; a part that was read and holds nothing is an empty array. An object listed twice
+    (by id, letter case ignored) counts once.
 
     The rows, each an ordered object with its keys in this order; every id is written lower-cased,
     every blank text is written $null, and nothing is invented:
@@ -57,14 +58,15 @@ function Get-OERServicePrincipalAccess {
     assignment's resourceDisplayName, else $null), appRoleId and appRoleValue (the value of the
     resource's app role whose id equals appRoleId, letter case ignored; $null when the resource does
     not declare it, as for the default access role 00000000-0000-0000-0000-000000000000 or a role
-    since removed). delegatedPermissionGrants -- clientId, clientDisplayName, resourceId,
-    resourceDisplayName (both names from read 1, $null for an id it did not list), consentType,
-    principalId, principalDisplayName ($null for AllPrincipals; for Principal the lookup's Name when
-    the directory returned the user, $null when it did not) and scope (the grant's space-separated
-    scope string, trimmed). applicationOwners -- applicationId, appId, applicationDisplayName,
-    ownerId, ownerType, ownerDisplayName, ownerUserPrincipalName. servicePrincipalOwners --
-    servicePrincipalId, servicePrincipalDisplayName, ownerId, ownerType, ownerDisplayName,
-    ownerUserPrincipalName. ownerType is ConvertTo-OERPrincipalType of the owner's @odata.type, else
+    since removed, and when read 1 did not list the resource). delegatedPermissionGrants -- clientId,
+    clientDisplayName, resourceId, resourceDisplayName (both names from read 1, $null for an id it did
+    not list), consentType, principalId, principalDisplayName and principalUserPrincipalName (for
+    Principal the user's displayName and userPrincipalName as the lookup returned them, each $null
+    when blank; both $null for AllPrincipals and when the directory did not return the user) and
+    scope (the grant's space-separated scope string, trimmed). applicationOwners -- applicationId,
+    appId, applicationDisplayName, ownerId, ownerType, ownerDisplayName, ownerUserPrincipalName.
+    servicePrincipalOwners -- servicePrincipalId, servicePrincipalDisplayName, ownerId, ownerType,
+    ownerDisplayName, ownerUserPrincipalName. ownerType is ConvertTo-OERPrincipalType of the owner's @odata.type, else
     that type without its '#microsoft.graph.' prefix, else $null. Each part is sorted, ordinally and
     without regard to letter case, by its first display name, then its second, then its ids, so two
     exports of an unchanged tenant write the same file.
@@ -198,14 +200,21 @@ function Get-OERServicePrincipalAccess {
             $Target = $PermissionListUri
             $ServicePrincipalId = Get-ListedId -Item $Listing -Kind 'service principal'
             if ($ServicePrincipals.ContainsKey($ServicePrincipalId)) { continue }
-            $Step = "the app role assignments of the service principal '$ServicePrincipalId'"
             $Target = $ServicePrincipalId
+            # The app roles the object declares as a resource give the role values below. An object listed
+            # without its appRoles collection declares roles nobody knows, so it is a failed read, never one
+            # that declares none: every appRoleValue on that resource would otherwise be written null.
+            $Step = "the app roles of the service principal '$ServicePrincipalId'"
+            if (-not (Test-HasKey -Item $Listing -Key 'appRoles') -or $null -eq $Listing.appRoles) {
+                throw 'Microsoft Graph returned it without its appRoles collection, so the roles it declares are not known.'
+            }
             $RoleValue = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($AppRole in @(@($Listing.appRoles) | Where-Object { $null -ne $_ })) {
                 $AppRoleId = Get-IdOrNull -Value $AppRole.id
                 if ($AppRoleId -and -not $RoleValue.ContainsKey($AppRoleId)) { $RoleValue[$AppRoleId] = Get-TextOrNull -Value $AppRole.value }
             }
             $ServicePrincipals[$ServicePrincipalId] = [PSCustomObject]@{ DisplayName = (Get-TextOrNull -Value $Listing.displayName); RoleValue = $RoleValue }
+            $Step = "the app role assignments of the service principal '$ServicePrincipalId'"
             foreach ($Assignment in (Get-ExpandedEntry -Item $Listing -Key 'appRoleAssignments' -ItemId $ServicePrincipalId -ReReadFormat $PermissionReReadFormat)) {
                 $Held.Add([PSCustomObject]@{ ClientId = $ServicePrincipalId; Assignment = $Assignment })
             }
@@ -349,9 +358,13 @@ function Get-OERServicePrincipalAccess {
                     $IsPrincipal = [string]::Equals($ConsentType, 'Principal', [System.StringComparison]::OrdinalIgnoreCase)
                     $PrincipalId = $null
                     if (-not $IsAllPrincipals) { $PrincipalId = Get-IdOrNull -Value $Grant.principalId }
+                    # The user's two names, apart: its display name and its user principal name, as the
+                    # lookup returned them; both $null for AllPrincipals and for a user it did not return.
                     $PrincipalDisplayName = $null
+                    $PrincipalUserPrincipalName = $null
                     if ($IsPrincipal -and $PrincipalId -and $Answers.ContainsKey($PrincipalId) -and $Answers[$PrincipalId].Found -eq $true) {
-                        $PrincipalDisplayName = Get-TextOrNull -Value $Answers[$PrincipalId].Name
+                        $PrincipalDisplayName = Get-TextOrNull -Value $Answers[$PrincipalId].DisplayName
+                        $PrincipalUserPrincipalName = Get-TextOrNull -Value $Answers[$PrincipalId].UserPrincipalName
                     }
                     $ClientDisplayName = $null
                     if ($ClientId -and $ServicePrincipals.ContainsKey($ClientId)) { $ClientDisplayName = $ServicePrincipals[$ClientId].DisplayName }
@@ -359,14 +372,15 @@ function Get-OERServicePrincipalAccess {
                     if ($ResourceId -and $ServicePrincipals.ContainsKey($ResourceId)) { $ResourceDisplayName = $ServicePrincipals[$ResourceId].DisplayName }
                     $GrantScope = Get-TextOrNull -Value (([string]$Grant.scope).Trim())
                     [PSCustomObject][ordered]@{
-                        clientId             = $ClientId
-                        clientDisplayName    = $ClientDisplayName
-                        resourceId           = $ResourceId
-                        resourceDisplayName  = $ResourceDisplayName
-                        consentType          = $ConsentType
-                        principalId          = $PrincipalId
-                        principalDisplayName = $PrincipalDisplayName
-                        scope                = $GrantScope
+                        clientId                   = $ClientId
+                        clientDisplayName          = $ClientDisplayName
+                        resourceId                 = $ResourceId
+                        resourceDisplayName        = $ResourceDisplayName
+                        consentType                = $ConsentType
+                        principalId                = $PrincipalId
+                        principalDisplayName       = $PrincipalDisplayName
+                        principalUserPrincipalName = $PrincipalUserPrincipalName
+                        scope                      = $GrantScope
                     }
                 }
                 $DelegatedPermissionGrants = Get-SortedRow -Row @($Rows) -Key @('clientDisplayName', 'resourceDisplayName', 'clientId', 'resourceId', 'principalId')

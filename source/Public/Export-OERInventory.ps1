@@ -352,32 +352,35 @@ function Export-OERInventory {
     client side (servicePrincipalId, servicePrincipalDisplayName, resourceId, resourceDisplayName,
     appRoleId and appRoleValue, which is null for a role the resource does not declare, such as the
     default access role); delegatedPermissionGrants, one row per delegated permission grant (clientId,
-    clientDisplayName, resourceId, resourceDisplayName, consentType, principalId and
-    principalDisplayName, both null for AllPrincipals, and scope); applicationOwners, one row per
-    owner of an app registration (applicationId, appId, applicationDisplayName, ownerId, ownerType,
-    ownerDisplayName and ownerUserPrincipalName); and servicePrincipalOwners, one row per owner of a
-    service principal (servicePrincipalId, servicePrincipalDisplayName and the same four owner
-    fields). Every blank value is null, and each part is sorted, so two exports of an unchanged tenant
-    write the same file. The file is read-only context and never applied: inventory.json and
-    schema.json do not carry it, no apply cmdlet reads it back, and Invoke-OERStructure never grants,
-    revokes or changes any of it. The read costs one request per page of each of the three lists (the
-    service principals with their app role assignments, the service principals with their owners, and
-    the app registrations with their owners) and of the grants, one directoryObjects/getByIds per
-    1,000 users named in grants, and one extra paged read per object with 20 or more expanded
-    entries, since Microsoft Graph documents at most 20 for an expanded directory relationship;
-    measured 27 requests for a tenant of 1,129 service principals and 67 app registrations. It is
-    read after the Azure walk and before the bundle is written, under -WhatIf too, where Files lists
-    the file and nothing is written. A part is read whole or not at all: a part that could not be
-    read -- a refused or failed request, an object Microsoft Graph returned without its expanded
-    collection, or, for the grants, a user lookup that failed or the service principal list they are
-    named through -- is written as null, never [], and is named in IncompleteReads as
+    clientDisplayName, resourceId, resourceDisplayName, consentType, principalId,
+    principalDisplayName and principalUserPrincipalName -- the user's display name and user principal
+    name, all three null for AllPrincipals and the two names null for a user the directory did not
+    return -- and scope); applicationOwners, one row per owner of an app registration (applicationId,
+    appId, applicationDisplayName, ownerId, ownerType, ownerDisplayName and ownerUserPrincipalName);
+    and servicePrincipalOwners, one row per owner of a service principal (servicePrincipalId,
+    servicePrincipalDisplayName and the same four owner fields). Every blank value is null, and each
+    part is sorted, so two exports of an unchanged tenant write the same file. The file is read-only
+    context and never applied: inventory.json and schema.json do not carry it, no apply cmdlet reads
+    it back, and Invoke-OERStructure never grants, revokes or changes any of it. The read costs one
+    request per page of each of the three lists (the service principals with their app role
+    assignments, the service principals with their owners, and the app registrations with their
+    owners) and of the grants, one directoryObjects/getByIds per 1,000 users named in grants, and one
+    extra paged read per object with 20 or more expanded entries, since Microsoft Graph documents at
+    most 20 for an expanded directory relationship; measured 27 requests for a tenant of 1,129
+    service principals and 67 app registrations. It is read after the Azure walk and before the
+    bundle is written, under -WhatIf too, where Files lists the file and nothing is written. A part
+    is read whole or not at all: a part that could not be read -- a refused or failed request, an
+    object Microsoft Graph returned without its expanded collection, a service principal listed
+    without its app roles, or, for the grants, a user lookup that failed or the service principal
+    list they are named through -- is written as null, never [], and is named in IncompleteReads as
     'servicePrincipalAccess/<part>' (see below), in a clause of the InventoryPartial message with its
     causes, and in README.md under "What this export could not read". A part that could not be read
-    never stops another, and the export writes no warning for it. README.md gives each part's row
-    count in a section "Service principal access (read-only)", directly after "Subscriptions
-    delegated from another tenant (not read)". Directory.Read.All, which the export already requires,
-    covers every read. Without the switch none of it is read or written, and README.md and
-    rbac-architect-prompt.md are exactly what they were.
+    never stops another, except that the grants are not read when the service principal list they
+    are named through was not; the export writes no warning for any of it. README.md gives each
+    part's row count in a section "Service principal access (read-only)", directly after
+    "Subscriptions delegated from another tenant (not read)". Directory.Read.All, which the export
+    already requires, covers every read. Without the switch none of it is read or written, and
+    README.md and rbac-architect-prompt.md are exactly what they were.
 
     Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
     Groups read when it left anything unread, then one entry per partial report from

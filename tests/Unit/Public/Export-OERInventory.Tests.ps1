@@ -7264,8 +7264,8 @@ Describe 'Export-OERInventory (service principal access, Sprint 11 step 8)' {
                     [PSCustomObject][ordered]@{ servicePrincipalId = '11111111-1111-1111-1111-111111111111'; servicePrincipalDisplayName = 'Client App'; resourceId = '22222222-2222-2222-2222-222222222222'; resourceDisplayName = 'Graph Resource'; appRoleId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; appRoleValue = 'User.Read.All' }
                 )
                 DelegatedPermissionGrants = @(
-                    [PSCustomObject][ordered]@{ clientId = '11111111-1111-1111-1111-111111111111'; clientDisplayName = 'Client App'; resourceId = '22222222-2222-2222-2222-222222222222'; resourceDisplayName = 'Graph Resource'; consentType = 'AllPrincipals'; principalId = $null; principalDisplayName = $null; scope = 'User.Read' }
-                    [PSCustomObject][ordered]@{ clientId = '11111111-1111-1111-1111-111111111111'; clientDisplayName = 'Client App'; resourceId = '22222222-2222-2222-2222-222222222222'; resourceDisplayName = 'Graph Resource'; consentType = 'Principal'; principalId = '33333333-3333-3333-3333-333333333333'; principalDisplayName = 'person1@example.com'; scope = 'Mail.Read' }
+                    [PSCustomObject][ordered]@{ clientId = '11111111-1111-1111-1111-111111111111'; clientDisplayName = 'Client App'; resourceId = '22222222-2222-2222-2222-222222222222'; resourceDisplayName = 'Graph Resource'; consentType = 'AllPrincipals'; principalId = $null; principalDisplayName = $null; principalUserPrincipalName = $null; scope = 'User.Read' }
+                    [PSCustomObject][ordered]@{ clientId = '11111111-1111-1111-1111-111111111111'; clientDisplayName = 'Client App'; resourceId = '22222222-2222-2222-2222-222222222222'; resourceDisplayName = 'Graph Resource'; consentType = 'Principal'; principalId = '33333333-3333-3333-3333-333333333333'; principalDisplayName = 'Person One'; principalUserPrincipalName = 'person1@example.com'; scope = 'Mail.Read' }
                 )
                 ApplicationOwners         = @(
                     [PSCustomObject][ordered]@{ applicationId = '55555555-5555-5555-5555-555555555555'; appId = '12121212-1212-1212-1212-121212121212'; applicationDisplayName = 'Client App'; ownerId = '66666666-6666-6666-6666-666666666666'; ownerType = 'User'; ownerDisplayName = 'Person Two'; ownerUserPrincipalName = 'person2@example.com' }
@@ -7357,6 +7357,10 @@ Describe 'Export-OERInventory (service principal access, Sprint 11 step 8)' {
         $Description | Should -Match ([regex]::Escape('The file is read-only context and never applied: inventory.json and schema.json do not carry it, no apply cmdlet reads it back, and Invoke-OERStructure never grants, revokes or changes any of it.'))
         $Description | Should -Match ([regex]::Escape('measured 27 requests for a tenant of 1,129 service principals and 67 app registrations.'))
         $Description | Should -Match ([regex]::Escape("is written as null, never [], and is named in IncompleteReads as 'servicePrincipalAccess/<part>' (see below), in a clause of the InventoryPartial message with its causes, and in README.md under `"What this export could not read`"."))
+        $Description | Should -Match ([regex]::Escape('principalId, principalDisplayName and principalUserPrincipalName -- the user''s display name and user principal name, all three null for AllPrincipals and the two names null for a user the directory did not return -- and scope)'))
+        # The one dependency between the parts is stated with the rule it qualifies.
+        $Description | Should -Match ([regex]::Escape('A part that could not be read never stops another, except that the grants are not read when the service principal list they are named through was not; the export writes no warning for any of it.'))
+        $Description | Should -Match ([regex]::Escape('a service principal listed without its app roles'))
         $Description | Should -Match ([regex]::Escape('Directory.Read.All, which the export already requires, covers every read.'))
         $Description | Should -Match ([regex]::Escape('Without the switch none of it is read or written, and README.md and rbac-architect-prompt.md are exactly what they were.'))
         $Description | Should -Match ([regex]::Escape('and, last, the service principal access parts that could not be read, whose clause names each part and gives the causes.'))
@@ -7411,7 +7415,9 @@ Describe 'Export-OERInventory (service principal access, Sprint 11 step 8)' {
         ($Data.applicationPermissions[0].PSObject.Properties.Name -join ',') | Should -BeExactly 'servicePrincipalId,servicePrincipalDisplayName,resourceId,resourceDisplayName,appRoleId,appRoleValue'
         $Data.applicationPermissions[0].appRoleValue | Should -BeExactly 'User.Read.All'
         @($Data.delegatedPermissionGrants).Count | Should -Be 2
-        $Data.delegatedPermissionGrants[1].principalDisplayName | Should -BeExactly 'person1@example.com'
+        ($Data.delegatedPermissionGrants[1].PSObject.Properties.Name -join ',') | Should -BeExactly 'clientId,clientDisplayName,resourceId,resourceDisplayName,consentType,principalId,principalDisplayName,principalUserPrincipalName,scope'
+        $Data.delegatedPermissionGrants[1].principalDisplayName | Should -BeExactly 'Person One'
+        $Data.delegatedPermissionGrants[1].principalUserPrincipalName | Should -BeExactly 'person1@example.com'
         $Data.applicationOwners[0].ownerUserPrincipalName | Should -BeExactly 'person2@example.com'
         $Data.servicePrincipalOwners[0].ownerType | Should -BeExactly 'ServicePrincipal'
         # The README gets the reader's object and the prompt the switch; both name the file.
@@ -7600,7 +7606,10 @@ Describe 'Export-OERInventory (service principal access, Sprint 11 step 8)' {
             @($Data.applicationPermissions).Count | Should -Be 1
             $Data.applicationPermissions[0].appRoleValue | Should -BeExactly 'User.Read.All'
             @($Data.delegatedPermissionGrants).Count | Should -Be 1
-            $Data.delegatedPermissionGrants[0].principalDisplayName | Should -BeExactly 'person1@example.com'
+            # The user by both of its names, each in its own key, through the real lookup (Ruling R-8).
+            ($Data.delegatedPermissionGrants[0].PSObject.Properties.Name -join ',') | Should -BeExactly 'clientId,clientDisplayName,resourceId,resourceDisplayName,consentType,principalId,principalDisplayName,principalUserPrincipalName,scope'
+            $Data.delegatedPermissionGrants[0].principalDisplayName | Should -BeExactly 'Person One'
+            $Data.delegatedPermissionGrants[0].principalUserPrincipalName | Should -BeExactly 'person1@example.com'
             @($Data.servicePrincipalOwners).Count | Should -Be 1
             $Data.servicePrincipalOwners[0].ownerType | Should -BeExactly 'ServicePrincipal'
             @($Run.Result.IncompleteReads) | Should -Be @('servicePrincipalAccess/applicationOwners')

@@ -120,14 +120,15 @@ Describe 'Get-OERServicePrincipalAccess' {
             $Reply
         }
         # The user lookup: an id in this table is answered with its entry; any other id is one the
-        # directory did not return.
+        # directory did not return. Name follows the helper's own rule (the UPN for a user), so a row that
+        # took Name for either of its two names shows.
         $script:Lookup = @{
-            $script:UserOne = [PSCustomObject]@{ Id = $script:UserOne; Read = $true; Found = $true; Name = 'person1@example.com'; ObjectType = 'user'; Cause = $null }
+            $script:UserOne = [PSCustomObject]@{ Id = $script:UserOne; Read = $true; Found = $true; Name = 'person1@example.com'; ObjectType = 'user'; DisplayName = 'Person One'; UserPrincipalName = 'person1@example.com'; Cause = $null }
         }
         Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
             foreach ($One in @($Id)) {
                 if ($script:Lookup.ContainsKey($One)) { $script:Lookup[$One] }
-                else { [PSCustomObject]@{ Id = $One; Read = $true; Found = $false; Name = $null; ObjectType = $null; Cause = $null } }
+                else { [PSCustomObject]@{ Id = $One; Read = $true; Found = $false; Name = $null; ObjectType = $null; DisplayName = $null; UserPrincipalName = $null; Cause = $null } }
             }
         }
     }
@@ -167,7 +168,7 @@ Describe 'Get-OERServicePrincipalAccess' {
         It 'writes the delegated permission grants: AllPrincipals without a principal, a Principal found and one the directory did not return' {
             $Rows = @((Invoke-Spa).DelegatedPermissionGrants)
             $Rows.Count | Should -Be 3
-            ($Rows[0].PSObject.Properties.Name -join ',') | Should -BeExactly 'clientId,clientDisplayName,resourceId,resourceDisplayName,consentType,principalId,principalDisplayName,scope'
+            ($Rows[0].PSObject.Properties.Name -join ',') | Should -BeExactly 'clientId,clientDisplayName,resourceId,resourceDisplayName,consentType,principalId,principalDisplayName,principalUserPrincipalName,scope'
             # Same client and resource names: sorted on the ids, a null principal id first.
             $Rows[0].clientId | Should -BeExactly $script:ClientId
             $Rows[0].clientDisplayName | Should -BeExactly 'Client App'
@@ -176,19 +177,35 @@ Describe 'Get-OERServicePrincipalAccess' {
             $Rows[0].consentType | Should -BeExactly 'AllPrincipals'
             $null -eq $Rows[0].principalId | Should -BeTrue
             $null -eq $Rows[0].principalDisplayName | Should -BeTrue
+            $null -eq $Rows[0].principalUserPrincipalName | Should -BeTrue
             # The scope string is trimmed, its inner space kept.
             $Rows[0].scope | Should -BeExactly 'User.Read openid'
             $Rows[1].consentType | Should -BeExactly 'Principal'
             $Rows[1].principalId | Should -BeExactly $script:UserOne
-            $Rows[1].principalDisplayName | Should -BeExactly 'person1@example.com'
+            # The user's display name and user principal name, each in its own key (Ruling R-8).
+            $Rows[1].principalDisplayName | Should -BeExactly 'Person One'
+            $Rows[1].principalUserPrincipalName | Should -BeExactly 'person1@example.com'
             $Rows[1].scope | Should -BeExactly 'Mail.Read'
             $Rows[2].principalId | Should -BeExactly $script:UserGone
             $null -eq $Rows[2].principalDisplayName | Should -BeTrue
+            $null -eq $Rows[2].principalUserPrincipalName | Should -BeTrue
             $Rows[2].scope | Should -BeExactly 'Files.Read'
             # ONE lookup, for the two users the Principal grants name, and none for AllPrincipals.
             Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly -ParameterFilter {
                 $Detailed -and @($Id).Count -eq 2 -and $Id -contains '33333333-3333-3333-3333-333333333333' -and $Id -contains '88888888-8888-8888-8888-888888888888'
             }
+        }
+
+        It 'writes each of the two names of a found user on its own, a blank one as null (<Case>)' -ForEach @(
+            @{ Case = 'a blank user principal name'; DisplayName = 'Person One'; UserPrincipalName = '  '; ExpectDisplay = 'Person One'; ExpectUpn = $null }
+            @{ Case = 'a blank display name'; DisplayName = ''; UserPrincipalName = 'person1@example.com'; ExpectDisplay = $null; ExpectUpn = 'person1@example.com' }
+        ) {
+            # Name is set to the other value on purpose: the row reads the two names, never Name.
+            $script:Lookup[$script:UserOne] = [PSCustomObject]@{ Id = $script:UserOne; Read = $true; Found = $true; Name = 'name-rule-choice'; ObjectType = 'user'; DisplayName = $DisplayName; UserPrincipalName = $UserPrincipalName; Cause = $null }
+            $Row = @(@((Invoke-Spa).DelegatedPermissionGrants) | Where-Object { $_.principalId -eq $script:UserOne })[0]
+            $Row | Should -Not -BeNullOrEmpty
+            if ($null -eq $ExpectDisplay) { $null -eq $Row.principalDisplayName | Should -BeTrue } else { $Row.principalDisplayName | Should -BeExactly $ExpectDisplay }
+            if ($null -eq $ExpectUpn) { $null -eq $Row.principalUserPrincipalName | Should -BeTrue } else { $Row.principalUserPrincipalName | Should -BeExactly $ExpectUpn }
         }
 
         It 'writes the owners of the app registrations and of the service principals, of type user and servicePrincipal' {
@@ -344,6 +361,14 @@ Describe 'Get-OERServicePrincipalAccess' {
             Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly
             # No POST, PATCH or DELETE from this function: the getByIds POST is Resolve-OERPrincipalName's.
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $PesterBoundParameters.ContainsKey('Method') -and $Method -ne 'GET' }
+        }
+
+        It 'states in its help the one dependency between the parts and the grant row''s two user names' {
+            $Help = InModuleScope $script:moduleName { Get-Help Get-OERServicePrincipalAccess -Full }
+            $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+            $Description | Should -Match ([regex]::Escape('One part failing never stops another, except that the grants are not read when read 1 was not;'))
+            $Description | Should -Match ([regex]::Escape('principalDisplayName and principalUserPrincipalName (for Principal the user''s displayName and userPrincipalName as the lookup returned them'))
+            $Description | Should -Match ([regex]::Escape('without an appRoles collection (the roles it declares are then not known)'))
         }
 
         It 'never names a -Method on a Graph request in its source, so the requiredscope gate reads every literal as a read' {
@@ -539,6 +564,44 @@ Describe 'Get-OERServicePrincipalAccess' {
             $Result.Causes[0].Target | Should -BeExactly $Id
         }
 
+        It 'leaves the application permissions AND the grants unread when a service principal is listed without its app roles (<Case>)' -ForEach @(
+            @{ Case = 'no appRoles key at all'; Mode = 'missing' }
+            @{ Case = 'the key with no collection (null)'; Mode = 'null' }
+        ) {
+            # The resource of the client's roles: without its appRoles the roles it declares are not known,
+            # so every appRoleValue on it would be written null as if it declared none. An empty collection
+            # (the client's own appRoles = @()) is an answer and is read as declaring none.
+            if ($Mode -eq 'missing') { $script:Replies[$script:PermissionListUri].value[1].Remove('appRoles') }
+            else { $script:Replies[$script:PermissionListUri].value[1].appRoles = $null }
+            $Result = Invoke-Spa
+            $null -eq $Result.ApplicationPermissions | Should -BeTrue
+            $null -eq $Result.DelegatedPermissionGrants | Should -BeTrue
+            @($Result.Unread) | Should -Be @('servicePrincipalAccess/applicationPermissions', 'servicePrincipalAccess/delegatedPermissionGrants')
+            @($Result.Causes).Count | Should -Be 1
+            $Result.Causes[0].Cause | Should -BeExactly "Could not read the app roles of the service principal '$($script:ResourceId)': Microsoft Graph returned it without its appRoles collection, so the roles it declares are not known."
+            $Result.Causes[0].Target | Should -BeExactly $script:ResourceId
+            # The grants are named through that list, so they are not read at all, and nobody is looked up.
+            $script:ExpectedUri = $script:GrantListUri
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -ceq $script:ExpectedUri }
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 0
+            # Reach proof: the list was read, and the two owner parts are read.
+            $script:ExpectedUri = $script:PermissionListUri
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq $script:ExpectedUri }
+            @($Result.ServicePrincipalOwners).Count | Should -Be 2
+            @($Result.ApplicationOwners).Count | Should -Be 2
+        }
+
+        It 'leaves the application permissions unread the same way when the transport returns an object, not a hashtable, without appRoles' {
+            $script:Replies[$script:PermissionListUri] = [PSCustomObject]@{ value = @(
+                    [PSCustomObject]@{ id = $script:ClientId; appId = $script:ClientAppId; displayName = 'Client App'; appRoleAssignments = @() }
+                )
+            }
+            $Result = Invoke-Spa
+            $null -eq $Result.ApplicationPermissions | Should -BeTrue
+            @($Result.Unread) | Should -Be @('servicePrincipalAccess/applicationPermissions', 'servicePrincipalAccess/delegatedPermissionGrants')
+            $Result.Causes[0].Target | Should -BeExactly $script:ClientId
+        }
+
         It 'leaves a part unread when an object carries the key with no collection (null)' {
             $script:Replies[$script:AppOwnerListUri].value[0].owners = $null
             $Result = Invoke-Spa
@@ -574,7 +637,7 @@ Describe 'Get-OERServicePrincipalAccess' {
         }
 
         It 'leaves the grants unread when the lookup answers Read false for a user, naming each such user' {
-            $script:Lookup[$script:UserGone] = [PSCustomObject]@{ Id = $script:UserGone; Read = $false; Found = $false; Name = $null; ObjectType = $null; Cause = 'Too many requests (429).' }
+            $script:Lookup[$script:UserGone] = [PSCustomObject]@{ Id = $script:UserGone; Read = $false; Found = $false; Name = $null; ObjectType = $null; DisplayName = $null; UserPrincipalName = $null; Cause = 'Too many requests (429).' }
             $Result = Invoke-Spa
             $null -eq $Result.DelegatedPermissionGrants | Should -BeTrue
             @($Result.Unread) | Should -Be @('servicePrincipalAccess/delegatedPermissionGrants')
@@ -588,7 +651,7 @@ Describe 'Get-OERServicePrincipalAccess' {
 
         It 'leaves the grants unread when the lookup gives no answer for a user' {
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
-                [PSCustomObject]@{ Id = '33333333-3333-3333-3333-333333333333'; Read = $true; Found = $true; Name = 'person1@example.com'; ObjectType = 'user'; Cause = $null }
+                [PSCustomObject]@{ Id = '33333333-3333-3333-3333-333333333333'; Read = $true; Found = $true; Name = 'person1@example.com'; ObjectType = 'user'; DisplayName = 'Person One'; UserPrincipalName = 'person1@example.com'; Cause = $null }
             }
             $Result = Invoke-Spa
             $null -eq $Result.DelegatedPermissionGrants | Should -BeTrue

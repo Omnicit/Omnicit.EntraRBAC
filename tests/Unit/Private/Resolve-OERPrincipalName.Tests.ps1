@@ -160,7 +160,7 @@ Describe 'Resolve-OERPrincipalName' {
                 }
                 $Result = @(Resolve-OERPrincipalName -Id @('u-1', 'g-1', 'gone-1', 'u-1', ' ') -Detailed)
                 $Result.Count | Should -Be 3
-                @($Result[0].PSObject.Properties.Name) | Should -Be @('Id', 'Read', 'Found', 'Name', 'ObjectType', 'Cause')
+                @($Result[0].PSObject.Properties.Name) | Should -Be @('Id', 'Read', 'Found', 'Name', 'ObjectType', 'DisplayName', 'UserPrincipalName', 'Cause')
                 @($Result | ForEach-Object { "$($_.Id)|$($_.Read)|$($_.Found)|$($_.Name)|$($_.ObjectType)|$($_.Cause)" }) | Should -Be @(
                     'u-1|True|True|anna@contoso.com|user|'
                     'g-1|True|True|Sales Team|group|'
@@ -183,6 +183,93 @@ Describe 'Resolve-OERPrincipalName' {
                     'dev-1|True|Kiosk 7|device'
                     'odd-1|True|odd-1|servicePrincipal'
                 )
+            }
+        }
+
+        Context 'DisplayName and UserPrincipalName (Sprint 11 step 8, Ruling R-8)' {
+            # A caller that names a user by both its display name and its user principal name reads them
+            # from the answer: the object's own two values, never the Name rule's choice between them.
+            It 'answers a found user with its display name and its user principal name, apart from the Name rule' {
+                InModuleScope $script:moduleName {
+                    Mock Invoke-OERGraphRequest {
+                        @{ value = @(@{ id = 'u-1'; '@odata.type' = '#microsoft.graph.user'; userPrincipalName = 'anna@contoso.com'; displayName = 'Anna Berg' }) }
+                    }
+                    $Result = @(Resolve-OERPrincipalName -Id @('u-1') -Detailed)
+                    $Result[0].Name | Should -BeExactly 'anna@contoso.com'
+                    $Result[0].DisplayName | Should -BeExactly 'Anna Berg'
+                    $Result[0].UserPrincipalName | Should -BeExactly 'anna@contoso.com'
+                }
+            }
+
+            It 'answers a found group with its display name and no user principal name' {
+                InModuleScope $script:moduleName {
+                    Mock Invoke-OERGraphRequest {
+                        @{ value = @(@{ id = 'g-1'; '@odata.type' = '#microsoft.graph.group'; displayName = 'Sales Team' }) }
+                    }
+                    $Result = @(Resolve-OERPrincipalName -Id @('g-1') -Detailed)
+                    $Result[0].Found | Should -BeTrue
+                    $Result[0].DisplayName | Should -BeExactly 'Sales Team'
+                    $null -eq $Result[0].UserPrincipalName | Should -BeTrue
+                }
+            }
+
+            It 'answers a blank display name or user principal name as none' {
+                InModuleScope $script:moduleName {
+                    Mock Invoke-OERGraphRequest {
+                        @{ value = @(
+                                @{ id = 'u-1'; '@odata.type' = '#microsoft.graph.user'; userPrincipalName = '  '; displayName = 'Anna Berg' }
+                                @{ id = 'u-2'; '@odata.type' = '#microsoft.graph.user'; userPrincipalName = 'bo@contoso.com'; displayName = '' }
+                            ) }
+                    }
+                    $Result = @(Resolve-OERPrincipalName -Id @('u-1', 'u-2') -Detailed)
+                    $Result[0].DisplayName | Should -BeExactly 'Anna Berg'
+                    $null -eq $Result[0].UserPrincipalName | Should -BeTrue
+                    $null -eq $Result[1].DisplayName | Should -BeTrue
+                    $Result[1].UserPrincipalName | Should -BeExactly 'bo@contoso.com'
+                }
+            }
+
+            It 'answers both as null for an id a successful batch did not return' {
+                InModuleScope $script:moduleName {
+                    Mock Invoke-OERGraphRequest { @{ value = @() } }
+                    $Result = @(Resolve-OERPrincipalName -Id @('gone-1') -Detailed)
+                    "$($Result[0].Read)|$($Result[0].Found)" | Should -Be 'True|False'
+                    @($Result[0].PSObject.Properties.Name) | Should -Contain 'DisplayName'
+                    @($Result[0].PSObject.Properties.Name) | Should -Contain 'UserPrincipalName'
+                    $null -eq $Result[0].DisplayName | Should -BeTrue
+                    $null -eq $Result[0].UserPrincipalName | Should -BeTrue
+                }
+            }
+
+            It 'answers both as null for every id of a failed batch and of a batch whose answer carries no value (<Case>)' -ForEach @(
+                @{ Case = 'a failed batch'; Mode = 'throw' }
+                @{ Case = 'an answer with no value'; Mode = 'novalue' }
+            ) {
+                InModuleScope $script:moduleName -Parameters @{ Mode = $Mode } {
+                    param($Mode)
+                    if ($Mode -eq 'throw') { Mock Invoke-OERGraphRequest { throw 'graph 500' } }
+                    else { Mock Invoke-OERGraphRequest { @{ '@odata.context' = 'https://graph.microsoft.com/v1.0/$metadata#directoryObjects' } } }
+                    Mock Remove-OERErrorRecord { }
+                    $Result = @(Resolve-OERPrincipalName -Id @('u-1') -Detailed)
+                    $Result[0].Read | Should -BeFalse
+                    @($Result[0].PSObject.Properties.Name) | Should -Be @('Id', 'Read', 'Found', 'Name', 'ObjectType', 'DisplayName', 'UserPrincipalName', 'Cause')
+                    $null -eq $Result[0].DisplayName | Should -BeTrue
+                    $null -eq $Result[0].UserPrincipalName | Should -BeTrue
+                }
+            }
+
+            It 'leaves the default map and -PreferDisplayName exactly as they were' {
+                InModuleScope $script:moduleName {
+                    Mock Invoke-OERGraphRequest {
+                        @{ value = @(@{ id = 'u-1'; '@odata.type' = '#microsoft.graph.user'; userPrincipalName = 'anna@contoso.com'; displayName = 'Anna Berg' }) }
+                    }
+                    $Map = Resolve-OERPrincipalName -Id @('u-1')
+                    $Map | Should -BeOfType ([hashtable])
+                    $Map['u-1'] | Should -BeExactly 'anna@contoso.com'
+                    $Preferred = Resolve-OERPrincipalName -Id @('u-1') -PreferDisplayName
+                    $Preferred | Should -BeOfType ([hashtable])
+                    $Preferred['u-1'] | Should -BeExactly 'Anna Berg'
+                }
             }
         }
 
