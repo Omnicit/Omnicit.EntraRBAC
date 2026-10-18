@@ -669,6 +669,21 @@ Describe 'Test-OERStructure help documents -NamingStandard (Sprint 11 step 7)' {
         }
     }
 
+    It 'says which groups an exported inventory.json holds, and that a template with no name is warned about' {
+        $script:NsParameterHelp | Should -Match ([regex]::Escape('It covers the groups inventory.json holds, by default the RBAC-relevant security groups'))
+        $script:NsParameterHelp | Should -Match ([regex]::Escape('Export-OERInventory -AllGroupsDetailed keeps every security group in full detail'))
+        $script:NsParameterHelp | Should -Match ([regex]::Escape('a Microsoft 365 group is in groupsRoster.json only'))
+        $script:NsParameterHelp | Should -Match ([regex]::Escape('only when the export was made with Export-OERInventory -IncludeSyncedGroups'))
+        $script:NsParameterHelp | Should -Match ([regex]::Escape("Group at groups[i].template was not checked against the naming standard: its name could not be computed from 'template' and 'tokens'."))
+        $script:NsParameterHelp | Should -Match ([regex]::Escape('includeSyncedGroups is true, and its Warning says so'))
+        $script:NsParameterHelp | Should -Not -Match 'its row says so'
+    }
+
+    It 'words the example as one Warning for each rule a name breaks' {
+        $script:NsExamples | Should -Match ([regex]::Escape('adds one Warning for each rule a name breaks'))
+        $script:NsExamples | Should -Not -Match 'one Warning for each name'
+    }
+
     It 'carries a description paragraph and an example that runs it on an exported inventory' {
         $script:NsDescription | Should -Match 'naming standard'
         $script:NsDescription | Should -Match ([regex]::Escape('-NamingStandard'))

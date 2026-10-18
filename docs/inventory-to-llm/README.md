@@ -406,8 +406,8 @@ wrote, be checked instead of read by eye:
 Test-OERStructure -Path .\proposal.json -NamingStandard .\naming-standard.json
 ```
 
-Each name that breaks a rule is one `Warning` per rule, with `Section`, `Item`, `Path` and a message
-that says which rule the name breaks and what was expected, for example:
+A name gets one `Warning` for each rule it breaks, with `Section`, `Item`, `Path` and a message that
+says which rule the name breaks and what was expected, for example:
 
 ```text
 Name 'SG-Legal-Readers' at groups[2].displayName does not follow the naming standard (rule 'values', segment 2 'area'): 'Legal' is not one of the allowed values 'Finance', 'Sales', 'IT'.
@@ -424,17 +424,26 @@ tells you which names to change, and the apply engine applies the document as wr
   check. The six rules a warning names are `maxLength`, `separator`, `segmentCount`, `values`,
   `pattern` and `case`.
 - **Patterns match the whole text.** A segment `pattern` and an `exceptions` entry are anchored at
-  both ends and are case-sensitive unless they start with `(?i)`; a `values` entry is compared
+  both ends and are case-sensitive unless they carry `(?i)`; a `values` entry is compared
   exactly and is never a pattern.
 - **What is checked.** The name an object carries after the step: `displayName`, or the name a
   group's `template` and `tokens` give (a template that cannot be turned into a name gets one warning
   saying it was not checked). A `previousDisplayName` is never checked, so a rename is judged by its
   new name. A group with `onPremisesSynced` true is skipped, with a warning that says so, unless the
   file sets `includeSyncedGroups` to true.
+- **The groups an export holds.** The check covers the groups `inventory.json` holds: by default the
+  RBAC-relevant security groups (a role-assignable group, one with PIM eligibility, one with a
+  `pimPolicy`). `Export-OERInventory -AllGroupsDetailed` keeps every security group in full detail and
+  `-IncludeSyncedGroups` keeps the synchronized ones; a Microsoft 365 group is in `groupsRoster.json`
+  only. The standard's `includeSyncedGroups` therefore matters for an export only when the export was
+  made with `Export-OERInventory -IncludeSyncedGroups`, a different switch with a similar name.
 - **A proposal.** The bundle's prompt tells the model to propose names that follow the operator's
-  naming standard and that a name that does not is a Warning, never a refusal. On an exported
-  `inventory.json` the warnings are the list a rename map is written from: declare the new name as
-  `displayName` and the current one as `previousDisplayName` (see "Renaming a group" below).
+  naming standard (the `Naming convention` line of its `USER PREFERENCES (optional)` block) and that a
+  name that does not is a Warning, never a refusal. The model never sees the standard file: write the
+  standard's rules into that line of `rbac-architect-prompt.md` before you hand the prompt over, and
+  let `Test-OERStructure -NamingStandard` tell you which proposed names still break them. On an
+  exported `inventory.json` the warnings are the list a rename map is written from: declare the new
+  name as `displayName` and the current one as `previousDisplayName` (see "Renaming a group" below).
 - **A file that cannot be used.** A path that is not a file, malformed JSON, a key or value the
   standard does not allow or a pattern that does not compile is refused once with the error
   `InvalidNamingStandard`, which says what is wrong, and nothing is validated. A known limit: the

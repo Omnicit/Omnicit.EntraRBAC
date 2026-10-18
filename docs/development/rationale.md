@@ -10283,10 +10283,12 @@ are read.** The apply engine writes nothing to a group synchronized from on-prem
 Warning on it would ask for a change that only the on-premises directory can make. By default such a
 group is skipped, and its single Warning says it was not checked and how to include it
 (`includeSyncedGroups`), whether or not its name would have followed the standard and even when the
-name matches an exception, so the row does not depend on the name. Two shapes get another row, or none:
-a synced group named by a template whose name cannot be computed gets the template row below instead,
-and a group whose `displayName` is not a non-empty string gets no naming row, since the validator's own
-findings stand for it. When the standard includes synced groups, the group is checked like any other and each finding says that its
+name matches an exception, so the row does not depend on the name. Three shapes get another row, or
+none: a synced group named by a template whose name cannot be computed gets the template row below
+instead; a group that declares a `displayName` which is not a non-empty string gets no naming row (its
+`template`, if any, is not read either); and a group with no `displayName` and no `template` that is a
+non-empty string gets none, since the validator's own findings stand for each of those. When the
+standard includes synced groups, the group is checked like any other and each finding says that its
 name can only change in the on-premises directory. The check is offline, so it reads the document's own
 `onPremisesSynced` key (only the boolean true counts); the apply engine decides on the live read, as
 [#synced-groups](#synced-groups) records. Held by Context "a group synchronized from on-premises" in
@@ -10308,13 +10310,21 @@ broke the rule and the document by the path. Held by Context "every section that
 `Test-OERStructureSchema.Tests.ps1`.
 
 **An unreadable standard is one error, and no document is read or validated.** A path that is not a
-file, malformed JSON, a key or value the standard does not allow or a pattern that does not compile
-raises the non-terminating error `InvalidNamingStandard`, once, with the reader's message, after which
-`Test-OERStructure` returns no result for any document (piped ones included). Validating the documents
-without the standard would let a broken file pass for "no naming problems". The error is
-non-terminating, like the unreadable structure document's, so a script with no `try` goes on, and the
-standard is read once in `begin`, never per document. Held by Context "a standard that cannot be read",
-"a pipeline of documents" and "a script with no try" in `tests/Unit/Public/Test-OERStructure.Tests.ps1`.
+file, a file that exists but cannot be read (a lock, no read permission), malformed JSON, a key or value
+the standard does not allow or a pattern that does not compile raises the non-terminating error
+`InvalidNamingStandard`, once, with the reader's message. The reader reads with `-ErrorAction Stop` for
+the unreadable file: `Get-Content` writes a non-terminating error and returns nothing (measured on a
+file held open with `FileShare.None`), which once reached the operator as a second error and was then
+reported as an empty file. After the refusal `Test-OERStructure` returns no result for any document
+(piped ones included). Validating the documents without the standard would let a broken file pass for
+"no naming problems". The error is non-terminating, like the unreadable structure document's, so a
+script with no `try` goes on, and the standard is read once in `begin`, never per document. Held by
+Context "a standard that cannot be read", "a pipeline of documents" and "a script with no try" in
+`tests/Unit/Public/Test-OERStructure.Tests.ps1`, and for the unreadable file by the Its about
+`Get-Content` and a file another process holds open in both that file and
+`tests/Unit/Private/Read-OERNamingStandard.Tests.ps1`: a mock cannot write a non-terminating error
+(Pester runs a mock body under Stop), so the `-ErrorAction Stop` is held by a parameter filter and by
+the real locked file, which those Its skip where the platform does not enforce the lock.
 
 **The same check works on an exported inventory.** The export's own `inventory.json` is the document;
 `tests/Unit/Public/Export-OERInventory.Tests.ps1` ("the exported inventory.json is checked against a
@@ -10327,8 +10337,22 @@ example standard: still Valid, one Warning per name and broken rule).
 on PowerShell 7.6.6, with `-Depth 32 -NoEnumerate` as the reader calls it: `2024-01-01T10:00:00`,
 `2024-01-01T10:00:00Z` and `2024-01-01T10:00:00.5+02:00` become a `DateTime`, while `2024-01-01`,
 `2024-01-01T10:00` and `2024-01-01 10:00:00` stay a string. This is a limit of the parser, not
-something the reader fixes; `Read-OERStructureDocument` parses structure documents the same way. (b) The check reads the document it is given. An object the export left out of
-`inventory.json` (a name two or more objects share, a role assignment at a scope no document can
-declare) is not in the document and so is not checked; the bundle's `README.md` lists those. (c)
-The standard does not model Microsoft Graph's own limits on a display name: it is advisory, and a name
-that follows it can still be refused when it is applied, as one that breaks it can be accepted.
+something the reader fixes; `Read-OERStructureDocument` parses structure documents the same way. (b)
+The check reads the document it is given. An object the export left out of `inventory.json` is not in
+the document and so is not checked: a name two or more objects share, a role assignment at a scope no
+document can declare (the bundle's `README.md` lists those), and a group the export does not keep. By
+default `inventory.json` holds the RBAC-relevant security groups only (a role-assignable group, one
+with PIM eligibility, one with a `pimPolicy`); `Export-OERInventory -AllGroupsDetailed` keeps every
+security group in full detail, `-IncludeSyncedGroups` keeps the synchronized ones, and a group whose
+`securityEnabled` is false, a Microsoft 365 group or a distribution group, is in `groupsRoster.json`
+only at every detail level, as is every other group the export did not keep. So the standard's
+`includeSyncedGroups` changes an export's findings only when the export was made with
+`Export-OERInventory -IncludeSyncedGroups` (or `-AllGroupsDetailed`), a different switch with a
+similar name. (c) The standard does not model Microsoft Graph's own limits on a display name: it is
+advisory, and a name that follows it can still be refused when it is applied, as one that breaks it can
+be accepted. (d) A `values` entry that breaks its own segment's `case` (for example `sg` under
+`UPPERCASE`) is accepted by the reader, although no name can then follow that segment: every such name
+gets the `values` or the `case` Warning, so the output shows it. The reader refuses only a value that
+contains the separator. (e) Patterns are compiled without a match timeout, so a pattern with
+catastrophic backtracking (such as `(a+)+b`) can make the offline check slow on a long name (measured:
+about 1.5 s at 24 characters, growing exponentially). The check is offline and sends nothing.

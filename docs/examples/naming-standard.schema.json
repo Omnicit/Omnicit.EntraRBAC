@@ -38,7 +38,7 @@
             "description": "A closed list of the allowed values, compared as exact, case-sensitive text and never as patterns. No value may contain the separator. Use values or pattern, not both.",
             "items": { "type": "string", "minLength": 1 }
           },
-          "pattern": { "type": "string", "minLength": 1, "description": "A .NET regular expression the whole segment must match (it is anchored at both ends, so Fin does not match Finance), case-sensitive unless it starts with (?i). Use values or pattern, not both." },
+          "pattern": { "type": "string", "minLength": 1, "description": "A .NET regular expression the whole segment must match (it is anchored at both ends, so Fin does not match Finance), case-sensitive unless it carries (?i). Use values or pattern, not both." },
           "case": { "type": "string", "enum": [ "PascalCase", "camelCase", "UPPERCASE", "lowercase" ], "description": "The letter case of the segment: PascalCase is an uppercase letter first and then only letters and digits, camelCase a lowercase letter first and then only letters and digits, UPPERCASE no lowercase letter, lowercase no uppercase letter. Omit it to allow any case." },
           "optional": { "type": "boolean", "default": false, "description": "When true, the segment may be left out of a name." }
         }
@@ -46,7 +46,7 @@
     },
     "exceptions": {
       "type": "array",
-      "description": "Names that keep their names: a name that matches one of these .NET regular expressions in full (anchored at both ends, so All Users does not exempt All Users Copy; case-sensitive unless the entry starts with (?i)) is never checked.",
+      "description": "Names that keep their names: a name that matches one of these .NET regular expressions in full (anchored at both ends, so All Users does not exempt All Users Copy; case-sensitive unless the entry carries (?i)) is never checked.",
       "items": { "type": "string", "minLength": 1 }
     }
   }

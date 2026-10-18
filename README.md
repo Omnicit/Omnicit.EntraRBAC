@@ -923,10 +923,16 @@ by its name alone, so it cannot tell which package the review means. Name the pa
 id.
 
 `Test-OERStructure -NamingStandard` checks the names in a document, or in an exported
-`inventory.json`, against a naming standard file. Each name that breaks a rule is a `Warning` of its
-own, with `Section`, `Item`, `Path` and a message that says which rule the name breaks and what was
+`inventory.json`, against a naming standard file. A name gets one `Warning` for each rule it breaks,
+with `Section`, `Item`, `Path` and a message that says which rule the name breaks and what was
 expected. `Valid` does not change, and `Invoke-OERStructure`, which takes no naming standard, applies
-the document as before. The warnings are the list a rename map is written from.
+the document as before. The warnings are the list a rename map is written from. The check covers the
+groups `inventory.json` holds: by default the RBAC-relevant security groups (a role-assignable group,
+one with PIM eligibility, one with a `pimPolicy`). `Export-OERInventory -AllGroupsDetailed` keeps every
+security group in full detail and `-IncludeSyncedGroups` keeps the synchronized ones; a Microsoft 365
+group is in `groupsRoster.json` only. The standard's `includeSyncedGroups` therefore matters for an
+export only when the export was made with `Export-OERInventory -IncludeSyncedGroups`, a different
+switch with a similar name.
 
 ```powershell
 # The names that break the standard, each with the rule it breaks (a group that was not checked, a
@@ -947,7 +953,7 @@ module. A warning names one of six rules: `maxLength`, `separator`, `segmentCoun
 `pattern` and `case`.
 
 - **A pattern matches the whole text.** A segment `pattern` and an `exceptions` entry are anchored at
-  both ends and are case-sensitive unless they start with `(?i)`: `Fin` does not match the segment
+  both ends and are case-sensitive unless they carry `(?i)`: `Fin` does not match the segment
   `Finance`, and the exception `All Users` does not exempt `All Users Copy`. A `values` entry is
   compared exactly, letter case included, and is never read as a pattern, so `C++` means `C++`.
 - **Letter case.** `PascalCase` is an uppercase letter first and then only letters and digits,

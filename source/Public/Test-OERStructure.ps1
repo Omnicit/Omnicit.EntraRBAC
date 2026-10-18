@@ -122,9 +122,11 @@ function Test-OERStructure {
     optional) and exceptions (patterns for names that keep their names); $schema and description are
     free text. The rules a Warning names are maxLength, separator, segmentCount, values, pattern and
     case. A pattern has to match the whole segment or name, and a value is compared exactly. A group's
-    name is its displayName, or the name its template and tokens give. A group synchronized from
-    on-premises (onPremisesSynced true) is skipped unless includeSyncedGroups is true, and its row
-    says so.
+    name is its displayName, or the name its template and tokens give; a group whose template cannot
+    be turned into a name is not checked, and its Warning says so ("Group at groups[i].template was
+    not checked against the naming standard: its name could not be computed from 'template' and
+    'tokens'."). A group synchronized from on-premises (onPremisesSynced true) is skipped unless
+    includeSyncedGroups is true, and its Warning says so.
 
     A file that cannot be used (a path that is not a file, malformed JSON, a key or value the standard
     does not allow, a pattern that does not compile) is refused with the non-terminating error
@@ -133,7 +135,12 @@ function Test-OERStructure {
     no result is returned.
 
     The same check runs on the inventory.json of an Export-OERInventory bundle, and its Warnings are
-    the list a rename map is written from. An example standard is kept in the repository at
+    the list a rename map is written from. It covers the groups inventory.json holds, by default the
+    RBAC-relevant security groups: Export-OERInventory -AllGroupsDetailed keeps every security group
+    in full detail and its -IncludeSyncedGroups keeps the synchronized ones, while a Microsoft 365
+    group is in groupsRoster.json only. So the standard's includeSyncedGroups matters for an export
+    only when the export was made with Export-OERInventory -IncludeSyncedGroups, a different switch
+    with a similar name. An example standard is kept in the repository at
     docs/examples/naming-standard.json, with its schema at docs/examples/naming-standard.schema.json;
     neither ships inside the installed module. Invoke-OERStructure takes no naming standard.
 
@@ -155,7 +162,7 @@ function Test-OERStructure {
 
     .EXAMPLE
     Test-OERStructure -Path ./exports/oer-inventory-contoso-20261018-120000/inventory.json -NamingStandard ./naming-standard.json
-    Validates the exported inventory and adds one Warning for each name that does not follow the naming standard, saying which rule it breaks.
+    Validates the exported inventory and adds one Warning for each rule a name breaks, saying which rule it is.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding(DefaultParameterSetName = 'Path')]
