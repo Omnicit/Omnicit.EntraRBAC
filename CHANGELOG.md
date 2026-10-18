@@ -19,8 +19,8 @@ README as elevated access; `Test-OERStructure` warns on one and apply never crea
 there. A review found by name is updated only if it reviews the declared package and policy (a
 shared name must be an id), else it fails (`AccessReviewScopeMismatch`), writing nothing.
 
-`Set-OERAccessPackageAssignmentPolicy` no longer drops custom extension stages, renames a policy
-given `-DisplayName` alone and can update an automatic one. `Test-OERStructure` refuses an invalid
+`Set-OERAccessPackageAssignmentPolicy` keeps custom extension stages, updates an automatic policy
+and renames a policy given `-DisplayName` alone. `Test-OERStructure` refuses an invalid
 `mailNickname` and a scope with a dot segment, `%`, `\`, `?`, `#` or stray white space, and warns
 when a renamed group keeps its alias; `New-OERGroup` refuses an underivable alias.
 
