@@ -1307,9 +1307,14 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Invoke-OERStructure` and `Get-OERInventory` (gate 10), never by another public cmdlet: the role
   assignment and policy cmdlets use the scope they are given. `Get-OERInventory` (A20, BL-152) checks
   each of `-Scope` and `-Subscription` (as `sub:<value>`) that is given, ONCE per invocation, before
-  the first read of RoleAssignments or RoleManagementPolicies; `-ManagementGroup` is never checked. A
+  the first read of RoleAssignments or RoleManagementPolicies; `-ManagementGroup` is never checked.
+  That check reads through the ARM transport, so its `begin` asks for the ARM token in its one
+  `Initialize-OERAuth` call, exactly as `-IncludeARM` does, whenever either section is included with a
+  `-Scope` or `-Subscription` that is not blank (R-9); a `-ManagementGroup` alone keeps the readers'
+  acquisition on first use, and a call with neither section asks for none. A
   foreign subscription is read for nothing -- each included section empty, the owner's
-  `SubscriptionTenantMismatch` record written once, after the inventory, and not unread; an undecided
+  `SubscriptionTenantMismatch` record written once (the first foreign verdict's), after the inventory,
+  and not unread; an undecided
   one is read for nothing too, each included section named unread by its own name through
   `InventoryPartial`. Inside an export the answers are shared through the run context's
   `SubscriptionTenant`, which the tree fills (`-Cache`, the listed facts included), so the check sends

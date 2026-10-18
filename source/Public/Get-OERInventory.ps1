@@ -8,9 +8,11 @@ function Get-OERInventory {
     shape matches the Phase 5 JSON document schema, so the output round-trips into the orchestration
     apply engine. Select which building blocks to read with -Include (default: Groups,
     AdministrativeUnits, Catalogs and AccessPackages).
-    Azure sections (RoleAssignments, RoleManagementPolicies) need an ARM token: pass -IncludeARM to
-    acquire it up front (the Azure sections otherwise acquire it on first use) and supply their
-    targeting parameters. Names are emitted by default for portability;
+    Azure sections (RoleAssignments, RoleManagementPolicies) need an ARM token and their targeting
+    parameters. With either section and a -Scope or a -Subscription, the token is acquired up front,
+    in the command's one sign-in, as -IncludeARM does, since the subscription is checked before
+    either section reads (see below); with a -ManagementGroup alone, pass -IncludeARM to acquire it
+    up front, or the Azure sections acquire it on first use. Names are emitted by default for portability;
     -IncludeId additionally stamps each top-level object with its id.
     The Groups section is SECURITY-ENABLED-SCOPED unless you say otherwise: with no -GroupFilter it
     reads 'securityEnabled eq true', so a distribution group and a Microsoft 365 group whose
@@ -181,12 +183,15 @@ function Get-OERInventory {
     Export-OERInventory's Azure walk and Invoke-OERStructure apply too. The subscription is checked once
     per call, before either section reads anything, with one read of it (a subscription named by its
     display name also costs one read of the subscription list); with both -Scope and -Subscription,
-    each is checked. A -Scope at a management group or the root scope '/', and a -ManagementGroup, lie
+    each is checked. The Azure Resource Manager token that read needs is acquired in the command's
+    sign-in, as -IncludeARM does, whenever either section is included with a -Scope or a
+    -Subscription. A -Scope at a management group or the root scope '/', and a -ManagementGroup, lie
     in no subscription and are read as before. A subscription of another tenant -- a customer
     subscription another tenant delegated to this one through Azure Lighthouse, for example -- is not
     read: each included section is written empty, and one non-terminating SubscriptionTenantMismatch
     error, written after the inventory object, names the scope and the tenant, however many of the two
-    sections were included; the inventory is not reported partial for it. A subscription whose tenant could not be
+    sections were included; with both -Scope and -Subscription in subscriptions of another tenant,
+    that one error names the -Scope. The inventory is not reported partial for it. A subscription whose tenant could not be
     told -- its read failed, it gave no tenantId, the session's token names no tenant ID, or the scope
     cannot be resolved or is spelled in a way no structure document can declare, a trailing '/' for
     example -- is not read either: each included section is written empty and reported by its name
@@ -343,8 +348,9 @@ function Get-OERInventory {
     definitions (optionally narrowed by -AccessReviewFilter); a group, application, directory-role
     or multi-stage review is skipped with a warning. DirectoryRoleManagementPolicies and
     DirectoryRoleAssignments read Microsoft Entra directory roles through Microsoft Graph and need no
-    ARM token. RoleAssignments and RoleManagementPolicies require -IncludeARM plus their targeting
-    parameters.
+    ARM token. RoleAssignments and RoleManagementPolicies need an ARM token and their targeting
+    parameters: with a -Scope or a -Subscription the token is acquired up front, as -IncludeARM does;
+    with a -ManagementGroup alone they acquire it on first use unless -IncludeARM is passed.
 
     .PARAMETER GroupFilter
     An OData filter (without the $filter= prefix) selecting which groups to read. When omitted,
@@ -402,7 +408,11 @@ function Get-OERInventory {
     Stamp each top-level object with its id property (handy for same-tenant round-trips).
 
     .PARAMETER IncludeARM
-    Acquire an ARM token and read the Azure sections. Forwarded to Initialize-OERAuth.
+    Acquire an ARM token up front, in the command's sign-in. Forwarded to Initialize-OERAuth. It is
+    implied when RoleAssignments or RoleManagementPolicies is included with a -Scope or a
+    -Subscription, since the subscription is checked before either section reads; with a
+    -ManagementGroup alone the Azure sections otherwise acquire the token on first use. A call that
+    includes neither section acquires no ARM token without it.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. The
@@ -451,7 +461,17 @@ function Get-OERInventory {
     begin {
         $AuthParams = @{}
         if ($TenantId) { $AuthParams.TenantId = $TenantId }
-        if ($IncludeARM) { $AuthParams.IncludeARM = $true }
+        # A20 (BL-152, R-9): RoleAssignments and RoleManagementPolicies check the subscription of a -Scope or a
+        # -Subscription (Get-OERSubscriptionHomeTenant) before either reader runs, and that check reads the
+        # subscription through the ARM transport, which sends nothing without an ARM token. The readers
+        # acquire the token on first use, which is after the check, so it is acquired here, in this one
+        # sign-in, exactly as -IncludeARM does. A -ManagementGroup alone is never checked and keeps the
+        # readers' acquisition on first use, and a call that includes neither section acquires none, as
+        # before: an ARM token asked for without an -AuthMethod can turn an app-only session into an
+        # interactive prompt (see Export-OERInventory's begin).
+        $ChecksSubscription = ($Include -contains 'RoleAssignments' -or $Include -contains 'RoleManagementPolicies') -and
+            (-not [string]::IsNullOrWhiteSpace($Scope) -or -not [string]::IsNullOrWhiteSpace($Subscription))
+        if ($IncludeARM -or $ChecksSubscription) { $AuthParams.IncludeARM = $true }
         Initialize-OERAuth @AuthParams
         # BL-88 (A14): the tenant this inventory names, captured here under the session this command
         # signed in under, never read again where the document is assembled.
@@ -704,8 +724,12 @@ function Get-OERInventory {
             $Undecided = @($SubscriptionCheck.Verdicts | Where-Object { [string]$_.Verdict.Verdict -notin @('Home', 'NoSubscription') })
             if ($Undecided.Count -gt 0) {
                 foreach ($One in $Undecided) {
-                    Write-Verbose "Get-OERInventory: $Section was not read: $([string]$One.Verdict.Reason)."
-                    Add-UnreadCause -Cause ([string]$One.Verdict.Reason) -Target ([string]$One.Given)
+                    # The reason of a failed read ends in that read's own message, which may end with a period,
+                    # and the causes clause and the verbose line add their own: trimmed here, so neither ends in
+                    # '..'. The owner's Reason itself is left as it is.
+                    $UndecidedCause = ([string]$One.Verdict.Reason).TrimEnd().TrimEnd('.')
+                    Write-Verbose "Get-OERInventory: $Section was not read: $UndecidedCause."
+                    Add-UnreadCause -Cause $UndecidedCause -Target ([string]$One.Given)
                 }
                 if (-not $UnreadCollections.Contains($Section)) { $UnreadCollections.Add($Section) }
                 return $false
@@ -2428,8 +2452,10 @@ function Get-OERInventory {
         # A20 (BL-152): the refusal of a subscription of another tenant, the owner's own
         # SubscriptionTenantMismatch record, written ONCE per invocation however many of the two Azure
         # sections were refused, after the inventory object for the reason InventoryPartial is (below).
-        foreach ($ForeignVerdict in @($SubscriptionCheck.Foreign)) {
-            if ($null -ne $ForeignVerdict.ErrorRecord) { $PSCmdlet.WriteError($ForeignVerdict.ErrorRecord) }
+        # With both -Scope and -Subscription another tenant's, only the first verdict's record is written
+        # (R-10): the -Scope's, which is checked first.
+        if ($SubscriptionCheck.Foreign.Count -gt 0 -and $null -ne $SubscriptionCheck.Foreign[0].ErrorRecord) {
+            $PSCmdlet.WriteError($SubscriptionCheck.Foreign[0].ErrorRecord)
         }
 
         # Emitted AFTER the inventory object so a caller still receives the document it has to
