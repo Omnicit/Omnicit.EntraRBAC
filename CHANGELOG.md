@@ -59,7 +59,7 @@ findings the README lists. A failed read makes it partial.
 README; `Invoke-OERStructure` refuses a role assignment or policy in another tenant's subscription.
 
 `Test-OERStructure -NamingStandard` checks the names in a document or an exported inventory against
-a naming standard file: one warning per broken rule, and the document stays valid.
+a naming standard file: each broken rule is one warning, never an error.
 
 ## [1.2.0] - 2026-10-11
 

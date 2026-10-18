@@ -10230,8 +10230,9 @@ known limits.
 **The reader checks the file by hand, and the schema is held in step.** The schema is draft-07 and is
 published at `docs/examples/naming-standard.schema.json`, for an editor or an LLM. The reader does not
 call `Test-Json` at run time. It checks the file against the rules the schema declares, in its own
-code, for two reasons. Its messages are ASCII and name every problem in one throw (a path such as
-`segments[1].case`, what was expected, what was found), where a library's messages are not ours and
+code, for two reasons. The module's own message text is ASCII (a value the reader quotes is shown as
+found, so a non-ASCII value in the file appears in it) and names every problem in one throw (a path such
+as `segments[1].case`, what was expected, what was found), where a library's messages are not ours and
 change with the PowerShell version's JSON Schema library. And two rules draft-07 cannot express need
 the reader anyway: every `pattern` and every `exceptions` entry must compile as a .NET regular
 expression, and no `values` entry may contain the separator (it could never match a segment, since a
@@ -10251,8 +10252,9 @@ Cost if wrong: the reader and the schema can disagree where no refusal case reac
 are case-sensitive unless they carry `(?i)`. `-match` semantics, which find the text anywhere, would
 make `Fin` accept the segment `Finance` and the exception `All Users` exempt `All Users Copy`; a closed
 standard needs the whole-text reading, and an exception never exempts more than its text says. The
-cost is that an operator who expects `-match` must write `Fin.*` for a prefix. A `values` entry is compared exactly and is never read as a pattern, so `C++` and `A.B`
-mean what they say, and a hidden character is a difference. Held by `Read-OERNamingStandard.Tests.ps1`
+cost is that an operator who expects `-match` must write `Fin.*` for a prefix. A `values` entry is
+compared exactly and is never read as a pattern, so `C++` and `A.B` mean what they say, and a hidden
+character is a difference. Held by `Read-OERNamingStandard.Tests.ps1`
 ("compiles a pattern and an exception as a whole-text match") and by
 `tests/Unit/Private/Test-OERNamingStandardName.Tests.ps1` (Contexts "the pattern", "the exceptions",
 "the allowed values" and "a name that holds characters a pattern would read specially").
@@ -10281,8 +10283,10 @@ are read.** The apply engine writes nothing to a group synchronized from on-prem
 Warning on it would ask for a change that only the on-premises directory can make. By default such a
 group is skipped, and its single Warning says it was not checked and how to include it
 (`includeSyncedGroups`), whether or not its name would have followed the standard and even when the
-name matches an exception, so every synced group gets the same row and no name hides one. When the
-standard includes synced groups, the group is checked like any other and each finding says that its
+name matches an exception, so the row does not depend on the name. Two shapes get another row, or none:
+a synced group named by a template whose name cannot be computed gets the template row below instead,
+and a group whose `displayName` is not a non-empty string gets no naming row, since the validator's own
+findings stand for it. When the standard includes synced groups, the group is checked like any other and each finding says that its
 name can only change in the on-premises directory. The check is offline, so it reads the document's own
 `onPremisesSynced` key (only the boolean true counts); the apply engine decides on the live read, as
 [#synced-groups](#synced-groups) records. Held by Context "a group synchronized from on-premises" in
@@ -10290,8 +10294,10 @@ name can only change in the on-premises directory. The check is offline, so it r
 
 **A template whose name cannot be computed gets a Warning saying it was not checked.** A group declared
 with `template` and `tokens` is checked on the name `Resolve-OERName` gives, at the template's path.
-When a token has no value the name does not exist, so the check cannot say anything about it and says
-exactly that, once. The validator's own findings about the template stand. Held by Context "a group
+The name cannot be computed when a placeholder has no token, when `Resolve-OERName` refuses the result
+(longer than 256 characters), or when the result is empty; a token with an empty value does resolve.
+There is then no name to check, so the check says exactly that, once. The validator's own findings
+about the template stand. Held by Context "a group
 named by a template" in `Test-OERStructureSchema.Tests.ps1`.
 
 **The Item of a policy's finding is the policy's own name.** An assignment policy is listed in
@@ -10314,12 +10320,14 @@ standard is read once in `begin`, never per document. Held by Context "a standar
 `tests/Unit/Public/Export-OERInventory.Tests.ps1` ("the exported inventory.json is checked against a
 naming standard") reads a bundle back through the real `Test-OERStructure`. Held end to end for the
 shipped examples by `tests/Unit/Public/Test-OERStructure.Tests.ps1` (the apply example against the
-example standard: still Valid, one Warning per name the example standard does not allow).
+example standard: still Valid, one Warning per name and broken rule).
 
-**Known limits.** (a) `ConvertFrom-Json` turns a date-like string such as `2024-01-01` into a
-`DateTime`, so such a string anywhere in the naming standard file is refused as not a string. This is
-a limit of the parser, not something the reader fixes; `Read-OERStructureDocument` parses structure
-documents the same way. (b) The check reads the document it is given. An object the export left out of
+**Known limits.** (a) `ConvertFrom-Json` turns a string that holds an ISO 8601 date and time into a
+`DateTime`, so such a string anywhere in the naming standard file is refused as not a string. Measured
+on PowerShell 7.6.6, with `-Depth 32 -NoEnumerate` as the reader calls it: `2024-01-01T10:00:00`,
+`2024-01-01T10:00:00Z` and `2024-01-01T10:00:00.5+02:00` become a `DateTime`, while `2024-01-01`,
+`2024-01-01T10:00` and `2024-01-01 10:00:00` stay a string. This is a limit of the parser, not
+something the reader fixes; `Read-OERStructureDocument` parses structure documents the same way. (b) The check reads the document it is given. An object the export left out of
 `inventory.json` (a name two or more objects share, a role assignment at a scope no document can
 declare) is not in the document and so is not checked; the bundle's `README.md` lists those. (c)
 The standard does not model Microsoft Graph's own limits on a display name: it is advisory, and a name

@@ -510,8 +510,9 @@ NAMING STANDARD
     key or value the standard does not allow, a pattern that does not
     compile) is refused once with the error InvalidNamingStandard, which says
     what is wrong, and nothing is validated. Known limit: the JSON parser
-    reads a date-like string such as 2024-01-01 as a date, so such a value in
-    the file is refused as not a string.
+    reads a string that holds an ISO 8601 date and time, such as
+    2024-01-01T10:00:00, as a date (a date alone, such as 2024-01-01, stays a
+    string), so such a value in the file is refused as not a string.
 
 PERMISSIONS
 

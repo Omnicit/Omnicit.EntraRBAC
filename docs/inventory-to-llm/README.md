@@ -384,7 +384,9 @@ This entry is the group `role_sec_identity_administrator`.
   name. Token names are matched ignoring letter case.
 - **Every placeholder must resolve.** A placeholder without a token leaves the name unbuilt: the
   entry is reported `Failed` with the message "Naming template ... has unresolved token(s)" and
-  nothing is created or changed for it.
+  nothing is created or changed for it. `Test-OERStructure` raises no `Error` for it (with
+  `-NamingStandard` it adds only a `Warning` saying the name was not checked), so in the LLM loop
+  `Invoke-OERStructure -WhatIf` is the first step that shows the entry as `Failed`.
 - **`template` and `displayName` are mutually exclusive.** `Test-OERStructure` refuses, as an
   `Error`, an entry that declares both, one that declares neither, and a `template` without a `tokens`
   object.
@@ -416,10 +418,11 @@ tells you which names to change, and the apply engine applies the document as wr
 
 - **The file.** `docs/examples/naming-standard.json` is a neutral example (`kind-area-purpose`, with
   an optional environment at the end) and `docs/examples/naming-standard.schema.json` is its JSON
-  Schema. Copy the example and edit it: a `separator`, the ordered `segments` (each with a `name` and
-  a closed list of `values` or a `pattern`, a letter `case`, and `optional`), a `maxLength`,
-  `exceptions` for names that keep their names, and the `sections` to check. The six rules a warning
-  names are `maxLength`, `separator`, `segmentCount`, `values`, `pattern` and `case`.
+  Schema. Copy the example and edit it: a `version` (`"1.0"`), a `separator`, the ordered `segments`
+  (each has a `name` and may have a closed list of `values` or a `pattern`, a letter `case` and
+  `optional`), a `maxLength`, `exceptions` for names that keep their names, and the `sections` to
+  check. The six rules a warning names are `maxLength`, `separator`, `segmentCount`, `values`,
+  `pattern` and `case`.
 - **Patterns match the whole text.** A segment `pattern` and an `exceptions` entry are anchored at
   both ends and are case-sensitive unless they start with `(?i)`; a `values` entry is compared
   exactly and is never a pattern.
@@ -435,8 +438,9 @@ tells you which names to change, and the apply engine applies the document as wr
 - **A file that cannot be used.** A path that is not a file, malformed JSON, a key or value the
   standard does not allow or a pattern that does not compile is refused once with the error
   `InvalidNamingStandard`, which says what is wrong, and nothing is validated. A known limit: the
-  JSON parser reads a date-like string such as `2024-01-01` as a date, so such a value in the file is
-  refused as not a string.
+  JSON parser reads a string that holds an ISO 8601 date and time, such as `2024-01-01T10:00:00`, as a
+  date (a date alone, such as `2024-01-01`, stays a string), so such a value in the file is refused as
+  not a string.
 
 ## Renaming a group
 

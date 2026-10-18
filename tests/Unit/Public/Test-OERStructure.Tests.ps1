@@ -374,9 +374,10 @@ Describe 'Test-OERStructure -NamingStandard (Sprint 11 step 7)' {
             Should -Invoke -ModuleName $script:moduleName Test-OERStructureSchema -Exactly -Times 2
         }
 
-        It 'checks the shipped docs/examples/example-structure.json against docs/examples/naming-standard.json: still Valid, with one Warning for each name the example standard does not allow' {
+        It 'checks the shipped docs/examples/example-structure.json against docs/examples/naming-standard.json: still Valid, with one Warning per name and broken rule' {
             # The two shipped examples are neutral and were written apart: the apply example uses the
-            # names of an older demo, so the example standard has something to say about most of them.
+            # names of an older demo, so the example standard has something to say about each of its six
+            # names (OER-AU-Demo breaks two rules, which makes seven Warnings).
             # The rows below are what the example standard produces, in the order the document holds them.
             $Example = Join-Path $PSScriptRoot '..' '..' '..' 'docs' 'examples' 'example-structure.json'
             $Standard = Join-Path $PSScriptRoot '..' '..' '..' 'docs' 'examples' 'naming-standard.json'

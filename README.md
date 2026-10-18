@@ -929,14 +929,16 @@ expected. `Valid` does not change, and `Invoke-OERStructure`, which takes no nam
 the document as before. The warnings are the list a rename map is written from.
 
 ```powershell
-# The names that break the standard, each with the rule it breaks
+# The names that break the standard, each with the rule it breaks (a group that was not checked, a
+# synchronized one or a template whose name cannot be computed, is listed too, with the reason)
 (Test-OERStructure -Path ./exports/<bundle>/inventory.json -NamingStandard ./naming-standard.json).Errors |
     Where-Object { $_.Message -like '*naming standard*' } |
     Select-Object Section, Path, Message
 ```
 
-The standard is a JSON file: a `separator`, the ordered `segments` of a name (each has a `name` and
-may have a closed list of `values` or a `pattern`, a letter `case` and `optional`), an optional
+The standard is a JSON file: a `version` (`"1.0"`), a `separator`, the ordered `segments` of a name
+(each has a `name` and may have a closed list of `values` or a `pattern`, a letter `case` and
+`optional`), an optional
 `maxLength`, `exceptions` (patterns for names that keep their names) and the `sections` to check
 (`groups`, `administrativeUnits`, `catalogs`, `accessPackages`, `assignmentPolicies` and
 `accessReviews`). `docs/examples/naming-standard.json` is a neutral example and
@@ -966,8 +968,9 @@ module. A warning names one of six rules: `maxLength`, `separator`, `segmentCoun
 A file that cannot be used (a path that is not a file, malformed JSON, a key or value the standard
 does not allow, a pattern that does not compile) is refused once with the error
 `InvalidNamingStandard`, which says what is wrong, and nothing is validated. A known limit: the JSON
-parser reads a date-like string such as `2024-01-01` as a date, so such a value in the file is refused
-as not a string.
+parser reads a string that holds an ISO 8601 date and time, such as `2024-01-01T10:00:00`, as a date (a
+date alone, such as `2024-01-01`, stays a string), so such a value in the file is refused as not a
+string.
 
 A group's mail alias does not follow a rename: declare `mailNickname` for the new name, and the
 validator warns when a renamed group keeps the alias derived from its old name or declares none. A
