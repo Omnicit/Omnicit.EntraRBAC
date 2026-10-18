@@ -10,8 +10,8 @@ function Get-OERStructureSchemaJson {
     version key, the optional top-level tenantId (a canonical GUID, never null: a document that
     carries no tenant check omits the key), the closed set of top-level keys, the per-section required
     fields, the enforced enums
-    (catalog resource type, access review recurrence, role assignment principal type, role assignment
-    principalStatus Deleted/Unresolved, directory role
+    (catalog resource type, access review recurrence, role assignment principal type, administrative
+    unit scoped role principal type, role assignment principalStatus Deleted/Unresolved, directory role
     assignment assignmentType Eligible/Active and principal type, eligibility accessType member/owner,
     membershipRuleProcessingState On/Paused (shared by administrative units and groups), activeEnablement
     and activationEnablement restricted to Justification/MultiFactorAuthentication/Ticketing) and the
@@ -73,7 +73,10 @@ function Get-OERStructureSchemaJson {
     entry whose two names match different groups fails without merging them, and an entry neither
     name matches fails and creates nothing. Get-OERInventory never exports it.
     A groups[] item may carry onPremisesSynced, a boolean the export writes for a group synchronized
-    from on-premises; it is information only.
+    from on-premises; it is information only. An administrativeUnits[] scopedRoles item may carry
+    principalType (User, Group or ServicePrincipal), not required, which the export writes for a
+    principal the directory returned; the scopedRoles description says Invoke-OERStructure does not
+    read it, since a scoped role is matched by role and principal.
     A roleAssignments[] item may carry principalStatus (Deleted or Unresolved), which the export writes
     for a role assignment whose principal the directory did not return, beside the principal's object
     id: the apply engine looks no principal up for such an entry and never creates the assignment (it
@@ -284,13 +287,14 @@ function Get-OERStructureSchemaJson {
           },
           "scopedRoles": {
             "type": [ "array", "null" ],
-            "description": "An omitted key still reconciles: existing scoped roles it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves scoped roles untouched entirely -- null, not an omitted key, is how a unit is declared without touching its scoped roles. [] reconciles to no declared scoped roles. Get-OERInventory emits null here when the live read failed, and when an entry has no role or no principal that the apply engine accepts (it never writes an empty one).",
+            "description": "An omitted key still reconciles: existing scoped roles it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves scoped roles untouched entirely -- null, not an omitted key, is how a unit is declared without touching its scoped roles. [] reconciles to no declared scoped roles. Get-OERInventory emits null here when the live read failed, and when an entry has no role or no principal that the apply engine accepts (it never writes an empty one). An entry's principalType (User, Group or ServicePrincipal) is optional: Get-OERInventory writes it for a principal the directory returned as one of those types, and Invoke-OERStructure does not read it, since it matches a scoped role by role and principal.",
             "items": {
               "type": "object",
               "required": [ "role", "principal" ],
               "properties": {
                 "role": { "type": "string", "minLength": 1 },
-                "principal": { "type": "string", "minLength": 1 }
+                "principal": { "type": "string", "minLength": 1 },
+                "principalType": { "type": "string", "enum": [ "User", "Group", "ServicePrincipal" ] }
               }
             }
           }

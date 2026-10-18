@@ -99,6 +99,14 @@ function Get-OERInventory {
     package's resourceRoles, the catalog's resources or the unit's scopedRoles) is written as an
     explicit null and named in the InventoryPartial error, the way an unread collection is, since
     a declared set that quietly left the entry out would have Invoke-OERStructure -Prune remove it.
+    In AdministrativeUnits, a scoped role row whose principal is an object id carries principalType
+    (User, Group or ServicePrincipal) when the directory returns that principal as one of those three
+    types, all such principals being looked up together through directoryObjects/getByIds, in
+    batches of up to 1000 ids, one request per batch: a row whose principal is not returned, is of
+    another type or is named by its display name carries none, a failed lookup leaves the unit's rows
+    without it and reports 'administrativeUnits/<name>/scopedRoles/principalType' through the
+    InventoryPartial error, and Invoke-OERStructure, which matches a scoped role by role and
+    principal, does not read it.
     A group, administrative unit or access review LIST that could not be read at all is reported
     through the same InventoryPartial error by the section's own name alone (groups,
     administrativeUnits or accessReviews) and is written as an empty array, which does not mean the
@@ -931,6 +939,65 @@ function Get-OERInventory {
                     $UnreadCollections.Add("administrativeUnits/$($Au.DisplayName)/scopedRoles")
                 }
                 $AdministrativeUnits.Add([PSCustomObject]$Proj)
+            }
+
+            # Sprint 11 step 8: principalType on a scoped role row whose principal the directory returned.
+            # A Graph scopedRoleMembership does not say what kind of object its member is, so the distinct
+            # principals the rows above name by object id, over EVERY unit, are looked up ONCE through
+            # Resolve-OERPrincipalName -Detailed (one batched getByIds request per 1000 ids, and none at all
+            # when no row names a principal by object id), into this section's own answers -- the shared
+            # $PrincipalNameCache is not read or written here. A principal the directory returned as a
+            # user, a group or a service principal gets principalType after principal, in the casing
+            # ConvertTo-OERPrincipalType owns. One a successful lookup did not return, one of another type
+            # (a device, for one), one named by its display name and a unit whose scopedRoles is null keep
+            # their rows as they are, and nothing is reported: the type is information, since
+            # Invoke-OERStructure matches a scoped role by role and principal alone. A failed lookup leaves
+            # the rows without principalType and names each affected unit unread ONCE, as
+            # 'administrativeUnits/<name>/scopedRoles/principalType', with its cause; the scopedRoles
+            # collection itself was read, so it stays written. A unit whose scopedRoles is null needs no
+            # test of its own: @($null) holds one $null, whose principal is no object id.
+            $SrPrincipalIds = [System.Collections.Generic.List[string]]::new()
+            $SrPrincipalSeen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($AuEntry in $AdministrativeUnits) {
+                foreach ($SrRow in @($AuEntry.scopedRoles)) {
+                    $SrRowPrincipal = [string]$SrRow.principal
+                    if ((Test-OERGuid -Value $SrRowPrincipal) -and $SrPrincipalSeen.Add($SrRowPrincipal)) { $SrPrincipalIds.Add($SrRowPrincipal) }
+                }
+            }
+            if ($SrPrincipalIds.Count -gt 0) {
+                $SrPrincipalAnswers = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                foreach ($SrAnswer in @(Resolve-OERPrincipalName -Id $SrPrincipalIds.ToArray() -Detailed)) {
+                    $SrPrincipalAnswers[[string]$SrAnswer.Id] = $SrAnswer
+                }
+                foreach ($AuEntry in $AdministrativeUnits) {
+                    # The first principal of this unit whose lookup failed, with its cause: the unit is
+                    # named once however many of its principals the failed lookup held.
+                    $SrTypeUnread = $null
+                    foreach ($SrRow in @($AuEntry.scopedRoles)) {
+                        $SrRowPrincipal = [string]$SrRow.principal
+                        if (-not (Test-OERGuid -Value $SrRowPrincipal)) { continue }
+                        # An id the lookup gave no answer for (the dictionary then returns $null) was not
+                        # looked up: it is read as a failed lookup, never as one the directory did not return.
+                        $SrAnswer = $SrPrincipalAnswers[$SrRowPrincipal]
+                        if ($null -eq $SrAnswer -or $SrAnswer.Read -ne $true) {
+                            if ($null -eq $SrTypeUnread) {
+                                $SrTypeCause = if ($null -ne $SrAnswer) { [string]$SrAnswer.Cause } else { 'the lookup returned no answer for this principal.' }
+                                $SrTypeUnread = [PSCustomObject]@{ Id = $SrRowPrincipal; Cause = $SrTypeCause }
+                            }
+                            continue
+                        }
+                        if ($SrAnswer.Found -ne $true) { continue }
+                        $SrType = ConvertTo-OERPrincipalType -ODataType ([string]$SrAnswer.ObjectType)
+                        if ($null -eq $SrType) { continue }
+                        $SrRow | Add-Member -NotePropertyName 'principalType' -NotePropertyValue $SrType
+                    }
+                    if ($null -ne $SrTypeUnread) {
+                        $SrUnreadCause = "Could not look up the type of a scoped role principal through directoryObjects/getByIds: $($SrTypeUnread.Cause)"
+                        Write-Verbose "Get-OERInventory: $SrUnreadCause"
+                        Add-UnreadCause -Cause $SrUnreadCause -Target $SrTypeUnread.Id
+                        $UnreadCollections.Add("administrativeUnits/$($AuEntry.displayName)/scopedRoles/principalType")
+                    }
+                }
             }
         }
 
@@ -2283,7 +2350,8 @@ function Get-OERInventory {
                 -Message ([System.Exception]::new(
                     "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
                     "Unread: $($UnreadCollections -join ', '). A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as " +
-                    'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot.' +
+                    'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot. ' +
+                    'An entry ending in scopedRoles/principalType is not such a key: it names a unit whose scoped role rows are written without principalType, since their principals'' type could not be read.' +
                     $CauseClause)) `
                 -ErrorId 'InventoryPartial' `
                 -Category LimitsExceeded `

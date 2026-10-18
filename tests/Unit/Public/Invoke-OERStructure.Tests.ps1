@@ -5230,3 +5230,131 @@ Invoke-OERStructure -Json $Json #SWITCHES# | ForEach-Object { "ROW:$($_.Action):
         }
     }
 }
+
+Describe 'Invoke-OERStructure applies the scoped roles an export writes with principalType, Unchanged (Sprint 11 step 8)' {
+    # Get-OERInventory writes principalType on an administrativeUnits[].scopedRoles row whose principal the
+    # directory returned; Sync-OERStructureAdministrativeUnit matches a scoped role by role and principal and
+    # reads no principalType, and is not changed for it. These export ONE mocked live unit whose scoped roles
+    # are held by a user, a group and a service principal, and apply the export back through
+    # Invoke-OERStructure: every row is Unchanged, without and with -Prune, and nothing is written. The mocks
+    # sit at the cmdlet level (the unit reader, the principal lookup, the unit resolver and the writers);
+    # the projection, the document reader, the validator and the handler run for real, and the Microsoft
+    # Graph transport refuses every request. No id below is version-4 shaped.
+    BeforeAll {
+        $script:RtAuId = 'abab7777-0000-0000-0000-000000000001'
+        $script:RtUser = 'aaaa7777-0000-0000-0000-000000000011'
+        $script:RtGroup = 'bbbb7777-0000-0000-0000-000000000011'
+        $script:RtSp = 'cccc7777-0000-0000-0000-000000000011'
+        $script:RtTypeById = @{ $script:RtUser = 'user'; $script:RtGroup = 'group'; $script:RtSp = 'servicePrincipal' }
+        $script:RtLiveUnit = [PSCustomObject]@{
+            Id = $script:RtAuId; DisplayName = 'AU-RoundTrip'; Description = 'fixture unit'
+            IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
+            Members = @()
+            ScopedRoles = @(
+                [PSCustomObject]@{ RoleName = 'User Administrator'; RoleId = 'dddd7777-0000-0000-0000-000000000001'; PrincipalId = $script:RtUser; PrincipalDisplayName = 'fixture user'; ScopedRoleMembershipId = 'srm-user' }
+                [PSCustomObject]@{ RoleName = 'Groups Administrator'; RoleId = 'dddd7777-0000-0000-0000-000000000002'; PrincipalId = $script:RtGroup; PrincipalDisplayName = 'fixture group'; ScopedRoleMembershipId = 'srm-group' }
+                [PSCustomObject]@{ RoleName = 'Helpdesk Administrator'; RoleId = 'dddd7777-0000-0000-0000-000000000003'; PrincipalId = $script:RtSp; PrincipalDisplayName = 'fixture app'; ScopedRoleMembershipId = 'srm-sp' }
+            )
+        }
+        # Exports the unit and serializes the document the way a bundle does.
+        function script:Export-RtDocument {
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorAction Stop
+            [PSCustomObject]@{ version = '1.0'; administrativeUnits = @($Inv.administrativeUnits) } | ConvertTo-Json -Depth 12
+        }
+        function script:Get-RtRowLine {
+            param([object[]]$Row)
+            @($Row | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)|$($_.Detail)" })
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected Graph request: $Uri" }
+        # One live unit answers the export's list read and the apply's read by id.
+        Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit { $script:RtLiveUnit }
+        Mock -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId { $script:RtAuId }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            foreach ($One in @($Id)) {
+                [PSCustomObject]@{ Id = $One; Read = $true; Found = $true; Name = "name-$One"; ObjectType = $script:RtTypeById[$One]; DisplayName = "name-$One"; UserPrincipalName = $null; Cause = $null }
+            }
+        }
+        # The writers: any call is visible, and none is expected.
+        Mock -ModuleName $script:moduleName Add-OERAdministrativeUnitScopedRole { }
+        Mock -ModuleName $script:moduleName Remove-OERAdministrativeUnitScopedRole { }
+        Mock -ModuleName $script:moduleName Add-OERAdministrativeUnitMember { }
+        Mock -ModuleName $script:moduleName Remove-OERAdministrativeUnitMember { }
+        Mock -ModuleName $script:moduleName Set-OERAdministrativeUnit { }
+        Mock -ModuleName $script:moduleName New-OERAdministrativeUnit { }
+    }
+
+    It 'exports principalType User, Group and ServicePrincipal, which the offline validator accepts with no finding' {
+        $Json = Export-RtDocument
+        $Doc = $Json | ConvertFrom-Json
+        @($Doc.administrativeUnits[0].scopedRoles | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalType)" }) | Should -BeExactly @(
+            "User Administrator|$($script:RtUser)|User"
+            "Groups Administrator|$($script:RtGroup)|Group"
+            "Helpdesk Administrator|$($script:RtSp)|ServicePrincipal"
+        )
+        $Validation = Test-OERStructure -Json $Json
+        $Validation.Valid | Should -BeTrue
+        @($Validation.Errors | ForEach-Object { "$($_.Severity) $($_.Path): $($_.Message)" }) | Should -BeNullOrEmpty
+    }
+
+    It 'exports a document schema.json accepts' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        $Json = Export-RtDocument
+        $Schema = InModuleScope $script:moduleName { Get-OERStructureSchemaJson }
+        Test-Json -Json $Json -Schema $Schema -ErrorAction SilentlyContinue | Should -BeTrue
+    }
+
+    It 'applies the export back with every scoped role Unchanged and no write, <Case>' -TestCases @(
+        @{ Case = 'without -Prune'; Prune = $false; Swap = $false }
+        @{ Case = 'with -Prune'; Prune = $true; Swap = $false }
+        @{ Case = 'with -Prune and every principalType changed to another type, which the engine does not read'; Prune = $true; Swap = $true }
+    ) {
+        $Json = Export-RtDocument
+        if ($Swap) {
+            $Doc = $Json | ConvertFrom-Json
+            $Next = @{ User = 'Group'; Group = 'ServicePrincipal'; ServicePrincipal = 'User' }
+            foreach ($Row in @($Doc.administrativeUnits[0].scopedRoles)) { $Row.principalType = $Next[[string]$Row.principalType] }
+            @($Doc.administrativeUnits[0].scopedRoles.principalType) | Should -BeExactly @('Group', 'ServicePrincipal', 'User')
+            $Json = $Doc | ConvertTo-Json -Depth 12
+        }
+        $Results = @(Invoke-OERStructure -Json $Json -Prune:$Prune -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable ApplyErr -WarningAction SilentlyContinue -WarningVariable ApplyWarn)
+
+        @($Results | Where-Object { $_.Action -ne 'Unchanged' } | ForEach-Object { "$($_.Section) '$($_.Item)': $($_.Action) ($($_.Detail))" }) |
+            Should -BeNullOrEmpty
+        # Reached: each scoped role was matched by role and principal, one row each with the handler's own text.
+        @(Get-RtRowLine -Row @($Results | Where-Object { $_.Detail -like 'scopedRole *' })) | Should -BeExactly @(
+            "administrativeUnits|AU-RoundTrip|Unchanged|scopedRole 'User Administrator' for '$($script:RtUser)' already present"
+            "administrativeUnits|AU-RoundTrip|Unchanged|scopedRole 'Groups Administrator' for '$($script:RtGroup)' already present"
+            "administrativeUnits|AU-RoundTrip|Unchanged|scopedRole 'Helpdesk Administrator' for '$($script:RtSp)' already present"
+        )
+        @($ApplyErr) | Should -BeNullOrEmpty
+        @($ApplyWarn) | Should -BeNullOrEmpty
+        # Reached: the apply read the live unit by id with its scoped roles.
+        Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $Id -eq $script:RtAuId -and $IncludeScopedRoles }
+
+        Should -Invoke -ModuleName $script:moduleName Add-OERAdministrativeUnitScopedRole -Times 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERAdministrativeUnitScopedRole -Times 0
+        Should -Invoke -ModuleName $script:moduleName Add-OERAdministrativeUnitMember -Times 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERAdministrativeUnitMember -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERAdministrativeUnit -Times 0
+        Should -Invoke -ModuleName $script:moduleName New-OERAdministrativeUnit -Times 0
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'control: the export without the service principal''s row removes exactly that scoped role under -Prune, so the prune pass ran above' {
+        $Doc = Export-RtDocument | ConvertFrom-Json
+        $Doc.administrativeUnits[0].scopedRoles = @($Doc.administrativeUnits[0].scopedRoles | Where-Object { $_.principal -ne $script:RtSp })
+        $Results = @(Invoke-OERStructure -Json ($Doc | ConvertTo-Json -Depth 12) -Prune -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        @($Results | Where-Object { $_.Action -ne 'Unchanged' } | ForEach-Object { "$($_.Action)|$($_.Detail)" }) | Should -BeExactly @(
+            "Removed|removed undeclared scopedRole 'Helpdesk Administrator' (principal '$($script:RtSp)')"
+        )
+        Should -Invoke -ModuleName $script:moduleName Remove-OERAdministrativeUnitScopedRole -Times 1 -Exactly -ParameterFilter {
+            $Id -eq $script:RtAuId -and $ScopedRoleMembershipId -eq 'srm-sp'
+        }
+        Should -Invoke -ModuleName $script:moduleName Add-OERAdministrativeUnitScopedRole -Times 0
+    }
+}

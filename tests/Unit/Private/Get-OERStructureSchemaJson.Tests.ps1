@@ -164,6 +164,37 @@ Describe 'Get-OERStructureSchemaJson' {
         }
     }
 
+    It 'declares administrativeUnits[].scopedRoles[].principalType as the optional User/Group/ServicePrincipal enum, and says the engine does not read it (Sprint 11 step 8)' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $ScopedRoles = $Schema.properties.administrativeUnits.items.properties.scopedRoles
+            $Prop = $ScopedRoles.items.properties.principalType
+            $Prop | Should -Not -BeNullOrEmpty
+            $Prop.type | Should -BeExactly 'string'
+            @($Prop.enum) | Should -BeExactly @('User', 'Group', 'ServicePrincipal')
+            # The key sits after principal, and does not join the required keys.
+            @($ScopedRoles.items.properties.PSObject.Properties.Name) | Should -BeExactly @('role', 'principal', 'principalType')
+            @($ScopedRoles.items.required) | Should -BeExactly @('role', 'principal')
+            $ScopedRoles.description | Should -Match ([regex]::Escape("An entry's principalType (User, Group or ServicePrincipal) is optional: Get-OERInventory writes it for a principal the directory returned as one of those types, and Invoke-OERStructure does not read it, since it matches a scoped role by role and principal."))
+        }
+    }
+
+    It 'accepts a scoped role principalType User, Group and ServicePrincipal and rejects any other value, case-sensitively (Sprint 11 step 8)' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Row = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "AU-One", "scopedRoles": [ { "role": "User Administrator", "principal": "aaaa8888-0000-0000-0000-000000000001"#V# } ] } ] }'
+            # Positive control: the row is valid without the key.
+            Test-Json -Json $Row.Replace('#V#', '') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeTrue
+            foreach ($Value in 'User', 'Group', 'ServicePrincipal') {
+                Test-Json -Json $Row.Replace('#V#', ", `"principalType`": `"$Value`"") -Schema $Schema -ErrorAction SilentlyContinue | Should -BeTrue -Because "'$Value' is a canonical principalType"
+            }
+            foreach ($Value in 'Device', 'user', 'GROUP', '') {
+                Test-Json -Json $Row.Replace('#V#', ", `"principalType`": `"$Value`"") -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse -Because "'$Value' is not a canonical principalType"
+            }
+            Test-Json -Json $Row.Replace('#V#', ', "principalType": 1') -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+        }
+    }
+
     It 'rejects an activationMaxHours outside the 1-24 range' {
         InModuleScope $script:moduleName {
             $Schema = Get-OERStructureSchemaJson
@@ -525,7 +556,9 @@ Describe 'Get-OERStructureSchemaJson' {
                 }
                 $Declared.Add(($Values -join ','))
             }
-            $Declared.Count | Should -Be 15 -Because 'the schema declares 15 enum arrays across 10 distinct enums'
+            # 16 since Sprint 11 step 8: administrativeUnits[].scopedRoles[].principalType is the third
+            # array of the principalType enum.
+            $Declared.Count | Should -Be 16 -Because 'the schema declares 16 enum arrays across 10 distinct enums'
             $NullBearing | Should -Be 1 -Because 'accessReviews[].recurrence is the only nullable enum in the schema'
 
             $Owned = @{}

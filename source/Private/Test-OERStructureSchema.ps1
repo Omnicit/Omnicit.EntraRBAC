@@ -19,7 +19,11 @@ function Test-OERStructureSchema {
     resourceRoles entry's resource and role -- must be non-empty strings: one that is present but
     empty or only whitespace is an Error at its own path ("must be a non-empty string"), while an
     absent one is still reported as required, since an empty name identifies nothing and would
-    throw at apply (Get-OERInventory never writes one). Intra-document
+    throw at apply (Get-OERInventory never writes one). An administrative unit scopedRoles entry
+    may also carry principalType, which Get-OERInventory writes for a principal the directory
+    returned and the apply engine never reads: when present it must be User, Group or
+    ServicePrincipal (in any casing, with the casing Warning described below), and an entry without
+    it is valid. Intra-document
     cross-reference gaps (for example an access package whose catalog is not declared) are reported as
     Warning-severity entries that do not fail validation, since the referenced object may already exist
     in the tenant. A roleManagementPolicies item validates the settable Azure PIM policy surface except
@@ -1001,6 +1005,22 @@ function Test-OERStructureSchema {
                                 Add-Finding -Section 'administrativeUnits' -Item $AUItem `
                                     -Path "$SRPath.principal" `
                                     -Message "'principal' at $SRPath must be a non-empty string."
+                            }
+                            # Sprint 11 step 8 (R-7): principalType, which Get-OERInventory writes for a principal
+                            # the directory returned, is held to the enum roleAssignments uses, as there: a value
+                            # outside it is an Error, and one in another letter case is the casing Warning, since
+                            # schema.json declares the enum case-sensitively. An entry without it is valid as
+                            # before, and the apply engine never reads it.
+                            if (Test-HasProp -Node $SR -Name 'principalType') {
+                                $ValidSrPrincipalTypes = @(Resolve-OERStructureEnumCasing -EnumName 'principalType' -List)
+                                if ($ValidSrPrincipalTypes -inotcontains $SR.principalType) {
+                                    Add-Finding -Section 'administrativeUnits' -Item $AUItem `
+                                        -Path "$SRPath.principalType" `
+                                        -Message "'principalType' at $SRPath must be one of: $($ValidSrPrincipalTypes -join ', '). Got: '$($SR.principalType)'."
+                                } else {
+                                    Add-EnumCasingWarning -EnumName 'principalType' -Key 'principalType' -Value $SR.principalType `
+                                        -Section 'administrativeUnits' -Item $AUItem -Path "$SRPath.principalType"
+                                }
                             }
                         }
                     }

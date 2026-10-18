@@ -781,6 +781,17 @@ Describe 'Get-OERInventory' {
     }
 
     Context 'administrativeUnits scoped role id fallback' {
+        BeforeEach {
+            # Sprint 11 step 8: a scoped role principal named by object id is looked up for its type. The
+            # fixtures below name a user by object id, answered here as the directory returns one, so
+            # their rows also carry principalType User and nothing is reported unread.
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipalName {
+                foreach ($One in @($Id)) {
+                    [PSCustomObject]@{ Id = $One; Read = $true; Found = $true; Name = 'Anna'; ObjectType = 'user'; DisplayName = 'Anna'; UserPrincipalName = $null; Cause = $null }
+                }
+            }
+        }
+
         It 'falls back to the role id when the directory role name could not be resolved' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERAdministrativeUnit {
                 [PSCustomObject]@{
@@ -829,6 +840,207 @@ Describe 'Get-OERInventory' {
             $Au.scopedRoles[0].principal | Should -BeExactly '33333333-3333-3333-3333-333333333333'
             $InvPartial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
             $InvPartial.Count | Should -Be 0 -Because 'nothing was left unread, so no InventoryPartial names the unit''s scopedRoles'
+        }
+    }
+
+    Context 'administrativeUnits scoped role principalType (Sprint 11 step 8)' {
+        # A scoped role row whose principal is an object id carries principalType when the directory
+        # returned that principal as a user, a group or a service principal. Every such principal of every
+        # unit is looked up in ONE Resolve-OERPrincipalName -Detailed call. No id below is version-4 shaped.
+        BeforeAll {
+            $script:SrUser = 'aaaa7777-0000-0000-0000-000000000001'
+            $script:SrGroup = 'bbbb7777-0000-0000-0000-000000000001'
+            $script:SrSp = 'cccc7777-0000-0000-0000-000000000001'
+            $script:SrDevice = 'dddd7777-0000-0000-0000-000000000001'
+            $script:SrGone = 'eeee7777-0000-0000-0000-000000000001'
+            # The type the directory returns for each principal it holds; SrGone it does not return.
+            $script:SrTypeById = @{
+                $script:SrUser   = 'user'
+                $script:SrGroup  = 'group'
+                $script:SrSp     = 'servicePrincipal'
+                $script:SrDevice = 'device'
+            }
+            function script:New-SrMembership {
+                param([string]$Role, [string]$PrincipalId, [string]$PrincipalDisplayName = 'fixture')
+                [PSCustomObject]@{ RoleName = $Role; RoleId = 'r-1'; PrincipalId = $PrincipalId; PrincipalDisplayName = $PrincipalDisplayName; ScopedRoleMembershipId = "srm-$PrincipalId" }
+            }
+            function script:New-SrUnit {
+                param([string]$Name, [object[]]$ScopedRoles)
+                [PSCustomObject]@{
+                    Id = "au-$Name"; DisplayName = $Name; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
+                    Members = @(); ScopedRoles = @($ScopedRoles)
+                }
+            }
+            # AU-A: a user, a group and a service principal. AU-B: the same user again, a device, a principal
+            # the directory does not return, and one named by its display name (no object id). AU-C: none.
+            $script:SrUnits = @(
+                New-SrUnit -Name 'AU-A' -ScopedRoles @(
+                    New-SrMembership -Role 'User Administrator' -PrincipalId $script:SrUser
+                    New-SrMembership -Role 'Groups Administrator' -PrincipalId $script:SrGroup
+                    New-SrMembership -Role 'Helpdesk Administrator' -PrincipalId $script:SrSp
+                )
+                New-SrUnit -Name 'AU-B' -ScopedRoles @(
+                    New-SrMembership -Role 'Helpdesk Administrator' -PrincipalId $script:SrUser
+                    New-SrMembership -Role 'User Administrator' -PrincipalId $script:SrDevice
+                    New-SrMembership -Role 'User Administrator' -PrincipalId $script:SrGone
+                    New-SrMembership -Role 'Groups Administrator' -PrincipalId $null -PrincipalDisplayName 'Person Two'
+                )
+                New-SrUnit -Name 'AU-C' -ScopedRoles @()
+            )
+            # The names of a row's keys and its principalType, for one exact comparison per unit.
+            function script:Get-SrRowShape {
+                param([object]$Unit)
+                @(@($Unit.scopedRoles) | ForEach-Object { "$($_.principal)|$(@($_.PSObject.Properties.Name) -join ',')|$($_.principalType)" })
+            }
+        }
+
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit { $script:SrUnits }
+            # The directory's answer: a held principal is returned with its type; any other is read and not
+            # found. The not-found answer carries a type on purpose: Found alone decides, never the type.
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                foreach ($One in @($Id)) {
+                    if ($script:SrTypeById.ContainsKey($One)) {
+                        [PSCustomObject]@{ Id = $One; Read = $true; Found = $true; Name = "name-$One"; ObjectType = $script:SrTypeById[$One]; DisplayName = "name-$One"; UserPrincipalName = $null; Cause = $null }
+                    } else {
+                        [PSCustomObject]@{ Id = $One; Read = $true; Found = $false; Name = $null; ObjectType = 'user'; DisplayName = $null; UserPrincipalName = $null; Cause = $null }
+                    }
+                }
+            }
+        }
+
+        It 'writes principalType User, Group and ServicePrincipal after principal, and nothing for a device, a principal not found or one named by display name' {
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Units = @($Inv.AdministrativeUnits)
+            @($Units.displayName) | Should -BeExactly @('AU-A', 'AU-B', 'AU-C')
+            Get-SrRowShape -Unit $Units[0] | Should -BeExactly @(
+                "$($script:SrUser)|role,principal,principalType|User"
+                "$($script:SrGroup)|role,principal,principalType|Group"
+                "$($script:SrSp)|role,principal,principalType|ServicePrincipal"
+            )
+            Get-SrRowShape -Unit $Units[1] | Should -BeExactly @(
+                "$($script:SrUser)|role,principal,principalType|User"
+                "$($script:SrDevice)|role,principal|"
+                "$($script:SrGone)|role,principal|"
+                'Person Two|role,principal|'
+            )
+            $Units[2].PSObject.Properties.Name | Should -Contain 'scopedRoles'
+            @($Units[2].scopedRoles).Count | Should -Be 0
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }) | Should -BeNullOrEmpty -Because 'a principal not found, a device and a display name are facts about the rows, not unread reads'
+        }
+
+        It 'looks the distinct object ids of every unit up in exactly one lookup, and never a display name' {
+            $null = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly -ParameterFilter {
+                $Detailed -and (@($Id) -join ',') -ceq "$($script:SrUser),$($script:SrGroup),$($script:SrSp),$($script:SrDevice),$($script:SrGone)"
+            }
+        }
+
+        It 'makes no lookup when no unit names a scoped role principal by object id (<Case>)' -ForEach @(
+            @{ Case = 'no unit has a scoped role'; ByName = $false }
+            @{ Case = 'every principal is named by display name'; ByName = $true }
+        ) {
+            $script:SrNoIdUnits = @(
+                New-SrUnit -Name 'AU-A' -ScopedRoles $(if ($ByName) { @(New-SrMembership -Role 'User Administrator' -PrincipalId $null -PrincipalDisplayName 'Person Two') } else { @() })
+                New-SrUnit -Name 'AU-B' -ScopedRoles @()
+            )
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit { $script:SrNoIdUnits }
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            # Positive control: both units were read and projected with their scoped roles.
+            @($Inv.AdministrativeUnits.displayName) | Should -BeExactly @('AU-A', 'AU-B')
+            @($Inv.AdministrativeUnits[0].scopedRoles).Count | Should -Be $(if ($ByName) { 1 } else { 0 })
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 0
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }) | Should -BeNullOrEmpty
+        }
+
+        It 'writes no principalType when the lookup fails, names each affected unit once, and keeps the scoped roles written' {
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                foreach ($One in @($Id)) {
+                    [PSCustomObject]@{ Id = $One; Read = $false; Found = $false; Name = $null; ObjectType = $null; DisplayName = $null; UserPrincipalName = $null; Cause = 'TooManyRequests (injected)' }
+                }
+            }
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Units = @($Inv.AdministrativeUnits)
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly
+            Get-SrRowShape -Unit $Units[0] | Should -BeExactly @(
+                "$($script:SrUser)|role,principal|"
+                "$($script:SrGroup)|role,principal|"
+                "$($script:SrSp)|role,principal|"
+            )
+            Get-SrRowShape -Unit $Units[1] | Should -BeExactly @(
+                "$($script:SrUser)|role,principal|"
+                "$($script:SrDevice)|role,principal|"
+                "$($script:SrGone)|role,principal|"
+                'Person Two|role,principal|'
+            )
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            # Each unit whose principals were not read is named once; AU-C has none and is not named.
+            [string]$Partial[0].TargetObject | Should -BeExactly 'administrativeUnits/AU-A/scopedRoles/principalType, administrativeUnits/AU-B/scopedRoles/principalType'
+            $Message = $Partial[0].Exception.Message
+            $Message | Should -Match ([regex]::Escape('Could not look up the type of a scoped role principal through directoryObjects/getByIds: TooManyRequests (injected)'))
+            $Message | Should -Match ([regex]::Escape('An entry ending in scopedRoles/principalType is not such a key: it names a unit whose scoped role rows are written without principalType, since their principals'' type could not be read.'))
+        }
+
+        It 'names a unit with the cause of its first principal whose lookup failed' {
+            # Each principal's lookup fails with a cause of its own. AU-A's first row is the user, and so is
+            # AU-B's, so both units name the user's cause, and no other principal's cause is shown.
+            $script:SrCauseById = @{
+                $script:SrUser = 'injected cause A'; $script:SrGroup = 'injected cause B'; $script:SrSp = 'injected cause C'
+                $script:SrDevice = 'injected cause D'; $script:SrGone = 'injected cause E'
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                foreach ($One in @($Id)) {
+                    [PSCustomObject]@{ Id = $One; Read = $false; Found = $false; Name = $null; ObjectType = $null; DisplayName = $null; UserPrincipalName = $null; Cause = $script:SrCauseById[$One] }
+                }
+            }
+            $null = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            [string]$Partial[0].TargetObject | Should -BeExactly 'administrativeUnits/AU-A/scopedRoles/principalType, administrativeUnits/AU-B/scopedRoles/principalType'
+            $Message = $Partial[0].Exception.Message
+            $Message | Should -Match ([regex]::Escape('Causes: Could not look up the type of a scoped role principal through directoryObjects/getByIds: injected cause A.'))
+            foreach ($Other in 'injected cause B', 'injected cause C', 'injected cause D', 'injected cause E') {
+                $Message | Should -Not -Match $Other
+            }
+        }
+
+        It 'reads a principal the lookup gave no answer for as not read, never as one the directory did not return' {
+            # Only AU-A's group is answered; every other object id is missing from the answer.
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                [PSCustomObject]@{ Id = $script:SrGroup; Read = $true; Found = $true; Name = 'g'; ObjectType = 'group'; DisplayName = 'g'; UserPrincipalName = $null; Cause = $null }
+            }
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Get-SrRowShape -Unit @($Inv.AdministrativeUnits)[0] | Should -BeExactly @(
+                "$($script:SrUser)|role,principal|"
+                "$($script:SrGroup)|role,principal,principalType|Group"
+                "$($script:SrSp)|role,principal|"
+            )
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            [string]$Partial[0].TargetObject | Should -BeExactly 'administrativeUnits/AU-A/scopedRoles/principalType, administrativeUnits/AU-B/scopedRoles/principalType'
+            $Partial[0].Exception.Message | Should -Match ([regex]::Escape('directoryObjects/getByIds: the lookup returned no answer for this principal.'))
+        }
+
+        It 'leaves a unit whose scoped roles could not be read as it was, and looks nothing up for it' {
+            $script:SrUnreadUnit = [PSCustomObject]@{
+                Id = 'au-AU-D'; DisplayName = 'AU-D'; Description = $null
+                IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null; Members = @()
+            }
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit { $script:SrUnreadUnit }
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Au = @($Inv.AdministrativeUnits)[0]
+            $Au.PSObject.Properties.Name | Should -Contain 'scopedRoles'
+            $null -eq $Au.scopedRoles | Should -BeTrue
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 0
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            [string]$Partial[0].TargetObject | Should -BeExactly 'administrativeUnits/AU-D/scopedRoles'
+        }
+
+        It 'states the rule in its help' {
+            $Help = (Get-Command -Name Get-OERInventory -Module $script:moduleName).ScriptBlock.Ast.GetHelpContent().Description
+            $Help | Should -Match 'In AdministrativeUnits, a scoped role row whose principal is an object id carries principalType'
+            $Help | Should -Match ([regex]::Escape("reports 'administrativeUnits/<name>/scopedRoles/principalType' through the"))
         }
     }
 

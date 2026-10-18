@@ -7076,3 +7076,83 @@ Describe 'Test-OERStructureSchema (Rule 17, naming standard, Sprint 11 step 7)' 
         }
     }
 }
+
+Describe 'Test-OERStructureSchema administrativeUnits scopedRoles principalType (Sprint 11 step 8, R-7)' {
+    # Get-OERInventory writes principalType on a scoped role row whose principal the directory returned.
+    # The validator holds it to the enum roleAssignments uses: a value outside it is an Error with the
+    # roleAssignments text shape, a value in another letter case is the casing Warning, and a row without
+    # it, or with an explicit null, is valid as before. No id below is version-4 shaped.
+    BeforeAll {
+        function Invoke-SrValidation {
+            param([string]$Json)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        # One unit with two scoped role rows; -Extra is the JSON text that follows the SECOND row's
+        # principal, so a finding's path shows the row index it was raised for.
+        function Get-SrDocument {
+            param([string]$Extra = '')
+            '{ "version": "1.0", "administrativeUnits": [ { "displayName": "AU-One", "members": [], "scopedRoles": [ ' +
+            '{ "role": "User Administrator", "principal": "aaaa8888-0000-0000-0000-000000000001" }, ' +
+            '{ "role": "Helpdesk Administrator", "principal": "aaaa8888-0000-0000-0000-000000000002"' + $Extra + ' } ] } ] }'
+        }
+    }
+
+    It 'accepts principalType <Value> with no finding at all' -ForEach @(
+        @{ Value = 'User' }
+        @{ Value = 'Group' }
+        @{ Value = 'ServicePrincipal' }
+    ) {
+        $V = Invoke-SrValidation -Json (Get-SrDocument -Extra (', "principalType": "' + $Value + '"'))
+        @($V.Errors | ForEach-Object { "$($_.Path): $($_.Message)" }) | Should -BeNullOrEmpty
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'accepts a row without principalType, and one with an explicit null, as before (<Case>)' -ForEach @(
+        @{ Case = 'no key'; Extra = '' }
+        @{ Case = 'explicit null'; Extra = ', "principalType": null' }
+    ) {
+        $V = Invoke-SrValidation -Json (Get-SrDocument -Extra $Extra)
+        @($V.Errors | ForEach-Object { "$($_.Path): $($_.Message)" }) | Should -BeNullOrEmpty
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'refuses principalType <Json> outside the enum with the roleAssignments text shape' -ForEach @(
+        @{ Json = '"Device"'; Shown = 'Device' }
+        @{ Json = '"ForeignGroup"'; Shown = 'ForeignGroup' }
+        @{ Json = '""'; Shown = '' }
+        @{ Json = '7'; Shown = '7' }
+    ) {
+        $V = Invoke-SrValidation -Json (Get-SrDocument -Extra (', "principalType": ' + $Json))
+        $V.Valid | Should -BeFalse
+        @($V.Errors | ForEach-Object { "$($_.Severity)|$($_.Section)|$($_.Item)|$($_.Path)|$($_.Message)" }) | Should -BeExactly @(
+            ("Error|administrativeUnits|AU-One|administrativeUnits[0].scopedRoles[1].principalType|'principalType' at administrativeUnits[0].scopedRoles[1] " +
+                "must be one of: User, Group, ServicePrincipal. Got: '$Shown'.")
+        )
+    }
+
+    It 'accepts principalType <Value> in another letter case with the casing Warning naming <Canonical>' -ForEach @(
+        @{ Value = 'user'; Canonical = 'User' }
+        @{ Value = 'GROUP'; Canonical = 'Group' }
+        @{ Value = 'serviceprincipal'; Canonical = 'ServicePrincipal' }
+    ) {
+        $V = Invoke-SrValidation -Json (Get-SrDocument -Extra (', "principalType": "' + $Value + '"'))
+        $V.Valid | Should -BeTrue
+        @($V.Errors | ForEach-Object { "$($_.Severity)|$($_.Path)|$($_.Message)" }) | Should -BeExactly @(
+            ("Warning|administrativeUnits[0].scopedRoles[1].principalType|'principalType' at administrativeUnits[0].scopedRoles[1].principalType is '$Value'; " +
+                "the canonical spelling is '$Canonical'. Invoke-OERStructure normalizes the casing before it applies the document, but schema.json " +
+                'declares this enum case-sensitively (draft-07), so a validator outside the module rejects it.')
+        )
+    }
+
+    It 'documents principalType among the scopedRoles entry keys in its help' {
+        $Help = InModuleScope $script:moduleName {
+            (Get-Command -Name Test-OERStructureSchema -CommandType Function -ErrorAction Stop).ScriptBlock.Ast.GetHelpContent().Description
+        }
+        $Help | Should -Match ([regex]::Escape('An administrative unit scopedRoles entry'))
+        $Help | Should -Match 'may also carry principalType, which Get-OERInventory writes for a principal the directory'
+    }
+}
