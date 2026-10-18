@@ -712,3 +712,63 @@ Describe 'Get-OERInventoryPromptTemplate Azure Lighthouse delegations (Sprint 11
         }
     }
 }
+
+Describe 'Get-OERInventoryPromptTemplate service principal access (Sprint 11 step 8)' {
+    # Export-OERInventory -IncludeServicePrincipalAccess writes servicePrincipalAccess.json and asks the prompt
+    # to name it among the inputs, as read-only context that is never a proposal target. Without the switch the
+    # prompt is byte-identical to one built before it existed (Ruling R-4).
+    BeforeAll {
+        $script:SpPromptBullet = @(
+            '- servicePrincipalAccess.json -- read-only context, written when the export ran with'
+            '  -IncludeServicePrincipalAccess: the application permissions each service principal holds on a'
+            '  resource (applicationPermissions: the client, the resource and the app role with its value), the'
+            '  delegated permission grants (delegatedPermissionGrants: the client, the resource, AllPrincipals or'
+            '  the one user, and the scopes), and the owners of each app registration (applicationOwners) and of'
+            '  each service principal (servicePrincipalOwners). A part written as null could not be read --'
+            '  README.md names it under "What this export could not read" -- which is not the same as an empty'
+            '  []. This access is not part of the apply document: never declare it, and never propose to grant,'
+            '  revoke or change it through the document; it is never a proposal target. Name what stands out'
+            '  in your rationale as a finding.'
+        ) -join "`n"
+    }
+
+    It 'is byte-identical without the switch and with it $false (<Name>)' -ForEach @(
+        @{ Name = 'no naming convention'; Naming = $null }
+        @{ Name = 'a naming convention'; Naming = 'role_sec_{area}_{tier}' }
+    ) {
+        $Pair = InModuleScope $script:moduleName -Parameters @{ N = $Naming } {
+            param($N)
+            [PSCustomObject]@{
+                Without = Get-OERInventoryPromptTemplate -NamingConvention $N
+                False   = Get-OERInventoryPromptTemplate -NamingConvention $N -IncludeServicePrincipalAccess:$false
+            }
+        }
+        $Pair.False | Should -BeExactly $Pair.Without
+        $Pair.Without | Should -Not -Match 'servicePrincipalAccess'
+    }
+
+    It 'names servicePrincipalAccess.json directly after lighthouseDelegations.json, and adds nothing else' {
+        $Pair = InModuleScope $script:moduleName {
+            # Line breaks compared as LF: the built module's here-strings carry the build platform's.
+            [PSCustomObject]@{
+                Without = (Get-OERInventoryPromptTemplate) -replace '\r\n', "`n"
+                With    = (Get-OERInventoryPromptTemplate -IncludeServicePrincipalAccess) -replace '\r\n', "`n"
+            }
+        }
+        $Pair.With | Should -Match ([regex]::Escape("permanent.`n" + $script:SpPromptBullet + "`n- the per-area files"))
+        # Taken out again, the bullet leaves the prompt built without the switch.
+        $Pair.With.Replace($script:SpPromptBullet + "`n", '') | Should -BeExactly $Pair.Without
+        $Flat = $Pair.With -replace '\s+', ' '
+        $Flat.IndexOf('- servicePrincipalAccess.json --') | Should -BeGreaterThan $Flat.IndexOf('- lighthouseDelegations.json --')
+        $Flat.IndexOf('- servicePrincipalAccess.json --') | Should -BeLessThan $Flat.IndexOf('- the per-area files')
+    }
+
+    It 'tells the model the four parts, what a null part means, and that it is never a proposal target' {
+        $Flat = (InModuleScope $script:moduleName { Get-OERInventoryPromptTemplate -IncludeServicePrincipalAccess }) -replace '\s+', ' '
+        foreach ($Part in @('applicationPermissions', 'delegatedPermissionGrants', 'applicationOwners', 'servicePrincipalOwners')) {
+            $Flat | Should -Match ([regex]::Escape("($Part"))
+        }
+        $Flat | Should -Match ([regex]::Escape('A part written as null could not be read -- README.md names it under "What this export could not read" -- which is not the same as an empty [].'))
+        $Flat | Should -Match ([regex]::Escape('This access is not part of the apply document: never declare it, and never propose to grant, revoke or change it through the document; it is never a proposal target.'))
+    }
+}

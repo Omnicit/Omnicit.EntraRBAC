@@ -10,9 +10,19 @@ function Get-OERInventoryPromptTemplate {
     naming convention is supplied it is seeded into the optional USER PREFERENCES block. Pure string
     builder: no Graph, ARM, or filesystem access.
 
+    With -IncludeServicePrincipalAccess (Sprint 11 step 8), which Export-OERInventory passes only when
+    it ran with its own -IncludeServicePrincipalAccess, the Inputs list carries one more bullet,
+    directly after lighthouseDelegations.json: servicePrincipalAccess.json as read-only context -- its
+    four parts, that a part written as null could not be read, and that it is never a proposal
+    target. Without the switch the prompt is byte-identical to one built before it existed.
+
     .PARAMETER NamingConvention
     An optional naming-standard hint (for example 'role_sec_{area}_{tier}') seeded from the tenant's
     OER Tenant Profile. When omitted, a generic best-practice line is used and the user can edit it.
+
+    .PARAMETER IncludeServicePrincipalAccess
+    Add the servicePrincipalAccess.json bullet to the Inputs list, for a bundle that holds the file.
+    Leave it out for a bundle without it: the prompt is then exactly what it was.
 
     .EXAMPLE
     Get-OERInventoryPromptTemplate
@@ -21,17 +31,40 @@ function Get-OERInventoryPromptTemplate {
     .EXAMPLE
     Get-OERInventoryPromptTemplate -NamingConvention 'role_sec_{area}_{tier}'
     Returns the prompt with the supplied naming standard seeded into the preferences block.
+
+    .EXAMPLE
+    Get-OERInventoryPromptTemplate -IncludeServicePrincipalAccess
+    Returns the prompt with servicePrincipalAccess.json among its inputs.
     #>
     [OutputType([string])]
     [CmdletBinding()]
     param(
-        [string]$NamingConvention
+        [string]$NamingConvention,
+        [switch]$IncludeServicePrincipalAccess
     )
 
     $NamingLine = if ([string]::IsNullOrWhiteSpace($NamingConvention)) {
         '- Naming convention: (none specified -- propose a clear, consistent standard, e.g. role_sec_{area}_{tier})'
     } else {
         "- Naming convention: $NamingConvention"
+    }
+
+    # Sprint 11 step 8: the servicePrincipalAccess.json input, only for a bundle that holds the file. It
+    # stands at the start of the line of the next bullet, so without the switch the prompt is unchanged.
+    $SpAccessInput = ''
+    if ($IncludeServicePrincipalAccess) {
+        $SpAccessInput = @'
+- servicePrincipalAccess.json -- read-only context, written when the export ran with
+  -IncludeServicePrincipalAccess: the application permissions each service principal holds on a
+  resource (applicationPermissions: the client, the resource and the app role with its value), the
+  delegated permission grants (delegatedPermissionGrants: the client, the resource, AllPrincipals or
+  the one user, and the scopes), and the owners of each app registration (applicationOwners) and of
+  each service principal (servicePrincipalOwners). A part written as null could not be read --
+  README.md names it under "What this export could not read" -- which is not the same as an empty
+  []. This access is not part of the apply document: never declare it, and never propose to grant,
+  revoke or change it through the document; it is never a proposal target. Name what stands out
+  in your rationale as a finding.
+'@ + "`n"
     }
 
     @"
@@ -97,7 +130,7 @@ PowerShell module.
   this tenant and not part of the apply document: never declare it in roleAssignments[], and never
   propose to create or remove it through the document. Name each delegation in your rationale as a
   finding: the managing tenant, its roles, and whether each authorization is eligible or permanent.
-- the per-area files (groups.json, catalogs.json, ...) are the same data split out for convenience.
+${SpAccessInput}- the per-area files (groups.json, catalogs.json, ...) are the same data split out for convenience.
 - schema.json -- a formal JSON Schema (draft-07) for the apply document. Validate every proposal
   you emit against it; it encodes the required fields, enums, and numeric ranges exactly.
 

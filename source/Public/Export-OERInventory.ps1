@@ -9,7 +9,10 @@ function Export-OERInventory {
     directoryRoleManagementPolicies.json and directoryRoleAssignments.json for the Microsoft Entra
     directory role sections -- read-only context (scopeHierarchy.json, groupsRoster.json,
     azurePimEligibility.json, lighthouseDelegations.json), a formal
-    JSON Schema (schema.json), a predefined LLM prompt (rbac-architect-prompt.md), and a README. The
+    JSON Schema (schema.json), a predefined LLM prompt (rbac-architect-prompt.md), and a README. With
+    -IncludeServicePrincipalAccess it also writes servicePrincipalAccess.json, read-only context on the
+    application permissions, delegated permission grants and owners of the tenant's service principals
+    and app registrations (see SERVICE PRINCIPAL ACCESS below). The
     bundle is designed to be handed to any LLM to produce appliable RBAC proposals. Only
     RBAC-relevant groups are kept in full detail in inventory.json: a role-assignable group, a group
     with PIM eligibility, a group carrying a pimPolicy block, and, with -IncludeSyncedGroups, a
@@ -341,6 +344,41 @@ function Export-OERInventory {
     name, never an id -- or the statement that none was found. Nothing is left out of the export, and
     listing a group changes nothing in the tenant.
 
+    SERVICE PRINCIPAL ACCESS. With -IncludeServicePrincipalAccess the export also writes
+    servicePrincipalAccess.json: read-only context on what the tenant's service principals may do and
+    who owns them and its app registrations, which inventory.json does not model. The file is one
+    JSON object with four parts, in this order: applicationPermissions, one row per app role a
+    service principal holds on a resource -- application permissions among them -- read from the
+    client side (servicePrincipalId, servicePrincipalDisplayName, resourceId, resourceDisplayName,
+    appRoleId and appRoleValue, which is null for a role the resource does not declare, such as the
+    default access role); delegatedPermissionGrants, one row per delegated permission grant (clientId,
+    clientDisplayName, resourceId, resourceDisplayName, consentType, principalId and
+    principalDisplayName, both null for AllPrincipals, and scope); applicationOwners, one row per
+    owner of an app registration (applicationId, appId, applicationDisplayName, ownerId, ownerType,
+    ownerDisplayName and ownerUserPrincipalName); and servicePrincipalOwners, one row per owner of a
+    service principal (servicePrincipalId, servicePrincipalDisplayName and the same four owner
+    fields). Every blank value is null, and each part is sorted, so two exports of an unchanged tenant
+    write the same file. The file is read-only context and never applied: inventory.json and
+    schema.json do not carry it, no apply cmdlet reads it back, and Invoke-OERStructure never grants,
+    revokes or changes any of it. The read costs one request per page of each of the three lists (the
+    service principals with their app role assignments, the service principals with their owners, and
+    the app registrations with their owners) and of the grants, one directoryObjects/getByIds per
+    1,000 users named in grants, and one extra paged read per object with 20 or more expanded
+    entries, since Microsoft Graph documents at most 20 for an expanded directory relationship;
+    measured 27 requests for a tenant of 1,129 service principals and 67 app registrations. It is
+    read after the Azure walk and before the bundle is written, under -WhatIf too, where Files lists
+    the file and nothing is written. A part is read whole or not at all: a part that could not be
+    read -- a refused or failed request, an object Microsoft Graph returned without its expanded
+    collection, or, for the grants, a user lookup that failed or the service principal list they are
+    named through -- is written as null, never [], and is named in IncompleteReads as
+    'servicePrincipalAccess/<part>' (see below), in a clause of the InventoryPartial message with its
+    causes, and in README.md under "What this export could not read". A part that could not be read
+    never stops another, and the export writes no warning for it. README.md gives each part's row
+    count in a section "Service principal access (read-only)", directly after "Subscriptions
+    delegated from another tenant (not read)". Directory.Read.All, which the export already requires,
+    covers every read. Without the switch none of it is read or written, and README.md and
+    rbac-architect-prompt.md are exactly what they were.
+
     Entra ID coverage is reported the same way. IncompleteReads carries, first, one entry for the
     Groups read when it left anything unread, then one entry per partial report from
     Get-OERInventory, which reads the other Entra ID sections. Each entry names the affected
@@ -367,16 +405,21 @@ function Export-OERInventory {
     kept: when only one row could not be judged, the other unused, unchanged policies there are still
     left out. After those, IncompleteReads carries one entry per subscription the Azure walk did not
     enter since whether it belongs to this tenant could not be read (see SUBSCRIPTIONS OF ANOTHER
-    TENANT above), reading 'subscriptionHomeTenant at <scope>'. Last of all, IncompleteReads carries
+    TENANT above), reading 'subscriptionHomeTenant at <scope>'. Then IncompleteReads carries
     the Azure Lighthouse entries (see AZURE LIGHTHOUSE DELEGATIONS above): one 'lighthouseDelegations
     at <scope>' per scope of a subscription whose delegations could not be read, one
     'lighthouseDelegations role <id>' per role whose name could not be read, and one entry for a walk
-    that could not start or a subscription listing that failed. The Count of IncompleteReads is
+    that could not start or a subscription listing that failed. Last of all, for an export run with
+    -IncludeServicePrincipalAccess, IncompleteReads carries one entry per part of
+    servicePrincipalAccess.json that could not be read (see SERVICE PRINCIPAL ACCESS above), reading
+    'servicePrincipalAccess/' and the part's name, for example 'servicePrincipalAccess/applicationOwners'.
+    The Count of IncompleteReads is
     therefore one for the Groups read when it left anything unread, plus the number of partial reports
     from Get-OERInventory, plus one when the group roster could not be read, plus one per role
     assignment principal that could not be read, plus one per Azure scope where a role management
     policy could not be judged, plus one per subscription whose home tenant could not be read, plus one
-    per Azure Lighthouse entry, and not the number of unread collections; read the entries for that.
+    per Azure Lighthouse entry, plus one per service principal access part that could not be read, and
+    not the number of unread collections; read the entries for that.
     The same non-terminating InventoryPartial error is raised here when IncompleteReads, SkippedScopes
     or SkippedEligibilityScopes is non-empty, and its message gives the causes of the unread group
     reads (Get-OERInventory's own InventoryPartial gives those of the other sections). The part of that
@@ -384,8 +427,9 @@ function Export-OERInventory {
     assignment principals that could not be read have a clause of their own, which names each of them
     and gives the causes, and so have the Azure scopes where policies could not be judged, the
     subscriptions whose home tenant could not be read, whose clause names each entry and gives the
-    causes, and, last, the Azure Lighthouse reads that failed, whose clause names each entry and gives
-    the causes. A
+    causes, the Azure Lighthouse reads that failed, whose clause names each entry and gives the
+    causes, and, last, the service principal access parts that could not be read, whose clause names
+    each part and gives the causes. A
     members, scopedRoles, resources or resourceRoles collection that
     could not be read, or that has an entry the export could name by nothing the apply engine
     accepts, is NOT written into inventory.json as an empty one or with an empty name: its key is an
@@ -401,8 +445,9 @@ function Export-OERInventory {
     could not read": one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes
     entry -- among the IncompleteReads entries, those of a role assignment principal that could not be
     read, those of an Azure scope where role management policies could not be judged, those of a
-    subscription whose home tenant could not be read and those of an Azure Lighthouse read that failed
-    each under a label of its own -- or the statement that nothing
+    subscription whose home tenant could not be read, those of an Azure Lighthouse read that failed
+    and those of a service principal access part that could not be read each under a label of its
+    own -- or the statement that nothing
     was left unread, so whoever receives the bundle (an LLM, say) can tell a collection that was not
     read from one that is empty. The lists go into README.md only, never into inventory.json or any
     other file that is validated or applied.
@@ -481,6 +526,16 @@ function Export-OERInventory {
     names RoleManagementPolicies; the DirectoryRoleManagementPolicies section has its own switch,
     -AllDirectoryRolePolicies.
 
+    .PARAMETER IncludeServicePrincipalAccess
+    Also read the application permissions, delegated permission grants and owners of the tenant's
+    service principals and app registrations, and write them to servicePrincipalAccess.json as
+    read-only context (see SERVICE PRINCIPAL ACCESS above). The read adds one request per page of each
+    of three lists and of the grants, one directoryObjects/getByIds per 1,000 users named in grants,
+    and one paged read per object with 20 or more expanded entries. A part that could not be read is
+    written as null and named in IncompleteReads. It reads Microsoft Graph only, whatever -Include
+    names, and needs no ARM token of its own. Without this switch none of it is read and no such file
+    is written.
+
     .PARAMETER ManagementGroup
     Narrow the Azure scope walk to a single management group branch identified by name or id.
 
@@ -528,6 +583,12 @@ function Export-OERInventory {
     Reads the tenant and writes a bundle under the current directory.
 
     .EXAMPLE
+    Export-OERInventory -IncludeServicePrincipalAccess
+    Reads the tenant as the example above does, and also writes servicePrincipalAccess.json: the
+    application permissions, delegated permission grants and owners of the tenant's service principals
+    and app registrations, as read-only context.
+
+    .EXAMPLE
     Export-OERInventory -GroupFilter "startswith(displayName,'role_')"
     Reads inventory.json's groups from the security-enabled groups whose display name starts with
     role_ only, so far fewer groups are read in a tenant with very many of them. groupsRoster.json
@@ -568,6 +629,8 @@ function Export-OERInventory {
         # A switch takes no position, so declaring it here leaves every positional parameter where it
         # was (see the -GroupFilter comment below).
         [switch]$AllRolePolicies,
+        # Sprint 11 step 8. A switch, so it takes no position either.
+        [switch]$IncludeServicePrincipalAccess,
         [string]$ManagementGroup,
         [string]$Scope,
         [switch]$Force,
@@ -1173,6 +1236,47 @@ function Export-OERInventory {
         # finally (see the run context above), so the control flow of the region is what it always was.
         $script:_OERInventoryRunContext = $null
 
+        # Sprint 11 step 8: the service principal access, read only with -IncludeServicePrincipalAccess, ONCE,
+        # here after the Azure walk and before the warnings that precede the bundle's ShouldProcess -- under
+        # -WhatIf too, since the read changes nothing and the plan is then complete. Get-OERServicePrincipalAccess
+        # owns the four reads and never writes an error record; a part it could not read is $null in its
+        # result and named in its Unread, with the causes in its Causes. Both lists are kept apart from the
+        # other entries, as the Lighthouse ones are: $SpAccessUnread goes last into IncompleteReads (the output
+        # object and the README call) and has a clause of its own in the InventoryPartial message. No warning
+        # is written for it. A reader that stops, or returns nothing, has read nothing: every part is then
+        # unread and named, never written as an empty or silent null.
+        $SpAccessRead = $null
+        $SpAccessUnread = [System.Collections.Generic.List[string]]::new()
+        $SpAccessCauses = [System.Collections.Generic.List[object]]::new()
+        if ($IncludeServicePrincipalAccess) {
+            $SpAccessStopCause = $null
+            try {
+                $SpAccessRead = Get-OERServicePrincipalAccess
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $SpAccessRead = $null
+                $SpAccessStopCause = "Could not read the service principal access: $($PSItem.Exception.Message)"
+            }
+            if ($null -eq $SpAccessRead) {
+                $SpAccessRead = [PSCustomObject]@{
+                    ApplicationPermissions    = $null
+                    DelegatedPermissionGrants = $null
+                    ApplicationOwners         = $null
+                    ServicePrincipalOwners    = $null
+                    Unread                    = @('servicePrincipalAccess/applicationPermissions', 'servicePrincipalAccess/delegatedPermissionGrants', 'servicePrincipalAccess/applicationOwners', 'servicePrincipalAccess/servicePrincipalOwners')
+                    Causes                    = @([PSCustomObject]@{ Cause = $(if ($SpAccessStopCause) { $SpAccessStopCause } else { 'Could not read the service principal access: the read returned nothing.' }); Target = '' })
+                }
+            }
+            # A blank entry is left out, as for the Lighthouse reader: it would add an empty item to IncompleteReads
+            # and to the InventoryPartial message, and raise that error for nothing. A null cause is no cause.
+            foreach ($SpAccessUnreadEntry in @($SpAccessRead.Unread)) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$SpAccessUnreadEntry)) { $SpAccessUnread.Add([string]$SpAccessUnreadEntry) }
+            }
+            foreach ($SpAccessCause in @($SpAccessRead.Causes)) {
+                if ($null -ne $SpAccessCause) { $SpAccessCauses.Add($SpAccessCause) }
+            }
+        }
+
         # BL-126 (R3): the role assignments at the root scope the walk's reads left out, each once
         # (Format-OERRootScopeAssignment deduplicates them on the role assignment id and owns their
         # order and list text, shared with Get-OERInventory's warning). One warning names them, here
@@ -1536,6 +1640,27 @@ function Export-OERInventory {
             # file is never mistaken for a tenant with no delegation.
             Write-OERBundleJson -Name 'lighthouseDelegations.json' -Data @($LighthouseDelegations)
         }
+        # Sprint 11 step 8: written only with -IncludeServicePrincipalAccess, after the Azure files (after
+        # scopeHierarchy.json when no Azure section is included). ONE object, the four parts in this order.
+        # A part that could not be read is null in the file, NEVER []: an empty array would state that the
+        # tenant has none of it, and the part is named in IncompleteReads instead. A part that was read is
+        # always an array, [] when it holds nothing; @() keeps a part of one row an array, and the
+        # null-filter keeps a null row out of it. Nothing else reads this file: inventory.json, schema.json and
+        # Invoke-OERStructure never see it.
+        if ($IncludeServicePrincipalAccess) {
+            $SpAccessData = [ordered]@{
+                applicationPermissions    = $SpAccessRead.ApplicationPermissions
+                delegatedPermissionGrants = $SpAccessRead.DelegatedPermissionGrants
+                applicationOwners         = $SpAccessRead.ApplicationOwners
+                servicePrincipalOwners    = $SpAccessRead.ServicePrincipalOwners
+            }
+            foreach ($SpAccessPart in @($SpAccessData.Keys)) {
+                if ($null -ne $SpAccessData[$SpAccessPart]) {
+                    $SpAccessData[$SpAccessPart] = [object[]]@(@($SpAccessData[$SpAccessPart]) | Where-Object { $null -ne $_ })
+                }
+            }
+            Write-OERBundleJson -Name 'servicePrincipalAccess.json' -Data $SpAccessData
+        }
 
         # --- Formal JSON Schema (so a consumer without the module can validate a proposal) ---
         if ($ShouldWrite) {
@@ -1544,8 +1669,17 @@ function Export-OERInventory {
         $WrittenFiles.Add('schema.json')
 
         # --- Prompt + README ---
+        # Sprint 11 step 8: the prompt names servicePrincipalAccess.json, and the README gets its section, only
+        # with -IncludeServicePrincipalAccess. Each parameter is added only when the switch is set, as
+        # -AllDirectoryRolePolicies is above, so without it both calls are exactly what they were.
+        $PromptParams = @{ NamingConvention = $NamingConvention }
+        $ReadmeSpAccessParams = @{}
+        if ($IncludeServicePrincipalAccess) {
+            $PromptParams.IncludeServicePrincipalAccess = $true
+            $ReadmeSpAccessParams.ServicePrincipalAccess = $SpAccessRead
+        }
         if ($ShouldWrite) {
-            (Get-OERInventoryPromptTemplate -NamingConvention $NamingConvention) |
+            (Get-OERInventoryPromptTemplate @PromptParams) |
                 Set-Content -Path (Join-Path $BundlePath 'rbac-architect-prompt.md') -Encoding utf8
         }
         $WrittenFiles.Add('rbac-architect-prompt.md')
@@ -1564,9 +1698,9 @@ function Export-OERInventory {
             # Azure Lighthouse delegations (Sprint 11 step 6b, BL-133), and the subscriptions of another tenant the
             # walk did not read (BL-150, A19). The role assignment principals that could not be read follow the
             # Entra ID entries and precede the role policy selection's, the subscriptions whose home tenant could
-            # not be read follow those, and the Azure Lighthouse reads that failed come last of all, as in the
-            # output object.
-            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads) + @($HomeTenantUnread) + @($LighthouseUnread)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments -SharedNames $SharedNames -UnresolvedPrincipalAssignments $UnresolvedPrincipalAssignments -UndeclarableScopeAssignments $UndeclarableScopeAssignments -RestrictedUnitPimGroups $RestrictedUnitPimGroups -LighthouseDelegations $LighthouseDelegations -ForeignSubscriptions $ForeignSubscriptions) |
+            # not be read follow those, then the Azure Lighthouse reads that failed, and the service principal
+            # access parts that could not be read come last of all (Sprint 11 step 8), as in the output object.
+            (Get-OERInventoryReadme -IncompleteReads (@($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads) + @($HomeTenantUnread) + @($LighthouseUnread) + @($SpAccessUnread)) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes) -PimLeftOut $ReadmePimLeftOut -RootScopeAssignments $RootScopeAssignments -SharedNames $SharedNames -UnresolvedPrincipalAssignments $UnresolvedPrincipalAssignments -UndeclarableScopeAssignments $UndeclarableScopeAssignments -RestrictedUnitPimGroups $RestrictedUnitPimGroups -LighthouseDelegations $LighthouseDelegations -ForeignSubscriptions $ForeignSubscriptions @ReadmeSpAccessParams) |
                 Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
         }
         $WrittenFiles.Add('README.md')
@@ -1618,8 +1752,9 @@ function Export-OERInventory {
             # The Entra ID entries first, in their documented order, then the role assignment principals
             # that could not be read (BL-133), then the scopes where role management policies that could
             # not be judged were kept (BL-107), then the subscriptions whose home tenant could not be read
-            # (BL-150, A19), and last the Azure Lighthouse reads that failed (Sprint 11 step 6b, BL-133).
-            IncompleteReads        = @($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads) + @($HomeTenantUnread) + @($LighthouseUnread)
+            # (BL-150, A19), then the Azure Lighthouse reads that failed (Sprint 11 step 6b, BL-133), and last
+            # the service principal access parts that could not be read (Sprint 11 step 8).
+            IncompleteReads        = @($IncompleteReads) + @($UnreadPrincipalReads) + @($RolePolicySelectionReads) + @($HomeTenantUnread) + @($LighthouseUnread) + @($SpAccessUnread)
             Files                  = $WrittenFiles.ToArray()
         }
         $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.InventoryBundle')
@@ -1629,7 +1764,7 @@ function Export-OERInventory {
         # then learns the coverage is incomplete. A warning alone left $? true, -ErrorAction Stop
         # inert and a try/catch seeing success, which is how a heavily truncated bundle reached the
         # LLM -> Invoke-OERStructure workflow looking exactly like a full tenant snapshot.
-        if ($SkippedScopes.Count -gt 0 -or $SkippedEligibilityScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0 -or $UnreadPrincipalReads.Count -gt 0 -or $RolePolicySelectionReads.Count -gt 0 -or $HomeTenantUnread.Count -gt 0 -or $LighthouseUnread.Count -gt 0) {
+        if ($SkippedScopes.Count -gt 0 -or $SkippedEligibilityScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0 -or $UnreadPrincipalReads.Count -gt 0 -or $RolePolicySelectionReads.Count -gt 0 -or $HomeTenantUnread.Count -gt 0 -or $LighthouseUnread.Count -gt 0 -or $SpAccessUnread.Count -gt 0) {
             $PartialParts = [System.Collections.Generic.List[string]]::new()
             # A '<...>' entry is not a scope that failed to READ: it names the whole walk that could not
             # start, or a level of the tree (management groups, subscriptions) that could not be LISTED,
@@ -1752,6 +1887,18 @@ function Export-OERInventory {
                 $LighthouseCauseClause = Format-OERUnreadCauseClause -Cause $LighthouseCauses.ToArray() -Label 'Causes of the unread Azure Lighthouse reads'
                 if ($LighthouseCauseClause) { $LighthousePart += '.' + $LighthouseCauseClause.TrimEnd('.') }
                 $PartialParts.Add($LighthousePart)
+            }
+            if ($SpAccessUnread.Count -gt 0) {
+                # A clause of its own (Sprint 11 step 8), after the Lighthouse one and last of all, not folded into
+                # the Entra ID one, whose count and wording stay over the Entra ID entries only: these are parts of
+                # servicePrincipalAccess.json, each read whole or not at all and written as null when not read. The
+                # causes are the ones the reader returned; Format-OERUnreadCauseClause owns their wording,
+                # deduplication and cap, and its trailing period is trimmed, as above, because the parts are joined
+                # with one.
+                $SpAccessPart = "$($SpAccessUnread.Count) service principal access part(s) could not be read, so servicePrincipalAccess.json writes them as null: $($SpAccessUnread -join '; ')"
+                $SpAccessCauseClause = Format-OERUnreadCauseClause -Cause $SpAccessCauses.ToArray() -Label 'Causes of the unread service principal access reads'
+                if ($SpAccessCauseClause) { $SpAccessPart += '.' + $SpAccessCauseClause.TrimEnd('.') }
+                $PartialParts.Add($SpAccessPart)
             }
             Write-CmdletError `
                 -Message ([System.Exception]::new(

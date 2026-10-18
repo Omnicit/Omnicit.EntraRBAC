@@ -19,6 +19,12 @@ BeforeAll {
     Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation {
         [PSCustomObject]@{ Delegations = @(); Unread = @(); Causes = @() }
     }
+    # Sprint 11 step 8: where a test runs the export with -IncludeServicePrincipalAccess, the service principal
+    # access reader answers as a read that finds nothing, so no test reaches the transport through it by
+    # accident (the reader has its own suite). A test about it overrides it.
+    Mock -ModuleName $script:moduleName Get-OERServicePrincipalAccess {
+        [PSCustomObject]@{ ApplicationPermissions = @(); DelegatedPermissionGrants = @(); ApplicationOwners = @(); ServicePrincipalOwners = @(); Unread = @(); Causes = @() }
+    }
 
     # Sprint 11 step 6 (BL-133, A18): where a test reaches the REAL Get-OERInventory RoleAssignments
     # section, its principals are looked up with Resolve-OERPrincipalName -Detailed (one answer per id:
@@ -2558,15 +2564,18 @@ Describe 'Export-OERInventory (help documents the bundle nesting)' {
         # the Entra ID entries and these.
         $Description | Should -Match ([regex]::Escape('After every Entra ID entry, IncompleteReads carries one entry per role assignment principal that could not be read'))
         $Description | Should -Match ([regex]::Escape('After those entries, IncompleteReads carries one entry per Azure scope where at least one role management policy could not be judged'))
-        # Sprint 11 step 6b (BL-133): the Azure Lighthouse entries now come after these, last of all, so the
-        # role selection entries are no longer called the last ones.
+        # Sprint 11 step 6b (BL-133): the Azure Lighthouse entries now come after these, so the role selection
+        # entries are no longer called the last ones. Sprint 11 step 8: the service principal access entries
+        # come after the Lighthouse ones, last of all, so the Lighthouse entries are no longer called the last.
         $Description | Should -Not -Match ([regex]::Escape('Last, after those entries, IncompleteReads carries one entry per Azure scope'))
-        $Description | Should -Match ([regex]::Escape('Last of all, IncompleteReads carries the Azure Lighthouse entries (see AZURE LIGHTHOUSE DELEGATIONS above)'))
+        $Description | Should -Not -Match ([regex]::Escape('Last of all, IncompleteReads carries the Azure Lighthouse entries'))
+        $Description | Should -Match ([regex]::Escape('Then IncompleteReads carries the Azure Lighthouse entries (see AZURE LIGHTHOUSE DELEGATIONS above)'))
+        $Description | Should -Match ([regex]::Escape("Last of all, for an export run with -IncludeServicePrincipalAccess, IncompleteReads carries one entry per part of servicePrincipalAccess.json that could not be read (see SERVICE PRINCIPAL ACCESS above), reading 'servicePrincipalAccess/' and the part's name, for example 'servicePrincipalAccess/applicationOwners'."))
         $Description | Should -Match ([regex]::Escape('It does not mean every policy at the scope was kept: when only one row could not be judged, the other unused, unchanged policies there are still left out.'))
         $Description | Should -Not -Match 'nothing is missing for it'
         # BL-150 (A19): the subscriptions whose home tenant could not be read stand between the role selection
         # entries and the Azure Lighthouse ones.
-        $Description | Should -Match ([regex]::Escape('plus one per Azure scope where a role management policy could not be judged, plus one per subscription whose home tenant could not be read, plus one per Azure Lighthouse entry, and not the number of unread collections'))
+        $Description | Should -Match ([regex]::Escape('plus one per Azure scope where a role management policy could not be judged, plus one per subscription whose home tenant could not be read, plus one per Azure Lighthouse entry, plus one per service principal access part that could not be read, and not the number of unread collections'))
         $Description | Should -Match ([regex]::Escape("After those, IncompleteReads carries one entry per subscription the Azure walk did not enter since whether it belongs to this tenant could not be read (see SUBSCRIPTIONS OF ANOTHER TENANT above), reading 'subscriptionHomeTenant at <scope>'."))
         $Description | Should -Match ([regex]::Escape('Invoke-OERStructure reads and writes only the policies a document declares'))
 
@@ -5145,7 +5154,7 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
         $Description | Should -Match ([regex]::Escape('A principal is looked for among the deleted items once for the whole export when that read succeeds, however many Azure scopes read the assignment; a read that fails is not kept, and is sent again by the next scope that needs it.'))
         # The README lists the principal entries under a label of their own, and they are IncompleteReads
         # entries, as the help says.
-        $Description | Should -Match ([regex]::Escape('one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes entry -- among the IncompleteReads entries, those of a role assignment principal that could not be read, those of an Azure scope where role management policies could not be judged, those of a subscription whose home tenant could not be read and those of an Azure Lighthouse read that failed each under a label of its own -- or the statement that nothing was left unread'))
+        $Description | Should -Match ([regex]::Escape('one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes entry -- among the IncompleteReads entries, those of a role assignment principal that could not be read, those of an Azure scope where role management policies could not be judged, those of a subscription whose home tenant could not be read, those of an Azure Lighthouse read that failed and those of a service principal access part that could not be read each under a label of its own -- or the statement that nothing was left unread'))
     }
 
     Context 'the rows the per-scope calls hand over' {
@@ -7229,5 +7238,386 @@ Describe 'Export-OERInventory (the exported inventory.json is checked against a 
         $Result[0].Valid | Should -BeTrue
         $Naming = @($Result[0].Errors | Where-Object { $_.Message -like '*the naming standard*' })
         ($Naming | ForEach-Object { $_.Path }) | Should -Be @('accessPackages[0].assignmentPolicies[1].displayName')
+    }
+}
+
+Describe 'Export-OERInventory (service principal access, Sprint 11 step 8)' {
+    # -IncludeServicePrincipalAccess reads the application permissions, delegated permission grants and owners
+    # of the tenant's service principals and app registrations (Get-OERServicePrincipalAccess, mocked here
+    # except in the end-to-end Context: the reader has its own suite) and writes them to
+    # servicePrincipalAccess.json as read-only context. Without the switch nothing changes (Ruling R-4). An
+    # unread part is null in the file, never [] (Ruling R-5), named last in IncompleteReads and in a clause of
+    # its own in InventoryPartial; the output object gains no property (Ruling R-3). The warnings are counted on
+    # the warning STREAM (3>&1), what the caller is shown. No id below is version-4 shaped.
+    BeforeAll {
+        $script:SpxPartialTail = '. Do not treat it as a full tenant snapshot.'
+        $script:SpxCause = [PSCustomObject]@{ Cause = 'Could not read the app registration list with its owners: Insufficient privileges to complete the operation. (403)'; Target = 'v1.0/applications' }
+        # The real README and prompt builders and the real reader, so a spy can call through to them.
+        $script:SpxRealReadme = InModuleScope $script:moduleName { Get-Command Get-OERInventoryReadme -CommandType Function }
+        $script:SpxRealPrompt = InModuleScope $script:moduleName { Get-Command Get-OERInventoryPromptTemplate -CommandType Function }
+        $script:SpxRealReader = InModuleScope $script:moduleName { Get-Command Get-OERServicePrincipalAccess -CommandType Function }
+        # The rows the reader hands over, in its own shapes.
+        function script:New-SpxRead {
+            param([switch]$AppOwnersUnread)
+            $Read = [PSCustomObject]@{
+                ApplicationPermissions    = @(
+                    [PSCustomObject][ordered]@{ servicePrincipalId = '11111111-1111-1111-1111-111111111111'; servicePrincipalDisplayName = 'Client App'; resourceId = '22222222-2222-2222-2222-222222222222'; resourceDisplayName = 'Graph Resource'; appRoleId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; appRoleValue = 'User.Read.All' }
+                )
+                DelegatedPermissionGrants = @(
+                    [PSCustomObject][ordered]@{ clientId = '11111111-1111-1111-1111-111111111111'; clientDisplayName = 'Client App'; resourceId = '22222222-2222-2222-2222-222222222222'; resourceDisplayName = 'Graph Resource'; consentType = 'AllPrincipals'; principalId = $null; principalDisplayName = $null; scope = 'User.Read' }
+                    [PSCustomObject][ordered]@{ clientId = '11111111-1111-1111-1111-111111111111'; clientDisplayName = 'Client App'; resourceId = '22222222-2222-2222-2222-222222222222'; resourceDisplayName = 'Graph Resource'; consentType = 'Principal'; principalId = '33333333-3333-3333-3333-333333333333'; principalDisplayName = 'person1@example.com'; scope = 'Mail.Read' }
+                )
+                ApplicationOwners         = @(
+                    [PSCustomObject][ordered]@{ applicationId = '55555555-5555-5555-5555-555555555555'; appId = '12121212-1212-1212-1212-121212121212'; applicationDisplayName = 'Client App'; ownerId = '66666666-6666-6666-6666-666666666666'; ownerType = 'User'; ownerDisplayName = 'Person Two'; ownerUserPrincipalName = 'person2@example.com' }
+                )
+                ServicePrincipalOwners    = @(
+                    [PSCustomObject][ordered]@{ servicePrincipalId = '22222222-2222-2222-2222-222222222222'; servicePrincipalDisplayName = 'Graph Resource'; ownerId = '11111111-1111-1111-1111-111111111111'; ownerType = 'ServicePrincipal'; ownerDisplayName = 'Client App'; ownerUserPrincipalName = $null }
+                )
+                Unread                    = @()
+                Causes                    = @()
+            }
+            if ($AppOwnersUnread) {
+                $Read.ApplicationOwners = $null
+                $Read.Unread = @('servicePrincipalAccess/applicationOwners')
+                $Read.Causes = @($script:SpxCause)
+            }
+            $Read
+        }
+        # One export, its result, the text of every warning that reached the caller's stream, and its errors.
+        function script:Invoke-SpxExport {
+            param([hashtable]$Splat)
+            $ExErr = $null
+            $All = @(Export-OERInventory @Splat -WarningAction Continue -ErrorAction SilentlyContinue -ErrorVariable ExErr 3>&1)
+            [PSCustomObject]@{
+                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                Errors   = @($ExErr)
+            }
+        }
+        function script:Get-SpxPartial {
+            param($Run)
+            @($Run.Errors | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+        }
+        function script:Get-SpxReadme {
+            param([string]$BundlePath)
+            (Get-Content (Join-Path $BundlePath 'README.md') -Raw) -replace '\r\n', "`n"
+        }
+        $script:SpxEntraFiles = @(
+            'inventory.json', 'groups.json', 'administrativeUnits.json', 'catalogs.json', 'accessPackages.json', 'accessReviews.json',
+            'directoryRoleManagementPolicies.json', 'directoryRoleAssignments.json', 'roleAssignments.json', 'roleManagementPolicies.json',
+            'groupsRoster.json', 'scopeHierarchy.json'
+        )
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @('/subscriptions/s1')
+                Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @(); RoleScopes = @() }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation {
+            [PSCustomObject]@{ Delegations = @(); Unread = @(); Causes = @() }
+        }
+        $script:SpxReaderResult = New-SpxRead
+        Mock -ModuleName $script:moduleName Get-OERServicePrincipalAccess { $script:SpxReaderResult }
+        Mock -ModuleName $script:moduleName Get-OERInventoryReadme { & $script:SpxRealReadme @PesterBoundParameters }
+        Mock -ModuleName $script:moduleName Get-OERInventoryPromptTemplate { & $script:SpxRealPrompt @PesterBoundParameters }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'states the rule in the help, and declares the switch with no position' {
+        $Help = Get-Help Export-OERInventory -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        # The pinned sentence stays as it was; the new file has a sentence of its own.
+        $Description | Should -Match ([regex]::Escape('read-only context (scopeHierarchy.json, groupsRoster.json, azurePimEligibility.json, lighthouseDelegations.json), a formal JSON Schema'))
+        $Description | Should -Match ([regex]::Escape('With -IncludeServicePrincipalAccess it also writes servicePrincipalAccess.json, read-only context on the application permissions, delegated permission grants and owners of the tenant''s service principals and app registrations (see SERVICE PRINCIPAL ACCESS below).'))
+        $Description | Should -Match ([regex]::Escape('SERVICE PRINCIPAL ACCESS. With -IncludeServicePrincipalAccess the export also writes servicePrincipalAccess.json'))
+        $Description | Should -Match ([regex]::Escape('The file is one JSON object with four parts, in this order: applicationPermissions,'))
+        $Description | Should -Match ([regex]::Escape('The file is read-only context and never applied: inventory.json and schema.json do not carry it, no apply cmdlet reads it back, and Invoke-OERStructure never grants, revokes or changes any of it.'))
+        $Description | Should -Match ([regex]::Escape('measured 27 requests for a tenant of 1,129 service principals and 67 app registrations.'))
+        $Description | Should -Match ([regex]::Escape("is written as null, never [], and is named in IncompleteReads as 'servicePrincipalAccess/<part>' (see below), in a clause of the InventoryPartial message with its causes, and in README.md under `"What this export could not read`"."))
+        $Description | Should -Match ([regex]::Escape('Directory.Read.All, which the export already requires, covers every read.'))
+        $Description | Should -Match ([regex]::Escape('Without the switch none of it is read or written, and README.md and rbac-architect-prompt.md are exactly what they were.'))
+        $Description | Should -Match ([regex]::Escape('and, last, the service principal access parts that could not be read, whose clause names each part and gives the causes.'))
+
+        $Param = @($Help.Parameters.Parameter) | Where-Object { $_.Name -eq 'IncludeServicePrincipalAccess' }
+        $Param | Should -Not -BeNullOrEmpty
+        $ParamText = ((@($Param.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $ParamText | Should -Match ([regex]::Escape('write them to servicePrincipalAccess.json as read-only context (see SERVICE PRINCIPAL ACCESS above).'))
+        $ParamText | Should -Match ([regex]::Escape('Without this switch none of it is read and no such file is written.'))
+        # In help order: after -AllRolePolicies, before -ManagementGroup, as declared.
+        $Names = @($Help.Parameters.Parameter | ForEach-Object { $_.Name })
+        $Examples = (@($Help.Examples.Example) | ForEach-Object { [string]$_.Code }) -join "`n"
+        $Examples | Should -Match ([regex]::Escape('Export-OERInventory -IncludeServicePrincipalAccess'))
+
+        $Meta = (Get-Command Export-OERInventory).Parameters['IncludeServicePrincipalAccess']
+        $Meta.SwitchParameter | Should -BeTrue
+        @($Meta.ParameterSets.Values | Where-Object { $_.Position -ge 0 }).Count | Should -Be 0
+        $ParamBlock = (Get-Command Export-OERInventory).ScriptBlock.Ast.Find({ param($Node) $Node -is [System.Management.Automation.Language.ParamBlockAst] }, $true)
+        $Declared = @($ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+        [array]::IndexOf($Declared, 'IncludeServicePrincipalAccess') | Should -Be ([array]::IndexOf($Declared, 'AllRolePolicies') + 1)
+        $Names | Should -Contain 'IncludeServicePrincipalAccess'
+    }
+
+    It 'without the switch: never calls the reader, writes no file, and lists, reads and prompts exactly as before' {
+        $Run = Invoke-SpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'spx-off'); Include = @('Groups') }
+        Should -Invoke -ModuleName $script:moduleName Get-OERServicePrincipalAccess -Times 0
+        Test-Path (Join-Path $Run.Result.BundlePath 'servicePrincipalAccess.json') | Should -BeFalse
+        @($Run.Result.Files) | Should -Be @($script:SpxEntraFiles + @('schema.json', 'rbac-architect-prompt.md', 'README.md'))
+        @($Run.Result.IncompleteReads).Count | Should -Be 0
+        (Get-SpxPartial -Run $Run).Count | Should -Be 0
+        # Neither builder is handed anything new, so both write what they wrote before the switch existed.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryReadme -Times 1 -Exactly -ParameterFilter { -not $PesterBoundParameters.ContainsKey('ServicePrincipalAccess') }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryPromptTemplate -Times 1 -Exactly -ParameterFilter { -not $PesterBoundParameters.ContainsKey('IncludeServicePrincipalAccess') }
+        (Get-SpxReadme -BundlePath $Run.Result.BundlePath) | Should -Not -Match 'servicePrincipalAccess'
+        (Get-Content (Join-Path $Run.Result.BundlePath 'rbac-architect-prompt.md') -Raw) | Should -Not -Match 'servicePrincipalAccess'
+    }
+
+    It 'with the switch: calls the reader once and writes the four parts in order, with the rows it gave, after scopeHierarchy.json' {
+        $Run = Invoke-SpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'spx-on'); Include = @('Groups'); IncludeServicePrincipalAccess = $true }
+        Should -Invoke -ModuleName $script:moduleName Get-OERServicePrincipalAccess -Times 1 -Exactly
+        $Path = Join-Path $Run.Result.BundlePath 'servicePrincipalAccess.json'
+        Test-Path $Path | Should -BeTrue
+        @($Run.Result.Files) | Should -Be @($script:SpxEntraFiles + @('servicePrincipalAccess.json', 'schema.json', 'rbac-architect-prompt.md', 'README.md'))
+        $Raw = Get-Content $Path -Raw
+        $Raw.TrimStart() | Should -Match '^\{'
+        $Data = $Raw | ConvertFrom-Json
+        ($Data.PSObject.Properties.Name -join ',') | Should -BeExactly 'applicationPermissions,delegatedPermissionGrants,applicationOwners,servicePrincipalOwners'
+        # Every part an array, a part of one row too.
+        $Raw | Should -Match '"applicationPermissions":\s*\['
+        $Raw | Should -Match '"applicationOwners":\s*\['
+        @($Data.applicationPermissions).Count | Should -Be 1
+        ($Data.applicationPermissions[0].PSObject.Properties.Name -join ',') | Should -BeExactly 'servicePrincipalId,servicePrincipalDisplayName,resourceId,resourceDisplayName,appRoleId,appRoleValue'
+        $Data.applicationPermissions[0].appRoleValue | Should -BeExactly 'User.Read.All'
+        @($Data.delegatedPermissionGrants).Count | Should -Be 2
+        $Data.delegatedPermissionGrants[1].principalDisplayName | Should -BeExactly 'person1@example.com'
+        $Data.applicationOwners[0].ownerUserPrincipalName | Should -BeExactly 'person2@example.com'
+        $Data.servicePrincipalOwners[0].ownerType | Should -BeExactly 'ServicePrincipal'
+        # The README gets the reader's object and the prompt the switch; both name the file.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryReadme -Times 1 -Exactly -ParameterFilter { $PesterBoundParameters.ContainsKey('ServicePrincipalAccess') -and $null -ne $ServicePrincipalAccess }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryPromptTemplate -Times 1 -Exactly -ParameterFilter { $IncludeServicePrincipalAccess -eq $true }
+        $Readme = Get-SpxReadme -BundlePath $Run.Result.BundlePath
+        $Readme | Should -Match ([regex]::Escape("## Service principal access (read-only)"))
+        $Readme | Should -Match ([regex]::Escape('- `applicationPermissions`: 1 row(s)'))
+        $Readme | Should -Match ([regex]::Escape('- `delegatedPermissionGrants`: 2 row(s)'))
+        (Get-Content (Join-Path $Run.Result.BundlePath 'rbac-architect-prompt.md') -Raw) | Should -Match ([regex]::Escape('- servicePrincipalAccess.json -- read-only context'))
+        @($Run.Result.IncompleteReads).Count | Should -Be 0
+        (Get-SpxPartial -Run $Run).Count | Should -Be 0
+        $Run.Warnings.Count | Should -Be 0
+    }
+
+    It 'writes the file after lighthouseDelegations.json when an Azure section is included' {
+        $Run = Invoke-SpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'spx-azure'); Include = @('RoleAssignments'); IncludeServicePrincipalAccess = $true }
+        $Files = @($Run.Result.Files)
+        [array]::IndexOf($Files, 'servicePrincipalAccess.json') | Should -Be ([array]::IndexOf($Files, 'lighthouseDelegations.json') + 1)
+        [array]::IndexOf($Files, 'schema.json') | Should -Be ([array]::IndexOf($Files, 'servicePrincipalAccess.json') + 1)
+        Should -Invoke -ModuleName $script:moduleName Get-OERServicePrincipalAccess -Times 1 -Exactly
+    }
+
+    It 'writes an unread part as null, never [], names it last in IncompleteReads, in the README and in ONE InventoryPartial with its clause' {
+        $script:SpxReaderResult = New-SpxRead -AppOwnersUnread
+        Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation {
+            [PSCustomObject]@{ Delegations = @(); Unread = @('lighthouseDelegations at /subscriptions/s1'); Causes = @([PSCustomObject]@{ Cause = 'Service unavailable (503)'; Target = '/subscriptions/s1' }) }
+        }
+        $Run = Invoke-SpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'spx-unread'); Include = @('RoleAssignments'); IncludeServicePrincipalAccess = $true }
+        $Raw = Get-Content (Join-Path $Run.Result.BundlePath 'servicePrincipalAccess.json') -Raw
+        $Raw | Should -Match '"applicationOwners":\s*null'
+        $Raw | Should -Not -Match '"applicationOwners":\s*\['
+        # The parts that were read are written.
+        @(($Raw | ConvertFrom-Json).delegatedPermissionGrants).Count | Should -Be 2
+        (@($Run.Result.IncompleteReads) -join '|') | Should -BeExactly 'lighthouseDelegations at /subscriptions/s1|servicePrincipalAccess/applicationOwners'
+        $Partial = Get-SpxPartial -Run $Run
+        $Partial.Count | Should -Be 1
+        $Clause = '1 service principal access part(s) could not be read, so servicePrincipalAccess.json writes them as null: servicePrincipalAccess/applicationOwners. ' +
+            "Causes of the unread service principal access reads: $($script:SpxCause.Cause)"
+        $Partial[0].Exception.Message | Should -MatchExactly ('(?s)' + [regex]::Escape($Clause + $script:SpxPartialTail) + '$')
+        # The clause follows the Lighthouse one.
+        $Partial[0].Exception.Message.IndexOf('1 Azure Lighthouse read(s) failed') | Should -BeGreaterThan 0
+        $Partial[0].Exception.Message.IndexOf('1 Azure Lighthouse read(s) failed') | Should -BeLessThan $Partial[0].Exception.Message.IndexOf('1 service principal access part(s)')
+        $Readme = Get-SpxReadme -BundlePath $Run.Result.BundlePath
+        $Bullets = @((Get-ReadmeCouldNotReadSection -BundlePath $Run.Result.BundlePath) -split '\r?\n' | Where-Object { $_ -like '- *' })
+        ($Bullets -join "`n") | Should -BeExactly (@(
+                '- Azure Lighthouse read that failed: `lighthouseDelegations at /subscriptions/s1`'
+                '- Service principal access part that could not be read: `servicePrincipalAccess/applicationOwners`'
+            ) -join "`n")
+        $Readme | Should -Match ([regex]::Escape('- `applicationOwners`: not read -- see "What this export could not read"'))
+        # No warning is written for it.
+        @($Run.Warnings | Where-Object { $_ -like '*service principal*' }).Count | Should -Be 0
+    }
+
+    It 'raises InventoryPartial for the service principal access alone, after the summary object' {
+        $script:SpxReaderResult = New-SpxRead -AppOwnersUnread
+        $Run = Invoke-SpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'spx-alone'); Include = @('Groups'); IncludeServicePrincipalAccess = $true }
+        $Run.Result.BundlePath | Should -Not -BeNullOrEmpty
+        @($Run.Result.IncompleteReads) | Should -Be @('servicePrincipalAccess/applicationOwners')
+        @($Run.Result.SkippedScopes).Count | Should -Be 0
+        $Partial = Get-SpxPartial -Run $Run
+        $Partial.Count | Should -Be 1
+        $Partial[0].CategoryInfo.Category | Should -Be 'LimitsExceeded'
+        $Partial[0].Exception.Message | Should -BeExactly ('This inventory bundle is PARTIAL: 1 service principal access part(s) could not be read, so servicePrincipalAccess.json writes them as null: servicePrincipalAccess/applicationOwners. ' +
+            "Causes of the unread service principal access reads: $($script:SpxCause.Cause)" + $script:SpxPartialTail)
+        $Partial[0].Exception.Message | Should -Not -BeLike '*partial Entra ID read entry*'
+    }
+
+    It 'writes four [] and raises nothing for an empty tenant' {
+        $script:SpxReaderResult = [PSCustomObject]@{ ApplicationPermissions = @(); DelegatedPermissionGrants = @(); ApplicationOwners = @(); ServicePrincipalOwners = @(); Unread = @(); Causes = @() }
+        $Run = Invoke-SpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'spx-empty'); Include = @('Groups'); IncludeServicePrincipalAccess = $true }
+        $Raw = Get-Content (Join-Path $Run.Result.BundlePath 'servicePrincipalAccess.json') -Raw
+        foreach ($Part in @('applicationPermissions', 'delegatedPermissionGrants', 'applicationOwners', 'servicePrincipalOwners')) {
+            $Raw | Should -Match ('"' + $Part + '":\s*\[\s*\]')
+        }
+        @($Run.Result.IncompleteReads).Count | Should -Be 0
+        (Get-SpxPartial -Run $Run).Count | Should -Be 0
+        (Get-SpxReadme -BundlePath $Run.Result.BundlePath) | Should -Match ([regex]::Escape('- `servicePrincipalOwners`: 0 row(s)'))
+    }
+
+    It 'reads under -WhatIf too, writes no file, and Files names it' {
+        $Run = Invoke-SpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'spx-whatif'); Include = @('Groups'); IncludeServicePrincipalAccess = $true; WhatIf = $true }
+        Should -Invoke -ModuleName $script:moduleName Get-OERServicePrincipalAccess -Times 1 -Exactly
+        Test-Path $Run.Result.BundlePath | Should -BeFalse
+        $Run.Result.Files | Should -Contain 'servicePrincipalAccess.json'
+    }
+
+    It 'names every part unread when the reader <Name>, and writes each as null' -ForEach @(
+        @{ Name = 'stops'; Mode = 'throw'; Cause = 'Could not read the service principal access: the reader stopped' }
+        @{ Name = 'returns nothing'; Mode = 'null'; Cause = 'Could not read the service principal access: the read returned nothing.' }
+    ) {
+        $script:SpxMode = $Mode
+        Mock -ModuleName $script:moduleName Get-OERServicePrincipalAccess { if ($script:SpxMode -eq 'throw') { throw 'the reader stopped' } }
+        $Run = Invoke-SpxExport -Splat @{ OutputPath = (Join-Path $TestDrive "spx-reader-$Mode"); Include = @('Groups'); IncludeServicePrincipalAccess = $true }
+        $Raw = Get-Content (Join-Path $Run.Result.BundlePath 'servicePrincipalAccess.json') -Raw
+        foreach ($Part in @('applicationPermissions', 'delegatedPermissionGrants', 'applicationOwners', 'servicePrincipalOwners')) {
+            $Raw | Should -Match ('"' + $Part + '":\s*null')
+        }
+        @($Run.Result.IncompleteReads) | Should -Be @(
+            'servicePrincipalAccess/applicationPermissions'
+            'servicePrincipalAccess/delegatedPermissionGrants'
+            'servicePrincipalAccess/applicationOwners'
+            'servicePrincipalAccess/servicePrincipalOwners'
+        )
+        $Partial = Get-SpxPartial -Run $Run
+        $Partial.Count | Should -Be 1
+        $Partial[0].Exception.Message | Should -BeLike "*4 service principal access part(s) could not be read*Causes of the unread service principal access reads: $Cause*"
+        $Run.Warnings.Count | Should -Be 0
+    }
+
+    It 'leaves a blank entry and a null cause of the reader out of IncompleteReads, the count and the causes' {
+        $Read = New-SpxRead -AppOwnersUnread
+        $Read.Unread = @('', '  ', $null, 'servicePrincipalAccess/applicationOwners')
+        $Read.Causes = @($null, $script:SpxCause)
+        $script:SpxReaderResult = $Read
+        $Run = Invoke-SpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'spx-blank'); Include = @('Groups'); IncludeServicePrincipalAccess = $true }
+        @($Run.Result.IncompleteReads) | Should -Be @('servicePrincipalAccess/applicationOwners')
+        (Get-SpxPartial -Run $Run)[0].Exception.Message | Should -BeLike "*PARTIAL: 1 service principal access part(s) could not be read*: $($script:SpxCause.Cause). Do not treat*"
+    }
+
+    It 'leaves inventory.json, the other JSON files and the output object without it' {
+        $Run = Invoke-SpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'spx-stays-out'); Include = @('Groups'); IncludeServicePrincipalAccess = $true }
+        $Others = @(Get-ChildItem -Path $Run.Result.BundlePath -Filter '*.json' | Where-Object { $_.Name -ne 'servicePrincipalAccess.json' })
+        $Others.Count | Should -BeGreaterThan 10 -Because 'inventory.json and the per-area files were all written'
+        foreach ($File in $Others) {
+            $Raw = Get-Content $File.FullName -Raw
+            foreach ($Value in @('Client App', 'Graph Resource', 'User.Read.All', 'person1@example.com', 'applicationPermissions', 'servicePrincipalOwners')) {
+                $Raw | Should -Not -Match ([regex]::Escape($Value)) -Because "$($File.Name) must not carry '$Value'"
+            }
+        }
+        $Inventory = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        ($Inventory.PSObject.Properties.Name -join ',') | Should -BeExactly ($script:InventoryTopLevelKeys -join ',')
+        ($Run.Result.PSObject.Properties.Name -join ',') | Should -BeExactly 'BundlePath,TenantId,Generated,Groups,AdministrativeUnits,Catalogs,AccessPackages,AccessReviews,DirectoryRoleManagementPolicies,DirectoryRoleAssignments,RoleAssignments,RoleManagementPolicies,RosterCount,ScopeCount,ScopesEnumerated,SkippedScopes,AzurePimEligibility,SkippedEligibilityScopes,IncompleteReads,Files'
+    }
+
+    Context 'end to end, through the real reader' {
+        BeforeAll {
+            $script:SpxListPermissions = 'v1.0/servicePrincipals?$select=id,appId,displayName,appRoles&$expand=appRoleAssignments&$top=999'
+            $script:SpxListSpOwners = 'v1.0/servicePrincipals?$select=id,displayName&$expand=owners($select=id,displayName,userPrincipalName)&$top=999'
+            $script:SpxListApps = 'v1.0/applications?$select=id,appId,displayName&$expand=owners($select=id,displayName,userPrincipalName)&$top=999'
+            $script:SpxListGrants = 'v1.0/oauth2PermissionGrants?$top=999'
+        }
+
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERServicePrincipalAccess { & $script:SpxRealReader }
+            # The one answer table of the mocked Graph transport; a request nobody listed is a failed read.
+            $script:SpxReplies = @{
+                $script:SpxListPermissions = @{ value = @(
+                        @{ id = '11111111-1111-1111-1111-111111111111'; appId = '12121212-1212-1212-1212-121212121212'; displayName = 'Client App'; appRoles = @()
+                            appRoleAssignments = @(@{ id = 'assign-1'; appRoleId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; principalId = '11111111-1111-1111-1111-111111111111'; resourceId = '22222222-2222-2222-2222-222222222222'; resourceDisplayName = 'Graph Resource' })
+                        }
+                        @{ id = '22222222-2222-2222-2222-222222222222'; appId = '23232323-2323-2323-2323-232323232323'; displayName = 'Graph Resource'
+                            appRoles = @(@{ id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; value = 'User.Read.All' }); appRoleAssignments = @()
+                        }
+                    )
+                }
+                $script:SpxListSpOwners    = @{ value = @(
+                        @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Graph Resource'; owners = @(@{ '@odata.type' = '#microsoft.graph.servicePrincipal'; id = '11111111-1111-1111-1111-111111111111'; displayName = 'Client App' }) }
+                    )
+                }
+                $script:SpxListApps        = [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Insufficient privileges to complete the operation. (403)'), 'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)
+                $script:SpxListGrants      = @{ value = @(
+                        @{ id = 'grant-1'; clientId = '11111111-1111-1111-1111-111111111111'; consentType = 'Principal'; principalId = '33333333-3333-3333-3333-333333333333'; resourceId = '22222222-2222-2222-2222-222222222222'; scope = 'Mail.Read' }
+                    )
+                }
+                'v1.0/directoryObjects/getByIds' = @{ value = @(@{ '@odata.type' = '#microsoft.graph.user'; id = '33333333-3333-3333-3333-333333333333'; displayName = 'Person One'; userPrincipalName = 'person1@example.com' }) }
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                if (-not $script:SpxReplies.ContainsKey($Uri)) { throw "No mocked answer for '$Uri'." }
+                $Reply = $script:SpxReplies[$Uri]
+                if ($Reply -is [System.Management.Automation.ErrorRecord]) { throw $Reply }
+                $Reply
+            }
+        }
+
+        It 'adds no Graph request without the switch' {
+            $null = Invoke-SpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'spx-e2e-off'); Include = @('Groups') }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'leaves applicationOwners null after a 403 on the app registration list, the other three as read, with exactly five Graph requests' {
+            $Run = Invoke-SpxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'spx-e2e'); Include = @('Groups'); IncludeServicePrincipalAccess = $true }
+            $Raw = Get-Content (Join-Path $Run.Result.BundlePath 'servicePrincipalAccess.json') -Raw
+            $Raw | Should -Match '"applicationOwners":\s*null'
+            $Data = $Raw | ConvertFrom-Json
+            @($Data.applicationPermissions).Count | Should -Be 1
+            $Data.applicationPermissions[0].appRoleValue | Should -BeExactly 'User.Read.All'
+            @($Data.delegatedPermissionGrants).Count | Should -Be 1
+            $Data.delegatedPermissionGrants[0].principalDisplayName | Should -BeExactly 'person1@example.com'
+            @($Data.servicePrincipalOwners).Count | Should -Be 1
+            $Data.servicePrincipalOwners[0].ownerType | Should -BeExactly 'ServicePrincipal'
+            @($Run.Result.IncompleteReads) | Should -Be @('servicePrincipalAccess/applicationOwners')
+            $Partial = Get-SpxPartial -Run $Run
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -BeLike '*1 service principal access part(s) could not be read, so servicePrincipalAccess.json writes them as null: servicePrincipalAccess/applicationOwners. Causes of the unread service principal access reads: Could not read the app registration list with its owners: Insufficient privileges to complete the operation. (403). Do not treat*'
+            # What the switch adds: the four lists, each once, and the one user lookup (getByIds, a POST the
+            # lookup helper sends), and nothing else.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 5 -Exactly
+            foreach ($ListUri in @($script:SpxListPermissions, $script:SpxListSpOwners, $script:SpxListApps, $script:SpxListGrants)) {
+                $script:SpxExpected = $ListUri
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq $script:SpxExpected -and $All }
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -ceq 'v1.0/directoryObjects/getByIds' -and $Method -eq 'POST' }
+            $Run.Warnings.Count | Should -Be 0
+            # The read is Microsoft Graph only: the export signs in once, with no ARM token, as without it.
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { -not $IncludeARM }
+        }
     }
 }

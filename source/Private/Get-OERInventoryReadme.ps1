@@ -36,7 +36,12 @@ function Get-OERInventoryReadme {
     'subscriptionHomeTenant at <scope>' (BL-150, A19), and is listed under the label 'Azure subscription
     whose tenant could not be read'; the section's prose says that none of its role assignments, role
     management policies, PIM eligibilities or Azure Lighthouse delegations is in the bundle, which does
-    not mean it has none.
+    not mean it has none. An IncompleteReads entry that starts with 'servicePrincipalAccess/' (compared
+    ordinally) names a part of servicePrincipalAccess.json that could not be read, as
+    'servicePrincipalAccess/<part>' (Sprint 11 step 8), and is listed under the label 'Service
+    principal access part that could not be read'. Only when such an entry is present does the
+    section's prose add the sentence that says such a part is written null in that file, never [],
+    which does not mean the tenant has none of it; without one the section reads exactly as before.
 
     Directly after it comes the section "Members and owners left out as PIM for Groups access"
     (BL-125, A3). It says that inventory.json and groups.json write a group's standing members and
@@ -165,6 +170,20 @@ function Get-OERInventoryReadme {
     It claims nothing about subscriptions that were not listed. That parameter is mandatory for the same
     reason as the ten above.
 
+    Only when -ServicePrincipalAccess is given (Sprint 11 step 8), directly after it comes the section
+    "Service principal access (read-only)", before "Files". It says what servicePrincipalAccess.json
+    holds -- its four parts, the application permissions, the delegated permission grants, and the
+    owners of the app registrations and of the service principals -- as read-only context, that none
+    of it is in inventory.json or schema.json and Invoke-OERStructure never grants, revokes or changes
+    any of it, that a part that could not be read is written null, never [], and is named under "What
+    this export could not read", and what the read cost. Then it gives one bullet per part, in the
+    file's order: the part as a code span and its row count, or 'not read -- see "What this export
+    could not read"' for a part that is $null. The "Files" section then lists
+    servicePrincipalAccess.json directly after lighthouseDelegations.json. That parameter is optional,
+    unlike the eleven above: without it, or with $null, the README is byte-identical to one built
+    without it -- no section and no bullet -- which is what an export without
+    -IncludeServicePrincipalAccess writes.
+
     .PARAMETER IncompleteReads
     The IncompleteReads list of the Export-OERInventory output. First the Entra ID entries:
     collections or objects that could not be read, could not be written without an empty name, or
@@ -186,7 +205,9 @@ function Get-OERInventoryReadme {
     listing that failed, 'lighthouseDelegations at <subscriptions: the listing failed>'), and one per
     role whose name could not be read, reading 'lighthouseDelegations role <id>': the delegations of
     such a scope are absent from lighthouseDelegations.json, which does not mean it has none, and the
-    roleName of such a role is written null there.
+    roleName of such a role is written null there. Only for an export run with
+    -IncludeServicePrincipalAccess, after those, one entry per part of servicePrincipalAccess.json that
+    could not be read, reading 'servicePrincipalAccess/<part>': that part is written null there.
     Pass an empty array when there are none.
 
     .PARAMETER SkippedScopes
@@ -261,6 +282,14 @@ function Get-OERInventoryReadme {
     A bullet writes the scope, the display name and the home tenant; no other property is written.
     Pass an empty array when there are none.
 
+    .PARAMETER ServicePrincipalAccess
+    Optional. The object Get-OERServicePrincipalAccess returned, which Export-OERInventory passes only
+    when it ran with -IncludeServicePrincipalAccess: ApplicationPermissions,
+    DelegatedPermissionGrants, ApplicationOwners and ServicePrincipalOwners, each the rows written to
+    servicePrincipalAccess.json, or $null for a part that could not be read. Only the row count of
+    each part is written, never a row. Leave it out, or pass $null, for an export without the switch:
+    the README is then byte-identical to one built without the parameter.
+
     .EXAMPLE
     Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @()
     Returns the README Markdown as a single string. Its "What this export could not read" section
@@ -314,6 +343,13 @@ function Get-OERInventoryReadme {
     Returns the README Markdown with the count and one bullet per delegation under "Azure Lighthouse
     delegations (access from another tenant)": the scope, the managing tenant, the offer, how many
     authorizations it holds and the roles.
+
+    .EXAMPLE
+    Get-OERInventoryReadme -IncompleteReads @('servicePrincipalAccess/applicationOwners') -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @() -ServicePrincipalAccess $Access
+    Returns the README Markdown with a section "Service principal access (read-only)" that gives the
+    row count of each part of $Access, the object Get-OERServicePrincipalAccess returned, and
+    servicePrincipalAccess.json among the files; the unread part is listed under "What this export
+    could not read" with the label of its own.
     #>
     [OutputType([string])]
     [CmdletBinding()]
@@ -328,7 +364,10 @@ function Get-OERInventoryReadme {
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$UndeclarableScopeAssignments,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RestrictedUnitPimGroups,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$LighthouseDelegations,
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$ForeignSubscriptions
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$ForeignSubscriptions,
+        # Sprint 11 step 8: optional, unlike the eleven above, since the section it adds is written only
+        # for an export run with -IncludeServicePrincipalAccess. $null writes nothing for it.
+        [object]$ServicePrincipalAccess = $null
     )
 
     # A text written as a Markdown code span, so '<all Azure scopes: scope enumeration failed>' is
@@ -377,6 +416,13 @@ function Get-OERInventoryReadme {
     # the role selection entries and before the Lighthouse ones, so it gets its own label too.
     $HomeTenantPrefix = 'subscriptionHomeTenant '
     $HomeTenantLabel = 'Azure subscription whose tenant could not be read'
+    # Sprint 11 step 8: an IncompleteReads entry that starts with 'servicePrincipalAccess/' is not an Entra ID
+    # entry either: it names a part of servicePrincipalAccess.json that could not be read, which
+    # Export-OERInventory appends last of all, so it gets its own label too. The sentence that explains the
+    # label joins the prose only when such an entry is present, so the section is otherwise as it was.
+    $SpAccessPrefix = 'servicePrincipalAccess/'
+    $SpAccessLabel = 'Service principal access part that could not be read'
+    $HasSpAccessEntry = $false
     # The two scope lists never hold such an entry: theirs start with '/' or '<'.
     $Lists = @(
         @{ Label = 'Entra ID'; Entries = $IncompleteReads }
@@ -391,6 +437,7 @@ function Get-OERInventoryReadme {
             elseif ($Entry.StartsWith($PrincipalPrefix, [System.StringComparison]::Ordinal)) { $Label = $PrincipalLabel }
             elseif ($Entry.StartsWith($LighthouseReadPrefix, [System.StringComparison]::Ordinal)) { $Label = $LighthouseReadLabel }
             elseif ($Entry.StartsWith($HomeTenantPrefix, [System.StringComparison]::Ordinal)) { $Label = $HomeTenantLabel }
+            elseif ($Entry.StartsWith($SpAccessPrefix, [System.StringComparison]::Ordinal)) { $Label = $SpAccessLabel; $HasSpAccessEntry = $true }
             $Bullets.Add("- $($Label): $(Format-CodeSpan -Text $Entry)")
         }
     }
@@ -435,6 +482,13 @@ the Azure walk did not enter since whether it belongs to this tenant could not b
 role assignments, role management policies, PIM eligibilities or Azure Lighthouse delegations is in
 this bundle, which does not mean it has none.
 '@
+        if ($HasSpAccessEntry) {
+            $Partial += "`n" + @'
+An entry labelled "Service principal access part that could not be read" names a part of
+`servicePrincipalAccess.json`, as `servicePrincipalAccess/<part>`, that could not be read: the part is
+written `null` there, never `[]`, which does not mean the tenant has none of it.
+'@
+        }
         $Partial + "`n`n" + ($Bullets -join "`n")
     } else {
         @'
@@ -727,6 +781,52 @@ export could not read" instead.
         $ForeignIntro + "`n`n" + "None. This export named no subscription whose home tenant is another tenant. Subscriptions are listed only when`nthe export includes ``RoleAssignments`` or ``RoleManagementPolicies`` and gives no ``-Scope``; a ``-Scope`` names one scope, and one at a`nmanagement group or the root scope lies in no subscription. A subscription listing that failed, a walk that could`nnot start and a subscription whose home tenant could not be read are named under `"What this export could not read`"."
     }
 
+    # Sprint 11 step 8: the service principal access the export read, written only when the export was run
+    # with -IncludeServicePrincipalAccess and so passes -ServicePrincipalAccess. One bullet per part, in the
+    # file's order, with its row count, or 'not read' for a part that is $null (an unread part, which the
+    # IncompleteReads entries name). Never a row. Without the parameter both texts stay empty, and the
+    # README is byte-identical to one built without it.
+    $SpAccessSection = ''
+    $SpAccessFileBullet = ''
+    if ($null -ne $ServicePrincipalAccess) {
+        $SpAccessBullets = foreach ($Part in @(
+                @{ Name = 'applicationPermissions'; Rows = $ServicePrincipalAccess.ApplicationPermissions }
+                @{ Name = 'delegatedPermissionGrants'; Rows = $ServicePrincipalAccess.DelegatedPermissionGrants }
+                @{ Name = 'applicationOwners'; Rows = $ServicePrincipalAccess.ApplicationOwners }
+                @{ Name = 'servicePrincipalOwners'; Rows = $ServicePrincipalAccess.ServicePrincipalOwners }
+            )) {
+            if ($null -eq $Part.Rows) {
+                "- $(Format-CodeSpan -Text $Part.Name): not read -- see `"What this export could not read`""
+            } else {
+                "- $(Format-CodeSpan -Text $Part.Name): $(@($Part.Rows | Where-Object { $null -ne $_ }).Count) row(s)"
+            }
+        }
+        $SpAccessIntro = @'
+## Service principal access (read-only)
+
+`servicePrincipalAccess.json` holds, as read-only context, the permissions of the tenant's service
+principals and the owners of its service principals and app registrations, in four parts:
+`applicationPermissions`, the app roles -- application permissions among them -- that each service
+principal holds on a resource; `delegatedPermissionGrants`, the delegated permissions granted to a
+client application, for every user or for one; and `applicationOwners` and `servicePrincipalOwners`,
+the owners of each app registration and of each service principal. It is never applied: none of it
+is in `inventory.json` or `schema.json`, and `Invoke-OERStructure` never grants, revokes or changes
+any of it. A part that could not be read is written `null`, never `[]`, and is named under "What
+this export could not read"; a part that was read and holds nothing is `[]`. The read cost one
+request per page of each of the three lists (the service principals with their app role
+assignments, the service principals with their owners, and the app registrations with their
+owners) and of the grants, one `directoryObjects/getByIds` per 1,000 users named in grants, and one
+extra paged read per object with 20 or more expanded entries.
+'@
+        $SpAccessSection = "`n`n" + $SpAccessIntro + "`n`n" + 'The four parts, as this export wrote them:' + "`n`n" + (@($SpAccessBullets) -join "`n")
+        $SpAccessFileBullet = @'
+- `servicePrincipalAccess.json` -- the application permissions, delegated permission grants and
+  owners of the tenant's service principals and app registrations, written only when the export ran
+  with `-IncludeServicePrincipalAccess`. Read-only context, not an apply document -- see "Service
+  principal access (read-only)" above.
+'@ + "`n"
+    }
+
     $Readme = @'
 # OER RBAC Inventory Bundle
 
@@ -784,7 +884,7 @@ includes a predefined prompt that turns it into appliable improvement proposals.
   tenant hold over a delegated subscription or resource group, which is not listed as a role
   assignment there. Read-only context, not an apply document -- see "Azure Lighthouse delegations
   (access from another tenant)" above.
-- `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
+@@SP-ACCESS-FILE@@- `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (for example with Test-Json).
 - `rbac-architect-prompt.md` -- the predefined prompt. Open it, optionally edit the
   "USER PREFERENCES" block, then give it to any LLM together with this README and the JSON files
@@ -896,5 +996,8 @@ came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in anothe
 remove `tenantId` first.
 '@
 
-    $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection).Replace('@@SHARED-NAMES@@', $SharedNameSection).Replace('@@UNRESOLVED-PRINCIPALS@@', $UnresolvedPrincipalSection).Replace('@@UNDECLARABLE-SCOPES@@', $UndeclarableScopeSection).Replace('@@RESTRICTED-UNIT-PIM@@', $RestrictedUnitSection).Replace('@@LIGHTHOUSE@@', $LighthouseSection).Replace('@@FOREIGN-SUBSCRIPTIONS@@', $ForeignSubscriptionSection)
+    # The Files bullet goes in first, before any text the export read is put into the template. The service
+    # principal access section joins the foreign subscriptions one, after a blank line, so it stands
+    # directly before "## Files"; both are empty without -ServicePrincipalAccess.
+    $Readme.Replace('@@SP-ACCESS-FILE@@', $SpAccessFileBullet).Replace('@@COULD-NOT-READ@@', $CouldNotRead).Replace('@@PIM-LEFT-OUT@@', $PimLeftOutSection).Replace('@@ROOT-SCOPE@@', $RootScopeSection).Replace('@@SHARED-NAMES@@', $SharedNameSection).Replace('@@UNRESOLVED-PRINCIPALS@@', $UnresolvedPrincipalSection).Replace('@@UNDECLARABLE-SCOPES@@', $UndeclarableScopeSection).Replace('@@RESTRICTED-UNIT-PIM@@', $RestrictedUnitSection).Replace('@@LIGHTHOUSE@@', $LighthouseSection).Replace('@@FOREIGN-SUBSCRIPTIONS@@', $ForeignSubscriptionSection + $SpAccessSection)
 }
