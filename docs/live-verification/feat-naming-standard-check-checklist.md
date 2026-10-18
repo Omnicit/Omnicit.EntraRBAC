@@ -197,7 +197,7 @@ function Get-S117NamingSummary {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -220,13 +220,32 @@ worktree on this branch with 0 tracked changes; every mark `True`.
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main clone; a
 `False` mark -- build the worktree first (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: 2026-10-18 05:31 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main, never switched; the worktree is on this branch at 2f72eab with 0 tracked changes, and its build (built from 36b57f1, the last commit under source/; 2f72eab adds only this checklist) carries every mark; the neutral example is in the worktree.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s117] The module loads from a worktree that is not the main clone: True
+[oer-s117] Main clone: branch main; HEAD 491e72e
+[oer-s117] Worktree: branch feat/naming-standard-check; HEAD 2f72eab docs: add the live checklist for the naming standard check; tracked changes: 0
+[oer-s117] The worktree's build reads a naming standard file: True
+[oer-s117] The worktree's build checks a name against it: True
+[oer-s117] The worktree's build refuses an unreadable file: True
+[oer-s117] The neutral example is in the worktree: True
+
+RUNNER: check-S.1 exit code 0; started 2026-10-18T05:31:40Z; took 3 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build. #type/subtask
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -241,13 +260,37 @@ Disconnect-OerLive
 both parameter lines `True`.
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), or `False`.
 
-Result:
+Result: 2026-10-18 05:32 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only, certificate); identity check passed; the module is the worktree's build (1.2.1); Test-OERStructure has -NamingStandard and Invoke-OERStructure has none. (The leak check leaves out the module name and its GitHub path, which the redactor keeps on purpose although the tenant alias is a word of them.)
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s117] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg7\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s117] The module is the worktree's build: True; version 1.2.1
+[oer-s117] Test-OERStructure has -NamingStandard: True; Invoke-OERStructure has none: True
+
+RUNNER: check-0.1 exit code 0; started 2026-10-18T05:32:37Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 1. An export of the test tenant, checked against the neutral example
 
 ### 1.1. The export reads only
 
-- [ ] **1.1** An export of the five Entra ID sections that carry names writes `inventory.json` with reads only. #type/subtask
+- [x] **1.1** An export of the five Entra ID sections that carry names writes `inventory.json` with reads only. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -274,11 +317,37 @@ is below the tenant's, and the check in 1.2 covers exactly the groups the file h
 section was asked for), or an unread collection (the export is then partial and 1.2 still runs on what was
 read, with the partial reads recorded here).
 
-Result:
+Result: 2026-10-18 05:35 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The export of the five Entra ID sections that carry names (Groups, AdministrativeUnits, Catalogs, AccessPackages, AccessReviews) read only: 324 Microsoft Graph requests, 0 writes, 0 Azure Resource Manager requests, 0 token requests. inventory.json carries 10 groups, 1 administrative unit, 5 catalogs, 6 access packages with 5 assignment policies, and 5 access reviews; no group is synchronized from on-premises (the test tenant has none); nothing unread and no error. The export wrote one warning, counted and not printed, since its text can name the tenant's objects.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s117] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg7\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s117] token requests: 0; Microsoft Graph requests: 324, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s117] inventory.json exists: True; names it carries: groups 10, administrativeUnits 1, catalogs 5, accessPackages 6, accessReviews 5, assignmentPolicies 5
+[oer-s117] Groups marked onPremisesSynced true: 0
+[oer-s117] IncompleteReads: 0; errors: ; export warnings (counted, not printed): 1
+
+RUNNER: check-1.1 exit code 0; started 2026-10-18T05:32:55Z; took 118 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.2. The check on the exported inventory.json: valid, nothing else changes, nothing is sent
 
-- [ ] **1.2** `Test-OERStructure -NamingStandard` with the neutral example on the export's `inventory.json` keeps the document valid, adds only naming Warnings (counted per section and rule), changes no other finding, and sends no request. #type/subtask
+- [x] **1.2** `Test-OERStructure -NamingStandard` with the neutral example on the export's `inventory.json` keeps the document valid, adds only naming Warnings (counted per section and rule), changes no other finding, and sends no request. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -311,11 +380,57 @@ expected not to follow it.
 an Item that is not the name at its Path, or another finding that differs (the check then touches more than
 names).
 
-Result:
+Result: 2026-10-18 05:35 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Test-OERStructure on the export's inventory.json sent nothing, with a session open in which it could have (0 token, 0 Microsoft Graph and 0 Azure Resource Manager requests for both calls). Without the standard the document is Valid with no finding; with the neutral example it stays Valid with 0 Errors, and every one of its 50 findings is a naming Warning whose Item is the name at its Path, over all 32 names the file carries (10 groups, 1 administrative unit, 5 catalogs, 6 access packages, 5 assignment policies, 5 access reviews): none of the test tenant's names was written for the neutral example. Per section and rule: groups segmentCount 6 and separator 4; administrativeUnits separator 1; catalogs separator 3, segmentCount 1, values 2; accessPackages separator 2, segmentCount 2, values 5, case 4; assignmentPolicies separator 2, segmentCount 1, values 5, case 4; accessReviews separator 2, segmentCount 2, values 2, case 2. No other finding changed. Only counts are recorded: the Warnings quote the tenant's object names (G1).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2 ===
+[oer-s117] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg7\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s117] token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s117] Without the standard: Valid True; Errors 0; Warnings 0
+[oer-s117] With the standard: Valid True; Errors 0; Warnings 50
+[oer-s117] Every other finding is the same, in the same order, with and without the standard: True; naming findings without the standard: 0
+[oer-s117] Names the standard covers: groups 10, administrativeUnits 1, catalogs 5, accessPackages 6, accessReviews 5, assignmentPolicies 5
+[oer-s117] Naming findings: 50; every one a Warning: True; on distinct names: 32; every Item is the name at its Path: True
+[oer-s117]   accessPackages / case: 4
+[oer-s117]   accessPackages / segmentCount: 2
+[oer-s117]   accessPackages / separator: 2
+[oer-s117]   accessPackages / values: 5
+[oer-s117]   accessReviews / case: 2
+[oer-s117]   accessReviews / segmentCount: 2
+[oer-s117]   accessReviews / separator: 2
+[oer-s117]   accessReviews / values: 2
+[oer-s117]   administrativeUnits / separator: 1
+[oer-s117]   assignmentPolicies / case: 4
+[oer-s117]   assignmentPolicies / segmentCount: 1
+[oer-s117]   assignmentPolicies / separator: 2
+[oer-s117]   assignmentPolicies / values: 5
+[oer-s117]   catalogs / segmentCount: 1
+[oer-s117]   catalogs / separator: 3
+[oer-s117]   catalogs / values: 2
+[oer-s117]   groups / segmentCount: 6
+[oer-s117]   groups / separator: 4
+
+RUNNER: check-1.2 exit code 0; started 2026-10-18T05:35:15Z; took 7 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ### 1.3. A local copy with names the check invents
 
-- [ ] **1.3** On a local copy of the export with eight invented entries added, a following name, an exception, a renamed entry and an optional segment give no finding; a wrong separator, a value outside the list and a template name give one rule Warning each; a synced group gives one "not checked" Warning; the copy stays valid. #type/subtask
+- [x] **1.3** On a local copy of the export with eight invented entries added, a following name, an exception, a renamed entry and an optional segment give no finding; a wrong separator, a value outside the list and a template name give one rule Warning each; a synced group gives one "not checked" Warning; the copy stays valid. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -329,7 +444,7 @@ $Base = @{ groups = @($Doc.groups).Count; administrativeUnits = @($Doc.administr
 $Doc.groups = @(@($Doc.groups) + @(
         [PSCustomObject]@{ displayName = 'SG-Finance-Readers'; members = $null },
         [PSCustomObject]@{ displayName = 'SG_Finance_Readers'; members = $null },
-        [PSCustomObject]@{ template = 'SG-{area}-{purpose}'; tokens = [PSCustomObject]@{ area = 'Finance'; purpose = 'readers' }; members = $null },
+        [PSCustomObject]@{ template = 'SG-{area}-{purpose}'; tokens = [PSCustomObject]@{ area = 'Finance'; purpose = 'auditors' }; members = $null },
         [PSCustomObject]@{ displayName = 'SG-Legal-Readers'; onPremisesSynced = $true; members = $null },
         [PSCustomObject]@{ displayName = 'SG-Finance-Owners'; previousDisplayName = 'old name without a standard'; members = $null }))
 $Doc.administrativeUnits = @(@($Doc.administrativeUnits) + @([PSCustomObject]@{ displayName = 'All Users'; members = $null; scopedRoles = $null }))
@@ -358,19 +473,55 @@ Disconnect-OerLive
 ```
 
 **Expect:** 0 requests; `The copy is valid: True`; a following name 0, a wrong separator 1 (`rule 'separator'`),
-a template name 1 at `.template` (`rule 'case', segment 3 'purpose'` for `SG-Finance-readers`), a synced group 1
+a template name 1 at `.template` (`rule 'case', segment 3 'purpose'` for `SG-Finance-auditors`; a template name that equals another entry's name ignoring case would be a duplicate Error), a synced group 1
 (`was not checked against the naming standard: the group is synchronized from on-premises`), a renamed entry 0
 (its `previousDisplayName` is never checked), an exception 0, a value outside the list 1 (`rule 'values',
 segment 2 'area'` for `Legal`), an optional segment present 0; every printed finding `[Warning]`.
 **Failure looks like:** any other count, an Error, a request, or a copy that is not valid.
 
-Result:
+Result: 2026-10-18 05:36 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (second run). On a local copy of the export with eight invented entries, the check sent nothing and the copy is Valid: a following name, an exception (All Users), a renamed entry (its previousDisplayName is not checked) and a name with the optional segment present give no finding; a wrong separator gives one separator Warning, a template group one case Warning at its template path for the name Resolve-OERName computes, a value outside the list one values Warning, and a synced group one Warning saying it was not checked. Every finding is a Warning. The first run found the same eight outcomes, but its copy was not Valid: the template computed SG-Finance-readers, which equals another added entry's name ignoring case, and the validator refused the pair as a duplicate (an Error the check itself never raises). The checklist's template token was changed from readers to auditors and the check run again; the first run's output is not kept.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.3 ===
+[oer-s117] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg7\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s117] token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s117] The copy is valid: True
+[oer-s117] a following name (an added entry): 0 naming finding(s)
+[oer-s117] a wrong separator (an added entry): 1 naming finding(s)
+[oer-s117]   [Warning] Name 'SG_Finance_Readers' at groups[11].displayName does not follow the naming standard (rule 'separator'): it does not contain the separator '-'; the standard expects at least 3 segments: kind, area, purpose, environment (optional), separated by '-'.
+[oer-s117] a template name (an added entry): 1 naming finding(s)
+[oer-s117]   [Warning] Name 'SG-Finance-auditors' at groups[12].template does not follow the naming standard (rule 'case', segment 3 'purpose'): 'auditors' is not PascalCase (an uppercase letter first, then only letters and digits).
+[oer-s117] a synced group (an added entry): 1 naming finding(s)
+[oer-s117]   [Warning] Name 'SG-Legal-Readers' at groups[13].displayName was not checked against the naming standard: the group is synchronized from on-premises (onPremisesSynced true), and the standard does not include synced groups. Set includeSyncedGroups to true to check it.
+[oer-s117] a renamed entry (an added entry): 0 naming finding(s)
+[oer-s117] an exception (an added entry): 0 naming finding(s)
+[oer-s117] a value outside the list (an added entry): 1 naming finding(s)
+[oer-s117]   [Warning] Name 'CAT-Legal-Documents' at catalogs[5].displayName does not follow the naming standard (rule 'values', segment 2 'area'): 'Legal' is not one of the allowed values 'Finance', 'Sales', 'IT'.
+[oer-s117] an optional segment present (an added entry): 0 naming finding(s)
+
+RUNNER: check-1.3 exit code 0; started 2026-10-18T05:36:34Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## 2. An invalid naming standard file
 
 ### 2.1. The file is refused, and nothing is validated
 
-- [ ] **2.1** A standard file that breaks the schema, and a path that names no file, are each refused with `InvalidNamingStandard`, the message names what is wrong, no validation result is returned, and nothing is sent. #type/subtask
+- [x] **2.1** A standard file that breaks the schema, and a path that names no file, are each refused with `InvalidNamingStandard`, the message names what is wrong, no validation result is returned, and nothing is sent. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -400,7 +551,34 @@ Disconnect-OerLive
 **Failure looks like:** a validation result (the document was validated after all), another error id, a
 message that does not say what is wrong, or a request.
 
-Result:
+Result: 2026-10-18 05:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. A copy of the neutral example with an unknown key (seperator) and segments[0].case Pascal, and a path that names no file, were each refused with exactly one InvalidNamingStandard error, category InvalidData, and no validation result: the document was not validated. The first message names both problems and what was expected; the second says the standard was not found at the path. Nothing was sent (0 token, 0 Microsoft Graph and 0 Azure Resource Manager requests).
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s117] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg7\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s117] token requests: 0; Microsoft Graph requests: 0, writes: 0; Azure Resource Manager requests: 0, writes: 0
+[oer-s117] a file that breaks the schema: validation results returned: 0; InvalidNamingStandard errors: 1; category: InvalidData
+[oer-s117]   Message: Could not read the naming standard: The naming standard at 'REPO\docs\live-verification\raw\s117\naming-standard-invalid.json' is not valid: seperator is not a known key; expected one of $schema, version, description, separator, maxLength, sections, includeSyncedGroups, segments, exceptions. segments[0].case must be one of PascalCase, camelCase, UPPERCASE, lowercase; found 'Pascal'.
+[oer-s117] a path that names no file: validation results returned: 0; InvalidNamingStandard errors: 1; category: InvalidData
+[oer-s117]   Message: Could not read the naming standard: The naming standard was not found at path 'REPO\docs\live-verification\raw\s117\no-such-standard.json'.
+
+RUNNER: check-2.1 exit code 0; started 2026-10-18T05:36:56Z; took 5 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
 
 ## B. Proved offline (class B)
 
@@ -428,7 +606,7 @@ Each item is held by unit tests on this branch, run by `./build.ps1 -Tasks test`
 
 ### T.1. Nothing was created, and the step's raw folders are gone
 
-- [ ] **T.1** No object with the prefix `oer-s117-` exists, and the step's raw folders are deleted. The redaction map is deleted with `Clear-OerLiveRedactionMap` once every result is written up, after this check. #type/subtask
+- [x] **T.1** No object with the prefix `oer-s117-` exists, and the step's raw folders are deleted. The redaction map is deleted with `Clear-OerLiveRedactionMap` once every result is written up, after this check. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -445,4 +623,30 @@ foreach ($Dir in @($Raw, (Join-Path $Cfg.Repo 'docs\live-verification\raw\s117')
 **Failure looks like:** a prefixed object (this checklist creates none: STOP and find who made it), or a folder
 left behind.
 
-Result:
+Result: 2026-10-18 05:37 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Nothing was created: the prefix sweep finds no user, group, administrative unit, catalog, access package or app registration starting with oer-s117- (0 objects). The step's raw folders under the main clone and the worktree are deleted (the export bundle, the control copy and the two standard files with them). The redaction map is deleted after the write-up.
+
+=== Run ===
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[oer-s117] Omnicit.EntraRBAC 1.2.1 loaded from REPO\.claude\worktrees\s11-steg7\output\module\Omnicit.EntraRBAC\1.2.1.
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s117] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s117] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s117-' is left.
+[oer-s117] Objects carrying the prefix oer-s117-: 0
+[oer-s117] Raw folder deleted: True
+[oer-s117] Raw folder deleted: True
+
+RUNNER: check-T.1 exit code 0; started 2026-10-18T05:37:17Z; took 6 s.
+LEAK CHECK: psd1 values surviving redaction: 0
+```
