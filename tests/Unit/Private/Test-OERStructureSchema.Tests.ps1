@@ -6711,3 +6711,360 @@ Describe 'Test-OERStructureSchema warns about PIM for Groups in a restricted man
         $Description | Should -Match ([regex]::Escape('what Microsoft Graph answers to those writes has not been measured, so the finding is a Warning and never an Error'))
     }
 }
+
+Describe 'Test-OERStructureSchema (Rule 17, naming standard, Sprint 11 step 7)' {
+    # Rule 17 checks the names of the sections a naming standard lists, only when -NamingStandard is
+    # given, and reports each name that breaks it as a Warning (per object and rule). It never makes a
+    # document invalid. The rules themselves belong to Test-OERNamingStandardName.
+    BeforeAll {
+        $script:NsExampleJson = @'
+{
+  "version": "1.0",
+  "separator": "-",
+  "maxLength": 64,
+  "sections": [ "groups", "administrativeUnits", "catalogs", "accessPackages", "assignmentPolicies", "accessReviews" ],
+  "segments": [
+    { "name": "kind", "values": [ "SG", "AU", "CAT", "AP", "POL", "AR" ], "case": "UPPERCASE" },
+    { "name": "area", "values": [ "Finance", "Sales", "IT" ] },
+    { "name": "purpose", "case": "PascalCase" },
+    { "name": "environment", "values": [ "Prod", "Test" ], "optional": true }
+  ],
+  "exceptions": [ "All Users", "(?i)legacy-.*" ]
+}
+'@
+
+        # Builds a naming standard through the real reader. -Sections is the JSON array text of the
+        # sections it applies to; -IncludeSynced adds includeSyncedGroups true.
+        function Get-NsStandard {
+            param([string]$Sections = '', [switch]$IncludeSynced)
+            $Json = $script:NsExampleJson
+            if ($Sections) {
+                $Json = $Json -replace '"sections": \[[^\]]*\]', ('"sections": ' + $Sections)
+            }
+            if ($IncludeSynced) {
+                $Json = $Json.Replace('"maxLength": 64,', '"maxLength": 64, "includeSyncedGroups": true,')
+            }
+            $Path = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N') + '.json')
+            [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            InModuleScope $script:moduleName -Parameters @{ Path = $Path } {
+                param($Path)
+                Read-OERNamingStandard -Path $Path
+            }
+        }
+
+        # Validates a document, with the naming standard when one is given.
+        function Invoke-NsValidation {
+            param([string]$Json, [object]$Standard)
+            $Doc = $Json | ConvertFrom-Json
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Standard = $Standard } {
+                param($Doc, $Standard)
+                if ($null -ne $Standard) {
+                    Test-OERStructureSchema -Document $Doc -NamingStandard $Standard
+                } else {
+                    Test-OERStructureSchema -Document $Doc
+                }
+            }
+        }
+
+        # The findings of this rule among all a document raises.
+        function Get-NsFinding {
+            param([object]$Validation)
+            @($Validation.Errors | Where-Object { $_.Message -like '*the naming standard*' })
+        }
+
+        # One name in each kind of object, every one breaking the separator rule only.
+        $script:NsBadDocument = '{ "version": "1.0", ' +
+        '"groups": [ { "displayName": "bad_group" } ], ' +
+        '"administrativeUnits": [ { "displayName": "bad_unit" } ], ' +
+        '"catalogs": [ { "displayName": "bad_catalog" } ], ' +
+        '"accessPackages": [ { "displayName": "bad_package", "catalog": "bad_catalog", "assignmentPolicies": [ { "displayName": "bad_policy" } ] } ], ' +
+        '"accessReviews": [ { "displayName": "bad_review", "accessPackage": "bad_package", "assignmentPolicy": "bad_policy" } ] }'
+
+        # The same six objects with names that follow the standard.
+        $script:NsGoodDocument = '{ "version": "1.0", ' +
+        '"groups": [ { "displayName": "SG-Finance-Readers" } ], ' +
+        '"administrativeUnits": [ { "displayName": "AU-Finance-Staff" } ], ' +
+        '"catalogs": [ { "displayName": "CAT-Finance-Main" } ], ' +
+        '"accessPackages": [ { "displayName": "AP-Finance-Standard", "catalog": "CAT-Finance-Main", "assignmentPolicies": [ { "displayName": "POL-Finance-Default" } ] } ], ' +
+        '"accessReviews": [ { "displayName": "AR-Finance-Quarterly", "accessPackage": "AP-Finance-Standard", "assignmentPolicy": "POL-Finance-Default" } ] }'
+
+        $script:NsSeparatorDetail = "it does not contain the separator '-'; the standard expects at least 3 segments: kind, area, purpose, environment (optional), separated by '-'."
+        $script:NsSyncedClause = ' The group is synchronized from on-premises (onPremisesSynced true), and Invoke-OERStructure writes nothing to it: change its name in the on-premises directory.'
+    }
+
+    Context 'every section that carries names' {
+        It 'gives one Warning per non-following name, in document order, with the Section of the top-level section' {
+            $V = Invoke-NsValidation -Json $script:NsBadDocument -Standard (Get-NsStandard)
+            $Hit = @(Get-NsFinding -Validation $V)
+
+            $Hit.Count | Should -Be 6
+            ($Hit | ForEach-Object { $_.Path }) | Should -Be @(
+                'groups[0].displayName', 'administrativeUnits[0].displayName', 'catalogs[0].displayName',
+                'accessPackages[0].displayName', 'accessPackages[0].assignmentPolicies[0].displayName', 'accessReviews[0].displayName')
+            ($Hit | ForEach-Object { $_.Section }) | Should -Be @('groups', 'administrativeUnits', 'catalogs', 'accessPackages', 'accessPackages', 'accessReviews')
+            ($Hit | ForEach-Object { $_.Item }) | Should -Be @('bad_group', 'bad_unit', 'bad_catalog', 'bad_package', 'bad_policy', 'bad_review')
+            ($Hit | ForEach-Object { $_.Severity } | Select-Object -Unique) | Should -Be 'Warning'
+            $Hit[0].Message | Should -Be "Name 'bad_group' at groups[0].displayName does not follow the naming standard (rule 'separator'): $script:NsSeparatorDetail"
+            $Hit[4].Message | Should -Be "Name 'bad_policy' at accessPackages[0].assignmentPolicies[0].displayName does not follow the naming standard (rule 'separator'): $script:NsSeparatorDetail"
+        }
+
+        It 'checks only the sections the standard names: <Sections>' -ForEach @(
+            @{ Sections = '[ "catalogs" ]'; Expected = @('catalogs[0].displayName') }
+            @{ Sections = '[ "groups", "accessReviews" ]'; Expected = @('groups[0].displayName', 'accessReviews[0].displayName') }
+            @{ Sections = '[ "accessPackages" ]'; Expected = @('accessPackages[0].displayName') }
+            @{ Sections = '[ "assignmentPolicies" ]'; Expected = @('accessPackages[0].assignmentPolicies[0].displayName') }
+            @{ Sections = '[ "administrativeUnits" ]'; Expected = @('administrativeUnits[0].displayName') }
+        ) {
+            $V = Invoke-NsValidation -Json $script:NsBadDocument -Standard (Get-NsStandard -Sections $Sections)
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be $Expected.Count
+            ($Hit | ForEach-Object { $_.Path }) | Should -Be $Expected
+        }
+
+        It 'raises nothing for names that follow the standard' {
+            $V = Invoke-NsValidation -Json $script:NsGoodDocument -Standard (Get-NsStandard)
+            @(Get-NsFinding -Validation $V).Count | Should -Be 0
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'raises one Warning per broken rule of one name, each with its segment' {
+            $V = Invoke-NsValidation -Json '{ "version": "1.0", "groups": [ { "displayName": "sg-Finance-Readers" } ] }' -Standard (Get-NsStandard)
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 2
+            $Hit[0].Message | Should -Be "Name 'sg-Finance-Readers' at groups[0].displayName does not follow the naming standard (rule 'values', segment 1 'kind'): 'sg' is not one of the allowed values 'SG', 'AU', 'CAT', 'AP', 'POL', 'AR' (it differs from 'SG' only in letter case)."
+            $Hit[1].Message | Should -Be "Name 'sg-Finance-Readers' at groups[0].displayName does not follow the naming standard (rule 'case', segment 1 'kind'): 'sg' is not UPPERCASE (no lowercase letter)."
+        }
+
+        It 'numbers the paths by position, so a second package and a second policy are found' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json ('{ "version": "1.0", "accessPackages": [ ' +
+                '{ "displayName": "AP-Finance-One", "catalog": "CAT-Finance-Main", "assignmentPolicies": [ { "displayName": "POL-Finance-One" } ] }, ' +
+                '{ "displayName": "bad_two", "catalog": "CAT-Finance-Main", "assignmentPolicies": [ { "displayName": "POL-Finance-One" }, { "displayName": "bad_policy" } ] } ] }')
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 2
+            $Hit[0].Path | Should -Be 'accessPackages[1].displayName'
+            $Hit[1].Path | Should -Be 'accessPackages[1].assignmentPolicies[1].displayName'
+        }
+    }
+
+    Context 'a group named by a template' {
+        It 'checks the name the template computes, at the template path' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json ('{ "version": "1.0", "groups": [ ' +
+                '{ "template": "SG-{area}-{purpose}", "tokens": { "area": "Finance", "purpose": "readers" } } ] }')
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Section | Should -Be 'groups'
+            $Hit[0].Item | Should -Be 'SG-Finance-readers'
+            $Hit[0].Path | Should -Be 'groups[0].template'
+            $Hit[0].Severity | Should -Be 'Warning'
+            $Hit[0].Message | Should -Be "Name 'SG-Finance-readers' at groups[0].template does not follow the naming standard (rule 'case', segment 3 'purpose'): 'readers' is not PascalCase (an uppercase letter first, then only letters and digits)."
+        }
+
+        It 'checks the displayName and not the template when a group declares both' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json ('{ "version": "1.0", "groups": [ ' +
+                '{ "displayName": "SG-Finance-Readers", "template": "bad_{x}", "tokens": { "x": "template" } }, ' +
+                '{ "displayName": "bad_name", "template": "SG-Finance-Readers" } ] }')
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 1 -Because 'a group is checked once, by its displayName'
+            $Hit[0].Item | Should -Be 'bad_name'
+            $Hit[0].Path | Should -Be 'groups[1].displayName'
+        }
+
+        It 'raises nothing for a template whose name follows the standard' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json ('{ "version": "1.0", "groups": [ ' +
+                '{ "template": "SG-{area}-{purpose}", "tokens": { "area": "Finance", "purpose": "Readers" } } ] }')
+            @(Get-NsFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'says so, once, when the name cannot be computed: <Text>' -ForEach @(
+            @{ Text = 'a token is missing'; Group = '{ "template": "SG-{area}-{purpose}", "tokens": { "area": "Finance" } }' }
+            @{ Text = 'there are no tokens'; Group = '{ "template": "SG-{area}-{purpose}" }' }
+            @{ Text = 'tokens is not an object'; Group = '{ "template": "SG-{area}-{purpose}", "tokens": "x" }' }
+        ) {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json ('{ "version": "1.0", "groups": [ ' + $Group + ' ] }')
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Section | Should -Be 'groups'
+            $Hit[0].Item | Should -Be 'groups[0]'
+            $Hit[0].Path | Should -Be 'groups[0].template'
+            $Hit[0].Severity | Should -Be 'Warning'
+            $Hit[0].Message | Should -Be "Group at groups[0].template was not checked against the naming standard: its name could not be computed from 'template' and 'tokens'."
+        }
+    }
+
+    Context 'the name a step leaves' {
+        It 'never checks previousDisplayName' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json ('{ "version": "1.0", ' +
+                '"groups": [ { "displayName": "SG-Finance-Readers", "previousDisplayName": "old_bad_name" } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-Finance-Staff", "previousDisplayName": "old_bad_name" } ], ' +
+                '"catalogs": [ { "displayName": "CAT-Finance-Main", "previousDisplayName": "old_bad_name" } ], ' +
+                '"accessPackages": [ { "displayName": "AP-Finance-Standard", "previousDisplayName": "old_bad_name", "catalog": "CAT-Finance-Main", ' +
+                '"assignmentPolicies": [ { "displayName": "POL-Finance-Default", "previousDisplayName": "old_bad_name" } ] } ], ' +
+                '"accessReviews": [ { "displayName": "AR-Finance-Quarterly", "previousDisplayName": "old_bad_name", "accessPackage": "AP-Finance-Standard", "assignmentPolicy": "POL-Finance-Default" } ] }')
+            @(Get-NsFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'checks the new name of a rename that breaks the standard, and only that' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json '{ "version": "1.0", "groups": [ { "displayName": "bad_new", "previousDisplayName": "SG-Finance-Readers" } ] }'
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Item | Should -Be 'bad_new'
+            $Hit[0].Path | Should -Be 'groups[0].displayName'
+        }
+    }
+
+    Context 'a group synchronized from on-premises' {
+        It 'is skipped, with a row that says so, when the standard does not include synced groups' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json '{ "version": "1.0", "groups": [ { "displayName": "bad_synced", "onPremisesSynced": true } ] }'
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Section | Should -Be 'groups'
+            $Hit[0].Item | Should -Be 'bad_synced'
+            $Hit[0].Path | Should -Be 'groups[0].displayName'
+            $Hit[0].Severity | Should -Be 'Warning'
+            $Hit[0].Message | Should -Be "Name 'bad_synced' at groups[0].displayName was not checked against the naming standard: the group is synchronized from on-premises (onPremisesSynced true), and the standard does not include synced groups. Set includeSyncedGroups to true to check it."
+        }
+
+        It 'gets the same row whether or not its name would have followed the standard' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json '{ "version": "1.0", "groups": [ { "displayName": "SG-Finance-Readers", "onPremisesSynced": true } ] }'
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Match 'was not checked against the naming standard'
+        }
+
+        It 'is checked when the standard includes synced groups, and each finding names what to do' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard -IncludeSynced) -Json '{ "version": "1.0", "groups": [ { "displayName": "bad_synced", "onPremisesSynced": true } ] }'
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Be "Name 'bad_synced' at groups[0].displayName does not follow the naming standard (rule 'separator'): $script:NsSeparatorDetail$script:NsSyncedClause"
+        }
+
+        It 'raises nothing for a synced group whose name follows a standard that includes them' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard -IncludeSynced) -Json '{ "version": "1.0", "groups": [ { "displayName": "SG-Finance-Readers", "onPremisesSynced": true } ] }'
+            @(Get-NsFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'is checked like any group when onPremisesSynced is <Text>' -ForEach @(
+            @{ Text = 'false'; Value = 'false' }
+            @{ Text = 'the string "true"'; Value = '"true"' }
+            @{ Text = 'null'; Value = 'null' }
+        ) {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json ('{ "version": "1.0", "groups": [ { "displayName": "bad_group", "onPremisesSynced": ' + $Value + ' } ] }')
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Be "Name 'bad_group' at groups[0].displayName does not follow the naming standard (rule 'separator'): $script:NsSeparatorDetail"
+        }
+
+        It 'skips a synced group named by a template at the template path' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json '{ "version": "1.0", "groups": [ { "template": "bad_{x}", "tokens": { "x": "synced" }, "onPremisesSynced": true } ] }'
+            $Hit = @(Get-NsFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -Be 'groups[0].template'
+            $Hit[0].Message | Should -Match 'the standard does not include synced groups'
+        }
+    }
+
+    Context 'what the validation reports otherwise' {
+        It 'keeps a valid document Valid when names break the standard' {
+            $V = Invoke-NsValidation -Standard (Get-NsStandard) -Json $script:NsBadDocument
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            $V.Valid | Should -BeTrue
+            @(Get-NsFinding -Validation $V).Count | Should -Be 6
+        }
+
+        It 'keeps an invalid document invalid, with its findings first and in order, and the naming findings after' {
+            $Json = '{ "version": "1.0", "grops": [], "catalogs": [ { } ], "groups": [ { "displayName": "bad_group" } ] }'
+            $Without = Invoke-NsValidation -Json $Json
+            $With = Invoke-NsValidation -Json $Json -Standard (Get-NsStandard)
+
+            $Without.Valid | Should -BeFalse
+            $With.Valid | Should -BeFalse
+            $Before = @($Without.Errors)
+            $After = @($With.Errors)
+            $Before.Count | Should -BeGreaterThan 1
+            $After.Count | Should -Be ($Before.Count + 1)
+            for ($I = 0; $I -lt $Before.Count; $I++) {
+                $After[$I].Message | Should -Be $Before[$I].Message
+                $After[$I].Path | Should -Be $Before[$I].Path
+                $After[$I].Severity | Should -Be $Before[$I].Severity
+                $After[$I].Section | Should -Be $Before[$I].Section
+            }
+            $After[-1].Message | Should -Match 'does not follow the naming standard'
+            @($After | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be @($Before | Where-Object { $_.Severity -eq 'Error' }).Count
+        }
+
+        It 'adds no naming row without a naming standard' {
+            $V = Invoke-NsValidation -Json $script:NsBadDocument
+            @(Get-NsFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'does not give Invoke-OERStructure a NamingStandard parameter' {
+            (Get-Command -Module $script:moduleName -Name Invoke-OERStructure).Parameters.Keys | Should -Not -Contain 'NamingStandard'
+        }
+
+        It 'declares NamingStandard on the validator and states the rule in its help' {
+            $Help = InModuleScope $script:moduleName {
+                [PSCustomObject]@{
+                    Parameter     = (Get-Command Test-OERStructureSchema).Parameters.Keys
+                    Description   = ((@((Get-Help Test-OERStructureSchema -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+                    ParameterHelp = ((Get-Help Test-OERStructureSchema -Parameter NamingStandard).Description | ForEach-Object { $_.Text }) -join ' '
+                }
+            }
+            $Help.Parameter | Should -Contain 'NamingStandard'
+            $Help.Description | Should -Match 'Test-OERNamingStandardName'
+            $Help.Description | Should -Match 'previousDisplayName'
+            $Help.Description | Should -Match 'never an Error'
+            $Help.ParameterHelp | Should -Match 'Read-OERNamingStandard'
+        }
+    }
+
+    Context 'a document whose name-carrying node is malformed (review focus 5)' {
+        It 'adds no naming row and does not throw for <Text>' -ForEach @(
+            @{ Text = 'groups as a string'; Json = '{ "version": "1.0", "groups": "x" }' }
+            @{ Text = 'groups as an object'; Json = '{ "version": "1.0", "groups": { "displayName": "bad_group" } }' }
+            @{ Text = 'groups as a number'; Json = '{ "version": "1.0", "groups": 5 }' }
+            @{ Text = 'a null group'; Json = '{ "version": "1.0", "groups": [ null ] }' }
+            @{ Text = 'a group that is a string'; Json = '{ "version": "1.0", "groups": [ "bad_group" ] }' }
+            @{ Text = 'a group that is a number'; Json = '{ "version": "1.0", "groups": [ 7 ] }' }
+            @{ Text = 'a group that is an array'; Json = '{ "version": "1.0", "groups": [ [ "bad_group" ] ] }' }
+            @{ Text = 'a null displayName'; Json = '{ "version": "1.0", "groups": [ { "displayName": null } ] }' }
+            @{ Text = 'an empty displayName'; Json = '{ "version": "1.0", "groups": [ { "displayName": "" } ] }' }
+            @{ Text = 'a numeric displayName'; Json = '{ "version": "1.0", "groups": [ { "displayName": 42 } ] }' }
+            @{ Text = 'a boolean displayName'; Json = '{ "version": "1.0", "groups": [ { "displayName": true } ] }' }
+            @{ Text = 'an array displayName'; Json = '{ "version": "1.0", "groups": [ { "displayName": [ "bad_group" ] } ] }' }
+            @{ Text = 'an object displayName'; Json = '{ "version": "1.0", "groups": [ { "displayName": { "a": "bad_group" } } ] }' }
+            @{ Text = 'a null template'; Json = '{ "version": "1.0", "groups": [ { "template": null } ] }' }
+            @{ Text = 'an empty template'; Json = '{ "version": "1.0", "groups": [ { "template": "" } ] }' }
+            @{ Text = 'a numeric template'; Json = '{ "version": "1.0", "groups": [ { "template": 42 } ] }' }
+            @{ Text = 'a group with neither name nor template'; Json = '{ "version": "1.0", "groups": [ { "description": "d" } ] }' }
+            @{ Text = 'administrativeUnits as a string'; Json = '{ "version": "1.0", "administrativeUnits": "x" }' }
+            @{ Text = 'a null administrative unit'; Json = '{ "version": "1.0", "administrativeUnits": [ null, "x", { "displayName": null }, { "displayName": 3 } ] }' }
+            @{ Text = 'catalogs as an object'; Json = '{ "version": "1.0", "catalogs": { "displayName": "bad_catalog" } }' }
+            @{ Text = 'a catalog that is null or a string'; Json = '{ "version": "1.0", "catalogs": [ null, "bad_catalog", { "displayName": "" } ] }' }
+            @{ Text = 'accessPackages as a string'; Json = '{ "version": "1.0", "accessPackages": "x" }' }
+            @{ Text = 'a package that is null, a string or a number'; Json = '{ "version": "1.0", "accessPackages": [ null, "x", 4 ] }' }
+            @{ Text = 'a package with a null displayName'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": null, "catalog": "c" } ] }' }
+            @{ Text = 'assignmentPolicies as a string'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": "AP-Finance-One", "catalog": "c", "assignmentPolicies": "x" } ] }' }
+            @{ Text = 'assignmentPolicies as an object'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": "AP-Finance-One", "catalog": "c", "assignmentPolicies": { "displayName": "bad_policy" } } ] }' }
+            @{ Text = 'a policy that is null, a string or a number'; Json = '{ "version": "1.0", "accessPackages": [ { "displayName": "AP-Finance-One", "catalog": "c", "assignmentPolicies": [ null, "x", 5, { "displayName": 9 }, { "displayName": null } ] } ] }' }
+            @{ Text = 'accessReviews as a number'; Json = '{ "version": "1.0", "accessReviews": 5 }' }
+            @{ Text = 'a review that is null or a string'; Json = '{ "version": "1.0", "accessReviews": [ null, "bad_review", { "displayName": "" } ] }' }
+        ) {
+            $Standard = Get-NsStandard
+            $Thrown = $null
+            $V = $null
+            try { $V = Invoke-NsValidation -Json $Json -Standard $Standard } catch { $Thrown = $PSItem }
+            $Thrown | Should -BeNullOrEmpty
+            $V | Should -Not -BeNullOrEmpty
+            $V.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureValidation'
+            @(Get-NsFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'leaves the findings the validator itself raises for a malformed node as they were' {
+            $Json = '{ "version": "1.0", "groups": [ null, "x", { "displayName": 42 } ], "catalogs": "x" }'
+            $Without = Invoke-NsValidation -Json $Json
+            $With = Invoke-NsValidation -Json $Json -Standard (Get-NsStandard)
+            @($With.Errors).Count | Should -Be @($Without.Errors).Count
+            $With.Valid | Should -Be $Without.Valid
+        }
+    }
+}

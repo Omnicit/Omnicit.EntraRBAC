@@ -276,16 +276,40 @@ function Test-OERStructureSchema {
     Omnicit.EntraRBAC.StructureValidation object with a Valid flag and an
     Errors collection of records carrying Section, Item, Path, Message, and Severity. No Graph or ARM
     calls are made and no authentication occurs.
+    Rule 17 (Sprint 11 step 7) runs only when -NamingStandard is given, which Test-OERStructure passes
+    for its -NamingStandard parameter and Invoke-OERStructure never does, so applying a document is
+    unchanged. It checks the names of the sections the standard lists (groups, administrativeUnits,
+    catalogs, accessPackages, the assignmentPolicies of an access package, accessReviews) and adds one
+    Warning per object and broken rule, after every other finding, with Section the top-level section
+    (a policy's is accessPackages), Item the name, Path the node that holds it and a Message that says
+    which rule the name breaks and what was expected. Test-OERNamingStandardName owns the rules and
+    their texts. The name checked is the one an object carries after the step: its displayName, or for
+    a group without displayName and with a template the name Resolve-OERName computes from template and
+    tokens (a template that cannot be computed gets one Warning saying it was not checked). A
+    previousDisplayName is never checked. A group with onPremisesSynced true is skipped, with a Warning
+    that says so, unless the standard includes synced groups; then it is checked and each finding says
+    its name can only change in the on-premises directory. Every finding is a Warning and never an
+    Error, so Valid does not change, and a node that is not the shape it should be (a section that is
+    not an array, a null or non-object item, a displayName that is not a non-empty string) is left to
+    the findings the validator already raises for it and adds no naming row.
     .PARAMETER Document
     The parsed document object (from Read-OERStructureDocument or ConvertFrom-Json) to validate.
+    .PARAMETER NamingStandard
+    The naming standard object Read-OERNamingStandard returns. When given, Rule 17 checks the names of
+    the sections it lists and adds a Warning for each name that breaks it. When omitted, no name is
+    checked and the findings are exactly what they were without Rule 17.
     .EXAMPLE
     Test-OERStructureSchema -Document ($json | ConvertFrom-Json)
     Returns a StructureValidation describing any schema problems in the document.
+    .EXAMPLE
+    Test-OERStructureSchema -Document ($json | ConvertFrom-Json) -NamingStandard (Read-OERNamingStandard -Path ./naming-standard.json)
+    Returns the same StructureValidation with a Warning for every name that does not follow the standard.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][PSCustomObject]$Document
+        [Parameter(Mandatory)][PSCustomObject]$Document,
+        [Parameter()][PSCustomObject]$NamingStandard
     )
 
     $Findings = [System.Collections.Generic.List[object]]::new()
@@ -2600,6 +2624,120 @@ function Test-OERStructureSchema {
                         "a restricted management unit, lists the group in its members as '$ListedAs'. $RestrictedRisk")
             }
         }
+    }
+
+    # Rule 17 (Sprint 11 step 7, A6): the names of the sections the naming standard lists, against the
+    # standard. Runs only when -NamingStandard is given (Test-OERStructure passes it; Invoke-OERStructure
+    # never does), after every other rule, so a document that is invalid without it keeps exactly its
+    # findings and the naming Warnings follow them. Every finding is a Warning -- a name is advice, not a
+    # reason to refuse a document -- and Test-OERNamingStandardName owns the rules and the texts. The name
+    # checked is the one the object carries after the step: displayName, or for a group without
+    # displayName and with a template the name Get-GroupEntryName computes (Rule 12's reading). A
+    # previousDisplayName is never read. A node that is not the shape it should be (a section that is not
+    # an array, an item that is not an object, a displayName that is not a non-empty string) adds no row:
+    # the rules above already report what is wrong with it, and the walk must not stop on it.
+    function Get-NamingItem {
+        param([object]$Node, [string]$Name)
+        if ((Test-HasProp -Node $Node -Name $Name) -and
+            ($Node.$Name -is [System.Collections.IEnumerable]) -and ($Node.$Name -isnot [string])) {
+            return , @($Node.$Name)
+        }
+        , @()
+    }
+
+    # One name against the standard: a Warning per broken rule at -Path. A synced group (-Synced) is
+    # skipped with one Warning that says so unless the standard includes synced groups; when it does, each
+    # finding says where the name can be changed.
+    function Add-NamingFinding {
+        param([string]$Section, [string]$Name, [string]$Path, [bool]$Synced = $false)
+        if ($Synced -and -not $NamingStandard.IncludeSyncedGroups) {
+            Add-Finding -Section $Section -Item $Name -Path $Path -Severity 'Warning' `
+                -Message ("Name '$Name' at $Path was not checked against the naming standard: the group is synchronized from on-premises " +
+                    '(onPremisesSynced true), and the standard does not include synced groups. Set includeSyncedGroups to true to check it.')
+            return
+        }
+        $SyncedClause = ''
+        if ($Synced) {
+            $SyncedClause = ' The group is synchronized from on-premises (onPremisesSynced true), and Invoke-OERStructure writes nothing to it: change its name in the on-premises directory.'
+        }
+        foreach ($NameFinding in @(Test-OERNamingStandardName -Name $Name -Standard $NamingStandard)) {
+            $SegmentClause = ''
+            if ($null -ne $NameFinding.Segment) { $SegmentClause = ", segment $($NameFinding.Segment) '$($NameFinding.SegmentName)'" }
+            Add-Finding -Section $Section -Item $Name -Path $Path -Severity 'Warning' `
+                -Message "Name '$Name' at $Path does not follow the naming standard (rule '$($NameFinding.Rule)'$SegmentClause): $($NameFinding.Detail)$SyncedClause"
+        }
+    }
+
+    # The displayName of one node, when it is a non-empty string, checked at -Path (the node's own path).
+    # -Section is the name the finding carries.
+    function Add-NamingDisplayNameFinding {
+        param([string]$Section, [string]$Path, [object]$Node)
+        if (-not (Test-HasProp -Node $Node -Name 'displayName')) { return }
+        $DisplayName = $Node.displayName
+        if ($DisplayName -isnot [string] -or $DisplayName.Length -eq 0) { return }
+        Add-NamingFinding -Section $Section -Name $DisplayName -Path "$Path.displayName"
+    }
+
+    # Every item of a top-level section that carries a displayName.
+    function Add-NamingSectionFinding {
+        param([string]$Section)
+        $Items = Get-NamingItem -Node $Document -Name $Section
+        for ($I = 0; $I -lt $Items.Count; $I++) {
+            Add-NamingDisplayNameFinding -Section $Section -Path "$Section[$I]" -Node $Items[$I]
+        }
+    }
+
+    if ($null -ne $NamingStandard) {
+        $NamingSections = @($NamingStandard.Sections)
+
+        if ($NamingSections -ccontains 'groups') {
+            $NamingGroups = Get-NamingItem -Node $Document -Name 'groups'
+            for ($I = 0; $I -lt $NamingGroups.Count; $I++) {
+                $NamingGroup = $NamingGroups[$I]
+                $NamingSynced = (Test-HasProp -Node $NamingGroup -Name 'onPremisesSynced') -and
+                    ($NamingGroup.onPremisesSynced -is [bool]) -and $NamingGroup.onPremisesSynced
+                if (Test-HasProp -Node $NamingGroup -Name 'displayName') {
+                    $GroupDisplayName = $NamingGroup.displayName
+                    if ($GroupDisplayName -is [string] -and $GroupDisplayName.Length -gt 0) {
+                        Add-NamingFinding -Section 'groups' -Name $GroupDisplayName -Path "groups[$I].displayName" -Synced $NamingSynced
+                    }
+                    continue
+                }
+                if ((Test-HasProp -Node $NamingGroup -Name 'template') -and
+                    ($NamingGroup.template -is [string]) -and $NamingGroup.template.Length -gt 0) {
+                    $TemplateName = Get-GroupEntryName -Group $NamingGroup
+                    if ([string]::IsNullOrEmpty($TemplateName)) {
+                        Add-Finding -Section 'groups' -Item "groups[$I]" -Path "groups[$I].template" -Severity 'Warning' `
+                            -Message "Group at groups[$I].template was not checked against the naming standard: its name could not be computed from 'template' and 'tokens'."
+                        continue
+                    }
+                    Add-NamingFinding -Section 'groups' -Name $TemplateName -Path "groups[$I].template" -Synced $NamingSynced
+                }
+            }
+        }
+
+        foreach ($NamingSection in 'administrativeUnits', 'catalogs') {
+            if ($NamingSections -ccontains $NamingSection) { Add-NamingSectionFinding -Section $NamingSection }
+        }
+
+        # An access package, then its own assignment policies, so the findings follow the document. The
+        # policies are walked for a standard that lists assignmentPolicies alone as well.
+        if (($NamingSections -ccontains 'accessPackages') -or ($NamingSections -ccontains 'assignmentPolicies')) {
+            $NamingPackages = Get-NamingItem -Node $Document -Name 'accessPackages'
+            for ($I = 0; $I -lt $NamingPackages.Count; $I++) {
+                if ($NamingSections -ccontains 'accessPackages') {
+                    Add-NamingDisplayNameFinding -Section 'accessPackages' -Path "accessPackages[$I]" -Node $NamingPackages[$I]
+                }
+                if ($NamingSections -ccontains 'assignmentPolicies') {
+                    $NamingPolicies = Get-NamingItem -Node $NamingPackages[$I] -Name 'assignmentPolicies'
+                    for ($K = 0; $K -lt $NamingPolicies.Count; $K++) {
+                        Add-NamingDisplayNameFinding -Section 'accessPackages' -Path "accessPackages[$I].assignmentPolicies[$K]" -Node $NamingPolicies[$K]
+                    }
+                }
+            }
+        }
+
+        if ($NamingSections -ccontains 'accessReviews') { Add-NamingSectionFinding -Section 'accessReviews' }
     }
 
     $Out = [PSCustomObject]@{
