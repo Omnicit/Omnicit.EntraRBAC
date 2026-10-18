@@ -144,7 +144,7 @@ function Start-S118Count {
 }
 
 function global:Get-S118Shape {
-    # The request's path with each GUID segment as {id}, and ' expand=<relationship>' when the query expands one.
+    # The request's path with each GUID segment as {id}, then ' expand=' and the relationship when the query expands one.
     param([string]$Uri)
     $Path = $Uri; $Query = ''
     if ([uri]::IsWellFormedUriString($Uri, [System.UriKind]::Absolute)) { $U = [uri]$Uri; $Path = $U.AbsolutePath; $Query = $U.Query }
@@ -198,7 +198,7 @@ function ConvertTo-S118Canonical {
 }
 
 function Save-S118Export {
-    # One export of $Include into a folder of its own, its requests and files written to <Name>.json for 1.2b.
+    # One export of $Include into a folder of its own; its requests and files go to a JSON file named after it, for 1.2b.
     param([Parameter(Mandatory)][string]$Name, [switch]$Switch)
     $Out = Join-Path $Work "export-$Name"
     $null = New-Item -ItemType Directory -Path $Out -Force
