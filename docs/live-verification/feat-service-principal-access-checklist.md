@@ -327,11 +327,14 @@ Disconnect-OerLive
 
 **Expect:** `writes: 0` for both transports and `token requests: 0`; the service principal access requests:
 the service principal list with app role assignments and the one with owners one request per page each (12
-measured on 2026-10-18), the app registration list 1, the grant list 1, no re-read (no object reaches 20);
+measured on 2026-10-18), the app registration list 1, the grant list 1, and a full app role assignment re-read
+for each service principal whose expanded assignments lack a resource id (2 measured; no object reaches 20, so
+no other re-read);
 `servicePrincipalAccess.json exists: True`, in Files, keys `applicationPermissions, delegatedPermissionGrants,
 applicationOwners, servicePrincipalOwners`; every part read with 0 rows missing an id or a name and the key
-orders of the plan (grants with both `principalDisplayName` and `principalUserPrincipalName`); about 1
-application permission with `appRoleValue` null (measured); no AllPrincipals grant naming a principal; the
+orders of the plan (grants with both `principalDisplayName` and `principalUserPrincipalName`); 1 application
+permission with `appRoleValue` null (measured: a role its resource does not declare); no AllPrincipals grant
+naming a principal; the
 identity's own permissions all on `Microsoft Graph`, every one with a value, their values printed; no service
 principal access part in `IncompleteReads` (the export may still be partial for the management group listing
 this identity cannot read, as in earlier steps); README has the section.
