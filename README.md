@@ -831,6 +831,15 @@ that counts them, and the export's `README.md` lists them under "Role assignment
 document can declare", with the rules each scope breaks. `Invoke-OERStructure` never creates or
 removes a role assignment at such a scope, since it prunes only at a scope a document declares.
 
+In `administrativeUnits[].scopedRoles`, `Get-OERInventory` and `Export-OERInventory` write
+`principalType` (`User`, `Group` or `ServicePrincipal`) on a row whose principal is an object id
+that the directory returns as one of those types, looked up together through
+`directoryObjects/getByIds`. A lookup that fails leaves those rows without it and names the unit in
+`InventoryPartial` as `administrativeUnits/<name>/scopedRoles/principalType`; the unit's
+`scopedRoles` is still written. `Test-OERStructure` refuses any other value (another letter case is a
+`Warning`), and `Invoke-OERStructure` does not use the key to match or write a scoped role, which it
+matches by role and principal.
+
 Microsoft Learn states that Privileged Identity Management does not support a group in a restricted
 management administrative unit. With `Groups` and `AdministrativeUnits` included,
 `Export-OERInventory` warns once with the count of the groups `inventory.json` writes with PIM
@@ -1068,6 +1077,28 @@ not be read (`lighthouseDelegations role <id>`, its `roleName` written `null`). 
 paged lists per subscription and one read per distinct role, plus a listing of the subscription's
 resource groups and one read per group only when a delegation may sit at one; `Reader` covers it.
 
+`Export-OERInventory -IncludeServicePrincipalAccess` also writes `servicePrincipalAccess.json`:
+read-only context on what the tenant's service principals may do and who owns them and its app
+registrations, which the apply document does not model. Its four parts are
+`applicationPermissions` (one row per app role a service principal holds on a resource, application
+permissions among them, with the role's value, `null` for a role the resource does not declare),
+`delegatedPermissionGrants` (one row per delegated permission grant: the client, the resource, the
+consent type, the scopes and, for a grant to one user, its `principalDisplayName` and
+`principalUserPrincipalName`), `applicationOwners` and `servicePrincipalOwners` (one row per owner
+of an app registration or a service principal, with the owner's type and names). Every row carries
+ids and display names. The file is never part of the apply document: `inventory.json` and
+`schema.json` do not carry it, and `Invoke-OERStructure` never grants, revokes or changes any of it.
+The read costs one request per page of each of three lists (the service principals with their app
+role assignments, the service principals with their owners, and the app registrations with their
+owners) and of the grants, one `directoryObjects/getByIds` per 1,000 users named in grants, and one
+more paged read per object with 20 or more expanded entries: 27 requests for a test tenant of 1,129
+service principals and 67 app registrations. A part is read whole or not at all: one that could not
+be read is written `null`, never `[]`, and is named in `IncompleteReads` as
+`servicePrincipalAccess/<part>` and in `InventoryPartial`, and the grants are not read when the
+service principal list they are named through was not. The bundle's `README.md` gives each part's
+row count under "Service principal access (read-only)". `Directory.Read.All`, which the export
+already requires, covers every read. Without the switch none of it is read or written.
+
 `Export-OERInventory`'s Azure walk reads only the session tenant's own subscriptions, judged by the
 `tenantId` Azure Resource Manager returns for each: a subscription of another tenant (one delegated
 to this tenant through Azure Lighthouse, say) is not read, and one warning and the bundle's
@@ -1076,6 +1107,18 @@ home tenant could not be read is named in `IncompleteReads` (`subscriptionHomeTe
 and makes the bundle partial. `Invoke-OERStructure` refuses a role assignment or a role management
 policy at a scope in another tenant's subscription (`SubscriptionTenantMismatch`): it reads no role
 assignment or policy there and writes nothing for it.
+
+`Get-OERInventory` checks the same way before its `RoleAssignments` or `RoleManagementPolicies`
+section reads a `-Scope` or a `-Subscription`, once per call, with one read of the subscription (and
+of the subscription list for one named by display name). A subscription of another tenant is not
+read: each of those sections it includes is written empty, with one `SubscriptionTenantMismatch`
+error. One whose home tenant cannot be told (its read failed, or the scope cannot be resolved or is
+spelled in a way no document can declare) is not read either, and those sections are named in
+`InventoryPartial`. A `-ManagementGroup`, and a `-Scope` at a management group or the root scope, lie
+in no subscription and are not checked. Whenever either section is included with a `-Scope` or a
+`-Subscription`, the call asks for the Azure Resource Manager token in its own sign-in, as
+`-IncludeARM` does, so when that sign-in fails it sends nothing, its Entra ID sections included.
+Inside `Export-OERInventory` the walk's answers are reused, so the check sends no request.
 
 ---
 

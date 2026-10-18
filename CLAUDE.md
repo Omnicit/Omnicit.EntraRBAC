@@ -1234,8 +1234,12 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Get-OERDeletedPrincipalStatus` is the single read of `directory/deletedItems`, and
   `Resolve-OERPrincipalName -Detailed` the lookup that tells a principal the directory returned from
   one it did not return and from one whose lookup failed** (BL-133, A18). Only the `roleAssignments`
-  section of `Get-OERInventory` uses them: a principal not returned is written by its object id with
-  `principalStatus` `Deleted` or `Unresolved`, and a failed lookup or a failed deleted items read is
+  section of `Get-OERInventory` uses both. `-Detailed` alone has two more callers since Sprint 11
+  step 8, neither of which reads the deleted items: the `administrativeUnits` section's scoped role
+  type lookup, and `Get-OERServicePrincipalAccess` for the users named in delegated permission
+  grants (see the next bullet). In the `roleAssignments` section a principal not returned is written
+  by its object id with `principalStatus` `Deleted` or `Unresolved`, and a failed lookup or a failed
+  deleted items read is
   never a fact -- it is named unread (`.../principal`, `.../principalStatus`; the second still written
   `Unresolved`, never as a principal that exists). The read never throws, never writes an error
   record, and caches only an answer that was read. `Sync-OERStructureRoleAssignment` looks no principal
@@ -1243,6 +1247,29 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `ShouldProcess`). The other sections keep `Resolve-OERPrincipalName`'s default map, which is
   unchanged. Never read `directory/deletedItems` anywhere else.
   `Why: docs/development/rationale.md#unresolved-principals`
+- **`Get-OERServicePrincipalAccess` is the single reader of what `servicePrincipalAccess.json`
+  holds** (Sprint 11 step 8, A7): the service principal list with `$expand=appRoleAssignments` (the
+  application permissions, read from the client side), the service principal and app registration
+  lists with `$expand=owners(...)`, and one paged `oauth2PermissionGrants` list whose users it looks
+  up with ONE `Resolve-OERPrincipalName -Detailed` call. An object whose expanded collection holds 20
+  or more entries is read again in full with a paged read of its own, since Microsoft Graph documents
+  at most 20 for an expanded directory relationship. A part is read whole or not at all: any failure
+  inside it leaves it `$null`, never `[]`, and names it `servicePrincipalAccess/<part>`; the grants
+  are not read when the service principal list was not. It never throws, never writes an error
+  record or a warning, and sends GET requests only, with no `-Method` (the requiredscope gate would
+  judge every literal of a function that writes as a write). `Export-OERInventory` calls it once,
+  only with `-IncludeServicePrincipalAccess` (A9), and nothing reads the file back: never add its
+  content to `inventory.json`, `schema.json` or the apply engine. **`ConvertTo-OERPrincipalType` is
+  the single owner of mapping a Microsoft Graph object type to the document's principal type**
+  (`User`, `Group` or `ServicePrincipal`, the `#microsoft.graph.` prefix optional, letter case
+  ignored; anything else `$null`, never guessed), used for the owner rows and for the
+  `principalType` `Get-OERInventory` writes on an `administrativeUnits[].scopedRoles` row whose
+  principal the directory returned. `ConvertTo-OERDirectoryRoleAssignment` keeps the mapping it had
+  before this one (a named exception, not a precedent); never map a Graph type inline anywhere else.
+  The validator holds the scoped role `principalType` to the enum and `Read-OERStructureDocument`
+  canonicalises it, but `Sync-OERStructureAdministrativeUnit` never uses it to match or write.
+  `Why: docs/development/rationale.md#service-principal-access`,
+  `docs/development/rationale.md#scoped-role-principal-type`
 - **A group that uses PIM for Groups in a restricted management administrative unit is a Warning,
   never an Error or a refusal**: `Export-OERInventory` warns before its `ShouldProcess` (with `Groups`
   and `AdministrativeUnits` included, from what it read, with no request) and lists the groups in the

@@ -7,59 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-A PIM for Groups activation is no longer written or applied as a standing membership.
-`Get-OERInventory` and `Export-OERInventory` leave out a member or owner held by a PIM activation or
-time-bound active assignment, counted per group in `Export-OERInventory`'s README; with the PIM
-assignments unread, they omit eligible ones and report `InventoryPartial`. `Invoke-OERStructure`
-adds no member or owner PIM holds or makes eligible and `-Prune` removes none; it adds and removes
-no member or owner of an existing group whose PIM state is unread. Needs
+A PIM for Groups activation is no longer written or applied as a standing membership. Inventories
+leave out a member or owner held by an activation or time-bound active assignment, counted per group
+in the export README; with PIM assignments unread, they omit eligible ones and report
+`InventoryPartial`. `Invoke-OERStructure` adds and prunes no member or owner PIM holds or makes
+eligible, and none of an existing group whose PIM state is unread. Needs
 `PrivilegedAssignmentSchedule.Read.AzureADGroup`.
 
-`Get-OERInventory` and `Export-OERInventory` leave out role assignments at the Azure root scope `/`
-with a warning; the bundle README lists them as elevated access. `Test-OERStructure` warns on one,
-and `Invoke-OERStructure` never creates or prunes there. It updates an access review found by name
-only if it reviews the declared package and policy (a non-unique name must be an id), else fails it
-(`AccessReviewScopeMismatch`), writing nothing.
+Inventories leave out role assignments at the Azure root scope `/` with a warning, listed in the
+README as elevated access; `Test-OERStructure` warns on one and `Invoke-OERStructure` never creates
+or prunes there. An access review found by name is updated only if it reviews the declared package
+and policy (a shared name must be an id), else it fails (`AccessReviewScopeMismatch`), writing
+nothing.
 
-`Set-OERAccessPackageAssignmentPolicy` no longer drops custom extension stages and can update an
-automatic assignment policy. `Test-OERStructure` refuses an invalid `mailNickname` and a scope with
-a dot segment, `%`, `\`, `?`, `#` or stray white space, and warns when a renamed group keeps its
-alias. `New-OERGroup` refuses an underivable alias. `-WhatIf` plans a package in a new catalog as
+`Set-OERAccessPackageAssignmentPolicy` keeps custom extension stages, updates an automatic
+assignment policy and renames a policy given `-DisplayName` alone. `Test-OERStructure` refuses an
+invalid `mailNickname` and a scope with a dot segment, `%`, `\`, `?`, `#` or stray white space, and
+warns when a renamed group keeps its alias; `New-OERGroup` refuses an underivable alias.
+
+`Invoke-OERStructure` renames administrative units, catalogs, access packages, assignment policies
+and access reviews through `previousDisplayName`, like groups: the object found only under its
+previous name is renamed; if both names find different objects, or neither finds one, the entry
+fails and writes nothing; a reference in the same run reaches the renamed object. A catalog it
+fails to read is `Failed`, with nothing written. `-WhatIf` plans a package in a new catalog as
 created.
 
-`Invoke-OERStructure` renames administrative units, catalogs and access packages through
-`previousDisplayName`, like groups: the object found only under its previous name is renamed; if both
-names find different objects, or neither finds one, the entry fails and writes nothing. In the same
-run, a group created into a renamed unit and a package in a renamed catalog find the renamed object
-by id.
-
-Assignment policies, within their package, and access reviews are renamed the same way, and an
-access review that names the new name of a package or policy renamed in the same run reaches it.
-`Set-OERAccessPackageAssignmentPolicy` renames a policy given `-DisplayName` alone. A catalog that
-`Invoke-OERStructure` fails to read is now `Failed`, with nothing written to it, instead of being
-updated.
-
-`groupsRoster.json` rows now carry each group's id, type, visibility and creation time. Inventories
-count shared group names tenant-wide, leave out same-named policies of one package (now refused in a
-document) and name a shared catalog, review target or role-assignment group by id; the export README
-lists each name and count. `Invoke-OERStructure` fails, writing nothing, when a package it would
+`groupsRoster.json` rows carry each group's id, type, visibility and creation time. Inventories
+count shared group names tenant-wide, leave out same-named policies of one package (refused in a
+document) and name a shared catalog, review target or role-assignment group by id; the export
+README lists each name. `Invoke-OERStructure` fails, writing nothing, when a package it would
 create exists in another catalog.
 
 Inventories set `principalStatus` `Deleted`/`Unresolved` for a role assignment whose principal
-Entra ID does not return (apply never creates it), mark failed lookups as partial and omit one at
-an undeclarable scope. Exports flag PIM groups in restricted units. Reviews reach a declared
-package via its entry, failing if `-Include` lacks `AccessPackages` (or use the id) or `-WhatIf`
-plans it as new.
+Entra ID does not return (apply never creates it), mark failed lookups partial, omit one at an
+undeclarable scope and write `principalType` on administrative unit scoped roles. Exports flag PIM
+groups in restricted units. Reviews reach a declared package via its entry, failing if `-Include`
+lacks `AccessPackages` (or use the id) or `-WhatIf` plans it as new.
 
 `Export-OERInventory` writes `lighthouseDelegations.json`: Azure Lighthouse delegations at the
-subscriptions it reads, access a managing tenant holds that no role assignment shows, as read-only
-findings the README lists. A failed read makes it partial.
+subscriptions it reads, access a managing tenant holds that no role assignment shows. With
+`-IncludeServicePrincipalAccess` it writes `servicePrincipalAccess.json`: application permissions,
+delegated grants and owners of service principals and app registrations, at about one request per
+list page. Both are read-only findings, never applied; a failed read makes the export partial (an
+unread part is `null`).
 
-`Export-OERInventory` reads only the session tenant's own subscriptions and names the others in its
-README; `Invoke-OERStructure` refuses a role assignment or policy in another tenant's subscription.
+Exports read only the session tenant's own subscriptions, naming the others in the README, and
+`Invoke-OERStructure` refuses a role assignment or policy in another tenant's. `Get-OERInventory`
+now reads none there (`SubscriptionTenantMismatch`), and a subscription it cannot decide, a `-Scope`
+no document can declare or an unresolvable `-Scope` or `-Subscription` leaves its Azure sections
+unread (partial). A scoped Azure section reads the subscription once and gets the ARM token at
+sign-in; if that fails, the call sends nothing.
 
-`Test-OERStructure -NamingStandard` checks the names in a document or an exported inventory against
-a naming standard file: each broken rule is one warning, never an error.
+`Test-OERStructure -NamingStandard` checks a document's or an export's names against a naming
+standard file, one warning per broken rule, never an error.
 
 ## [1.2.0] - 2026-10-11
 

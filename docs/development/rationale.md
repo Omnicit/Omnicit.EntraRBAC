@@ -645,8 +645,9 @@ wrappers and in `Initialize-OERAuth`; `Get-OERSignInSupersession` only in the tw
 only in the ARM wrapper; `Invoke-RestMethod` only in `Resolve-OERTenantDomain`, and
 `Resolve-OERTenantDomain` only in `Initialize-OERAuth`; `Set-OERSessionUncertain` only in
 `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`; `Get-OERDocumentTenantMismatch` only in
-`Invoke-OERStructure`; `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree` and
-`Invoke-OERStructure` ([#home-tenant-subscriptions](#home-tenant-subscriptions)) -- and every listed
+`Invoke-OERStructure`; `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree`,
+`Invoke-OERStructure` and, since Sprint 11 step 8, `Get-OERInventory`
+([#home-tenant-subscriptions](#home-tenant-subscriptions)) -- and every listed
 owner must really call its command, so a rule cannot hold
 over nothing and a stale owner is a failure. Two of those lists were widened by one owner each in
 Sprint 9 step 2, each widening justified in the gate's own text. Every row of the owner table is
@@ -1648,10 +1649,13 @@ Sprint 11 step 6c (BL-150, decision A19) kept `Export-OERInventory`'s Azure walk
 records the problem, the measurement, the decision, how it works, the rulings with what each costs if
 it is wrong, the known limits and the mutation proofs. `Get-OERSubscriptionHomeTenant` is the single
 owner of the decision (CLAUDE.md, Code Style), and gate 10 of `tests/QA/sourcehygiene.tests.ps1`
-holds it to its two callers ([#static-source-gates](#static-source-gates)). One ErrorId was added,
+holds it to its callers ([#static-source-gates](#static-source-gates)): two in step 6c, three since
+Sprint 11 step 8. One ErrorId was added,
 `SubscriptionTenantMismatch` (category `InvalidOperation`); no public parameter, no document key and
 no property of a public output object was added, and no public cmdlet other than `Export-OERInventory`
-and `Invoke-OERStructure` changed in behaviour (the help of `Get-OERInventory` changed too).
+and `Invoke-OERStructure` changed in behaviour (the help of `Get-OERInventory` changed too). Sprint 11
+step 8 (decision A20, BL-152) made `Get-OERInventory` the third caller and superseded R-11 and known
+limit (c) for it; its part, "Sprint 11 step 8: Get-OERInventory checks too", closes this anchor.
 
 **The problem (BL-150).** Sprint 11 step 6b's whole-branch review found that a managing (service
 provider) tenant's subscription list also returns the customer subscriptions delegated to it through
@@ -1695,7 +1699,8 @@ tenant is not the session's; the check is made once per subscription and run, be
 or read for a scope there; the row is `Failed` with ONE new ErrorId for the refusal, and nothing is
 written. When the home tenant cannot be decided the row is `Failed` with the error as itself. The
 public cmdlets (`New-OERRoleAssignment`, `Remove-OERRoleAssignment` and the rest, `Get-OERInventory`
-included) do NOT change.
+included) do NOT change. (Superseded for `Get-OERInventory` alone by A20 in Sprint 11 step 8; see the
+last part of this anchor. The other public cmdlets are still unchanged.)
 
 **How it works.**
 
@@ -1751,7 +1756,8 @@ included) do NOT change.
 - **The gate.** Gate 10's owner table holds the row `Get-OERSubscriptionHomeTenant` with the owners
   `Resolve-OERInventoryScopeTree.ps1` and `Invoke-OERStructure.ps1`; its own `It` asserts the call
   count first, so a deleted row turns it red, and the whole-table floor rose to fourteen rows
-  ([#static-source-gates](#static-source-gates)).
+  ([#static-source-gates](#static-source-gates)). Sprint 11 step 8 added `Get-OERInventory.ps1` as a
+  third owner of the same row; the row count, and so the floor, did not change.
 
 **Rulings.** Each with what it costs if it is wrong.
 
@@ -1809,7 +1815,8 @@ included) do NOT change.
   that subscription; a row it carries at a management group above that subscription, read as
   inherited, lies in no subscription, is not checked, and is applied like any management group row in
   the session's tenant (limit (c)). If wrong, `Get-OERInventory` gets the owner (one GET per call) in a
-  later step.
+  later step. **Superseded for `Get-OERInventory` by A20 in Sprint 11 step 8**, which did exactly that
+  (see the last part of this anchor); every other public cmdlet is still unchanged.
 - **R-12 (CLAUDE.md).** CLAUDE.md gets the single-owner bullet and the gate-10 sentence, since it
   carries every owner rule, although the specification's list of texts does not name it. If wrong,
   one bullet comes out.
@@ -1827,7 +1834,10 @@ included) do NOT change.
   ("the apply engine reads and writes a role assignment or a role management policy in a subscription
   only when it can show that the subscription belongs to this session's tenant, ...") was reworded the
   same way. The specification outranks the plan's wording, and the 6b final review caught the same
-  kind of overclaim. If wrong, one sentence of the message again.
+  kind of overclaim. If wrong, one sentence of the message again. Sprint 11 step 8 (A20) named the
+  third command: "... Invoke-OERStructure reads and writes, and Export-OERInventory and
+  Get-OERInventory read, a role assignment or a role management policy in a subscription only when
+  they can show ...", the rest unchanged.
 - **R-17 (a policy scope that cannot be resolved).** The step's own decision, not a stop: A19 says a
   row whose home tenant cannot be decided is `Failed` with the error as itself, and a resolver's
   failure is reported as itself, so a `roleManagementPolicies` scope that cannot be resolved (and any
@@ -1873,7 +1883,11 @@ included) do NOT change.
   removed, unless an entry at that scope whose role or principal cannot be resolved there withholds
   the prune. Which management group Azure Resource Manager reaches under the session's token is not
   measured. If wrong (the step should close it), the engine also refuses a management group row whose
-  name is not in the session tenant's hierarchy: a new check the architect decides (R-28).
+  name is not in the session tenant's hierarchy: a new check the architect decides (R-28). Since
+  Sprint 11 step 8 (A20) `Get-OERInventory` writes no row at all for a `-Scope` or `-Subscription` in a
+  subscription of another tenant, inherited management group rows included, so a document it makes
+  can no longer carry this path; a document written another way still can, and the engine check
+  R-28 suggests was not added.
 - **R-26 (an export -Scope that cannot be resolved).** An export `-Scope` the resolver cannot resolve
   is named `subscriptionHomeTenant at <scope as given>` in `IncompleteReads` and no longer in
   `SkippedScopes`/`SkippedEligibilityScopes`, and the Lighthouse reader is not asked about it -- A19:
@@ -1912,7 +1926,11 @@ included) do NOT change.
   refused Subscriptions - Get. The live checklist of the step covers only an identity with no Azure
   role at all. If it is refused, such an identity's role assignment and policy entries are `Failed`
   with that refusal, and its export `-Scope` is unread.
-- (c) The public cmdlets do not check (A19, R-11, R-24). `New-OERRoleAssignment`,
+- (c) **Superseded for `Get-OERInventory` by A20 in Sprint 11 step 8** (see the last part of this
+  anchor): it now checks the subscription of a `-Scope` or `-Subscription` and writes no row in one of
+  another tenant, so the document described below is no longer one it makes. The text below is the
+  step 6c record, kept as written; it still holds for every other public cmdlet. The public cmdlets do
+  not check (A19, R-11, R-24). `New-OERRoleAssignment`,
   `Set-OERRoleManagementPolicy`, `Get-OERInventory` and the rest use the scope they are given, so a
   write through them still reaches a delegated subscription. A document `Get-OERInventory` made at
   such a subscription is refused row by row when it is applied, but only for its rows in that
@@ -2047,6 +2065,115 @@ policy refusal at `:873` made `if ($false)`) turns that policy case and "refuses
 entry under -WhatIf too: Failed, no policy read and no ShouldProcess, ..." red, the second run in a
 runspace whose host records every `What if:` line; and the section filter at `:775` removed turns
 "never asks the owner and reads no subscription for Azure sections that -Include leaves out" red.
+
+### Sprint 11 step 8: Get-OERInventory checks too (A20, BL-152)
+
+**The problem (BL-152).** R-11 and known limit (c) left `Get-OERInventory` reading any scope it was
+given. A standalone `Get-OERInventory -Scope` or `-Subscription` in a subscription another tenant
+delegated to this one read that subscription's role assignments and role management policies into a
+document, inherited rows at management groups above it included (the R-24 path), and only the
+engine's row-by-row refusal stood between that document and a write.
+
+**The decision (A20).** `Get-OERInventory` becomes the third caller of the owner, with the rule the
+walk and the engine keep: its `RoleAssignments` and `RoleManagementPolicies` sections read a `-Scope`
+or a `-Subscription` only in a subscription of the session's tenant. No public parameter, no ErrorId
+and no output property was added; the other public cmdlets are unchanged.
+
+**How it works.**
+
+- **The check.** A local function of `Get-OERInventory` asks the owner, for each of `-Scope` and
+  `-Subscription` (as `sub:<value>`) that is not blank, ONCE per invocation -- by the first of the two
+  sections that asks -- after that section's own guards and before its reader runs; the second
+  section reuses the verdicts. `-ManagementGroup` is never checked: a management group lies in the
+  session's tenant, and the owner rates a management group or the root scope `NoSubscription` anyway.
+- **Foreign.** Any `Foreign` verdict refuses both sections: nothing is read there and no row is
+  written. The owner's `SubscriptionTenantMismatch` record is written ONCE per invocation, after the
+  inventory object (the place `InventoryPartial` takes), and the sections are not reported unread:
+  a refusal is not a failed read. With both `-Scope` and `-Subscription` in subscriptions of another
+  tenant, only the first verdict's record is written, the `-Scope`'s.
+- **Undecided.** With no `Foreign` verdict, any verdict other than `Home` or `NoSubscription` refuses
+  the sections too, and each included section is named unread by its own name (`roleAssignments`,
+  `roleManagementPolicies`) with the verdict's `Reason` as the cause (its trailing period trimmed),
+  so `InventoryPartial` names it; its record is not written separately.
+- **The ARM token.** The check reads the subscription through the ARM transport, which sends nothing
+  without an ARM token, and the readers used to acquire the token on first use, after the check. So
+  `begin` asks for it in the command's one `Initialize-OERAuth` call, as `-IncludeARM` does, whenever
+  either section is included with a `-Scope` or a `-Subscription` that is not blank; `-ManagementGroup`
+  alone keeps the readers' acquisition on first use, and a call that includes neither section asks
+  for none.
+- **No extra request inside an export.** The run context gets one member, `SubscriptionTenant`
+  ([#export-run-context](#export-run-context)). The export hands it to `Resolve-OERInventoryScopeTree
+  -Cache`, which hands it to both of its owner calls; the owner's `-Cache` now also belongs to the
+  `-Subscription` set and stores there what the list gave for each listed subscription, with no
+  request. `Get-OERInventory` uses the member while the context is in force and holds it, and a cache
+  of its own otherwise, so its per-scope calls inside an export are answered from what the walk
+  already decided.
+- **The gate.** Gate 10's `Get-OERSubscriptionHomeTenant` row names `Get-OERInventory.ps1` as its third
+  owner ([#static-source-gates](#static-source-gates)).
+
+**The measurement (mocked, with the real tree, owner, `Get-OERInventory` and readers inside the
+export).** The ARM requests the same exports sent before the step were measured with the same test on
+the unchanged build and pinned: a listed walk of one management group and one own subscription, both
+sections with `-AllRolePolicies`, sends no subscription GET and four ARM requests (the role
+assignments and the policy assignments at each scope), and an export `-Scope` at a resource group sends the tree's one subscription GET and then the
+two lists at the resource group, three in all -- the same requests as before the step. A standalone
+call costs one subscription GET (and the subscription list for a `-Subscription` named by display
+name) before its readers; the rows it writes for the session's own subscription are the rows it wrote
+before, measured on a dev-mode import of the code before the check.
+
+**Rulings of the step.** Each with what it costs if it is wrong. (The step's own numbering; they are
+not the R-numbers of step 6c above.)
+
+- **Step 8 R-2 (no new parameter).** "No new parameter" is read as no new public parameter and none on
+  `Get-OERInventory`: the owner's existing `-Cache` joins the `-Subscription` set and the private tree
+  gets an optional `-Cache`, so the answers reach `Get-OERInventory` through the run context's one new
+  member. If wrong, the tree returns its verdict facts and the export fills the cache itself.
+- **Step 8 R-6 (Foreign is a refusal, Undecided is unread).** A foreign subscription writes the owner's
+  record once and is not unread; an undecided one writes no record of its own and is unread. If wrong,
+  the undecided record (a read's own error) should be surfaced as itself too.
+- **Step 8 R-9 (the ARM token at sign-in).** When the sign-in for that token fails
+  (`ArmTokenAcquisitionFailed`), the whole command is latched and its Entra ID sections send nothing
+  too, as with `-IncludeARM`, where before the step those sections were read and only the readers
+  failed. If wrong, an operator whose ARM sign-in fails loses the Entra ID part of such a call.
+- **Step 8 R-10 (one record).** With both scopes foreign only the `-Scope`'s record is written. If
+  wrong, the second scope's reason is not printed (the readers refuse that combination anyway).
+
+**What changed for a caller, beyond the refusal.** A standalone `-Scope` that does not start with `/`,
+a `-Subscription` name nobody carries or two subscriptions share, and a `-Scope` in a spelling no
+document can declare (R-27 of step 6c, a trailing `/` among them) are now `Undecided`: both sections
+are written empty and named in `InventoryPartial` with the reason, where before the readers' own error
+was written (or, for a trailing `/`, the scope was read). A session whose Graph token names no tenant
+ID gets both sections unread the same way (R-3). Every standalone scoped call reads the subscription
+once.
+
+**Known limits.** (a) With `-Scope` foreign and `-Subscription` undecided, the foreign verdict wins and
+the undecided reason is not named. (b) Limit (b) of step 6c now reaches `Get-OERInventory` too: if an
+identity whose Azure role covers only a resource group is refused Subscriptions - Get, its scoped
+call is unread. (c) The other public cmdlets still use the scope they are given (limit (c) above).
+
+**Mutation proofs.** Each mutation was made in a copy of `source/` (a dev-mode module in scratch for
+the fix round) and run against the named tests; every mutant turned at least one test red, and the
+restored source was green. Lines are those of the step's Task 3 commit, and for the R rows of its fix
+round, before the step's later help changes moved them.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| M1, M1b | each section's check, `Get-OERInventory.ps1:1494`, `:2364` | `elseif ($false)` | 12 and 11 of 23 red, the no-try runspace test among them |
+| M2 | the foreign skip | `return $true` | 8 red |
+| M3, M4 | the undecided skip, and its unread entry | `return $true`; the key not added | 6 red each |
+| M5 | the record once, after the inventory | written per section inside the check | 6 red |
+| M6 | `-ManagementGroup` not checked | an `mg:` check added | 1 red |
+| M7 | decided once per invocation | the flag not set | 2 red |
+| M8a, M8b | the tree passes `-Cache` (listed call, `-Scope` call) | `-Cache` dropped | 3 red each, an export request count among them |
+| M9a, M9b, M9c | the export hands the member to the tree; `Get-OERInventory` uses it; only from a context whose owner is on the stack | each removed | 2, 5 and 1 red |
+| M10, M10b | the owner's listed write, and its lower-cased key | write removed; key not lower-cased | 8 and 3 red |
+| M11 | gate 10 row | `Get-OERInventory.ps1` removed from the owners | 2 red, the violation reported |
+| M-R9a to M-R9h | the ARM-at-sign-in condition, `Get-OERInventory.ps1:472-474` | each term and the whole condition | each red |
+| M-R10 | the first record only, `:2457` | one record per foreign verdict | 1 red |
+| M-R3 | the trailing period trimmed, `:730` | no trim | 1 red |
+
+The fallback to a cache of its own, for a run context without the member, is an equivalent mutant:
+the decision is made once per invocation, so no cache and a cache of its own send the same one GET.
 
 ## sovereign-clouds
 
@@ -9845,7 +9972,17 @@ sets it back to `$null` with a plain statement directly after the Azure walk. It
   read, and their causes, index for index, which the export names in `IncompleteReads` and its own
   `InventoryPartial` -- without the entries of a scope it skipped, and without a failed lookup of an
   assignment that another scope read (known limits (b) and (e) of
-  [#unresolved-principals](#unresolved-principals)).
+  [#unresolved-principals](#unresolved-principals));
+- `SubscriptionTenant` (added in Sprint 11 step 8, A20, BL-152): a dictionary, keyed without regard to
+  letter case, of what the export's scope tree learned about each subscription -- the facts the
+  subscription list gave, with no request, and a `-Scope`'s one read -- which
+  `Get-OERSubscriptionHomeTenant -Cache` stores and reads, so the export's per-scope `Get-OERInventory`
+  calls decide a subscription's home tenant with no request
+  ([#home-tenant-subscriptions](#home-tenant-subscriptions)). It is the one member only the owner
+  writes: the export hands it to `Resolve-OERInventoryScopeTree -Cache`, `Get-OERInventory` hands it
+  to its own owner calls, and the owner stores there what a read or the list gave. A context without
+  it, a test fixture's for one, reads as none, and `Get-OERInventory` then keeps a cache of its own for
+  the invocation.
 
 A local reference keeps the two lists after the context is cleared. Cost if wrong: one more member for
 each thing an export shares; the alternative, a parameter, would have been a new public parameter.
@@ -9911,7 +10048,14 @@ failed, and (fix round 1, F5) of a batch whose answer carries no `value` collect
 nothing about its ids; an empty `value` IS an answer. `Found` true carries the name (a user's user
 principal name, else the display name, else the id) and the object type. `Read` true and `Found` false
 is an id a successful batch did not return. Without `-Detailed` the map is exactly what it was for its
-other callers. `Get-OERDeletedPrincipalStatus` reads `v1.0/directory/deletedItems/{id}`, the id
+other callers. Sprint 11 step 8 (its Ruling R-8) added two properties to the `-Detailed` answer,
+`DisplayName` and `UserPrincipalName`, after `ObjectType` (each `$null` when blank, not found or not
+read; `Name` and its rule unchanged), and two callers of `-Detailed` that read no deleted items: the
+`administrativeUnits` scoped role type lookup ([#scoped-role-principal-type](#scoped-role-principal-type))
+and `Get-OERServicePrincipalAccess`, for the users named in delegated permission grants
+([#service-principal-access](#service-principal-access)). So the `roleAssignments` section is still
+the only one that reads the deleted items, but no longer the only caller of `-Detailed`.
+`Get-OERDeletedPrincipalStatus` reads `v1.0/directory/deletedItems/{id}`, the id
 escaped, with the three not-found codes declared to the transport: an object is `Deleted`; the
 not-found marker is `Unresolved`, read; a throw (scrubbed first) or an empty answer is `Unresolved`,
 NOT read, with its cause. It never throws and never writes an error record, and keeps an answer that
@@ -10356,3 +10500,212 @@ example `sg` under `UPPERCASE`) is accepted, and a name that carries it gets the
 Warning, so the output shows it. (e) Patterns are compiled without a match timeout, so a pattern with
 catastrophic backtracking (such as `(a+)+b`) can make the offline check slow on a long name (measured:
 about 1.5 s at 24 characters, growing exponentially). The check is offline and sends nothing.
+
+## service-principal-access
+
+Sprint 11 step 8 (decision A7; A9 allows its one new public parameter) gave the export read-only
+context on what a tenant's service principals may do and who owns them and its app registrations:
+`Export-OERInventory -IncludeServicePrincipalAccess` writes `servicePrincipalAccess.json`. This anchor
+records the measurement and the ruling that chose the read's shape, the shapes and their limits, the
+rulings with what each costs if it is wrong, and the mutation proofs. `Get-OERServicePrincipalAccess`
+is the single reader and `ConvertTo-OERPrincipalType` the single owner of the Graph type mapping
+(CLAUDE.md, Code Style). The switch is the only new public parameter; no ErrorId and no property of
+the export's output object was added (Ruling R-3: `Files` names the file and `IncompleteReads` its
+unread parts).
+
+**The measurement (2026-10-18, live, reads only, as `oer-live-cc`, with the reads' own URIs, not
+through the module).** No tenant value is recorded here. The test tenant held 1,129 service principals
+(12 list pages with `$top=999` and a `$select` that includes `appRoles`), 175 of them with app roles,
+67 app registrations (1 page), 156 delegated permission grants (1 page; `$top=999` accepted) naming 4
+distinct users, 133 application permissions held by service principals (read per client), 37 app
+registration owners (30 service principals and 7 users) and 1 service principal owner.
+
+| Form | Calls in the test tenant |
+|---|---|
+| per client: `servicePrincipals/{id}/appRoleAssignments` for every service principal | 1,129 (+12 list) |
+| per resource: `servicePrincipals/{id}/appRoleAssignedTo` for every one with app roles | 175 (+12 list), and incomplete (below) |
+| expanded: `servicePrincipals?$expand=appRoleAssignments` | 12 (the list itself) |
+| owners per object (`applications/{id}/owners`, `servicePrincipals/{id}/owners`) | 1,196 |
+| owners expanded on the two lists | 12 + 1 |
+| `oauth2PermissionGrants` | 1 |
+
+A second round the same day: the list
+`servicePrincipals?$select=id,appId,displayName,appRoles&$expand=appRoleAssignments&$top=999` takes 12
+calls, keeps `appRoles` on every object, and its expanded `appRoleAssignments` (133, at most 19 per
+object, none at 20) equal the per-client read for EVERY service principal, id for id. The resource side
+-- `appRoleAssignedTo` per resource, or expanded on the list -- lists 131 service principal assignments,
+not 133: it misses 2 that the client side shows (the resource listed, the role declared; the cause was
+not measured), and 76 objects without app roles still hold `appRoleAssignedTo` rows, the default access
+assignments of users and groups. An expanded app role assignment carries `appRoleId`,
+`createdDateTime`, `deletedDateTime`, `id`, `principalDisplayName`, `principalId`, `principalType`,
+`resourceDisplayName` and `resourceId`. The owners expanded with a nested select
+(`$expand=owners($select=id,displayName,userPrincipalName)`) came back with `@odata.type`,
+`displayName` and `id`, all typed and named, the same counts as the per-object reads -- so the
+app-only owner reads list service principals among the owners, 30 of the 37 app registration owners.
+One service principal assignment names a role its resource does not declare. `oer-live-cc` itself
+holds 19 app role assignments, all on one resource, each mapped to a role value.
+
+**Ruling R-1 (the form).** The application permissions are read from the CLIENT side, expanded on the
+one service principal list the file needs anyway (12 calls there; one request per page of service
+principals), with a full `servicePrincipals/{id}/appRoleAssignments?$top=999` read of any object whose
+expanded list holds 20 or more: Microsoft Graph documents a maximum of 20 for an expanded directory
+relationship and no next link for it, and none there reached it. The owners are read expanded on the
+service principal list and on the app registration list (12 + 1), with a full `.../owners?$top=999`
+read of any object with 20 or more. The grants are one paged `oauth2PermissionGrants?$top=999` list,
+and the users they name one `directoryObjects/getByIds` per 1,000. Measured total: 27 requests, where
+the per-object reads cost about 2,340. The architect's example, one read per resource that exposes
+app roles (175 calls), was rejected: measured, it is both dearer and incomplete (it misses 2 of 133).
+Cost if wrong: an expanded list capped below 20 for this relationship without saying so would hide an
+object's permissions or owners beyond the cap; the threshold follows the documented cap, and the
+measured maximum was 19.
+
+**The shapes.** One JSON object, four parts in this order, each an array of rows or `null`:
+
+- `applicationPermissions` -- one row per app role assignment a service principal holds, from the
+  client side: `servicePrincipalId`, `servicePrincipalDisplayName`, `resourceId`,
+  `resourceDisplayName` (the resource's name from the list, else the assignment's, else `null`),
+  `appRoleId` and `appRoleValue`, the `value` of the resource's app role with that id. A default
+  access assignment (the role id `00000000-0000-0000-0000-000000000000`) carries no value, and nor does
+  a role the resource no longer declares, so `appRoleValue` is `null` for both.
+- `delegatedPermissionGrants` -- one row per grant: `clientId`, `clientDisplayName`, `resourceId`,
+  `resourceDisplayName` (both names from the service principal list), `consentType`, `principalId`,
+  `principalDisplayName`, `principalUserPrincipalName` and `scope`, trimmed.
+- `applicationOwners` and `servicePrincipalOwners` -- one row per owner, with the object's id and
+  name (and an app registration's `appId`), `ownerId`, `ownerType` (`ConvertTo-OERPrincipalType` of the
+  owner's `@odata.type`, else that type without its prefix, else `null`), `ownerDisplayName` and
+  `ownerUserPrincipalName`.
+
+Every id is lower-cased, every blank value is `null`, nothing is invented, and each part is sorted,
+ordinally and without regard to letter case, by its display names and then its ids, so two exports of
+an unchanged tenant write the same file.
+
+**Rulings of the read.** Each with what it costs if it is wrong.
+
+- **R-4 (without the switch, nothing).** Without the switch the reader is never called, no file is
+  written, and `README.md` and `rbac-architect-prompt.md` say nothing of it: the README section, its
+  `Files` bullet, the label sentence and the prompt's input bullet appear only with the switch or an
+  unread entry. The step's own text changes (the prompt's `scopedRoles` keys,
+  [#scoped-role-principal-type](#scoped-role-principal-type)) do change every export's prompt, so "as
+  before the switch" now means "with nothing of the switch", not byte for byte the old file. Cost if
+  wrong: none for consumers; slightly more code.
+- **R-5 (a part is read whole or not at all).** Any failure inside a part -- its list, the full re-read
+  of one object, an object listed without an id, without its `appRoles` (the roles it declares are then
+  not known) or without its expanded collection (the expansion did not happen), a list answer with no
+  value collection, or one user lookup that did not read -- leaves that part `null`, never `[]`, and
+  names it `servicePrincipalAccess/<part>`. The grants are named through the service principal list,
+  so when that list was not read they are not read at all. Cost if wrong: one failed `getByIds` batch
+  hides every delegated grant of the run.
+- **R-8 (both names of a grant's user).** A grant to one user carries the user's display name and its
+  user principal name apart, like the owner rows; `Resolve-OERPrincipalName -Detailed` gained the two
+  properties for it ([#unresolved-principals](#unresolved-principals)). Cost if wrong: one more key in
+  a new file format.
+- **Where it is named.** An unread part goes last in `IncompleteReads`, after the Azure Lighthouse
+  entries, under a label of its own in the README, and in a clause of its own, with its causes, last in
+  the export's `InventoryPartial` message. No warning is written for it. A reader that stops, or
+  returns nothing, has read nothing: all four parts are then `null` and named.
+
+**The permissions.** Microsoft Learn's tables (read 2026-10-18): "List servicePrincipals", "List
+appRoleAssignments granted to a service principal", "List owners of a service principal", "List
+applications" and "List owners of an application" ask for `Application.Read.All` at least, with
+`Directory.Read.All` among the higher ones; "List oauth2PermissionGrants" asks for `Directory.Read.All`
+at least, and `Application.Read.All` is not in its table. The export already requires
+`Directory.Read.All`, so the switch needs no new permission. It is also what returns the owners'
+names: Microsoft Learn states that a directory object relationship returns an object of a type the
+caller cannot read with its id and type only. `tests/QA/requiredscope.tests.ps1` gained an
+`applications` and an `oauth2PermissionGrants` rule (the existing `servicePrincipals` rule covers the
+expanded lists and the re-reads); before them the gate accepted those literals silently, since a
+literal no rule matches asks for nothing. A case there holds that the call graph carries the reader's
+eight literals to `Export-OERInventory` and that each asks for exactly one rule. Measured: with
+`Directory.Read.All` dropped from the export's row, the export's case names 20 unsatisfied literals,
+eight of them the reader's; with the gate as it was before the two rules, 17, five of them the
+reader's. The reader sends GET requests only and never names `-Method`: the gate judges every literal
+of a function that sends a non-GET by its rule's write pattern.
+
+**Known limits.** (a) The 20 cap (R-1). (b) The resource side was not used, and why it missed 2 of 133
+was not measured; the client side is complete as measured. (c) The app role assignments of users and
+groups -- who may sign in to an application, the 76 default access assignments among them -- are not
+read: the file holds what service principals hold. (d) An owner whose answer carries no
+`userPrincipalName` is written with `ownerUserPrincipalName` `null`; the measurement recorded the keys
+`@odata.type`, `displayName` and `id`. (e) The file is never applied: nothing in it is reconciled,
+granted or revoked, and no validator reads it. (f) The reader was proven with mocked tests; the shapes
+it reads were measured live with its URIs, not through the module.
+
+**Mutation proofs.** Each mutation applied to the source, the named tests run against it (a dev-mode
+module, no build, for the reader; a build for the requiredscope row), the file restored and its hash
+checked. Every mutant turned at least one test red.
+
+| Id | Guard | Mutant | Red |
+|---|---|---|---|
+| M1 to M4 | each part's catch sets the part `$null` | `@()` instead | the unread test of that part |
+| M5 | the grants read only when the service principal list was read | `if ($true)` | the grants are read after a failed list |
+| M6, M12 | a user lookup that did not read, or gave no answer, makes the grants unread | forced; inverted | the two lookup tests |
+| M7, M9, M10, N1, N2 | a missing expanded key, a list with no value, an object with no id, a missing or null `appRoles` | each check removed | the matching unread tests |
+| M8 | the 20-or-more re-read | `-ge` made `-gt` | the three re-read tests |
+| M11a to M11c | an object listed twice counts once | each dedupe removed | "counts an object listed twice once" |
+| M13 | the sort's casts | removed | the sort tests |
+| N3 to N10 | the grant's two names, and `-Detailed`'s two properties | each changed | the name tests |
+| C1, C2 | `ConvertTo-OERPrincipalType`: the optional prefix; the ordinal comparison | removed; culture-based | the prefix cases; the culture case |
+| R1 to R3, P1 | README section, label sentence and label; prompt bullet, each only with the switch or entry | forced on, or the label branch removed | the byte-identity and label tests |
+| E1 to E8 | the export: reader not called without the switch, null-not-`[]`, `IncompleteReads` (output and README), `InventoryPartial` trigger, a reader that stops, the parameters and the file only with the switch | each removed or forced | the export's switch tests |
+| RS1, RS2 | the requiredscope `applications` and `oauth2PermissionGrants` rules | each made to match nothing | 4 and 3 red, the case for the export's literals among them |
+| RS3, RS4 | the same two rules narrowed so `Directory.Read.All` does not satisfy them | `Read` narrowed | the export's per-cmdlet case red, naming the literals |
+| RS5 | `Directory.Read.All` in the export's row of `Get-OERRequiredScopeMap` | dropped (rebuilt) | the export's per-cmdlet case red, 20 unsatisfied, 8 of them the reader's |
+
+## scoped-role-principal-type
+
+Sprint 11 step 8 writes `principalType` on an `administrativeUnits[].scopedRoles` row. A Graph scoped
+role membership names its member by id and does not say what kind of object it is, so a scoped role
+row named only a principal, and a reader of the document could not tell a user from a group or a
+service principal. No ErrorId and no public parameter was added.
+
+**The read.** After the unit loop, `Get-OERInventory` collects the distinct principals that are object
+ids (`Test-OERGuid`) over every unit's rows, and, when there is at least one, looks them up ONCE through
+`Resolve-OERPrincipalName -Detailed` (one `getByIds` request per 1,000 ids), into answers of the
+section's own: the shared name cache is not read or written. A row whose principal the directory
+returned as a user, a group or a service principal gets `principalType` after `principal`, in the
+casing `ConvertTo-OERPrincipalType` gives. A principal the directory did not return, one of another
+type (a device, for one) and one named by its display name keep their row as it is, and nothing is
+reported: the type is information. A lookup that did not read, or an id it gave no answer for, leaves
+the rows of those principals without the key and names each such unit unread ONCE, as
+`administrativeUnits/<name>/scopedRoles/principalType`, with the cause of its first such principal.
+Since one batch can fail while another succeeds, a named unit can hold rows with the key and rows
+without it -- "some or all of its rows", as every text says. The `scopedRoles` collection itself was
+read, so it stays written: the entry names no null collection, which the `InventoryPartial` message
+says in a sentence of its own, as does the export's, and the bundle README adds a sentence for such
+an entry only when one is present (the README's other prose stays as it was).
+
+**The document.** The schema declares the key optional, the enum `User`, `Group`, `ServicePrincipal`.
+Ruling R-7: the validator holds it to the enum, as it does a role assignment's -- a value outside it is
+an Error, another letter case a Warning -- and `Read-OERStructureDocument` canonicalises it, so the
+Warning's "Invoke-OERStructure normalizes the casing" stays true. `Sync-OERStructureAdministrativeUnit`
+is unchanged: it matches a scoped role by role and principal, so it never uses the key to match or
+write. So the texts say "does not use it to match or write", never "does not read it", since the
+reader and the validator do. A round trip holds it: a mocked live unit with a user, a group and a
+service principal exported with the real `Get-OERInventory` and applied with the real
+`Invoke-OERStructure` is `Unchanged` for every scoped role, with and without `-Prune`, and so is the
+same document with every `principalType` swapped to another type; a control without one row removes
+exactly that membership under `-Prune`. Cost if wrong (R-7): a hand-written document with a wrong
+`principalType` on a scoped role is refused although apply would ignore the key.
+
+**Known limits.** (a) The validator accepts an array `principalType` such as `["User"]`, as it does for
+`roleAssignments` (a pre-existing pattern). (b) A unit later left out of the document because another
+unit shares its name is looked up, and named unread when the lookup failed, all the same. (c) The
+`InventoryPartial` sentence about such an entry stands in every partial message of `Get-OERInventory`
+and of the export, also when no such entry is listed; the bundle README's sentence does not.
+
+**Mutation proofs.** Task 2 of the step (the inventory, the validator, the reader), each against a
+build; Task 4 (the README sentence) against a dev-mode copy of the source, where the unmutated copy
+ran 160 of 160 green. Every mutant turned at least one test red.
+
+| Id | Guard | Mutant | Red |
+|---|---|---|---|
+| M1, M3 | `Found`, and a type the mapping names | each removed | the principalType row test |
+| M2, M14 | a lookup that did not read, or gave no answer, is unread | each loosened | the failed-lookup and no-answer tests |
+| M4 | one batch for every unit | one call per id | the single-batch and failed-lookup tests |
+| M5, M6, M7, M8 | no lookup when no object id; object ids only, distinct, per row | each removed | the no-lookup, single-batch and row tests |
+| M9, M10, M11, M12, M13 | the unread entry, once per unit, with the first cause | each removed or forced | the failed-lookup, first-cause and no-answer tests |
+| V1, V2, V3 | the validator's enum Error, casing Warning, only when declared | each removed or forced | the validator's enum, casing and no-key tests |
+| R1 | the reader's canonicalisation | removed | both reader tests |
+| T1, T5 | the README sentence only when such an entry is present | `if ($true)`; `if ($false)` | 4 red each: the four "adds no sentence" cases; the three "adds the sentence" cases and the order test |
+| T2 | only for an Entra ID entry | the label condition removed | 2 red: the role assignment principal entry and the Azure scope |
+| T3, T4 | the path at the end of the entry or before a comma | the anchor dropped; the end alone | 1 red (a path that only starts the same way); 2 red (the comma cases) |
