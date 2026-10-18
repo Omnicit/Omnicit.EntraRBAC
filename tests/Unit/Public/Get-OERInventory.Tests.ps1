@@ -64,6 +64,19 @@ BeforeAll {
             [PSCustomObject]@{ Id = $One; Read = $true; Found = $Found; Name = $(if ($Found) { [string]$Names[$One] } else { $null }); ObjectType = $null; Cause = $null }
         }
     }
+    # Sprint 11 step 8 (A20, BL-152): the RoleAssignments and RoleManagementPolicies sections read a -Scope or
+    # -Subscription only after Get-OERSubscriptionHomeTenant has shown its subscription to be the session
+    # tenant's own. The Describes whose fixtures are about something else answer it with this: the scope
+    # lies in the session tenant's own subscription, so every such fixture reads as it did before the check
+    # existed. The Describe 'Get-OERInventory stays out of another tenant''s subscriptions (BL-152, A20)'
+    # does not, and drives the real owner through the transport.
+    $script:NewHomeVerdict = {
+        param([string]$GivenScope)
+        [PSCustomObject]@{
+            Scope = $GivenScope; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'
+            HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null
+        }
+    }
     # Three Split-Path hops from tests\Unit\Public: tests\Unit\Public -> tests\Unit -> tests ->
     # repo root. A two-hop version resolves to tests\ and was corrected once already on this
     # branch (Task 1) -- do not repeat that mistake.
@@ -98,6 +111,8 @@ Describe 'Get-OERInventory' {
         # hold fails here, loudly, rather than through the transport. The Describe 'Get-OERInventory role
         # assignment principals the directory did not return, or whose lookup failed' drives the real read.
         Mock -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus { throw "unexpected deleted items read: $Id" }
+        # A20 (BL-152): every -Scope and -Subscription here lies in the session tenant's own subscription.
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
     }
 
     It 'returns a tagged Omnicit.EntraRBAC.Inventory object' {
@@ -7958,6 +7973,8 @@ Describe 'Get-OERInventory role assignment principals the directory did not retu
     BeforeEach {
         InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        # A20 (BL-152): every -Scope here lies in the session tenant's own subscription.
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
         $script:UpRas = @()
         $script:UpAnswers = @{}
         Mock -ModuleName $script:moduleName Get-OERRoleAssignment { $script:UpRas }
@@ -9417,15 +9434,382 @@ Describe 'Get-OERInventory help documents the tenantId (BL-88, A14)' {
     }
 }
 
-Describe 'Get-OERInventory help documents the subscriptions of another tenant (BL-150, A19)' {
-    It 'says it reads a scope in a subscription of another tenant, unlike the export''s walk, that Invoke-OERStructure refuses one, and that a management group row read there as inherited is not checked' {
+Describe 'Get-OERInventory help documents the subscriptions of another tenant (BL-150, A19; BL-152, A20)' {
+    It 'says it reads no scope in a subscription of another tenant or of an undecided one, how each is reported, that a management group is not checked, that the export pays no request, and that a management group row read as inherited is not checked' {
         # Whitespace collapsed first, so the assertion does not depend on where the prose wraps.
         $Help = Get-Help Get-OERInventory -Full
         $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
 
-        $Description | Should -Match ([regex]::Escape("This cmdlet reads the Azure scope it is given, a scope in a subscription of another tenant included (it does not check a subscription's home tenant, while Export-OERInventory's Azure walk enters only the subscriptions of the tenant the session's Microsoft Graph token was issued for), and Invoke-OERStructure refuses a role assignment or a role management policy at a scope in a subscription of another tenant with SubscriptionTenantMismatch."))
-        # A row read at such a subscription as inherited from a management group above it is not checked
+        # The A19 text that said it read any scope is gone.
+        $Description | Should -Not -Match ([regex]::Escape("it does not check a subscription's home tenant"))
+        $Description | Should -Match ([regex]::Escape("The RoleAssignments and RoleManagementPolicies sections read a -Scope or a -Subscription only when the subscription it lies in belongs to the tenant the session's Microsoft Graph token was issued for, by the tenantId Azure Resource Manager returns for the subscription: the rule Export-OERInventory's Azure walk and Invoke-OERStructure apply too."))
+        $Description | Should -Match ([regex]::Escape('The subscription is checked once per call, before either section reads anything, with one read of it (a subscription named by its display name also costs one read of the subscription list); with both -Scope and -Subscription, each is checked.'))
+        $Description | Should -Match ([regex]::Escape("A -Scope at a management group or the root scope '/', and a -ManagementGroup, lie in no subscription and are read as before."))
+        $Description | Should -Match ([regex]::Escape('is not read: each included section is written empty, and one non-terminating SubscriptionTenantMismatch error, written after the inventory object, names the scope and the tenant, however many of the two sections were included; the inventory is not reported partial for it.'))
+        $Description | Should -Match ([regex]::Escape("is not read either: each included section is written empty and reported by its name (roleAssignments, roleManagementPolicies) through the InventoryPartial error below, with the reason as its cause."))
+        $Description | Should -Match ([regex]::Escape('Under Export-OERInventory the scopes it hands this cmdlet were already decided by its walk, and the answers are shared, so the check costs the export no request.'))
+        $Description | Should -Match ([regex]::Escape('Invoke-OERStructure refuses a role assignment or a role management policy at a scope in a subscription of another tenant with SubscriptionTenantMismatch.'))
+        # A row read at a subscription as inherited from a management group above it is not checked
         # (docs/development/rationale.md#home-tenant-subscriptions, limit (c)).
-        $Description | Should -Match ([regex]::Escape('A role assignment row that an inventory of such a subscription carries at a management group above it, read at the subscription as inherited, lies in no subscription and is not checked: Invoke-OERStructure applies it like any management group row.'))
+        $Description | Should -Match ([regex]::Escape('A role assignment row that an inventory of a subscription carries at a management group above it, read at the subscription as inherited, lies in no subscription and is not checked: Invoke-OERStructure applies it like any management group row.'))
+
+        $ParamText = @{}
+        foreach ($Name in 'Scope', 'Subscription', 'ManagementGroup') {
+            $Param = @($Help.Parameters.Parameter) | Where-Object { $_.Name -eq $Name }
+            $ParamText[$Name] = ((@($Param.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        }
+        $ParamText.Scope | Should -Match ([regex]::Escape('A scope in a subscription of another tenant, or in one whose tenant could not be told, is not read (see above).'))
+        $ParamText.Subscription | Should -Match ([regex]::Escape('A subscription of another tenant, or one whose tenant could not be told, is not read (see above).'))
+        $ParamText.ManagementGroup | Should -Match ([regex]::Escape('A management group lies in no subscription, so it is read without that check.'))
+    }
+}
+
+Describe 'Get-OERInventory stays out of another tenant''s subscriptions (BL-152, A20)' {
+    # The RoleAssignments and RoleManagementPolicies sections read a -Scope or -Subscription only when
+    # Get-OERSubscriptionHomeTenant shows its subscription to be the session tenant's own. The REAL owner runs
+    # here (no default answer), against the subscription GET the transport mock answers; the two readers are
+    # mocked, so a read is a call to them. aaaa...0001 is the subscription read, eeee...0001 the session's
+    # tenant and eeee...0002 another tenant. No id below is version-4 shaped.
+    BeforeAll {
+        $script:SgSession = 'eeee0000-0000-0000-0000-000000000001'
+        $script:SgOther = 'eeee0000-0000-0000-0000-000000000002'
+        $script:SgRg = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
+        $script:SgGet = '/subscriptions/aaaa1111-0000-0000-0000-000000000001?api-version=2022-12-01'
+        $script:SgGet2 = '/subscriptions/aaaa1111-0000-0000-0000-000000000002?api-version=2022-12-01'
+        $script:SgUser = 'dddd8888-0000-0000-0000-000000000001'
+        $script:SgTail = '. Invoke-OERStructure reads and writes, and Export-OERInventory and Get-OERInventory read, a role assignment or a role management policy in a subscription only when they can show that the subscription belongs to the tenant the session''s Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription''s home tenant to manage it there.'
+        $script:SgForeignReason = "subscription 'aaaa1111-0000-0000-0000-000000000001' belongs to tenant 'eeee0000-0000-0000-0000-000000000002', not to tenant 'eeee0000-0000-0000-0000-000000000001', the tenant the session's Microsoft Graph token was issued for"
+        # One call, every record and object it wrote in the order written (-ErrorAction Continue pinned, so
+        # its records reach the output through 2>&1 whatever the global preference), and its own records.
+        function script:Invoke-SgInventory {
+            param([hashtable]$Splat)
+            $Base = @{ Include = @('RoleAssignments', 'RoleManagementPolicies'); AllRolesAtScope = $true; IncludeARM = $true }
+            foreach ($Key in $Splat.Keys) { $Base[$Key] = $Splat[$Key] }
+            $All = @(Get-OERInventory @Base -ErrorAction Continue -WarningAction SilentlyContinue 2>&1)
+            $Records = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            [PSCustomObject]@{
+                All       = $All
+                Inventory = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })[0]
+                Own       = @($Records | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Get-OERInventory' })
+                Mismatch  = @($Records | Where-Object { [string]$_.FullyQualifiedErrorId -ceq 'SubscriptionTenantMismatch,Get-OERInventory' })
+                Partial   = @($Records | Where-Object { [string]$_.FullyQualifiedErrorId -ceq 'InventoryPartial,Get-OERInventory' })
+            }
+        }
+        # Stands in for Export-OERInventory: makes a run context owned by its OWN invocation -- with the
+        # SubscriptionTenant given, or without that member when -Omit -- and calls Get-OERInventory -Count
+        # times from inside itself.
+        function script:Invoke-SgAsExport {
+            [CmdletBinding()]
+            param([System.Collections.IDictionary]$SubscriptionTenant, [switch]$Omit, [int]$Count = 1)
+            $Context = [PSCustomObject]@{
+                Owner                = $MyInvocation
+                GroupNameIndex       = $null
+                PrincipalStatus      = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                UnreadPrincipal      = [System.Collections.Generic.List[string]]::new()
+                UnreadPrincipalCause = [System.Collections.Generic.List[object]]::new()
+            }
+            if (-not $Omit) { $Context | Add-Member -NotePropertyName SubscriptionTenant -NotePropertyValue $SubscriptionTenant }
+            & (Get-Module $script:moduleName) { param($Context) $script:_OERInventoryRunContext = $Context } $Context
+            $Runs = @(for ($I = 0; $I -lt $Count; $I++) { Invoke-SgInventory -Splat @{ Scope = $script:SgRg } })
+            [PSCustomObject]@{ Context = $Context; Runs = $Runs }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = [PSCustomObject]@{ TenantId = 'contoso.onmicrosoft.com'; TokenTenantId = 'eeee0000-0000-0000-0000-000000000001' }
+            $script:_OERInventoryRunContext = $null
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord {}
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+        # What the subscription GET answers; a test sets another tenant or shape.
+        $script:SgAnswer = [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Customer'; tenantId = $script:SgSession }
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest {
+            if ($Path -ceq $script:SgGet) { return $script:SgAnswer }
+            if ($Path -ceq $script:SgGet2) { return [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; displayName = 'Other'; tenantId = $script:SgOther } }
+            # The subscription list a display name is resolved through.
+            if ($Path -ceq '/subscriptions?api-version=2022-12-01') { return [PSCustomObject]@{ value = @([PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Customer' }) } }
+            throw "unexpected ARM request: $Path"
+        }
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
+            [PSCustomObject]@{
+                Scope = $script:SgRg; RoleName = 'Reader'
+                RoleDefinitionId = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/bbbb8888-0000-0000-0000-000000000001'
+                PrincipalId = $script:SgUser; PrincipalType = 'User'; PrincipalDisplayName = 'Person One'
+                RoleAssignmentId = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/providers/Microsoft.Authorization/roleAssignments/cccc8888-0000-0000-0000-000000000001'
+            }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+            & $script:AnswerPrincipalLookup -Id $Id -Detailed $Detailed -Names @{ 'dddd8888-0000-0000-0000-000000000001' = 'person1@example.com' }
+        }
+        Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {
+            [PSCustomObject]@{ PolicyId = '/p/1'; Scope = $script:SgRg; RoleName = 'Reader'; RoleDefinitionId = '/rd/1'; ActivationMaxHours = 8; AllowPermanentEligibility = $false; Approvers = @() }
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+    }
+
+    Context 'a subscription of another tenant' {
+        BeforeEach { $script:SgAnswer.tenantId = $script:SgOther }
+
+        It 'reads nothing at <Name>: one SubscriptionTenantMismatch after the inventory, both sections empty, and nothing unread' -ForEach @(
+            @{ Name = 'a -Scope on a resource group'; Splat = @{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' }
+                Given = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'; Requests = 1 }
+            @{ Name = 'a -Subscription given by its id'; Splat = @{ Subscription = 'aaaa1111-0000-0000-0000-000000000001' }
+                Given = 'sub:aaaa1111-0000-0000-0000-000000000001'; Requests = 1 }
+            @{ Name = 'a -Subscription given by its display name'; Splat = @{ Subscription = 'Customer' }
+                Given = 'sub:Customer'; Requests = 2 }
+        ) {
+            $Run = Invoke-SgInventory -Splat $Splat
+            # The inventory first, then the one record.
+            $Run.All.Count | Should -Be 2
+            $Run.All[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.Inventory'
+            $Run.All[1] | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+            @($Run.Inventory.RoleAssignments).Count | Should -Be 0
+            @($Run.Inventory.RoleManagementPolicies).Count | Should -Be 0
+            $Run.Own.Count | Should -Be 1
+            $Run.Mismatch.Count | Should -Be 1
+            $Run.Mismatch[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
+            $Run.Mismatch[0].TargetObject | Should -BeExactly $Given
+            $Run.Mismatch[0].Exception.Message | Should -BeExactly ("Scope '$Given' was refused: $($script:SgForeignReason)" + $script:SgTail)
+            $Run.Partial.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0
+            # Reach proof, and the decision made once for both sections: the subscription was read once.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq $script:SgGet }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times $Requests -Exactly
+        }
+
+        It 'refuses <Section> included alone the same way: one record, the section empty, nothing read' -ForEach @(
+            @{ Section = 'RoleAssignments' }
+            @{ Section = 'RoleManagementPolicies' }
+        ) {
+            $Run = Invoke-SgInventory -Splat @{ Include = @($Section); Scope = $script:SgRg }
+            $Run.Mismatch.Count | Should -Be 1
+            $Run.Own.Count | Should -Be 1
+            @($Run.Inventory.RoleAssignments).Count | Should -Be 0
+            @($Run.Inventory.RoleManagementPolicies).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq $script:SgGet }
+        }
+
+        It 'checks each of -Scope and -Subscription when both are given, and reads nothing when one is another tenant''s' {
+            # -Scope lies in aaaa...0002 (answered as another tenant's), -Subscription is aaaa...0001 (the session's).
+            $script:SgAnswer.tenantId = $script:SgSession
+            $Run = Invoke-SgInventory -Splat @{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg1'; Subscription = 'aaaa1111-0000-0000-0000-000000000001' }
+            $Run.Mismatch.Count | Should -Be 1
+            $Run.Mismatch[0].TargetObject | Should -BeExactly '/subscriptions/aaaa1111-0000-0000-0000-000000000002/resourceGroups/rg1'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq $script:SgGet }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq $script:SgGet2 }
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0
+        }
+    }
+
+    Context 'a subscription whose tenant could not be told' {
+        It 'reads nothing when <Name>: both sections empty and named unread in InventoryPartial with the reason, and no SubscriptionTenantMismatch' -ForEach @(
+            @{ Name = 'the read of the subscription fails'; Shape = 'fail'; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'; Requests = 1
+                Reason = "the read of subscription 'aaaa1111-0000-0000-0000-000000000001' failed: Service unavailable (503)." }
+            @{ Name = 'the subscription gives no tenantId'; Shape = 'nofield'; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'; Requests = 1
+                Reason = "Azure Resource Manager gave no home tenant (tenantId) for subscription 'aaaa1111-0000-0000-0000-000000000001'" }
+            @{ Name = 'the scope is spelled so that a request would not reach it as written'; Shape = 'ok'; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/'; Requests = 0
+                Reason = "scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/' is written in a spelling no structure document can declare (Slash), so the path a request sends for it may name another scope than its text; nothing was resolved or read for it" }
+            @{ Name = 'the session token names no tenant ID'; Shape = 'nosession'; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'; Requests = 0
+                Reason = "the session holds no Microsoft Graph token whose tenant ID subscription 'aaaa1111-0000-0000-0000-000000000001' could be compared with" }
+        ) {
+            if ($Shape -eq 'fail') {
+                Mock -ModuleName $script:moduleName Invoke-OERArmRequest {
+                    [CmdletBinding()] param($Path)
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Service unavailable (503).'), 'ServiceUnavailable', [System.Management.Automation.ErrorCategory]::ConnectionError, $null)
+                } -ParameterFilter { $Path -ceq $script:SgGet }
+            }
+            if ($Shape -eq 'nofield') { $script:SgAnswer = [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Customer' } }
+            if ($Shape -eq 'nosession') { InModuleScope $script:moduleName { $script:_OERAuthState = [PSCustomObject]@{ TenantId = 'contoso.onmicrosoft.com'; TokenTenantId = 'contoso.onmicrosoft.com' } } }
+            $Run = Invoke-SgInventory -Splat @{ Scope = $Scope }
+            @($Run.Inventory.RoleAssignments).Count | Should -Be 0
+            @($Run.Inventory.RoleManagementPolicies).Count | Should -Be 0
+            $Run.Mismatch.Count | Should -Be 0
+            $Run.Own.Count | Should -Be 1
+            $Run.Partial.Count | Should -Be 1
+            $Run.Partial[0].TargetObject | Should -BeExactly 'roleAssignments, roleManagementPolicies'
+            $Run.Partial[0].Exception.Message | Should -Match ([regex]::Escape('Unread: roleAssignments, roleManagementPolicies. A section reported here by its name alone could not be read at all and is written as an empty array'))
+            # The reason is the cause, named once although both sections gave it.
+            $Run.Partial[0].Exception.Message | Should -Match ([regex]::Escape(" Causes: $Reason."))
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times $Requests -Exactly -ParameterFilter { $Path -ceq $script:SgGet }
+        }
+
+        It 'names <Section> unread alone when it is the only Azure section included' -ForEach @(
+            @{ Section = 'RoleAssignments'; Key = 'roleAssignments' }
+            @{ Section = 'RoleManagementPolicies'; Key = 'roleManagementPolicies' }
+        ) {
+            $script:SgAnswer = [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Customer' }
+            $Run = Invoke-SgInventory -Splat @{ Include = @($Section); Scope = $script:SgRg }
+            $Run.Partial.Count | Should -Be 1
+            $Run.Partial[0].TargetObject | Should -BeExactly $Key
+            $Run.Mismatch.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0
+        }
+    }
+
+    Context 'the session tenant''s own subscription, and a scope in none' {
+        It 'reads both sections exactly as without the check, with one read of the subscription for both' {
+            $Checked = Invoke-SgInventory -Splat @{ Scope = $script:SgRg }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq $script:SgGet }
+            # The same call with the owner answering Home without a read: the rows as they were before the check.
+            Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
+            $Unchecked = Invoke-SgInventory -Splat @{ Scope = $script:SgRg }
+            $Checked.Own.Count | Should -Be 0
+            @($Checked.Inventory.RoleAssignments).Count | Should -Be 1
+            @($Checked.Inventory.RoleManagementPolicies).Count | Should -Be 1
+            ($Checked.Inventory.RoleAssignments | ConvertTo-Json -Depth 5 -Compress) | Should -BeExactly ($Unchecked.Inventory.RoleAssignments | ConvertTo-Json -Depth 5 -Compress)
+            ($Checked.Inventory.RoleManagementPolicies | ConvertTo-Json -Depth 5 -Compress) | Should -BeExactly ($Unchecked.Inventory.RoleManagementPolicies | ConvertTo-Json -Depth 5 -Compress)
+            $Checked.Inventory.RoleAssignments[0].principal | Should -BeExactly 'person1@example.com'
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 2 -Exactly -ParameterFilter { $Scope -ceq $script:SgRg }
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 2 -Exactly
+        }
+
+        It 'reads <Name> as before, with no request: it lies in no subscription' -ForEach @(
+            @{ Name = 'a -Scope at a management group'; Scope = '/providers/Microsoft.Management/managementGroups/mg1' }
+            @{ Name = 'a -Scope at the root scope'; Scope = '/' }
+        ) {
+            # Held in script scope: inside the filter, $Scope is the mocked command's own parameter.
+            $script:SgGivenScope = $Scope
+            $Run = Invoke-SgInventory -Splat @{ Scope = $Scope }
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq $script:SgGivenScope }
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+            $Run.Mismatch.Count | Should -Be 0
+            $Run.Partial.Count | Should -Be 0
+        }
+
+        It 'never asks the owner for a -ManagementGroup, and reads it as before' {
+            Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { [PSCustomObject]@{ Verdict = 'Foreign'; Reason = 'x'; ErrorRecord = $null } }
+            $Run = Invoke-SgInventory -Splat @{ ManagementGroup = 'mg1' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $ManagementGroup -ceq 'mg1' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter { $ManagementGroup -ceq 'mg1' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+            $Run.Own.Count | Should -Be 0
+            @($Run.Inventory.RoleAssignments).Count | Should -Be 1
+        }
+
+        It 'asks the owner once per invocation for both sections, once per given scope, and not at all when the sections'' own guards skip them' {
+            Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
+            $null = Invoke-SgInventory -Splat @{ Scope = $script:SgRg }
+            Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 1 -Exactly -ParameterFilter { $Scope -ceq $script:SgRg -and $null -ne $Cache }
+            $null = Invoke-SgInventory -Splat @{ Scope = $script:SgRg; Subscription = 'aaaa1111-0000-0000-0000-000000000001' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 3 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 1 -Exactly -ParameterFilter { $Scope -ceq 'sub:aaaa1111-0000-0000-0000-000000000001' }
+            # No role source and no scope: both sections skip on their own guards, before the check.
+            $null = Get-OERInventory -Include RoleAssignments, RoleManagementPolicies -IncludeARM -WarningAction SilentlyContinue
+            $null = Get-OERInventory -Include RoleManagementPolicies -Scope $script:SgRg -IncludeARM -WarningAction SilentlyContinue
+            Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 3 -Exactly
+        }
+    }
+
+    Context 'the answers an export shares through its run context' {
+        BeforeAll {
+            function script:New-SgFacts {
+                param([string]$TenantId)
+                $Cache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $Cache['aaaa1111-0000-0000-0000-000000000001'] = @{ Read = $true; TenantId = $TenantId; DisplayName = 'Customer'; ErrorRecord = $null }
+                , $Cache
+            }
+        }
+
+        It 'answers from the run context''s SubscriptionTenant with no request (<Name>)' -ForEach @(
+            @{ Name = 'the session tenant''s own'; Tenant = 'eeee0000-0000-0000-0000-000000000001'; Rows = 1; Mismatch = 0 }
+            @{ Name = 'another tenant''s'; Tenant = 'eeee0000-0000-0000-0000-000000000002'; Rows = 0; Mismatch = 1 }
+        ) {
+            # The GET would answer the other way, so a read would show.
+            $script:SgAnswer.tenantId = $(if ($Tenant -eq $script:SgSession) { $script:SgOther } else { $script:SgSession })
+            $Export = Invoke-SgAsExport -SubscriptionTenant (New-SgFacts -TenantId $Tenant)
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0
+            @($Export.Runs[0].Inventory.RoleAssignments).Count | Should -Be $Rows
+            $Export.Runs[0].Mismatch.Count | Should -Be $Mismatch
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times $Rows -Exactly
+        }
+
+        It 'stores its own read in the run context''s SubscriptionTenant when it holds none, so the next call sends none' {
+            $Shared = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $Export = Invoke-SgAsExport -SubscriptionTenant $Shared -Count 2
+            @($Shared.Keys) | Should -Be @('aaaa1111-0000-0000-0000-000000000001')
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq $script:SgGet }
+            @($Export.Runs | ForEach-Object { @($_.Inventory.RoleAssignments).Count }) | Should -Be @(1, 1)
+        }
+
+        It 'keeps a cache of its own for a run context without SubscriptionTenant, with no error' {
+            $Export = Invoke-SgAsExport -Omit -Count 2
+            # One read per call: each invocation has its own cache.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 2 -Exactly -ParameterFilter { $Path -ceq $script:SgGet }
+            @($Export.Runs | ForEach-Object { @($_.Inventory.RoleAssignments).Count }) | Should -Be @(1, 1)
+            @($Export.Runs | ForEach-Object { $_.Own.Count }) | Should -Be @(0, 0)
+            $Export.Context.PSObject.Properties.Name | Should -Not -Contain 'SubscriptionTenant'
+        }
+
+        It 'ignores the SubscriptionTenant of a run context whose Owner is on no call stack, and reads for itself' {
+            $Finished = & { [CmdletBinding()] param() $MyInvocation }
+            $Stale = [PSCustomObject]@{
+                Owner = $Finished; GroupNameIndex = $null
+                PrincipalStatus = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                UnreadPrincipal = [System.Collections.Generic.List[string]]::new(); UnreadPrincipalCause = [System.Collections.Generic.List[object]]::new()
+                SubscriptionTenant = (New-SgFacts -TenantId $script:SgOther)
+            }
+            & (Get-Module $script:moduleName) { param($Context) $script:_OERInventoryRunContext = $Context } $Stale
+            $Run = Invoke-SgInventory -Splat @{ Scope = $script:SgRg }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq $script:SgGet }
+            $Run.Mismatch.Count | Should -Be 0
+            @($Run.Inventory.RoleAssignments).Count | Should -Be 1
+        }
+    }
+
+    Context 'in a script with no try above it' {
+        BeforeAll {
+            . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+            # The public cmdlet in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere
+            # above it, as at a prompt. The script installs its own fakes in ITS copy of the module scope and
+            # logs every read with AppendAllText, whose path is substituted into the text.
+            function script:New-SgNoTryScenario {
+                param([string]$Log)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = [pscustomobject]@{ TenantId = 'contoso.onmicrosoft.com'; TokenTenantId = 'eeee0000-0000-0000-0000-000000000001' }
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Path)
+        [System.IO.File]::AppendAllText('#LOG#', "ARM $Path`n")
+        [pscustomobject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Customer'; tenantId = 'eeee0000-0000-0000-0000-000000000002' }
+    }
+    Set-Item -Path function:script:Get-OERRoleAssignment -Value { [System.IO.File]::AppendAllText('#LOG#', "READ roleAssignments`n") }
+    Set-Item -Path function:script:Get-OERRoleManagementPolicy -Value { [System.IO.File]::AppendAllText('#LOG#', "READ roleManagementPolicies`n") }
+}
+$Inv = Get-OERInventory -Include RoleAssignments, RoleManagementPolicies -Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' -AllRolesAtScope -IncludeARM
+"RA:$(@($Inv.RoleAssignments).Count)"
+"RMP:$(@($Inv.RoleManagementPolicies).Count)"
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+            }
+        }
+
+        It 'writes no row from a subscription of another tenant, writes the refusal once, and the script carries on to its end' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-SgNoTryScenario -Log $Log)
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'RA:*' -or $_ -like 'RMP:*' }) | Should -Be @('RA:0', 'RMP:0')
+            # The subscription was read once; neither section read anything.
+            @(Get-Content -LiteralPath $Log) | Should -Be @('ARM /subscriptions/aaaa1111-0000-0000-0000-000000000001?api-version=2022-12-01')
+            @($Run.Errors) | Should -Be @("Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' was refused: $($script:SgForeignReason)" + $script:SgTail)
+        }
     }
 }

@@ -791,12 +791,20 @@ function Export-OERInventory {
         # own InventoryPartial, which the call's -ErrorAction Stop below would turn into a skip of the whole
         # scope. The local reference keeps both lists after the context is cleared, for IncompleteReads and
         # the partial message.
+        #
+        # Sprint 11 step 8 (A20, BL-152): one more member, SubscriptionTenant, the cache of what the export
+        # learned about each subscription's home tenant (Get-OERSubscriptionHomeTenant -Cache, keyed on the
+        # subscription id, without regard to letter case). The scope tree below fills it -- the facts the
+        # subscription list gave, or its one read of the subscription of a -Scope -- and every per-scope
+        # Get-OERInventory call checks the subscription of its scope against it before it reads there, so
+        # that check, which a standalone Get-OERInventory makes with a request, costs the export none.
         $RunContext = [PSCustomObject]@{
             Owner                = $MyInvocation
             GroupNameIndex       = $GroupNameIndex
             PrincipalStatus      = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             UnreadPrincipal      = [System.Collections.Generic.List[string]]::new()
             UnreadPrincipalCause = [System.Collections.Generic.List[object]]::new()
+            SubscriptionTenant   = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
         }
         $script:_OERInventoryRunContext = $RunContext
         # The ids the roster member-count join below is keyed on come from the group reader alone:
@@ -975,7 +983,9 @@ function Export-OERInventory {
         $UndeclarableScopeRows = [System.Collections.Generic.List[object]]::new()
 
         if ($AzureSections.Count -gt 0) {
-            $TreeParams = @{}
+            # A20 (BL-152): the tree leaves what it learned about each subscription in the run context's
+            # SubscriptionTenant, which the per-scope Get-OERInventory calls below read (see the run context).
+            $TreeParams = @{ Cache = $RunContext.SubscriptionTenant }
             if ($ManagementGroup) { $TreeParams.ManagementGroup = $ManagementGroup }
             if ($Scope) { $TreeParams.Scope = $Scope }
             $Tree = $null

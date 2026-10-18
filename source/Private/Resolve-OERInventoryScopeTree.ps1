@@ -31,6 +31,13 @@ function Resolve-OERInventoryScopeTree {
     and then nothing is resolved or read -- in UndecidedSubscriptions, each with the scope as given, and
     Scopes is then empty.
 
+    With -Cache, both kinds of call pass it to Get-OERSubscriptionHomeTenant, which stores in it what it
+    learned about each subscription -- the facts the list gave for a listed one, the read for the
+    subscription of a -Scope -- under the subscription id in lower case (decision A20, BL-152).
+    Export-OERInventory passes its run context's SubscriptionTenant, so every Get-OERInventory call it
+    makes at a scope the tree returned is answered from it, with no request. The tree's requests and
+    decisions are the same with and without -Cache.
+
     A listing that fails is never read as an empty level. For the full tree, a management-group or
     subscription listing that is refused or fails is caught, warned about, and named in the output's
     SkippedScopes ('<management groups: the listing failed>' / '<subscriptions: the listing
@@ -53,18 +60,29 @@ function Resolve-OERInventoryScopeTree {
     .PARAMETER TenantId
     Optional tenant id or domain forwarded to Initialize-OERAuth.
 
+    .PARAMETER Cache
+    Optional. A dictionary passed to every Get-OERSubscriptionHomeTenant call, which stores in it what
+    it learned about each subscription (see above). Export-OERInventory passes its run context's
+    SubscriptionTenant.
+
     .EXAMPLE
     Resolve-OERInventoryScopeTree
     Returns every management group scope and the scope of each of this tenant's own subscriptions, plus
     the hierarchy, and names the subscriptions it left out in ForeignSubscriptions and
     UndecidedSubscriptions.
+
+    .EXAMPLE
+    Resolve-OERInventoryScopeTree -Cache $RunContext.SubscriptionTenant
+    Returns the same, and leaves what it learned about each subscription in the cache, for the
+    Get-OERInventory calls that read the scopes it returned.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
     param(
         [string]$ManagementGroup,
         [string]$Scope,
-        [string]$TenantId
+        [string]$TenantId,
+        [System.Collections.IDictionary]$Cache
     )
     $AuthParams = @{}
     if ($TenantId) { $AuthParams.TenantId = $TenantId }
@@ -94,8 +112,9 @@ function Resolve-OERInventoryScopeTree {
 
     if ($Scope) {
         # One read of the subscription the scope lies in decides it; a scope at a management group or the
-        # root scope lies in none and is not read. The scope is kept VERBATIM when it may be walked.
-        $Verdict = Get-OERSubscriptionHomeTenant -Scope $Scope
+        # root scope lies in none and is not read. The scope is kept VERBATIM when it may be walked. With
+        # -Cache the read is stored there (A20, BL-152), so the caller's own check at this scope sends none.
+        $Verdict = Get-OERSubscriptionHomeTenant -Scope $Scope -Cache $Cache
         if ($Verdict.Verdict -eq 'Foreign') {
             $ForeignSubscriptions.Add([PSCustomObject]@{
                     SubscriptionId = $Verdict.SubscriptionId
@@ -164,8 +183,9 @@ function Resolve-OERInventoryScopeTree {
     }
     foreach ($Sub in $Subscriptions) {
         # BL-150 (A19): decided from the tenantId the list returned, with no request. Only the tenant's own
-        # subscription is walked and enters the hierarchy.
-        $Verdict = Get-OERSubscriptionHomeTenant -Subscription $Sub
+        # subscription is walked and enters the hierarchy. With -Cache the listed facts are stored there
+        # (A20, BL-152), so the caller's own check at a scope in this subscription sends no request.
+        $Verdict = Get-OERSubscriptionHomeTenant -Subscription $Sub -Cache $Cache
         if ($Verdict.Verdict -eq 'Foreign') {
             $ForeignSubscriptions.Add([PSCustomObject]@{
                     SubscriptionId = $Verdict.SubscriptionId

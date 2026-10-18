@@ -19,7 +19,8 @@ Describe 'Get-OERSubscriptionHomeTenant (BL-150, A19)' {
         $script:HtGetPath = '/subscriptions/aaaa1111-0000-0000-0000-000000000001?api-version=2022-12-01'
         $script:HtRgScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
         $script:HtShape = 'Scope,SubscriptionId,DisplayName,Verdict,HomeTenantId,SessionTenantId,Reason,ErrorRecord'
-        $script:HtTail = '. Invoke-OERStructure reads and writes, and Export-OERInventory reads, a role assignment or a role management policy in a subscription only when they can show that the subscription belongs to the tenant the session''s Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription''s home tenant to manage it there.'
+        # Get-OERInventory is named among the readers since A20 (BL-152).
+        $script:HtTail = '. Invoke-OERStructure reads and writes, and Export-OERInventory and Get-OERInventory read, a role assignment or a role management policy in a subscription only when they can show that the subscription belongs to the tenant the session''s Microsoft Graph token was issued for -- not in one another tenant delegated to it, for example through Azure Lighthouse -- so none was read or written at that scope. Sign in to the subscription''s home tenant to manage it there.'
         # The real resolver, taken before any test mocks it, so a spy can call through to it.
         $script:HtRealResolveScope = InModuleScope Omnicit.EntraRBAC { Get-Command Resolve-OERScope -CommandType Function }
         function script:Invoke-HtOwner {
@@ -405,6 +406,57 @@ Describe 'Get-OERSubscriptionHomeTenant (BL-150, A19)' {
             $V.Verdict | Should -BeExactly 'Home'
             $V.Scope | Should -BeExactly '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
             $null -eq $V.DisplayName | Should -BeTrue
+        }
+
+        # A20 (BL-152): with -Cache, the facts the list gave are stored where a -Scope call with the same cache
+        # reads them, so the export's Get-OERInventory calls share the answers of its scope tree.
+        It 'stores the listed facts under the subscription id in lower case with -Cache, reads nothing, and decides as without it (<Name>)' -ForEach @(
+            @{ Name = 'Home'; Tenant = 'eeee0000-0000-0000-0000-000000000001'; Verdict = 'Home' }
+            @{ Name = 'Foreign'; Tenant = 'eeee0000-0000-0000-0000-000000000002'; Verdict = 'Foreign' }
+            @{ Name = 'a blank TenantId'; Tenant = ''; Verdict = 'Undecided' }
+        ) {
+            # An ordinal dictionary, so the key is found only because the owner lower-cases it.
+            $Cache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
+            $Listed = [PSCustomObject]@{ ResourceId = '/subscriptions/AAAA1111-0000-0000-0000-000000000001'; SubscriptionId = 'AAAA1111-0000-0000-0000-000000000001'; DisplayName = 'Prod'; State = 'Enabled'; TenantId = $Tenant }
+            $V = Invoke-HtOwner -Splat @{ Subscription = $Listed; Cache = $Cache }
+            $Without = Invoke-HtOwner -Splat @{ Subscription = $Listed }
+            $V.Verdict | Should -BeExactly $Verdict
+            ($V | Select-Object -ExcludeProperty ErrorRecord | ConvertTo-Json -Compress) | Should -BeExactly ($Without | Select-Object -ExcludeProperty ErrorRecord | ConvertTo-Json -Compress)
+            @($Cache.Keys) | Should -Be @('aaaa1111-0000-0000-0000-000000000001')
+            $Facts = $Cache['aaaa1111-0000-0000-0000-000000000001']
+            (@($Facts.Keys) | Sort-Object) -join ',' | Should -BeExactly 'DisplayName,ErrorRecord,Read,TenantId'
+            $Facts.Read | Should -BeTrue
+            $Facts.TenantId | Should -BeExactly $Tenant
+            $Facts.DisplayName | Should -BeExactly 'Prod'
+            $null -eq $Facts.ErrorRecord | Should -BeTrue
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 0
+        }
+
+        It 'answers a later -Scope call with the same cache from the listed facts, with no request (<Name>)' -ForEach @(
+            @{ Name = 'Home'; Tenant = 'eeee0000-0000-0000-0000-000000000001'; Verdict = 'Home' }
+            @{ Name = 'Foreign'; Tenant = 'eeee0000-0000-0000-0000-000000000002'; Verdict = 'Foreign' }
+        ) {
+            # The GET would answer the other way, so a read would show.
+            $script:HtAnswer.tenantId = $(if ($Tenant -eq $script:HtSession) { $script:HtOther } else { $script:HtSession })
+            $Cache = @{}
+            $null = Invoke-HtOwner -Splat @{ Subscription = (New-HtListed -TenantId $Tenant); Cache = $Cache }
+            $V = Invoke-HtOwner -Splat @{ Scope = $script:HtRgScope; Cache = $Cache }
+            $V.Verdict | Should -BeExactly $Verdict
+            $V.Scope | Should -BeExactly $script:HtRgScope
+            $V.HomeTenantId | Should -BeExactly $Tenant
+            # Reach proof: the -Scope call resolved the scope, and found its subscription in the cache.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+        }
+
+        It 'stores nothing for a listed subscription with no id, and still decides it' {
+            $Cache = @{}
+            $Listed = [PSCustomObject]@{ ResourceId = ''; SubscriptionId = ''; DisplayName = 'Prod'; State = 'Enabled'; TenantId = $script:HtSession }
+            $V = Invoke-HtOwner -Splat @{ Subscription = $Listed; Cache = $Cache }
+            $V.Verdict | Should -BeExactly 'Home'
+            $Cache.Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
         }
     }
 

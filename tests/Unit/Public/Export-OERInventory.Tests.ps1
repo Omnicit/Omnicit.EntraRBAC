@@ -44,6 +44,21 @@ BeforeAll {
         }
     }
 
+    # Sprint 11 step 8 (A20, BL-152): Get-OERInventory reads a role assignment or policy at a scope in a
+    # subscription only after Get-OERSubscriptionHomeTenant has shown it to be the session tenant's own. The
+    # real scope tree leaves its answers in the run context's SubscriptionTenant, so inside an export the
+    # check costs nothing; a Describe that stands in for the tree, and runs the REAL Get-OERInventory, has no
+    # such answers and answers the owner with this instead: the scope lies in the session tenant's own
+    # subscription, so its fixtures read as they did before the check existed. The Describes about the home
+    # tenant (BL-150, BL-152) do not, and run the real owner.
+    $script:NewHomeVerdict = {
+        param([string]$GivenScope)
+        [PSCustomObject]@{
+            Scope = $GivenScope; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'
+            HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null
+        }
+    }
+
     # F2 / A17. The bundle's README.md lists what the export could not read; the apply document and
     # every other JSON file must not. These helpers read the section back from a written bundle.
     $script:CouldNotReadHeading = '## What this export could not read'
@@ -1081,6 +1096,9 @@ Describe 'Export-OERInventory (role assignments at the root scope, through the r
         Mock -ModuleName $script:moduleName Get-OERGroup {}
         Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
         Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+        # A20 (BL-152): the stand-in tree below leaves no answer in the run context, and the subscription is
+        # the session tenant's own.
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
         Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
             [PSCustomObject]@{
                 Scopes    = @($script:E2eSub)
@@ -4848,6 +4866,9 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
         }
         Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
         Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+        # A20 (BL-152): the stand-in tree below leaves no answer in the run context, and both subscriptions are
+        # the session tenant's own.
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
         Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
             [PSCustomObject]@{
                 Scopes    = @($script:RcSubA, $script:RcSubB)
@@ -4935,8 +4956,12 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
         $Contexts[0].Owner.MyCommand.Name | Should -BeExactly 'Export-OERInventory'
         # The owner, the group name index and the three members of the principal reads (Sprint 11 step 6,
         # BL-133): the deleted items answers, and the unread principal entries and their causes, each empty
-        # and of the type Get-OERInventory fills.
-        @($Contexts[0].PSObject.Properties.Name) | Should -Be @('Owner', 'GroupNameIndex', 'PrincipalStatus', 'UnreadPrincipal', 'UnreadPrincipalCause')
+        # and of the type Get-OERInventory fills; and (Sprint 11 step 8, A20, BL-152) the subscription home
+        # tenant answers, which the stand-in tree here leaves empty.
+        @($Contexts[0].PSObject.Properties.Name) | Should -Be @('Owner', 'GroupNameIndex', 'PrincipalStatus', 'UnreadPrincipal', 'UnreadPrincipalCause', 'SubscriptionTenant')
+        $Contexts[0].SubscriptionTenant | Should -BeOfType ([System.Collections.Generic.Dictionary[string, object]])
+        $Contexts[0].SubscriptionTenant.Comparer.Equals('ABC', 'abc') | Should -BeTrue
+        $Contexts[0].SubscriptionTenant.Count | Should -Be 0
         $Contexts[0].PrincipalStatus | Should -BeOfType ([System.Collections.Generic.Dictionary[string, object]])
         $Contexts[0].PrincipalStatus.Comparer.Equals('ABC', 'abc') | Should -BeTrue
         $Contexts[0].PrincipalStatus.Count | Should -Be 0
@@ -5091,6 +5116,9 @@ Describe 'Export-OERInventory (role assignments whose principal the directory di
     # letter case), warns ONCE before its ShouldProcess and lists them in the README. The warnings are
     # counted on the warning STREAM (3>&1), what the caller is shown. No id below is version-4 shaped.
     BeforeAll {
+        # A20 (BL-152): every Context below stands in for the tree, which leaves no answer in the run context,
+        # and every subscription is the session tenant's own.
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
         # Writes what a per-scope Get-OERInventory call writes, from inside the module, so the preferences
         # of the call it stands in for govern it exactly as they govern the real command.
         function script:Write-AsUpxInventory {
@@ -5717,6 +5745,9 @@ Describe 'Export-OERInventory (role assignments at a scope no document can decla
     # counted on the warning STREAM (3>&1), what the caller is shown. Scopes holding '#' or '%' are
     # fixtures only. No id below is version-4 shaped.
     BeforeAll {
+        # A20 (BL-152): every Context below stands in for the tree, which leaves no answer in the run context,
+        # and every subscription is the session tenant's own.
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
         # Writes what a per-scope Get-OERInventory call writes, from inside the module, so the preferences
         # of the call it stands in for govern it exactly as they govern the real command.
         function script:Write-AsUdxInventory {
@@ -7086,6 +7117,82 @@ Describe 'Export-OERInventory stays in the home tenant''s subscriptions (BL-150,
         @($Run.Result.IncompleteReads).Count | Should -Be 0
         $Run.Partial.Count | Should -Be 0
         (Get-HtxReadmeSection -BundlePath $Run.Result.BundlePath) | Should -Match '(?m)^None\.'
+    }
+}
+
+Describe 'Export-OERInventory shares the subscription answers with its Get-OERInventory calls (BL-152, A20)' {
+    # Get-OERInventory checks the subscription of its -Scope (Get-OERSubscriptionHomeTenant) before it reads
+    # RoleAssignments or RoleManagementPolicies there. Inside an export every scope it is handed was already
+    # decided by the scope tree, and the tree's answers reach it through the run context's SubscriptionTenant,
+    # so the check costs no request: a listed walk sends no subscription GET at all, and an export -Scope sends
+    # only the tree's one. The REAL tree, the REAL owner, the REAL Get-OERInventory and the REAL role
+    # assignment and policy readers run; only the listings, the eligibility read and the transport are mocked,
+    # and every ARM request is recorded by its path. No id below is version-4 shaped.
+    BeforeAll {
+        $script:ShrSubGet = '/subscriptions/aaaa1111-0000-0000-0000-000000000001?api-version=2022-12-01'
+        $script:ShrOwn = [PSCustomObject]@{ ResourceId = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; SubscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; DisplayName = 'Own'; State = 'Enabled'; TenantId = 'eeee0000-0000-0000-0000-000000000001' }
+        $script:ShrMg = [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg1'; name = 'mg1'; properties = [PSCustomObject]@{ tenantId = 'eeee0000-0000-0000-0000-000000000001'; displayName = 'MG 1' } }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState = @{ TenantId = 'contoso.onmicrosoft.com'; TokenTenantId = 'eeee0000-0000-0000-0000-000000000001' }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Get-OERManagementGroupList { $script:ShrMg }
+        Mock -ModuleName $script:moduleName Get-OERSubscription { $script:ShrOwn }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @(); RoleScopes = @() } }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+        # The subscription GET answers the session's tenant; every list answers empty.
+        $script:ShrPaths = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest {
+            $script:ShrPaths.Add([string]$Path)
+            if ($Path -ceq $script:ShrSubGet) {
+                return [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Own'; tenantId = 'eeee0000-0000-0000-0000-000000000001' }
+            }
+            [PSCustomObject]@{ value = @() }
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+    }
+
+    # Paths: exactly the ARM requests the same export sent on 1e62be4, before Get-OERInventory checked a
+    # subscription at all (measured with this test): the listed walk reads the role assignments and the
+    # policies at the management group and at the subscription, and the -Scope export reads the subscription
+    # once, in the tree, and then the role assignments and the policies at the resource group.
+    It 'sends <SubGets> subscription GET(s) and the same ARM requests as before for <Name>, reads every scope and is not partial' -ForEach @(
+        @{ Name = 'a listed walk'; Splat = @{}; SubGets = 0; Scopes = 2
+            Paths = @(
+                '/providers/Microsoft.Management/managementGroups/mg1/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01'
+                '/providers/Microsoft.Management/managementGroups/mg1/providers/Microsoft.Authorization/roleManagementPolicyAssignments?api-version=2020-10-01'
+                '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01'
+                '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleManagementPolicyAssignments?api-version=2020-10-01'
+            ) }
+        @{ Name = 'an export -Scope on a resource group'; Splat = @{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg' }; SubGets = 1; Scopes = 1
+            Paths = @(
+                '/subscriptions/aaaa1111-0000-0000-0000-000000000001?api-version=2022-12-01'
+                '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01'
+                '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg/providers/Microsoft.Authorization/roleManagementPolicyAssignments?api-version=2020-10-01'
+            ) }
+    ) {
+        $ExErr = $null
+        $Splat = @{ OutputPath = (Join-Path $TestDrive 'shr'); Include = @('RoleAssignments', 'RoleManagementPolicies'); AllRolePolicies = $true } + $Splat
+        $Result = Export-OERInventory @Splat -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+        @($script:ShrPaths | Where-Object { $_ -ceq $script:ShrSubGet }).Count | Should -Be $SubGets
+        (@($script:ShrPaths) -join "`n") | Should -BeExactly ($Paths -join "`n")
+        $Result.ScopeCount | Should -Be $Scopes
+        @($Result.SkippedScopes).Count | Should -Be 0
+        @($Result.IncompleteReads).Count | Should -Be 0
+        @($ExErr).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
     }
 }
 

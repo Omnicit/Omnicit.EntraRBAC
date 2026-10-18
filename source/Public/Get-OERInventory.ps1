@@ -175,14 +175,28 @@ function Get-OERInventory {
     when a section holds a group principal whose name was read (one whose name could not be read is
     written by its object id with no listing), and shared by both; when it fails, the verbose stream
     says so and no group principal is reported unread, since an object id names the group exactly.
-    This cmdlet reads the Azure scope it is given, a scope in a subscription of another tenant included
-    (it does not check a subscription's home tenant, while Export-OERInventory's Azure walk enters only
-    the subscriptions of the tenant the session's Microsoft Graph token was issued for), and
-    Invoke-OERStructure refuses a role assignment or a role management policy at a scope in a
-    subscription of another tenant with SubscriptionTenantMismatch. A role assignment row that an
-    inventory of such a subscription carries at a management group above it, read at the
-    subscription as inherited, lies in no subscription and is not checked: Invoke-OERStructure applies
-    it like any management group row.
+    The RoleAssignments and RoleManagementPolicies sections read a -Scope or a -Subscription only when
+    the subscription it lies in belongs to the tenant the session's Microsoft Graph token was issued
+    for, by the tenantId Azure Resource Manager returns for the subscription: the rule
+    Export-OERInventory's Azure walk and Invoke-OERStructure apply too. The subscription is checked once
+    per call, before either section reads anything, with one read of it (a subscription named by its
+    display name also costs one read of the subscription list); with both -Scope and -Subscription,
+    each is checked. A -Scope at a management group or the root scope '/', and a -ManagementGroup, lie
+    in no subscription and are read as before. A subscription of another tenant -- a customer
+    subscription another tenant delegated to this one through Azure Lighthouse, for example -- is not
+    read: each included section is written empty, and one non-terminating SubscriptionTenantMismatch
+    error, written after the inventory object, names the scope and the tenant, however many of the two
+    sections were included; the inventory is not reported partial for it. A subscription whose tenant could not be
+    told -- its read failed, it gave no tenantId, the session's token names no tenant ID, or the scope
+    cannot be resolved or is spelled in a way no structure document can declare, a trailing '/' for
+    example -- is not read either: each included section is written empty and reported by its name
+    (roleAssignments, roleManagementPolicies) through the InventoryPartial error below, with the reason
+    as its cause. Under Export-OERInventory the scopes it hands this cmdlet were already decided by its
+    walk, and the answers are shared, so the check costs the export no request. Invoke-OERStructure
+    refuses a role assignment or a role management policy at a scope in a subscription of another
+    tenant with SubscriptionTenantMismatch. A role assignment row that an inventory of a subscription
+    carries at a management group above it, read at the subscription as inherited, lies in no
+    subscription and is not checked: Invoke-OERStructure applies it like any management group row.
     A role assignment at the Azure root scope '/', above every management group and subscription in
     the tenant, is left out of the RoleAssignments section: it is elevated
     access, a finding to review rather than part of the RBAC model a document describes, and
@@ -350,13 +364,16 @@ function Get-OERInventory {
     the section then warns and is skipped without failing the rest of the run.
 
     .PARAMETER Scope
-    A raw ARM scope for the Azure sections (e.g. '/subscriptions/{id}').
+    A raw ARM scope for the Azure sections (e.g. '/subscriptions/{id}'). A scope in a subscription of
+    another tenant, or in one whose tenant could not be told, is not read (see above).
 
     .PARAMETER Subscription
-    A subscription GUID or display name for the Azure sections.
+    A subscription GUID or display name for the Azure sections. A subscription of another tenant, or
+    one whose tenant could not be told, is not read (see above).
 
     .PARAMETER ManagementGroup
-    A management group name or display name for the Azure sections.
+    A management group name or display name for the Azure sections. A management group lies in no
+    subscription, so it is read without that check.
 
     .PARAMETER Role
     One or more roles (display name, GUID, or full ARM id) whose role management policy to read.
@@ -632,6 +649,68 @@ function Get-OERInventory {
             }
             Add-UnreadCause -Cause $Cause -Target $Target
             $UnreadCollections.Add($Path)
+        }
+
+        # Sprint 11 step 8 (A20, BL-152): the RoleAssignments and RoleManagementPolicies sections read a
+        # -Scope or a -Subscription only in a subscription of the tenant the session's Microsoft Graph token
+        # was issued for. Get-OERSubscriptionHomeTenant decides it (the single owner; nothing here decides
+        # a tenant), for each of -Scope and -Subscription that is given and not blank, the second as
+        # 'sub:<value>'. -ManagementGroup is never checked: a management group lies in the session's tenant,
+        # and the owner answers NoSubscription for one. The decision is made ONCE per invocation, by the
+        # first section that asks, and reused by the second, so the subscription is read at most once.
+        #
+        # The owner's cache: under Export-OERInventory the run context's SubscriptionTenant, which the
+        # export's scope tree has filled for every scope it hands this call, so the check sends no request;
+        # otherwise, and for a run context without that member (an older shape), this invocation's own.
+        # The member is read through PSObject.Properties, so its absence reads as none.
+        $SubscriptionTenantCache = $null
+        if ($null -ne $RunContext) {
+            $SubscriptionTenantMember = $RunContext.PSObject.Properties['SubscriptionTenant']
+            if ($null -ne $SubscriptionTenantMember -and $SubscriptionTenantMember.Value -is [System.Collections.IDictionary]) {
+                $SubscriptionTenantCache = $SubscriptionTenantMember.Value
+            }
+        }
+        if ($null -eq $SubscriptionTenantCache) {
+            $SubscriptionTenantCache = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        }
+        # Kept in a holder, since a local function cannot assign a variable of this block. Foreign holds the
+        # verdicts whose subscription is another tenant's: their SubscriptionTenantMismatch records are
+        # written once, after the inventory object, however many sections were refused.
+        $SubscriptionCheck = @{ Decided = $false; Verdicts = @(); Foreign = @() }
+        # Returns $true when the section may read as it always has (every checked scope is Home or
+        # NoSubscription, or none was checked), and $false otherwise, when it reads nothing and writes no
+        # row: for a Foreign verdict the refusal is recorded once, and the section is not unread (it is a
+        # refusal, not a failed read); for an Undecided one, with no Foreign verdict, the section is named
+        # unread under its own name, with the verdict's reason as its cause, so InventoryPartial names it.
+        function Test-SubscriptionInSessionTenant {
+            param([string]$Section)
+            if (-not $SubscriptionCheck.Decided) {
+                $SubscriptionCheck.Decided = $true
+                $SubscriptionCheck.Verdicts = @(
+                    if (-not [string]::IsNullOrWhiteSpace($Scope)) {
+                        [PSCustomObject]@{ Given = $Scope; Verdict = (Get-OERSubscriptionHomeTenant -Scope $Scope -Cache $SubscriptionTenantCache) }
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace($Subscription)) {
+                        $SubscriptionScope = "sub:$Subscription"
+                        [PSCustomObject]@{ Given = $SubscriptionScope; Verdict = (Get-OERSubscriptionHomeTenant -Scope $SubscriptionScope -Cache $SubscriptionTenantCache) }
+                    }
+                )
+                $SubscriptionCheck.Foreign = @($SubscriptionCheck.Verdicts | Where-Object { [string]$_.Verdict.Verdict -eq 'Foreign' } | ForEach-Object { $_.Verdict })
+            }
+            if ($SubscriptionCheck.Foreign.Count -gt 0) {
+                Write-Verbose "Get-OERInventory: $Section was not read: $(@($SubscriptionCheck.Foreign | ForEach-Object { [string]$_.Reason }) -join '; ')."
+                return $false
+            }
+            $Undecided = @($SubscriptionCheck.Verdicts | Where-Object { [string]$_.Verdict.Verdict -notin @('Home', 'NoSubscription') })
+            if ($Undecided.Count -gt 0) {
+                foreach ($One in $Undecided) {
+                    Write-Verbose "Get-OERInventory: $Section was not read: $([string]$One.Verdict.Reason)."
+                    Add-UnreadCause -Cause ([string]$One.Verdict.Reason) -Target ([string]$One.Given)
+                }
+                if (-not $UnreadCollections.Contains($Section)) { $UnreadCollections.Add($Section) }
+                return $false
+            }
+            $true
         }
 
         $GroupNameIndexHolder = @{ Index = $null }
@@ -1411,6 +1490,11 @@ function Get-OERInventory {
         if ($Include -contains 'RoleAssignments') {
             if (-not ($Scope -or $Subscription -or $ManagementGroup)) {
                 Write-Warning 'RoleAssignments requires a target scope (-Scope, -Subscription or -ManagementGroup); section skipped.'
+            }
+            elseif (-not (Test-SubscriptionInSessionTenant -Section 'roleAssignments')) {
+                # A20 (BL-152): the subscription of -Scope or -Subscription is another tenant's, or could not
+                # be decided, so nothing is read there and the section is written empty (see the check above).
+                Write-Verbose 'Get-OERInventory: roleAssignments is written empty, since its subscription was not shown to belong to this tenant.'
             }
             else {
                 $RaParams = @{ ResolveNames = $true }
@@ -2277,6 +2361,11 @@ function Get-OERInventory {
             elseif (-not $HasScope) {
                 Write-Warning "RoleManagementPolicies: -$($RoleSources[0]) requires a target scope (-Scope, -Subscription or -ManagementGroup); section skipped."
             }
+            elseif (-not (Test-SubscriptionInSessionTenant -Section 'roleManagementPolicies')) {
+                # A20 (BL-152): as for RoleAssignments, with the decision that section made, when it was
+                # included: nothing is read there and the section is written empty.
+                Write-Verbose 'Get-OERInventory: roleManagementPolicies is written empty, since its subscription was not shown to belong to this tenant.'
+            }
             else {
                 $ScopeParams = @{}
                 if ($Scope) { $ScopeParams.Scope = $Scope }
@@ -2335,6 +2424,13 @@ function Get-OERInventory {
             -DirectoryRoleAssignments $DirectoryRoleAssignments.ToArray() `
             -RoleAssignments $RoleAssignments.ToArray() `
             -RoleManagementPolicies $RoleManagementPolicies.ToArray()
+
+        # A20 (BL-152): the refusal of a subscription of another tenant, the owner's own
+        # SubscriptionTenantMismatch record, written ONCE per invocation however many of the two Azure
+        # sections were refused, after the inventory object for the reason InventoryPartial is (below).
+        foreach ($ForeignVerdict in @($SubscriptionCheck.Foreign)) {
+            if ($null -ne $ForeignVerdict.ErrorRecord) { $PSCmdlet.WriteError($ForeignVerdict.ErrorRecord) }
+        }
 
         # Emitted AFTER the inventory object so a caller still receives the document it has to
         # inspect, then learns that part of it was never read -- the same ordering

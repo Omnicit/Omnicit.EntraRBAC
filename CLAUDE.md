@@ -1215,9 +1215,13 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Why: docs/development/rationale.md#roster-identity-and-shared-names`
 - **`Export-OERInventory` is the only command that sets and clears the export run context
   (`$script:_OERInventoryRunContext`)**, the one object its `Get-OERInventory` calls share (the group
-  name index, the deleted items answers, the role assignment principals that could not be read);
+  name index, the deleted items answers, the role assignment principals that could not be read, and
+  the subscription home tenant answers, `SubscriptionTenant`);
   `Get-OERInventory` fills its members, `Get-OERDeletedPrincipalStatus` through the `PrincipalStatus`
-  dictionary it is handed. Export creates it in ONE place, directly before its Entra ID
+  dictionary it is handed, except `SubscriptionTenant`, which the export hands to
+  `Resolve-OERInventoryScopeTree -Cache` and `Get-OERInventory` to the owner the same way, so
+  `Get-OERSubscriptionHomeTenant -Cache` is what fills it (a context without the member reads as
+  none). Export creates it in ONE place, directly before its Entra ID
   `Get-OERInventory` call, with `Owner` set to its own `$MyInvocation`, and sets it back to `$null`
   with a plain statement directly after the Azure walk -- never in a `finally`, which turns a
   statement-terminating error into a skip of the rest of the walk. `Get-OERInventory` reads it once
@@ -1299,9 +1303,17 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Get-OERSubscriptionHomeTenant` is the single owner of whether a subscription's home tenant is
   the session's tenant (A19, BL-150)** -- ARM's subscription `tenantId` (Subscriptions - Get or List,
   api-version `2022-12-01`) against `Get-OERInventoryTenantId`, compared without regard to letter
-  case and only when both are canonical GUIDs. It is called only by `Resolve-OERInventoryScopeTree`
-  and `Invoke-OERStructure` (gate 10), never by another public cmdlet: the role assignment and policy
-  cmdlets and `Get-OERInventory` use the scope they are given. `Export-OERInventory`'s walk enters
+  case and only when both are canonical GUIDs. It is called only by `Resolve-OERInventoryScopeTree`,
+  `Invoke-OERStructure` and `Get-OERInventory` (gate 10), never by another public cmdlet: the role
+  assignment and policy cmdlets use the scope they are given. `Get-OERInventory` (A20, BL-152) checks
+  each of `-Scope` and `-Subscription` (as `sub:<value>`) that is given, ONCE per invocation, before
+  the first read of RoleAssignments or RoleManagementPolicies; `-ManagementGroup` is never checked. A
+  foreign subscription is read for nothing -- each included section empty, the owner's
+  `SubscriptionTenantMismatch` record written once, after the inventory, and not unread; an undecided
+  one is read for nothing too, each included section named unread by its own name through
+  `InventoryPartial`. Inside an export the answers are shared through the run context's
+  `SubscriptionTenant`, which the tree fills (`-Cache`, the listed facts included), so the check sends
+  no extra request. `Export-OERInventory`'s walk enters
   only a subscription of the session's tenant, names one of another tenant with one warning and in
   its README, and names one it cannot decide in `IncompleteReads` (partial). The engine checks once
   per subscription and document, before the first read or write of a `roleAssignments` or
@@ -1551,8 +1563,8 @@ bug.
   `Resolve-OERTenantDomain` and `Resolve-OERTenantDomain` only in `Initialize-OERAuth`,
   `Set-OERSessionUncertain` only in `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`,
   `Get-OERDocumentTenantMismatch` only in `Invoke-OERStructure`, and
-  `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree` and `Invoke-OERStructure`,
-  every listed owner really calling it; the tenant lookup's one `Invoke-RestMethod` call carrying only
+  `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree`, `Invoke-OERStructure` and
+  `Get-OERInventory`, every listed owner really calling it; the tenant lookup's one `Invoke-RestMethod` call carrying only
   `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`, with no splat; `$script:_OERSessionUncertain`
   read and written only in `Set-OERSessionUncertain`, and in `Initialize-OERAuth` exactly three
   `Set-OERSessionUncertain` calls -- the statement directly after the `Lock-OERSignIn` assignment and

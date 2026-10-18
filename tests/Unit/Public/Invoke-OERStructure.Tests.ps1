@@ -4680,7 +4680,8 @@ Describe 'Invoke-OERStructure stays in the home tenant''s subscriptions (BL-150,
         @($Err | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('SubscriptionTenantMismatch,Invoke-OERStructure')
         @($Err)[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
         @($Err)[0].TargetObject | Should -BeExactly $script:StForeignRg
-        @($Err)[0].Exception.Message | Should -BeLike "Scope '$($script:StForeignRg)' was refused: $($script:StForeignReason). Invoke-OERStructure reads and writes, and Export-OERInventory reads, *"
+        # Get-OERInventory is named among the readers since A20 (BL-152).
+        @($Err)[0].Exception.Message | Should -BeLike "Scope '$($script:StForeignRg)' was refused: $($script:StForeignReason). Invoke-OERStructure reads and writes, and Export-OERInventory and Get-OERInventory read, *"
         (Get-StRequestUnder -Under $script:StForeign) | Should -Be @($script:StForeignGet)
         Should -Invoke -ModuleName $script:moduleName Resolve-OERStructurePrincipal -Times 0 -ParameterFilter { $Reference -eq 'person1@example.com' }
         $Rows.Count | Should -Be 3
