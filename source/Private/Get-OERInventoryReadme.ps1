@@ -180,7 +180,9 @@ function Get-OERInventoryReadme {
     Only when -ServicePrincipalAccess is given (Sprint 11 step 8), directly after it comes the section
     "Service principal access (read-only)", before "Files". It says what servicePrincipalAccess.json
     holds -- its four parts, the application permissions, the delegated permission grants, and the
-    owners of the app registrations and of the service principals -- as read-only context, that none
+    owners of the app registrations and of the service principals -- as read-only context, that a
+    service principal's directory roles and Azure roles are in directoryRoleAssignments.json and
+    roleAssignments.json instead, that none
     of it is in inventory.json or schema.json and Invoke-OERStructure never grants, revokes or changes
     any of it, that a part that could not be read is written null, never [], and is named under "What
     this export could not read", and what the read cost. Then it gives one bullet per part, in the
@@ -828,17 +830,20 @@ export could not read" instead.
         $SpAccessIntro = @'
 ## Service principal access (read-only)
 
-`servicePrincipalAccess.json` holds, as read-only context, the permissions of the tenant's service
-principals and the owners of its service principals and app registrations, in four parts:
-`applicationPermissions`, the app roles -- application permissions among them -- that each service
-principal holds on a resource; `delegatedPermissionGrants`, the delegated permissions granted to a
-client application, for every user or for one; and `applicationOwners` and `servicePrincipalOwners`,
-the owners of each app registration and of each service principal. It is never applied: none of it
-is in `inventory.json` or `schema.json`, and `Invoke-OERStructure` never grants, revokes or changes
-any of it. A part that could not be read is written `null`, never `[]`, and is named under "What
-this export could not read"; a part that was read and holds nothing is `[]`. The read cost one
-request per page of each of the three lists (the service principals with their app role
-assignments, the service principals with their owners, and the app registrations with their
+`servicePrincipalAccess.json` holds, as read-only context, the app roles and delegated permission
+grants of the tenant's service principals and the owners of its service principals and app
+registrations, in four parts: `applicationPermissions`, the app roles -- application permissions
+among them -- that each service principal holds on a resource; `delegatedPermissionGrants`, the
+delegated permissions granted to a client application, for every user or for one; and
+`applicationOwners` and `servicePrincipalOwners`, the owners of each app registration and of each
+service principal. A service principal's Microsoft Entra directory roles and Azure roles are not in
+it but in `directoryRoleAssignments.json` and `roleAssignments.json`, each within its own coverage,
+so a service principal this file does not name is not shown to be without privilege. It is never
+applied: none of it is in `inventory.json` or `schema.json`, and `Invoke-OERStructure` never grants,
+revokes or changes any of it. A part that could not be read is written `null`, never `[]`, and is
+named under "What this export could not read"; a part that was read and holds nothing is `[]`. The
+read cost one request per page of each of the three lists (the service principals with their app
+role assignments, the service principals with their owners, and the app registrations with their
 owners) and of the grants, one `directoryObjects/getByIds` per 1,000 users named in grants, and one
 extra paged read per object with 20 or more expanded entries.
 '@

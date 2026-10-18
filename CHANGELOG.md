@@ -19,13 +19,13 @@ README as elevated access; `Test-OERStructure` warns on one and apply never crea
 there. A review found by name is updated only if it reviews the declared package and policy (a
 shared name must be an id), else it fails (`AccessReviewScopeMismatch`), writing nothing.
 
-`Set-OERAccessPackageAssignmentPolicy` no longer drops custom extension stages, can update an
-automatic policy and renames one given `-DisplayName` alone. `Test-OERStructure` refuses an invalid
+`Set-OERAccessPackageAssignmentPolicy` no longer drops custom extension stages, renames a policy
+given `-DisplayName` alone and can update an automatic one. `Test-OERStructure` refuses an invalid
 `mailNickname` and a scope with a dot segment, `%`, `\`, `?`, `#` or stray white space, and warns
 when a renamed group keeps its alias; `New-OERGroup` refuses an underivable alias.
 
-`Invoke-OERStructure` renames administrative units, catalogs, access packages, assignment policies
-within their package and access reviews through `previousDisplayName`, like groups: the object
+`Invoke-OERStructure` renames administrative units, catalogs, access packages, access reviews and
+assignment policies within their package through `previousDisplayName`, like groups: the object
 found only under its previous name is renamed; if both names find different objects, or neither
 finds one, the entry fails and writes nothing; a same-run reference by the new name reaches the
 renamed object. A catalog it fails to read is now `Failed`, with nothing written, instead of
@@ -38,10 +38,10 @@ README lists each name and count. `Invoke-OERStructure` fails, writing nothing, 
 would create exists in another catalog.
 
 Inventories set `principalStatus` `Deleted`/`Unresolved` for a role assignment whose principal
-Entra ID does not return (apply never creates it), mark failed lookups partial, omit one at an
-undeclarable scope and write `principalType` on administrative unit scoped roles. Exports flag PIM
-groups in restricted units. Reviews reach a declared package via its entry, failing if `-Include`
-lacks `AccessPackages` (or use the id) or `-WhatIf` plans it as new.
+Entra ID does not return (apply never creates it), omit one at an undeclarable scope, write
+`principalType` on administrative unit scoped roles and mark failed lookups partial. Exports flag
+PIM groups in restricted units. Reviews reach a declared package via its entry, failing if
+`-Include` lacks `AccessPackages` (or use the id) or `-WhatIf` plans it as new.
 
 `Export-OERInventory` writes `lighthouseDelegations.json`: Azure Lighthouse delegations at the
 subscriptions it reads, access a managing tenant holds that no role assignment shows, listed in the
@@ -52,9 +52,9 @@ partial (an unread part is `null`).
 
 Exports read only the session tenant's own subscriptions, naming the others in the README, and
 `Invoke-OERStructure` refuses a role assignment or policy in another tenant's. `Get-OERInventory`
-now reads none there (`SubscriptionTenantMismatch`); with `-Scope` or `-Subscription` it reads the
-subscription once per call, gets the ARM token at sign-in (if it fails, nothing is sent) and leaves
-the Azure sections unread (partial) for an undecidable subscription or an undeclarable or
+now reads none there (`SubscriptionTenantMismatch`); with `-Scope` or `-Subscription` its Azure
+sections read the subscription once per call, get the ARM token at sign-in (if it fails, nothing is
+sent) and are left unread (partial) for an undecidable subscription or an undeclarable or
 unresolvable scope.
 
 `Test-OERStructure -NamingStandard` checks names in a document or export against a naming standard

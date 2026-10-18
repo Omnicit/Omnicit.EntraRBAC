@@ -7461,7 +7461,9 @@ Describe 'Export-OERInventory (service principal access, Sprint 11 step 8)' {
         # The pinned sentence stays as it was; the new file has a sentence of its own.
         $Description | Should -Match ([regex]::Escape('read-only context (scopeHierarchy.json, groupsRoster.json, azurePimEligibility.json, lighthouseDelegations.json), a formal JSON Schema'))
         $Description | Should -Match ([regex]::Escape('With -IncludeServicePrincipalAccess it also writes servicePrincipalAccess.json, read-only context on the application permissions, delegated permission grants and owners of the tenant''s service principals and app registrations (see SERVICE PRINCIPAL ACCESS below).'))
-        $Description | Should -Match ([regex]::Escape('SERVICE PRINCIPAL ACCESS. With -IncludeServicePrincipalAccess the export also writes servicePrincipalAccess.json'))
+        $Description | Should -Match ([regex]::Escape('SERVICE PRINCIPAL ACCESS. With -IncludeServicePrincipalAccess the export also writes servicePrincipalAccess.json: read-only context on the app roles and delegated permission grants of the tenant''s service principals and on the owners of its service principals and app registrations, which inventory.json does not model.'))
+        # Only what the file holds: a service principal's directory and Azure roles are elsewhere.
+        $Description | Should -Not -Match ([regex]::Escape('what the tenant''s service principals may do'))
         $Description | Should -Match ([regex]::Escape('The file is one JSON object with four parts, in this order: applicationPermissions,'))
         $Description | Should -Match ([regex]::Escape('The file is read-only context and never applied: inventory.json and schema.json do not carry it, no apply cmdlet reads it back, and Invoke-OERStructure never grants, revokes or changes any of it.'))
         $Description | Should -Match ([regex]::Escape('measured 27 requests for a tenant of 1,129 service principals and 67 app registrations.'))

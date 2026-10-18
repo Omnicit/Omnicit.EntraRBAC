@@ -1078,10 +1078,14 @@ paged lists per subscription and one read per distinct role, plus a listing of t
 resource groups and one read per group only when a delegation may sit at one; `Reader` covers it.
 
 `Export-OERInventory -IncludeServicePrincipalAccess` also writes `servicePrincipalAccess.json`:
-read-only context on what the tenant's service principals may do and who owns them and its app
-registrations, which the apply document does not model. Its four parts are
-`applicationPermissions` (one row per app role a service principal holds on a resource, application
-permissions among them, with the role's value, `null` for a role the resource does not declare),
+read-only context on the app roles and delegated permission grants of the tenant's service
+principals and on the owners of its service principals and app registrations, which the apply
+document does not model. A service principal's Microsoft Entra directory roles and Azure roles are
+not in it but in `directoryRoleAssignments.json` and `roleAssignments.json`, each within its own
+coverage, so a service principal this file does not name is not shown to be without privilege. Its
+four parts are `applicationPermissions` (one row per app role a service principal holds on a
+resource, application permissions among them, with the role's value, `null` for a role the resource
+does not declare),
 `delegatedPermissionGrants` (one row per delegated permission grant: the client, the resource, the
 consent type, the scopes and, for a grant to one user, its `principalDisplayName` and
 `principalUserPrincipalName`), `applicationOwners` and `servicePrincipalOwners` (one row per owner
@@ -1116,10 +1120,12 @@ error. One whose home tenant cannot be told (its read failed or gave no `tenantI
 the session holds no Graph token whose tenant ID is a GUID, or the scope cannot be resolved or is
 spelled in a way no document can declare) is not read either, and those sections are named in
 `InventoryPartial`. A `-ManagementGroup`, and a `-Scope` at a management group or the root scope, lie
-in no subscription and are not checked. Whenever either section is included with a `-Scope` or a
-`-Subscription`, the call asks for the Azure Resource Manager token in its own sign-in, as
-`-IncludeARM` does, so when that sign-in fails it sends nothing, its Entra ID sections included.
-Inside `Export-OERInventory` the walk's answers are reused, so the check sends no request.
+in no subscription and are not checked. Whenever `RoleAssignments`, or `RoleManagementPolicies` with
+exactly one of `-Role`, `-CommonRoles` and `-AllRolesAtScope` (without which it reads nothing), is
+included with a `-Scope` or a `-Subscription`, the call asks for the Azure Resource Manager token in
+its own sign-in, as `-IncludeARM` does, so when that sign-in fails it sends nothing, its Entra ID
+sections included. Inside `Export-OERInventory` the walk's answers are reused, so the check sends no
+request.
 
 ---
 

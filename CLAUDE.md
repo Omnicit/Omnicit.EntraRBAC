@@ -1336,8 +1336,10 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   each of `-Scope` and `-Subscription` (as `sub:<value>`) that is given, ONCE per invocation, before
   the first read of RoleAssignments or RoleManagementPolicies; `-ManagementGroup` is never checked.
   That check reads through the ARM transport, so its `begin` asks for the ARM token in its one
-  `Initialize-OERAuth` call, exactly as `-IncludeARM` does, whenever either section is included with a
-  `-Scope` or `-Subscription` that is not blank (R-9); a `-ManagementGroup` alone keeps the readers'
+  `Initialize-OERAuth` call, exactly as `-IncludeARM` does, whenever RoleAssignments, or
+  RoleManagementPolicies with exactly one of `-Role`, `-CommonRoles` and `-AllRolesAtScope`
+  (the rule that section reads by, from the one `$RoleSources` list), is included with a `-Scope` or
+  `-Subscription` that is not blank (R-9); a `-ManagementGroup` alone keeps the readers'
   acquisition on first use, and a call with neither section asks for none. A
   foreign subscription is read for nothing -- each included section empty, the owner's
   `SubscriptionTenantMismatch` record written once (the first foreign verdict's), after the inventory,

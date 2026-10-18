@@ -379,9 +379,12 @@ this tenant.
 ## Service principal access
 
 With `-IncludeServicePrincipalAccess`, the export also writes `servicePrincipalAccess.json`:
-read-only context on what the tenant's service principals may do and who owns them and its app
-registrations, which the apply document does not model. It is one JSON object with four parts, in
-this order:
+read-only context on the app roles and delegated permission grants of the tenant's service
+principals and on the owners of its service principals and app registrations, which the apply
+document does not model. A service principal's Microsoft Entra directory roles and Azure roles are
+not in it but in `directoryRoleAssignments.json` and `roleAssignments.json`, each within its own
+coverage, so a service principal this file does not name is not shown to be without privilege. It
+is one JSON object with four parts, in this order:
 
 - `applicationPermissions` -- one row per app role a service principal holds on a resource,
   application permissions among them, read from the client side: `servicePrincipalId`,

@@ -345,8 +345,9 @@ function Export-OERInventory {
     listing a group changes nothing in the tenant.
 
     SERVICE PRINCIPAL ACCESS. With -IncludeServicePrincipalAccess the export also writes
-    servicePrincipalAccess.json: read-only context on what the tenant's service principals may do and
-    who owns them and its app registrations, which inventory.json does not model. The file is one
+    servicePrincipalAccess.json: read-only context on the app roles and delegated permission grants of
+    the tenant's service principals and on the owners of its service principals and app
+    registrations, which inventory.json does not model. The file is one
     JSON object with four parts, in this order: applicationPermissions, one row per app role a
     service principal holds on a resource -- application permissions among them -- read from the
     client side (servicePrincipalId, servicePrincipalDisplayName, resourceId, resourceDisplayName,

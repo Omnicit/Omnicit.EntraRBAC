@@ -2101,9 +2101,14 @@ and no output property was added; the other public cmdlets are unchanged.
 - **The ARM token.** The check reads the subscription through the ARM transport, which sends nothing
   without an ARM token, and the readers used to acquire the token on first use, after the check. So
   `begin` asks for it in the command's one `Initialize-OERAuth` call, as `-IncludeARM` does, whenever
-  either section is included with a `-Scope` or a `-Subscription` that is not blank; `-ManagementGroup`
-  alone keeps the readers' acquisition on first use, and a call that includes neither section asks
-  for none.
+  `RoleAssignments`, or `RoleManagementPolicies` with exactly one of `-Role`, `-CommonRoles` and
+  `-AllRolesAtScope`, is included with a `-Scope` or a `-Subscription` that is not blank;
+  `-ManagementGroup` alone keeps the readers' acquisition on first use, and a call that includes
+  neither section asks for none. `RoleManagementPolicies` with none or more than one of the three is
+  skipped with a warning before the check and reads nothing, so since the step's final fix round it
+  asks for no token (before it, it did, and a failed ARM sign-in then latched the call's Entra ID
+  sections for a section that read nothing); `begin` computes the one `$RoleSources` list that
+  section decides by, so the two conditions cannot drift apart.
 - **No extra request inside an export.** The run context gets one member, `SubscriptionTenant`
   ([#export-run-context](#export-run-context)). The export hands it to `Resolve-OERInventoryScopeTree
   -Cache`, which hands it to both of its owner calls; the owner's `-Cache` now also belongs to the
@@ -2146,13 +2151,20 @@ a `-Subscription` name nobody carries or two subscriptions share, and a `-Scope`
 document can declare (R-27 of step 6c, a trailing `/` among them) are now `Undecided`: both sections
 are written empty and named in `InventoryPartial` with the reason, where before the readers' own error
 was written (or, for a trailing `/`, the scope was read). A session whose Graph token names no tenant
-ID gets both sections unread the same way (R-3). Every standalone scoped call reads the subscription
-once.
+ID gets both sections unread the same way (R-3 of step 6c). Every standalone scoped call with
+`RoleAssignments` or `RoleManagementPolicies` included reads the subscription once, before the first
+of the two sections reads; a `RoleManagementPolicies` section skipped for its role parameters (none,
+or more than one, of `-Role`, `-CommonRoles` and `-AllRolesAtScope`) reads nothing, the subscription
+included.
 
 **Known limits.** (a) With `-Scope` foreign and `-Subscription` undecided, the foreign verdict wins and
 the undecided reason is not named. (b) Limit (b) of step 6c now reaches `Get-OERInventory` too: if an
 identity whose Azure role covers only a resource group is refused Subscriptions - Get, its scoped
 call is unread. (c) The other public cmdlets still use the scope they are given (limit (c) above).
+(d) A `-Subscription` given by its display name is resolved by the owner for the check and again by
+each reader for its read, so a name that moved to another subscription between the two resolutions
+could be read unchecked (theoretical; not measured). A follow-up would pass the owner's resolved
+scope to the readers; the step's final review left it as it is.
 
 **Mutation proofs.** Each mutation was made in a copy of `source/` (a dev-mode module in scratch for
 the fix round) and run against the named tests; every mutant turned at least one test red, and the
@@ -2174,6 +2186,7 @@ round, before the step's later help changes moved them.
 | M-R9a to M-R9h | the ARM-at-sign-in condition, `Get-OERInventory.ps1:472-474` | each term and the whole condition | each red |
 | M-R10 | the first record only, `:2457` | one record per foreign verdict | 1 red |
 | M-R3 | the trailing period trimmed, `:730` | no trim | 1 red |
+| M-F1a, M-F1b, M-F1c | the final fix round's `RoleManagementPolicies` term, exactly one role source, `Get-OERInventory.ps1:489` (mutated in the built module) | the role-source term removed; `-eq 1` made `-ge 1`; the term made `$false` | 2, 1 and 2 red |
 
 The fallback to a cache of its own, for a run context without the member, is an equivalent mutant:
 the decision is made once per invocation, so no cache and a cache of its own send the same one GET.
@@ -10507,8 +10520,13 @@ about 1.5 s at 24 characters, growing exponentially). The check is offline and s
 ## service-principal-access
 
 Sprint 11 step 8 (decision A7; A9 allows its one new public parameter) gave the export read-only
-context on what a tenant's service principals may do and who owns them and its app registrations:
-`Export-OERInventory -IncludeServicePrincipalAccess` writes `servicePrincipalAccess.json`. This anchor
+context on the app roles and delegated permission grants of a tenant's service principals and on the
+owners of its service principals and app registrations:
+`Export-OERInventory -IncludeServicePrincipalAccess` writes `servicePrincipalAccess.json`. A service
+principal's Microsoft Entra directory roles and Azure roles are not in that file but in
+`directoryRoleAssignments.json` and `roleAssignments.json`, each within its own coverage, so a
+service principal the file does not name is not shown to be without privilege (the step's final
+review narrowed every text that said the file held what service principals "may do"). This anchor
 records the measurement and the ruling that chose the read's shape, the shapes and their limits, the
 rulings with what each costs if it is wrong, and the mutation proofs. `Get-OERServicePrincipalAccess`
 is the single reader and `ConvertTo-OERPrincipalType` the single owner of the Graph type mapping
@@ -10627,11 +10645,17 @@ of a function that sends a non-GET by its rule's write pattern.
 **Known limits.** (a) The 20 cap (R-1). (b) The resource side was not used, and why it missed 2 of 133
 was not measured; the client side is complete as measured. (c) The app role assignments of users and
 groups -- who may sign in to an application, the 76 default access assignments among them -- are not
-read: the file holds what service principals hold. (d) An owner whose answer carries no
+read: the file holds the app roles and grants service principals hold, and their directory and Azure
+roles are in the two role assignment files (above). (d) An owner whose answer carries no
 `userPrincipalName` is written with `ownerUserPrincipalName` `null`; the measurement recorded the keys
 `@odata.type`, `displayName` and `id`. (e) The file is never applied: nothing in it is reconciled,
-granted or revoked, and no validator reads it. (f) The reader was proven with mocked tests; the shapes
-it reads were measured live with its URIs, not through the module.
+granted or revoked, and no validator reads it. (f) The reader was proven with mocked tests. The four
+lists it reads were measured live with its URIs, not through the module; its full re-reads were not:
+no object reached 20 expanded entries, so `servicePrincipals/{id}/appRoleAssignments?$top=999`
+and `.../owners?$select=id,displayName,userPrincipalName&$top=999` were never sent with those query
+strings (the table above records the per-object paths without one). A re-read Microsoft Graph
+refuses leaves its part unread, `null` and named, the safe outcome. The id in a re-read's path is
+URI-escaped (the step's final review), which leaves a GUID unchanged.
 
 **Mutation proofs.** Each mutation applied to the source, the named tests run against it (a dev-mode
 module, no build, for the reader; a build for the requiredscope row), the file restored and its hash
@@ -10646,6 +10670,7 @@ checked. Every mutant turned at least one test red.
 | M8 | the 20-or-more re-read | `-ge` made `-gt` | the three re-read tests |
 | M11a to M11c | an object listed twice counts once | each dedupe removed | "counts an object listed twice once" |
 | M13 | the sort's casts | removed | the sort tests |
+| M14 | the id in a re-read's path URI-escaped (the final review's fix, `Get-OERServicePrincipalAccess.ps1:159`, mutated in the built module) | `-f $ItemId`, unescaped | the two escape tests |
 | N3 to N10 | the grant's two names, and `-Detailed`'s two properties | each changed | the name tests |
 | C1, C2 | `ConvertTo-OERPrincipalType`: the optional prefix; the ordinal comparison | removed; culture-based | the prefix cases; the culture case |
 | R1 to R3, P1 | README section, label sentence and label; prompt bullet, each only with the switch or entry | forced on, or the label branch removed | the byte-identity and label tests |

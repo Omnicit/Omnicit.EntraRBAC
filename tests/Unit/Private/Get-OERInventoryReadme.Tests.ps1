@@ -1876,7 +1876,11 @@ Describe 'Get-OERInventoryReadme (service principal access, Sprint 11 step 8)' {
 
     It 'says what the file holds, that it is never applied, how an unread part is written, and the cost' {
         $Collapsed = (Get-SpSection -Readme (Get-SpReadme -PassAccess -Access (New-SpAccess))) -replace '\s+', ' '
-        $Collapsed | Should -Match ([regex]::Escape('`servicePrincipalAccess.json` holds, as read-only context, the permissions of the tenant''s service principals and the owners of its service principals and app registrations, in four parts:'))
+        $Collapsed | Should -Match ([regex]::Escape('`servicePrincipalAccess.json` holds, as read-only context, the app roles and delegated permission grants of the tenant''s service principals and the owners of its service principals and app registrations, in four parts:'))
+        # It names only what the file holds, and where a service principal's other roles are, so a service
+        # principal the file does not name is never read as one without privilege.
+        $Collapsed | Should -Not -Match ([regex]::Escape('the permissions of the tenant''s service principals'))
+        $Collapsed | Should -Match ([regex]::Escape('A service principal''s Microsoft Entra directory roles and Azure roles are not in it but in `directoryRoleAssignments.json` and `roleAssignments.json`, each within its own coverage, so a service principal this file does not name is not shown to be without privilege.'))
         $Collapsed | Should -Match ([regex]::Escape('It is never applied: none of it is in `inventory.json` or `schema.json`, and `Invoke-OERStructure` never grants, revokes or changes any of it.'))
         $Collapsed | Should -Match ([regex]::Escape('A part that could not be read is written `null`, never `[]`, and is named under "What this export could not read"; a part that was read and holds nothing is `[]`.'))
         $Collapsed | Should -Match ([regex]::Escape('The read cost one request per page of each of the three lists (the service principals with their app role assignments, the service principals with their owners, and the app registrations with their owners) and of the grants, one `directoryObjects/getByIds` per 1,000 users named in grants, and one extra paged read per object with 20 or more expanded entries.'))
