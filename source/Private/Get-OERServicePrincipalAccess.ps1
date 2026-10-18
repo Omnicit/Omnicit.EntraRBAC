@@ -37,8 +37,8 @@ function Get-OERServicePrincipalAccess {
     $select=id,displayName,userPrincipalName&$top=999, for reads 2 and 3, the id as Graph listed it,
     lower-cased and URI-escaped. An object with 19 or fewer entries, each with those ids, is not read
     again. Measured: no object in the test tenant reached 20; the full read of read 1 was sent with
-    its URI, though not through this function, for the 2 assignments above, and returned both with
-    their resourceId; the owner re-reads were not measured live.
+    its URI on its own for the 2 assignments above, and by this function for 2 service principals, and
+    returned them with their resourceId; no owner was read again, so the owner re-read was not sent.
 
     The cost: one request per page of each of the three lists and of the grants, one
     directoryObjects/getByIds per 1,000 users named in grants, and one extra paged read per object

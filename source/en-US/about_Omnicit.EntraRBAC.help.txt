@@ -287,30 +287,31 @@ SERVICE PRINCIPAL ACCESS IN AN EXPORT
     to be without privilege. Its four parts are
     applicationPermissions (one row per app role a service principal holds on
     a resource, application permissions among them, with the role's value,
-    null for a role the resource does not declare), delegatedPermissionGrants
-    (one row per delegated permission grant: the client, the resource, the
-    consent type, the scopes and, for a grant to one user, its
-    principalDisplayName and principalUserPrincipalName), applicationOwners
-    and servicePrincipalOwners (one row per owner of an app registration or a
-    service principal, with the owner's type and names). Every row carries ids
-    and display names. The file is never part of the apply document:
-    inventory.json and schema.json do not carry it, and Invoke-OERStructure
-    never grants, revokes or changes any of it. The read costs one request per
-    page of each of three lists (the service principals with their app role
-    assignments, the service principals with their owners, and the app
-    registrations with their owners) and of the grants, one
+    null for a role the resource does not declare or declares without a value,
+    and for a resource the service principal list did not return, whose
+    resourceDisplayName is then the assignment's own, else null),
+    delegatedPermissionGrants (one row per delegated permission grant: the
+    client, the resource, the consent type, the scopes and, for a grant to one
+    user, its principalDisplayName and principalUserPrincipalName),
+    applicationOwners and servicePrincipalOwners (one row per owner of an app
+    registration or a service principal, with the owner's type and names).
+    Every row carries ids and display names. The file is never part of the
+    apply document: inventory.json and schema.json do not carry it, and
+    Invoke-OERStructure never grants, revokes or changes any of it. The read
+    costs one request per page of each of three lists (the service principals
+    with their app role assignments, the service principals with their owners,
+    and the app registrations with their owners) and of the grants, one
     directoryObjects/getByIds per 1,000 users named in grants, and one more
     paged read per object with 20 or more expanded entries or with an expanded
     entry that lacks the id its row needs: 29 requests for a test tenant of
-    1,129 service principals and 67 app registrations. A part
-    is read whole or not at all: one that could not be read is written null,
-    never [], and is named in IncompleteReads as
-    'servicePrincipalAccess/<part>' and in InventoryPartial, and the grants
-    are not read when the service principal list they are named through was
-    not. The bundle's README gives each part's row count under "Service
-    principal access (read-only)". Directory.Read.All, which the export
-    already requires, covers every read. Without the switch none of it is
-    read or written.
+    1,129 service principals and 67 app registrations. A part is read whole or
+    not at all: one that could not be read is written null, never [], and is
+    named in IncompleteReads as 'servicePrincipalAccess/<part>' and in
+    InventoryPartial, and the grants are not read when the service principal
+    list they are named through was not. The bundle's README gives each part's
+    row count under "Service principal access (read-only)".
+    Directory.Read.All, which the export already requires, covers every read.
+    Without the switch none of it is read or written.
 
 ROLE ASSIGNMENTS AT THE ROOT SCOPE
 

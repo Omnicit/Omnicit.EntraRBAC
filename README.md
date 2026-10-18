@@ -1085,7 +1085,8 @@ not in it but in `directoryRoleAssignments.json` and `roleAssignments.json`, eac
 coverage, so a service principal this file does not name is not shown to be without privilege. Its
 four parts are `applicationPermissions` (one row per app role a service principal holds on a
 resource, application permissions among them, with the role's value, `null` for a role the resource
-does not declare),
+does not declare or declares without a value, and for a resource the service principal list did not
+return, whose `resourceDisplayName` is then the assignment's own, else `null`),
 `delegatedPermissionGrants` (one row per delegated permission grant: the client, the resource, the
 consent type, the scopes and, for a grant to one user, its `principalDisplayName` and
 `principalUserPrincipalName`), `applicationOwners` and `servicePrincipalOwners` (one row per owner
@@ -1096,13 +1097,13 @@ The read costs one request per page of each of three lists (the service principa
 role assignments, the service principals with their owners, and the app registrations with their
 owners) and of the grants, one `directoryObjects/getByIds` per 1,000 users named in grants, and one
 more paged read per object with 20 or more expanded entries or with an expanded entry that lacks the
-id its row needs: 29 requests for a test tenant of 1,129 service principals and 67 app registrations.
-A part is read whole or not at all: one that could not
-be read is written `null`, never `[]`, and is named in `IncompleteReads` as
-`servicePrincipalAccess/<part>` and in `InventoryPartial`, and the grants are not read when the
-service principal list they are named through was not. The bundle's `README.md` gives each part's
-row count under "Service principal access (read-only)". `Directory.Read.All`, which the export
-already requires, covers every read. Without the switch none of it is read or written.
+id its row needs: 29 requests for a test tenant of 1,129 service principals and 67 app
+registrations. A part is read whole or not at all: one that could not be read is written `null`,
+never `[]`, and is named in `IncompleteReads` as `servicePrincipalAccess/<part>` and in
+`InventoryPartial`, and the grants are not read when the service principal list they are named
+through was not. The bundle's `README.md` gives each part's row count under "Service principal
+access (read-only)". `Directory.Read.All`, which the export already requires, covers every read.
+Without the switch none of it is read or written.
 
 `Export-OERInventory`'s Azure walk reads only the session tenant's own subscriptions, judged by the
 `tenantId` Azure Resource Manager returns for each: a subscription of another tenant (one delegated

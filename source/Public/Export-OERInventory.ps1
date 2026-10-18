@@ -351,13 +351,15 @@ function Export-OERInventory {
     JSON object with four parts, in this order: applicationPermissions, one row per app role a
     service principal holds on a resource -- application permissions among them -- read from the
     client side (servicePrincipalId, servicePrincipalDisplayName, resourceId, resourceDisplayName,
-    appRoleId and appRoleValue, which is null for a role the resource does not declare, such as the
-    default access role); delegatedPermissionGrants, one row per delegated permission grant (clientId,
-    clientDisplayName, resourceId, resourceDisplayName, consentType, principalId,
-    principalDisplayName and principalUserPrincipalName -- the user's display name and user principal
-    name, all three null for AllPrincipals and the two names null for a user the directory did not
-    return -- and scope); applicationOwners, one row per owner of an app registration (applicationId,
-    appId, applicationDisplayName, ownerId, ownerType, ownerDisplayName and ownerUserPrincipalName);
+    appRoleId and appRoleValue, which is null for a role the resource does not declare or declares
+    without a value, such as the default access role, and for a resource the service principal list
+    did not return (resourceDisplayName is then the assignment's own, else null);
+    delegatedPermissionGrants, one row per delegated permission grant (clientId, clientDisplayName,
+    resourceId, resourceDisplayName, consentType, principalId, principalDisplayName and
+    principalUserPrincipalName -- the user's display name and user principal name, all three null
+    for AllPrincipals and the two names null for a user the directory did not return -- and scope);
+    applicationOwners, one row per owner of an app registration (applicationId, appId,
+    applicationDisplayName, ownerId, ownerType, ownerDisplayName and ownerUserPrincipalName);
     and servicePrincipalOwners, one row per owner of a service principal (servicePrincipalId,
     servicePrincipalDisplayName and the same four owner fields). Every blank value is null, and each
     part is sorted, so two exports of an unchanged tenant write the same file. The file is read-only

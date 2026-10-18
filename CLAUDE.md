@@ -1251,9 +1251,13 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   holds** (Sprint 11 step 8, A7): the service principal list with `$expand=appRoleAssignments` (the
   application permissions, read from the client side), the service principal and app registration
   lists with `$expand=owners(...)`, and one paged `oauth2PermissionGrants` list whose users it looks
-  up with ONE `Resolve-OERPrincipalName -Detailed` call. An object whose expanded collection holds 20
-  or more entries is read again in full with a paged read of its own, since Microsoft Graph documents
-  at most 20 for an expanded directory relationship. A part is read whole or not at all: any failure
+  up with ONE `Resolve-OERPrincipalName -Detailed` call. An object whose expanded collection holds
+  20 or more entries, or one of whose expanded entries lacks the id its row needs (an app role
+  assignment without `resourceId` or `appRoleId`, an owner without `id`), is read again in full with
+  a paged read of its own, since Microsoft Graph documents at most 20 for an expanded directory
+  relationship and was measured to return an expanded app role assignment with a null `resourceId`.
+  An app role assignment the full read still returns without them leaves only
+  `applicationPermissions` unread (R-14). A part is read whole or not at all: any failure
   inside it leaves it `$null`, never `[]`, and names it `servicePrincipalAccess/<part>`; the grants
   are not read when the service principal list was not. It never throws, never writes an error
   record or a warning, and sends GET requests only, with no `-Method` (the requiredscope gate would
