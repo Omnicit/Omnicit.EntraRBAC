@@ -8093,6 +8093,35 @@ Describe 'Export-OERInventory (a read after the Azure walk that stops is reporte
         @($Run.Result.SkippedEligibilityScopes) | Should -Be @($script:StSubA, $script:StSubB)
     }
 
+    It 'names no blank scope of the tree as skipped for eligibility when the eligibility read stops, and counts none' {
+        # Fix round 1 (G5), the filter on the scopes of a stopped eligibility read. The tree never lists a blank scope,
+        # so this stands one in among its scopes: it is no scope to name. Without the filter it joins
+        # SkippedEligibilityScopes, is counted as a scope in the InventoryPartial message ("4 of 4") and is written as
+        # an empty bullet of the README. The blank scopes are white space, since a mandatory array refuses an empty
+        # element at binding; the policy list of a blank scope is empty, so the selection has nothing of it to name.
+        $script:StTreeScopes = @($script:StSubA, '   ', $script:StSubB, "`t")
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { throw 'ARM eligibility list refused (403)' }
+        Mock -ModuleName $script:moduleName Get-OERInventoryRolePolicy {
+            param($Scope, $ErrorAction)
+            if (-not [string]::IsNullOrWhiteSpace($Scope)) { & $script:StCandidates $Scope $Scope }
+        }
+        $Run = Invoke-StExport -Splat @{ OutputPath = (Join-Path $TestDrive 'st-elig-blank'); Include = @('RoleManagementPolicies') }
+
+        # Reach proofs: the read stopped once over all four entries, and the walk read all four.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Exactly -Times 1 -ParameterFilter { @($Scope).Count -eq 4 }
+        $Run.Result.ScopeCount | Should -Be 4
+        # Only the two real scopes are named, and counted: two of the four scopes enumerated.
+        @($Run.Result.SkippedEligibilityScopes) | Should -Be @($script:StSubA, $script:StSubB)
+        $Run.Partial[0].Exception.Message | Should -BeLike "*2 of 4 Azure scopes could not be read for azurePimEligibility.json, and their eligible assignments are absent from it. Skipped: $($script:StSubA), $($script:StSubB)*"
+        $Section = Get-ReadmeCouldNotReadSection -BundlePath $Run.Result.BundlePath
+        @(Get-SectionBullets -Section $Section | Where-Object { $_ -like '- Azure scope, absent from *azurePimEligibility.json*' }) | Should -Be @(
+            ('- Azure scope, absent from `azurePimEligibility.json`: `' + $script:StSubA + '`')
+            ('- Azure scope, absent from `azurePimEligibility.json`: `' + $script:StSubB + '`')
+        )
+        # The selection read both real scopes as unread, as before.
+        @($Run.Result.IncompleteReads) | Should -Be @($script:StUnjudgedA, $script:StUnjudgedB)
+    }
+
     It 'reports a Lighthouse read that stops: one entry for every Azure scope with its cause, no delegation, one warning, the bundle written' {
         Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation { throw 'ARM Lighthouse list refused (503)' }
         $Run = Invoke-StExport -Splat @{ OutputPath = (Join-Path $TestDrive 'st-lh'); Include = @('RoleAssignments') }
@@ -8150,6 +8179,46 @@ Describe 'Export-OERInventory (a read after the Azure walk that stops is reporte
             ('- Azure role management policies kept without being judged: `' + $script:StUnjudgedA + '`')
             ('- Azure role management policies kept without being judged: `' + $script:StUnjudgedB + '`')
         )
+    }
+
+    It 'writes no null policy and names no blank scope when a selection that stops is handed a candidate with no entry and a candidate with no scope' {
+        # Fix round 1 (G5), the two guards of the selection-stop merge. A candidate with no Entry has no policy to
+        # keep: without its guard a $null joins the policies and is written to roleManagementPolicies.json. A
+        # candidate with no Scope names no scope: without the test on the canonical scope, the entry
+        # 'roleManagementPolicies/role selection at ' with an empty scope is added. The candidate with no scope
+        # still carries a policy, which is kept. (A candidate that is itself $null never reaches the catch: the
+        # walk drops it as it is read, so the catch's own test for one is not provable and is not tried.)
+        $script:StTreeScopes = @($script:StSubA)
+        Mock -ModuleName $script:moduleName Get-OERInventoryRolePolicy {
+            param($Scope, $ErrorAction)
+            & $script:StCandidates $Scope $Scope
+            [PSCustomObject]@{
+                Entry            = $null
+                Scope            = $Scope
+                RoleDefinitionId = "$Scope/providers/Microsoft.Authorization/roleDefinitions/aaaaaaaa-0000-0000-0000-00000000000d"
+                Modified         = $false
+            }
+            [PSCustomObject]@{
+                Entry            = [PSCustomObject]@{ scope = $Scope; role = 'Owner'; allowPermanentEligibility = $null; activationMaxHours = 8 }
+                Scope            = ''
+                RoleDefinitionId = "$Scope/providers/Microsoft.Authorization/roleDefinitions/aaaaaaaa-0000-0000-0000-00000000000b"
+                Modified         = $false
+            }
+        }
+        Mock -ModuleName $script:moduleName Select-OERInventoryRolePolicy { throw 'role policy selection refused' }
+        $Run = Invoke-StExport -Splat @{ OutputPath = (Join-Path $TestDrive 'st-sel-null'); Include = @('RoleManagementPolicies') }
+
+        # Reach proofs: the scope was read, four candidates came back, and the selection was asked once and stopped.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryRolePolicy -Exactly -Times 1
+        Should -Invoke -ModuleName $script:moduleName Select-OERInventoryRolePolicy -Exactly -Times 1 -ParameterFilter { @($Policy).Count -eq 4 }
+        $Run.Result.ScopeCount | Should -Be 1
+        # The three policies with an entry are kept, once each; no null stands among them or in the count.
+        $Written = @(Get-Content (Join-Path $Run.Result.BundlePath 'roleManagementPolicies.json') -Raw | ConvertFrom-Json)
+        @($Written | ForEach-Object { if ($null -eq $_) { '<null>' } else { "$($_.scope)|$($_.role)" } }) | Should -Be @("$($script:StSubA)|Reader", "$($script:StSubA)|Contributor", "$($script:StSubA)|Owner")
+        $Run.Result.RoleManagementPolicies | Should -Be 3
+        # The one real scope is named, and no entry with an empty scope.
+        @($Run.Result.IncompleteReads) | Should -Be @($script:StUnjudgedA)
+        $Run.Warnings | Should -Be @('Export-OERInventory: could not select the Azure role management policies, so every policy read is kept and each scope is named as not judged: role policy selection refused')
     }
 
     It 'omits the policies it can judge and names nothing when the selection does not stop (the control for the three tests above)' {
@@ -8247,7 +8316,12 @@ foreach ($Item in $Items) {
         $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
         $Description | Should -Match ([regex]::Escape('An eligibility read that stops as a whole, on an error nothing in it catches, is reported the same way and never ends the export: every scope of the walk is named in SkippedEligibilityScopes, azurePimEligibility.json is written as [], and ONE warning names the cause.'))
         $Description | Should -Match ([regex]::Escape("A read that stopped as a whole, on an error nothing in the reader catches, is named as 'lighthouseDelegations at <all Azure scopes: the read stopped>', with the cause in the causes of the InventoryPartial message and ONE warning, and lighthouseDelegations.json is written as []."))
-        $Description | Should -Match ([regex]::Escape('A selection that stops as a whole, on an error nothing in it catches, keeps every policy read at every scope, merged as the kept ones are, names the scope of each as above, and writes ONE warning that names the cause; so does an eligibility read that stopped, which leaves every scope''s eligibility unread.'))
+        $Description | Should -Match ([regex]::Escape('A selection that stops as a whole, on an error nothing in it catches, keeps every policy read at every scope, merged as the kept ones are, names the scope of each as above, and writes ONE warning that names the cause.'))
+        # Fix round 1: an eligibility stop names a scope only where a policy is kept without being judged, which
+        # is not every scope (one whose policies a role assignment or a change keeps is not named).
+        $Description | Should -Match ([regex]::Escape('An eligibility read that stops as a whole leaves the eligibility of every scope unread, so a policy there that no role assignment and no change keeps is kept without being judged, as above, and its scope named; a scope where a role assignment or a change keeps every policy has no such policy, and is not named.'))
+        # Fix round 1: the IncompleteReads paragraph names the Lighthouse stop beside the other Lighthouse entries.
+        $Description | Should -Match ([regex]::Escape("one entry for a walk that could not start or a subscription listing that failed, and one entry, 'lighthouseDelegations at <all Azure scopes: the read stopped>', for a Lighthouse read that stopped as a whole, so that lighthouseDelegations.json holds no delegation."))
         $Description | Should -Match ([regex]::Escape('and its one warning (''Could not read the role assignments at scope ...'') is written once the scope''s policy list has been read.'))
     }
 }
@@ -8497,8 +8571,10 @@ Describe 'Export-OERInventory (one warning for a scope whose role assignment rea
 
 Describe 'Export-OERInventory (the bookkeeping of a failed read stands before its warning, Sprint 11 step 10, BL-44)' {
     # BL-44. A Write-Warning under a Stop warning preference is a terminating error, so a statement after it never
-    # runs: a failed read whose bookkeeping (the unread flag, the stand-in result, the skipped scope) stands after
-    # its warning is told as a warning and not carried to the partial signal. The export's sites hold a variable or
+    # runs, and BL-44 asks that no warning stand between a failure and its record: the bookkeeping (the unread flag,
+    # the stand-in result, the skipped scope) stands BEFORE the warning. At the export's sites no try resumes after
+    # the warning, so a Stop on it ends the export in either order and the order is no outcome a caller sees; it is
+    # the rule, kept and held here. The export's sites hold a variable or
     # a list, which a verbose line cannot show, so the proof reads the source with the AST: for each warning, found by
     # the start of its text, each named bookkeeping statement stands in the SAME statement block and starts before
     # the warning. The checker has a known-answer test of its own, so it cannot pass for nothing.

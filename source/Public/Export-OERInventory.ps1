@@ -246,8 +246,10 @@ function Export-OERInventory {
     'Skipping scope ...' is then the one warning for a scope whose role assignment read failed too. A
     selection that stops as a whole, on an error nothing in it catches, keeps every policy read at
     every scope, merged as the kept ones are, names the scope of each as above, and writes ONE warning
-    that names the cause; so does an eligibility read that stopped, which leaves every scope's
-    eligibility unread. -AllRolePolicies exports every policy at every
+    that names the cause. An eligibility read that stops as a whole leaves the eligibility of every
+    scope unread, so a policy there that no role assignment and no change keeps is kept without being
+    judged, as above, and its scope named; a scope where a role assignment or a change keeps every
+    policy has no such policy, and is not named. -AllRolePolicies exports every policy at every
     scope the walk reads, with the call earlier versions made. Invoke-OERStructure reads and writes
     only the policies a document declares, so a policy the export leaves out stays as it is when the
     document, or a proposal built from it, is applied.
@@ -430,9 +432,11 @@ function Export-OERInventory {
     TENANT above), reading 'subscriptionHomeTenant at <scope>'. Then IncompleteReads carries
     the Azure Lighthouse entries (see AZURE LIGHTHOUSE DELEGATIONS above): one 'lighthouseDelegations
     at <scope>' per scope of a subscription whose delegations could not be read, one
-    'lighthouseDelegations role <id>' per role whose name could not be read, and one entry for a walk
-    that could not start or a subscription listing that failed. Last of all, for an export run with
-    -IncludeServicePrincipalAccess, IncompleteReads carries one entry per part of
+    'lighthouseDelegations role <id>' per role whose name could not be read, one entry for a walk
+    that could not start or a subscription listing that failed, and one entry,
+    'lighthouseDelegations at <all Azure scopes: the read stopped>', for a Lighthouse read that
+    stopped as a whole, so that lighthouseDelegations.json holds no delegation. Last of all, for an
+    export run with -IncludeServicePrincipalAccess, IncompleteReads carries one entry per part of
     servicePrincipalAccess.json that could not be read (see SERVICE PRINCIPAL ACCESS above), reading
     'servicePrincipalAccess/' and the part's name, for example 'servicePrincipalAccess/applicationOwners'.
     The Count of IncompleteReads is
@@ -776,10 +780,12 @@ function Export-OERInventory {
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId -notlike 'GroupNotFound*') {
-                    # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning. A Write-Warning
-                    # under a Stop warning preference is a terminating error, so a statement after it would
-                    # never run, and the failed read would be told as a warning only and not carried to the
-                    # partial signal. Held by the AST test of this file.
+                    # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning, as BL-44 asks at
+                    # every site, so no warning stands between a failure and its record. A Write-Warning
+                    # under a Stop warning preference is a terminating error, and no try of this export
+                    # resumes after this one, so at this site a Stop ends the export in either order: the
+                    # order is kept for the rule's sake and changes nothing a caller sees. Held by the AST
+                    # test of this file.
                     $RosterUnread = $true
                     Write-Warning "Could not read the group roster: $($PSItem.Exception.Message)"
                 }
@@ -1229,8 +1235,10 @@ function Export-OERInventory {
                         } catch {
                             Remove-OERErrorRecord -Record $PSItem
                             # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning (see the
-                            # roster catch above), so a scope the warning ends the export at has still been
-                            # taken back and named. The warning is the last statement before the continue.
+                            # roster catch above). This catch stands in the walk's try/finally and no try
+                            # resumes after it, so under a Stop warning preference this warning ends the
+                            # export in either order; the order is kept for the rule's sake. The warning is
+                            # the last statement before the continue.
                             $SkippedScopes.Add([string]$S)
                             # The skipped scope merges no row, so what its call handed over is taken back.
                             & $UndoScopeHandover $UnresolvedPrincipalRows $UnresolvedMark
@@ -1323,10 +1331,12 @@ function Export-OERInventory {
                 # Causes); the delegations are read from it with a null-filter, since @($null) is one element.
                 #
                 # Sprint 11 step 10 (BL-123, first point): a stopped read has read no delegation of any scope, so
-                # it is named as the one entry the reader names a walk that could not start with, and gives its
-                # cause as the reader gives its own: 'lighthouseDelegations at <all Azure scopes: the read
-                # stopped>' in $LighthouseUnread and the record's message in $LighthouseCauses, with no target
-                # (the stop belongs to no one scope). $LighthouseRead stays $null, which the lines below read as
+                # it is named in the shape of the entry this export gives a walk that could not start (the
+                # enumeration catch above), an entry of its own and not one the reader ever returns (the reader
+                # names only 'lighthouseDelegations at <scope>' and 'lighthouseDelegations role <id>'), and
+                # gives its cause as the reader gives its own: 'lighthouseDelegations at <all Azure scopes: the
+                # read stopped>' in $LighthouseUnread and the record's message in $LighthouseCauses, with no
+                # target (the stop belongs to no one scope). $LighthouseRead stays $null, which the lines below read as
                 # no delegation and nothing more to add, and lighthouseDelegations.json is written as [] and
                 # named, never read as "no delegation". The catch scrubs first, completes its bookkeeping before
                 # the warning (BL-44) and writes ONE warning that names the cause.
