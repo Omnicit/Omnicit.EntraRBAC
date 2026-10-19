@@ -7614,7 +7614,9 @@ there -- and the export carries on. What each one records:
   same set as the kept ones are, so a scope the walk lists twice, or in another letter case, writes a policy
   once -- and each distinct canonical scope among the candidates (`ConvertTo-OERCanonicalScope`, compared
   without regard to letter case, in the order first seen, as `Select-OERInventoryRolePolicy`'s own unjudged
-  scopes are) is named `roleManagementPolicies/role selection at <scope>`. Warning: `Export-OERInventory: could
+  scopes are) is named `roleManagementPolicies/role selection at <scope>`. A candidate with no entry adds no
+  policy (a `$null` would be written to `roleManagementPolicies.json`), and one with no scope names no scope
+  (an entry with an empty scope would be added). Warning: `Export-OERInventory: could
   not select the Azure role management policies, so every policy read is kept and each scope is named as not
   judged: ...`. The direction is the safe one, as for every unjudged policy: more is kept than the selection
   would keep, nothing is dropped on a guess.
@@ -7673,9 +7675,16 @@ list fails is skipped with `Skipping scope '...'` as its one warning, and is not
 merges no row. Under a Stop warning preference the held warning, now after the policy list, stops the scope
 through the same outer `catch` as before. Cost if wrong: the text moves back into the `catch`.
 
-**Bookkeeping before the warning (BL-44, at the export).** A `Write-Warning` under a Stop warning preference is
-a terminating error, so a statement after it never runs: a failed read told as a warning and not carried to the
-partial signal. Seven sites stand before their warning in the same statement block, and an AST test of
+**Bookkeeping before the warning (BL-44, at the export).** BL-44 asks that no warning stand between a failure
+and its record: a `Write-Warning` under a Stop warning preference is a terminating error, so a statement after
+it never runs, and bookkeeping written after the warning is lost wherever the error is caught and the command
+resumes. At these export sites nothing resumes after the warning -- the roster, group reader and scope
+enumeration catches stand at the top level of `process`, and the skip catch stands inside the walk's
+`try`/`finally` only -- so under a caller's `-WarningAction Stop` the warning ends the export in EITHER order,
+with no bundle and no `InventoryPartial`. The order is the rule kept at the export, not an outcome a caller
+sees there. The warnings that ARE caught and resumed are the ones written inside the per-scope `try`
+(Get-OERInventory's own warnings, written again per scope, and the held role assignment warning); they feed the
+skip catch, as before the step. Seven sites stand before their warning in the same statement block, and an AST test of
 `Export-OERInventory.Tests.ps1` holds each (R-7: the bookkeeping here is a variable or a list, which a verbose
 line cannot show): the roster read (`$RosterUnread`), the group reader that stops (the stand-in `$GroupRead`),
 the scope enumeration (`$Tree` and three `.Add` calls), the skipped scope (`$SkippedScopes` and the four
@@ -7687,7 +7696,9 @@ two list additions (Lighthouse) and the merge loop (selection).
 
 **Mutation proofs.** Each mutation was made in a copy of the step's tree at this commit's source and tests, and
 run against the Describes whose names carry "step 10" in `tests/Unit/Public/Export-OERInventory.Tests.ps1`;
-every mutant turned at least one test red, and the restored source was green. Lines are the source's.
+every mutant turned at least one test red, and the restored source was green. Lines are the source's at the
+commit that added the rows; the rows of the fix round (G1 to H8, below the table) carry the lines of the source
+after it, which the help and comment edits of that round moved.
 
 | Id | Guard | Mutant | Outcome |
 |---|---|---|---|
@@ -7709,6 +7720,17 @@ every mutant turned at least one test red, and the restored source was green. Li
 | B1-B7 | the seven BL-44 sites, `:783`, `:824`, `:1098`, `:1240`, `:1312`, `:1340`, `:1392` | each warning moved before its bookkeeping | 1 red each, the AST test of that site |
 | B8, B9 | one statement of several, `:1097`, `:1239` | one `.Add` of the three, and one takeback of the four, after the warning | 1 red each |
 | H1-H6 | the help of the three stops, the held warning and the two switches, `:134`, `:192`, `:248`, `:244`, `:552`, `:542` | one clause changed | 1 red each |
+
+The fix round that followed the review of those commits added the proofs of three guards in the new catches and
+of two help sentences. The lines are those of the source after the round.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| G1 | the blank-scope filter on the scopes of a stopped eligibility read, `:1316` | the filter dropped; and weakened to an empty-string test (G1b) | 1 red each: a white space scope is named in `SkippedEligibilityScopes` |
+| G2 | a candidate with no entry adds no policy to the selection stop's merge, `:1395` | the guard dropped | 1 red: a `$null` is written among the policies |
+| G3 | a candidate with no scope names no scope, `:1400` | the test on the canonical scope dropped | 1 red: the entry with an empty scope is added |
+| G4 | the test for a candidate that is itself `$null`, `:1394` | dropped | equivalent: green. The walk drops a `$null` candidate as it reads it, so none reaches the `catch`, and without strict mode the two guards above would read it as one with no entry and no scope |
+| H7, H8 | the help names the Lighthouse stop in the IncompleteReads paragraph, and says an eligibility stop names a scope only where a policy is kept without being judged, `:436`, `:252` | one clause changed | 1 red each |
 
 **Known limits.**
 
