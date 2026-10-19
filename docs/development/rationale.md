@@ -8052,6 +8052,25 @@ that nothing is missing. If wrong: a device or organizational contact the untype
 would still be missing from `Members`. The repair is one more entry in the type list at the top of
 `Get-OERGroupRelation`, made after a measurement with such a member.
 
+**R1, measured again (Sprint 11 step 10, BL-83, R-14).** The first measurement could not say whether the
+other casts miss anything, since its group held no user, device or organizational contact. On 2026-10-19 the
+question was put to the whole test tenant, read-only: every one of its 99 groups (73 security, 9
+role-assignable, 9 dynamic security, 6 Microsoft 365, 1 mail-enabled security and 1 distribution; no
+synchronized group and no dynamic Microsoft 365 group), members and owners, the untyped read against the
+typed `user`, `group`, `device`, `orgContact` and `servicePrincipal` casts, counts only. The members found
+were users (154) and devices (91), and the typed user and device casts found nothing the untyped read had
+missed. The owners were users (24) and 18 service principals that ONLY the typed `servicePrincipal` cast
+lists, which is the known gap and nothing new; the user cast found nothing the untyped read had missed. No
+group, organizational contact or service principal member existed in the tenant, so those member casts found
+nothing to compare, and the owner casts to `group`, `device` and `orgContact` answer 400
+`Request_UnsupportedQuery`. What that settles: across all those groups the untyped read missed no user and no
+device, which the first run could not say. What it leaves open: an organizational contact was never seen, a
+group member was seen once (2026-10-06), a service principal as a member only once, and synchronized groups
+and dynamic Microsoft 365 groups were not measured. So R1 stands as decided, with no code change: only
+`servicePrincipal` is read typed. The comment above `$TypedReadTypes` in `Get-OERGroupRelation` states exactly
+this and no more; it used to say that the user, group, device and organizational contact casts "showed
+nothing missing", which the first run could not say of the user, device and organizational contact casts.
+
 **How the two reads are merged.** On object id, ignoring case, the untyped read's order first and
 then what only the typed read added, so a service principal that Graph one day starts listing in
 both appears once. Every object goes through `ConvertTo-OERGroupMember`. Since a typed answer has no
@@ -10490,6 +10509,38 @@ first. A failed package list now names `packages` alone for its catalog, since a
 resources, so a catalog's `packages` and `catalogResourceNames` entries can no longer both be named, and no
 other entry changes. Cost if wrong: one resource read more per catalog that holds no package, and a
 `catalogResourceNames` entry for a read that was never needed.
+
+### Sprint 11 step 10: the not-found codes of two reads are the ones measured (BL-21, R-13)
+
+**The problem (BL-21).** `Get-OERAccessReviewInstance -Instance` sorted a failed single-instance GET as a
+missing instance when the converted error id was one of four codes (`ResourceNotFound`,
+`Request_ResourceNotFound`, `ItemNotFound` and `NotFound`), and the catalog list read of `Get-OERInventory`
+carried a copy of the same four for a by-id `-Catalog` read, beside `CatalogNotFound`. Both lists were declared
+while the real code was unknown, a superset that is a guess (the same shape `Resolve-OERAccessPackageId`
+dropped for the access package probe), and an unobserved code is as likely to mean something else as to mean
+"missing".
+
+**What was measured (2026-10-19, read-only, as the dedicated live-verification identity, through the module's
+transport).** A missing access review definition, the instance list of a missing definition, and a missing
+instance of a missing definition or of an existing one: Microsoft Graph answers 404 with NO error code in the
+body, so the id the module carries is the status-derived `NotFound`. A catalog by a missing id: 404 with the
+code `CatalogNotFound`, which `Get-OERCatalog -Id` republishes as `CatalogNotFound`.
+
+**R-13 (the instance read).** The single-instance GET declares `-ExpectedErrorCode 'NotFound'` and turns the
+`Omnicit.EntraRBAC.GraphExpectedError` marker it gets back into the existing `AccessReviewInstanceNotFound`,
+with the message, category and target it always had and no inner exception, since the marker is an answer and
+nothing was raised. Every other failure is scrubbed and published as itself, and the four-code list is gone, so
+`ResourceNotFound`, `Request_ResourceNotFound` and `ItemNotFound` are no longer read as a missing instance. The
+transport compares whole tokens and reads a failure's message text only when its id is status-derived, so a 403
+that carries a real code is never softened into "not found" by prose such as "the caller does not have access
+to the resource, or it does not exist". **The catalog by-id list** keeps its `CatalogNotFound*` and
+`AmbiguousCatalogName*` arms, which republish the record as itself and count nothing unread, and loses the
+four-code segment test: a by-id failure that carries one of the four is a catalog list that could not be read,
+named unread (`catalogs` and `accessPackages`) with its cause, the safe direction to be wrong in. Cost if
+wrong: a Graph that answers one of those endpoints with a code the module does not declare makes the instance
+read publish that error as itself instead of the friendly id, and the catalog by-id read name the catalogs
+unread instead of republishing the not-found record, each repaired by adding the one measured code to the
+declaration or to the arm.
 
 ## export-run-context
 
