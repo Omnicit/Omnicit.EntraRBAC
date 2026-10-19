@@ -352,10 +352,11 @@ function Sync-OERStructureAccessReview {
         # as its own nested pipeline, which re-deposited the same record on the way out -- so
         # dropping either one alone only halves the leak.
         # SilentlyContinue here means "captured", not "ignored": the records are inspected below, so
-        # a failed read is still a failed read. The group and administrative-unit reads in
-        # Get-OERInventory share this capture (SilentlyContinue and a local -ErrorVariable) but not
-        # the pipe into Where-Object: each is a bare call inside @( ), a shape the access review
-        # read in that file measured to leak one record to the caller.
+        # a failed read is still a failed read. The group read (Get-OERInventoryGroup) and the
+        # administrative-unit and access review reads in Get-OERInventory share this capture
+        # (SilentlyContinue and a local -ErrorVariable) and, since BL-58, the pipe into Where-Object
+        # too: a bare call inside @( ) is the shape the access review read in that file measured to
+        # leak one record to the caller.
         function Find-ReviewDefinitionByName {
             param(
                 [string]$LookupName,

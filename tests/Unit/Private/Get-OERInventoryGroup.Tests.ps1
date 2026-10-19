@@ -720,6 +720,115 @@ Describe 'Get-OERInventoryGroup' {
             @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_first', 'role_sec_second')
             $Read.Result.Groups[1].members | Should -Be @('person3@contoso.com')
         }
+
+        # Sprint 11 step 10 (BL-58). The list read pipes Get-OERGroup onward before its @( ) closes, the one
+        # measured shape that deposits nothing in the caller's -ErrorVariable (docs/development/rationale.md,
+        # #writeerror-deposit). The bare call inside @( ) deposited one record per record Get-OERGroup wrote,
+        # although this reader reports each of them itself, as an unread collection with its cause. The reach
+        # proof stands first in each test (the reader saw the record and named the read unread), so an empty
+        # list of leaked records cannot be a read that wrote nothing.
+        It 'leaves no record of a failed collection read in the caller -ErrorVariable, and still names the collection unread (BL-58)' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not read members for group 'g-1': Too many requests (429)."),
+                        'GroupMemberReadFailed,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, 'g-1')) -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_team'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Owners = @(); PimEligibility = @()
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+            $Read = Invoke-GroupRead
+            @($Read.Result.Unread) | Should -Contain 'groups/role_sec_team/members'
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Leaked = @($Read.Errors | Where-Object { $null -ne $_ -and ([string]$_.FullyQualifiedErrorId) -like 'GroupMemberReadFailed*' })
+            $Leaked.Count | Should -Be 0 -Because ('a record Get-OERGroup wrote is captured by the reader and must not reach the caller; leaked: ' +
+                (@($Leaked | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | '))
+        }
+
+        It 'leaves no record of a failed list read in the caller -ErrorVariable, and still names the groups unread (BL-58)' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction $Ea
+            }
+            $Read = Invoke-GroupRead
+            @($Read.Result.Unread) | Should -Be @('groups')
+            @($Read.Warned) | Should -Be @('Could not read groups: Insufficient privileges to complete the operation.')
+            $Leaked = @($Read.Errors | Where-Object { $null -ne $_ -and ([string]$_.FullyQualifiedErrorId) -like 'Authorization_RequestDenied*' })
+            $Leaked.Count | Should -Be 0 -Because ('a record Get-OERGroup wrote is captured by the reader and must not reach the caller; leaked: ' +
+                (@($Leaked | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | '))
+        }
+
+        It 'leaves an empty item out of the list Get-OERGroup returns, as the filter after the pipe does (BL-58)' {
+            # The filter stands after the pipe for the access review read of Get-OERInventory, and is not to be
+            # simplified away: an empty item would otherwise be projected as a group without a name.
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                $null
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_team'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Members = @(); Owners = @(); PimEligibility = @()
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+            $Read = Invoke-GroupRead
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_team')
+        }
+    }
+
+    Context 'the bookkeeping of a failed list read stands before its warning (Sprint 11 step 10, BL-44)' {
+        # A Write-Warning under a Stop warning preference is a terminating error, so a statement after it never
+        # runs: a list that failed to read was then told as a warning and not carried to the unread list and the
+        # causes. Add-UnreadSection writes a verbose line first, so the proof is behavioural: under
+        # -WarningAction Stop -Verbose the section's verbose line is written before the warning stops the
+        # command. The line is asserted WHOLE, and the two sites are told apart by it: the site in the record
+        # loop writes the reader's own message, and the catch -- which also catches the stop the warning of the
+        # record loop raises -- writes a line that starts with the preference's own text.
+        BeforeAll {
+            function Invoke-GroupReadUnderStop {
+                InModuleScope Omnicit.EntraRBAC {
+                    $Seen = [System.Collections.Generic.List[string]]::new()
+                    $Stopped = $null
+                    try {
+                        Get-OERInventoryGroup -Filter 'securityEnabled eq true' -Verbose -WarningAction Stop -ErrorAction SilentlyContinue 4>&1 |
+                            ForEach-Object { if ($_ -is [System.Management.Automation.VerboseRecord]) { $Seen.Add([string]$_.Message) } }
+                    } catch {
+                        $Stopped = $PSItem
+                    }
+                    [PSCustomObject]@{ Verbose = $Seen.ToArray(); Stopped = $Stopped }
+                }
+            }
+        }
+
+        It 'writes the verbose line of a list failure Get-OERGroup publishes before the warning stops the read' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction $Ea
+            }
+            $Run = Invoke-GroupReadUnderStop
+            # Reach proof: the warning was reached, and it stopped the command.
+            $Run.Stopped | Should -Not -BeNullOrEmpty
+            $Run.Stopped.Exception.Message | Should -BeLike '*Could not read groups: Insufficient privileges to complete the operation.'
+            @($Run.Verbose) | Should -Contain 'Get-OERInventory: Could not read groups: Insufficient privileges to complete the operation.'
+        }
+
+        It 'writes the verbose line of a list failure Get-OERGroup throws before the warning stops the read' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup { throw 'throttled' }
+            $Run = Invoke-GroupReadUnderStop
+            $Run.Stopped | Should -Not -BeNullOrEmpty
+            $Run.Stopped.Exception.Message | Should -BeLike '*Could not read groups: throttled'
+            @($Run.Verbose) | Should -Contain 'Get-OERInventory: Could not read groups: throttled'
+        }
     }
 
     Context 'order' {
@@ -1898,5 +2007,77 @@ Describe 'Get-OERInventoryGroup, the PIM for Groups assignment read driven throu
         $ByName = @{}
         foreach ($G in $Read.Result.Groups) { $ByName[$G.displayName] = $G }
         $ByName['role_sec_a'].members | Should -Be @('person1@contoso.com', 'person2@contoso.com')
+    }
+}
+
+Describe 'Get-OERInventoryGroup (the cause removal of a left-out group stands before its warning, Sprint 11 step 10, BL-44)' {
+    # BL-44. A Write-Warning under a Stop warning preference is a terminating error, so a statement after it never
+    # runs. The cause removal of -SecurityEnabledOnly holds a list, which a verbose line cannot show, so the proof
+    # reads the source with the AST: the warning found by the start of its text, the removal loop stands in the SAME
+    # statement block and starts before it. The checker has a known-answer test of its own, so it cannot pass for
+    # nothing.
+    BeforeAll {
+        $script:BkSourcePath = (Resolve-Path (Join-Path $PSScriptRoot '../../../source/Private/Get-OERInventoryGroup.ps1')).Path
+        $BkErrors = $null
+        $script:BkAst = [System.Management.Automation.Language.Parser]::ParseFile($script:BkSourcePath, [ref]$null, [ref]$BkErrors)
+        if (@($BkErrors).Count -gt 0) { throw "Get-OERInventoryGroup.ps1 does not parse: $(@($BkErrors)[0].Message)" }
+        # The violations of one warning: an empty list when it is found once and each named statement stands in its
+        # block, the right number of times, before it.
+        function script:Get-BkViolation {
+            param([System.Management.Automation.Language.Ast]$Ast, [string]$WarningStart, [object[]]$Bookkeeping)
+            $Violations = [System.Collections.Generic.List[string]]::new()
+            $Warnings = @($Ast.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq 'Write-Warning' }, $true) |
+                    Where-Object {
+                        $Elements = @($_.CommandElements)
+                        $Elements.Count -ge 2 -and $Elements[1].Extent.Text.TrimStart([char[]]@('"', "'")).StartsWith($WarningStart, [System.StringComparison]::Ordinal)
+                    })
+            if ($Warnings.Count -ne 1) {
+                $Violations.Add("expected exactly one Write-Warning starting '$WarningStart', found $($Warnings.Count)")
+                return $Violations.ToArray()
+            }
+            $Statement = $Warnings[0]
+            while ($null -ne $Statement.Parent -and $Statement.Parent -isnot [System.Management.Automation.Language.StatementBlockAst]) { $Statement = $Statement.Parent }
+            $Block = $Statement.Parent
+            foreach ($Item in $Bookkeeping) {
+                $Hits = @($Block.Statements | Where-Object { $_.Extent.Text -match $Item.Pattern })
+                if ($Hits.Count -ne $Item.Count) {
+                    $Violations.Add("expected $($Item.Count) statement(s) matching '$($Item.Pattern)' in the block of the warning, found $($Hits.Count)")
+                    continue
+                }
+                foreach ($Hit in $Hits) {
+                    if ($Hit.Extent.StartOffset -ge $Statement.Extent.StartOffset) {
+                        $Violations.Add("a statement matching '$($Item.Pattern)' starts at $($Hit.Extent.StartOffset), not before the warning at $($Statement.Extent.StartOffset)")
+                    }
+                }
+            }
+            $Violations.ToArray()
+        }
+    }
+
+    It 'holds the known answer: the checker finds a warning that stands before its bookkeeping, a bookkeeping statement that is missing and a warning that is not unique' {
+        $Parse = {
+            param([string]$Text)
+            $E = $null
+            [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$E)
+        }
+        $Pattern = @(@{ Pattern = '^\$Unread = \$true$'; Count = 1 })
+        $Good = & $Parse 'if ($n -gt 0) { $Unread = $true; Write-Warning "Could not read: $n" }'
+        @(Get-BkViolation -Ast $Good -WarningStart 'Could not read:' -Bookkeeping $Pattern).Count | Should -Be 0
+        $Late = & $Parse 'if ($n -gt 0) { Write-Warning "Could not read: $n"; $Unread = $true }'
+        @(Get-BkViolation -Ast $Late -WarningStart 'Could not read:' -Bookkeeping $Pattern).Count | Should -Be 1
+        @(Get-BkViolation -Ast $Late -WarningStart 'Could not read:' -Bookkeeping $Pattern)[0] | Should -BeLike "a statement matching '*' starts at *, not before the warning at *"
+        $Missing = & $Parse 'if ($n -gt 0) { Write-Warning "Could not read: $n" }'
+        @(Get-BkViolation -Ast $Missing -WarningStart 'Could not read:' -Bookkeeping $Pattern)[0] | Should -BeLike 'expected 1 statement(s) matching*found 0'
+        $Twice = & $Parse 'if ($n -gt 0) { $Unread = $true; Write-Warning "Could not read: a"; Write-Warning "Could not read: b" }'
+        @(Get-BkViolation -Ast $Twice -WarningStart 'Could not read:' -Bookkeeping $Pattern)[0] | Should -BeLike 'expected exactly one Write-Warning starting*found 2'
+        $Absent = & $Parse 'if ($n -gt 0) { $Unread = $true; Write-Warning "Another text" }'
+        @(Get-BkViolation -Ast $Absent -WarningStart 'Could not read:' -Bookkeeping $Pattern)[0] | Should -BeLike 'expected exactly one Write-Warning starting*found 0'
+    }
+
+    It 'stands the cause removal of the left-out groups before the -GroupFilter warning' {
+        $Violations = @(Get-BkViolation -Ast $script:BkAst -WarningStart '-GroupFilter returned' -Bookkeeping @(
+                @{ Pattern = '(?s)^for \(\$CauseIndex = .*\$Causes\.RemoveAt\('; Count = 1 }
+            ))
+        $Violations | Should -Be @()
     }
 }

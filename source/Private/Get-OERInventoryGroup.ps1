@@ -272,12 +272,21 @@ function Get-OERInventoryGroup {
         # failed, and Stop would abort the whole enumeration on the first one -- losing every
         # remaining group instead of losing one collection. The errors are inspected below, so
         # nothing is suppressed; SilentlyContinue here means "captured", not "ignored".
+        # The pipe into Where-Object is load-bearing, not tidying (BL-58). The measured numbers are in the
+        # access review read of Get-OERInventory ("The pipe into Where-Object is load-bearing") and in
+        # docs/development/rationale.md#writeerror-deposit: a bare call inside @( ) leaks one record per
+        # record written to the caller's -ErrorVariable, since the array subexpression runs the call as its
+        # own nested pipeline and deposits the record again on the way out; only piping the call onward
+        # before the @( ) closes leaks none. This call was that bare form, so every per-collection record
+        # Get-OERGroup writes (GroupMemberReadFailed and its two siblings) reached the operator's own error
+        # stream although this reader counts and words each of them itself. Do not "simplify" the filter away.
         $GroupReadErrors = $null
         # The try/catch still guards a genuinely TERMINATING failure of the whole read (auth,
         # a dead transport, an -ErrorAction Stop upstream); the inner loop handles the
         # NON-terminating per-group records. Both are needed: neither subsumes the other.
         try {
-            $GroupItems = @(Get-OERGroup @GroupParams -ErrorAction SilentlyContinue -ErrorVariable GroupReadErrors)
+            $GroupItems = @(Get-OERGroup @GroupParams -ErrorAction SilentlyContinue -ErrorVariable GroupReadErrors |
+                    Where-Object { $null -ne $_ })
             foreach ($GErr in @($GroupReadErrors)) {
                 if ($null -eq $GErr) { continue }
                 # No Remove-OERErrorRecord here: these records were WRITTEN deliberately by
@@ -308,10 +317,15 @@ function Get-OERInventoryGroup {
                 # Membership, not a suffix match: Write-Error appends a further name when a
                 # record is republished, so the cmdlet's name is not always the last segment.
                 if (@(([string]$GErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERGroup') {
-                    Write-Warning "Could not read groups: $($GErr.Exception.Message)"
                     # The warning stays; the section is ALSO counted unread, since the groups array
-                    # below is [] whether the tenant has none or the list could not be read.
+                    # below is [] whether the tenant has none or the list could not be read. Sprint 11
+                    # step 10 (BL-44): the bookkeeping stands BEFORE the warning. A Write-Warning under a
+                    # Stop warning preference is a terminating error, so a statement after it would never
+                    # run, and the failed read would be told as a warning only and not carried to the
+                    # unread list and the causes. Held by the verbose line Add-UnreadSection writes first,
+                    # in the tests of this reader.
                     Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($GErr.Exception.Message)"
+                    Write-Warning "Could not read groups: $($GErr.Exception.Message)"
                 } else {
                     # Routed to verbose rather than dropped: a stray is still evidence when a read
                     # misbehaves, it just is not a section-level finding the operator must act on.
@@ -322,8 +336,10 @@ function Get-OERInventoryGroup {
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             if ($PSItem.FullyQualifiedErrorId -notlike 'GroupNotFound*') {
-                Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
+                # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning (see the record loop
+                # above). This catch also catches the stop the warning of the record loop raises.
                 Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($PSItem.Exception.Message)"
+                Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
             }
         }
 
@@ -358,10 +374,14 @@ function Get-OERInventoryGroup {
                 if ($Listed.Id) { $null = $LeftOutIds.Add([string]$Listed.Id) }
             }
             if ($LeftOutCount -gt 0) {
-                Write-Warning "-GroupFilter returned $LeftOutCount group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out."
+                # Sprint 11 step 10 (BL-44): the removal of the left-out groups' causes stands BEFORE the
+                # warning, as the bookkeeping of a failed read does above: a Write-Warning under a Stop
+                # warning preference is a terminating error, so a statement after it never runs. Held by the
+                # AST test of this reader, since a list cannot be shown by a verbose line.
                 for ($CauseIndex = $Causes.Count - 1; $CauseIndex -ge 0; $CauseIndex--) {
                     if ($LeftOutIds.Contains([string]$Causes[$CauseIndex].Target)) { $Causes.RemoveAt($CauseIndex) }
                 }
+                Write-Warning "-GroupFilter returned $LeftOutCount group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out."
             }
             $GroupItems = $KeptGroupItems.ToArray()
         }

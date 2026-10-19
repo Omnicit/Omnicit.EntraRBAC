@@ -5917,6 +5917,37 @@ Describe 'Get-OERInventory' {
                 Should -Be 0 -Because 'the projection accounts for it by name; a section warning naming no object would be a second, vaguer report'
         }
 
+        It 'leaves no record of a failed collection read in the caller -ErrorVariable, and still reports it (BL-58, groups)' {
+            # Sprint 11 step 10 (BL-58). The group list is read through Get-OERInventoryGroup, whose call of
+            # Get-OERGroup pipes onward before its @( ) closes -- the one measured shape that deposits nothing in
+            # the caller's -ErrorVariable (docs/development/rationale.md, #writeerror-deposit). The bare call
+            # deposited the record the reader had already counted and worded itself. The mock honours the
+            # call's -ErrorAction, as the reader's own tests do, and the record is built with the publisher in
+            # its id. The reach proof stands first: the partial the read ends in names the collection.
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not read members for group 'g-1': Too many requests (429)."),
+                        'GroupMemberReadFailed,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, 'g-1')) -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_first'; IsAssignableToRole = $false
+                    GroupType = 'Assigned'; Description = $null; MailNickname = $null
+                    Owners = @(); PimEligibility = @()
+                }
+            }
+
+            $Inv = Get-OERInventory -Include Groups -ErrorVariable CallerErrors -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            @($Inv.groups).Count | Should -Be 1
+            $Partial = @(@($CallerErrors) | Where-Object { $null -ne $_ -and [string]$_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -Match 'groups/role_sec_first/members'
+            $Leaked = @(@($CallerErrors) | Where-Object { $null -ne $_ -and [string]$_.FullyQualifiedErrorId -like 'GroupMemberReadFailed*' })
+            $Leaked.Count | Should -Be 0 -Because ('a record the group read captured must not reach the operator error stream; leaked: ' +
+                (@($Leaked | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | '))
+        }
+
         It 'carries the underlying failure cause into InventoryPartial and onto the verbose stream' {
             # The triples say WHICH collection is missing; only the transport message says WHY, and
             # -ErrorAction SilentlyContinue keeps the originating record off the caller's stream. A
@@ -6115,6 +6146,53 @@ Describe 'Get-OERInventory' {
 
             Get-OERInventory -Include AdministrativeUnits -WarningVariable Warned -WarningAction SilentlyContinue -ErrorAction SilentlyContinue | Out-Null
             @($Warned | Where-Object { $_ -match 'Could not read administrative units' }).Count | Should -Be 0
+        }
+
+        It 'leaves no record of a failed collection read in the caller -ErrorVariable, and still reports it (BL-58, administrative units)' {
+            # Sprint 11 step 10 (BL-58). The administrative unit list read pipes Get-OERAdministrativeUnit
+            # onward before its @( ) closes, as the access review read of this file does -- the one measured
+            # shape that deposits nothing in the caller's -ErrorVariable (docs/development/rationale.md,
+            # #writeerror-deposit). The bare call deposited the record the read had already counted and worded
+            # itself. The mock honours the call's -ErrorAction, and the record is built with the publisher in
+            # its id. The reach proof stands first: the partial the read ends in names the collection.
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                param($IncludeMembers, $IncludeScopedRoles, $ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not read members for administrative unit 'au-1': Too many requests (429)."),
+                        'AdministrativeUnitMemberReadFailed,Get-OERAdministrativeUnit',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, 'au-1')) -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'au-1'; DisplayName = 'AU-One'; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
+                    ScopedRoles = @()
+                }
+            }
+
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorVariable CallerErrors -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            @($Inv.administrativeUnits).Count | Should -Be 1
+            $Partial = @(@($CallerErrors) | Where-Object { $null -ne $_ -and [string]$_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            $Partial[0].Exception.Message | Should -Match 'administrativeUnits/AU-One/members'
+            $Leaked = @(@($CallerErrors) | Where-Object { $null -ne $_ -and [string]$_.FullyQualifiedErrorId -like 'AdministrativeUnitMemberReadFailed*' })
+            $Leaked.Count | Should -Be 0 -Because ('a record the administrative unit read captured must not reach the operator error stream; leaked: ' +
+                (@($Leaked | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | '))
+        }
+
+        It 'leaves an empty item out of the list Get-OERAdministrativeUnit returns, as the filter after the pipe does (BL-58)' {
+            # The filter stands after the pipe in the access review read below as well, and is not to be
+            # simplified away: an empty item would otherwise be projected as an administrative unit without a name.
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                $null
+                [PSCustomObject]@{
+                    Id = 'au-1'; DisplayName = 'AU-One'; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
+                    Members = @(); ScopedRoles = @()
+                }
+            }
+
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue
+            @($Inv.administrativeUnits | ForEach-Object { $_.displayName }) | Should -Be @('AU-One')
         }
 
         It 'still warns at section level for a unit read error that is not a per-collection failure' {
@@ -6566,6 +6644,86 @@ Describe 'Get-OERInventory' {
                 Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are not stated as facts in the document*'
             $Read.Partial[0].Exception.Message |
                 Should -BeLike '*Unread: groups. A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null*'
+        }
+
+        Context 'the bookkeeping of a failed list read stands before its warning (Sprint 11 step 10, BL-44)' {
+            # A Write-Warning under a Stop warning preference is a terminating error, so a statement after it
+            # never runs: a list that failed to read was then told as a warning and not carried to the unread
+            # list and the causes. Add-UnreadSection writes a verbose line first, so the proof is behavioural:
+            # under -WarningAction Stop -Verbose the section's verbose line is written before the warning stops
+            # the command. Each row reaches its own site: the group reader that stops, and, for the
+            # administrative unit and access review lists, a record the reader published (the site in the record
+            # loop) and a throw out of the reader (the site in the catch). The line is asserted WHOLE and the two
+            # sites are told apart by it: the record loop writes the reader's own message, and the catch -- which
+            # also catches the stop the warning of the record loop raises -- writes a line that starts with the
+            # preference's own text.
+            BeforeAll {
+                function Get-SectionReadUnderStop {
+                    param([string[]]$Include)
+                    $Seen = [System.Collections.Generic.List[string]]::new()
+                    $Stopped = $null
+                    try {
+                        Get-OERInventory -Include $Include -Verbose -ErrorAction SilentlyContinue -WarningAction Stop 4>&1 |
+                            ForEach-Object { if ($_ -is [System.Management.Automation.VerboseRecord]) { $Seen.Add([string]$_.Message) } }
+                    } catch {
+                        $Stopped = $PSItem
+                    }
+                    [PSCustomObject]@{ Verbose = $Seen.ToArray(); Stopped = $Stopped }
+                }
+            }
+
+            It 'writes the verbose line of the groups section before the warning stops the command, when the group reader stops on a throw' {
+                # The error is raised inside the real group reader, by a helper it calls for every group
+                # outside any catch of its own (Test-OERGroupOnPremisesSynced), so the read stops part-way and
+                # the catch of Get-OERInventory around the reader is the site.
+                Mock -ModuleName $script:moduleName Get-OERGroup -MockWith {
+                    [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_team'; GroupType = 'Assigned'; IsAssignableToRole = $false; SecurityEnabled = $true; Members = @(); Owners = @(); PimEligibility = @() }
+                }
+                Mock -ModuleName $script:moduleName Test-OERGroupOnPremisesSynced -MockWith { throw [System.Exception]::new('stop') }
+                $Run = Get-SectionReadUnderStop -Include Groups
+                # Reach proofs: the reader was reached, the helper inside it ran, and the warning stopped the command.
+                Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+                Should -Invoke -ModuleName $script:moduleName Test-OERGroupOnPremisesSynced -Times 1 -Exactly
+                $Run.Stopped | Should -Not -BeNullOrEmpty
+                $Run.Stopped.Exception.Message | Should -BeLike '*Could not read groups: stop'
+                @($Run.Verbose) | Should -Contain 'Get-OERInventory: Could not read groups: stop'
+            }
+
+            It 'writes the verbose line of the administrative units section before the warning stops the command, for a list failure the reader publishes' {
+                Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit -MockWith $script:AuListPublished
+                $Run = Get-SectionReadUnderStop -Include AdministrativeUnits
+                Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly
+                $Run.Stopped | Should -Not -BeNullOrEmpty
+                $Run.Stopped.Exception.Message | Should -BeLike '*Could not read administrative units: Insufficient privileges to complete the operation.'
+                @($Run.Verbose) | Should -Contain 'Get-OERInventory: Could not read administrative units: Insufficient privileges to complete the operation.'
+            }
+
+            It 'writes the verbose line of the administrative units section before the warning stops the command, for a list failure the reader throws' {
+                Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit -MockWith $script:AuListThrown
+                $Run = Get-SectionReadUnderStop -Include AdministrativeUnits
+                Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly
+                $Run.Stopped | Should -Not -BeNullOrEmpty
+                $Run.Stopped.Exception.Message | Should -BeLike '*Could not read administrative units: throttled'
+                @($Run.Verbose) | Should -Contain 'Get-OERInventory: Could not read administrative units: throttled'
+            }
+
+            It 'writes the verbose line of the access reviews section before the warning stops the command, for a list failure the reader publishes' {
+                Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition -MockWith $script:ArListPublished
+                $Run = Get-SectionReadUnderStop -Include AccessReviews
+                Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+                $Run.Stopped | Should -Not -BeNullOrEmpty
+                $Run.Stopped.Exception.Message | Should -BeLike '*Could not read access reviews: Insufficient privileges to complete the operation.'
+                @($Run.Verbose) | Should -Contain 'Get-OERInventory: Could not read access reviews: Insufficient privileges to complete the operation.'
+            }
+
+            It 'writes the verbose line of the access reviews section before the warning stops the command, for a list failure the reader throws' {
+                Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition -MockWith $script:ArListThrown
+                $Run = Get-SectionReadUnderStop -Include AccessReviews
+                Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+                $Run.Stopped | Should -Not -BeNullOrEmpty
+                $Run.Stopped.Exception.Message | Should -BeLike '*Could not read access reviews: throttled'
+                @($Run.Verbose) | Should -Contain 'Get-OERInventory: Could not read access reviews: throttled'
+            }
         }
     }
 

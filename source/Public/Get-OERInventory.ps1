@@ -986,8 +986,13 @@ function Get-OERInventory {
                 $GroupRead = Get-OERInventoryGroup -Filter $GroupReadFilter -IncludeId:$IncludeId -PrincipalNameCache $PrincipalNameCache
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
+                # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning. A Write-Warning
+                # under a Stop warning preference is a terminating error, so a statement after it would
+                # never run, and the failed read would be told as a warning only and not carried to the
+                # partial signal. Held by the verbose line Add-UnreadSection writes first, in the tests of
+                # this cmdlet.
                 Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($PSItem.Exception.Message)"
+                Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
             }
             # Groups is the first section read, so replaying in order leaves the cause list and the unread
             # list exactly as the section used to leave them.
@@ -1021,9 +1026,19 @@ function Get-OERInventory {
             # now writes a non-terminating error per unit whose members or scoped-role read failed,
             # and -ErrorAction Stop would abort the whole enumeration on the first one. The records
             # are inspected below rather than discarded.
+            # The pipe into Where-Object is load-bearing, not tidying (BL-58), exactly as in the access review
+            # read below ("The pipe into Where-Object is load-bearing", which carries the measured numbers;
+            # docs/development/rationale.md#writeerror-deposit): a bare call inside @( ) leaks one record per
+            # record written to the caller's -ErrorVariable, since the array subexpression runs the call as
+            # its own nested pipeline and deposits the record again on the way out; only piping the call onward
+            # before the @( ) closes leaks none. This call was that bare form, so every per-collection record
+            # Get-OERAdministrativeUnit writes (AdministrativeUnitMemberReadFailed and its sibling) reached the
+            # operator's own error stream although this read counts and words each of them itself. Do not
+            # "simplify" the filter away.
             $AuReadErrors = $null
             try {
-                $AuItems = @(Get-OERAdministrativeUnit -IncludeMembers -IncludeScopedRoles -ErrorAction SilentlyContinue -ErrorVariable AuReadErrors)
+                $AuItems = @(Get-OERAdministrativeUnit -IncludeMembers -IncludeScopedRoles -ErrorAction SilentlyContinue -ErrorVariable AuReadErrors |
+                        Where-Object { $null -ne $_ })
                 foreach ($AErr in @($AuReadErrors)) {
                     if ($null -eq $AErr) { continue }
                     if ($AErr.FullyQualifiedErrorId -like 'AdministrativeUnitNotFound*') { continue }
@@ -1043,10 +1058,11 @@ function Get-OERInventory {
                     # matching comment there for why the PUBLISHER named in the FullyQualifiedErrorId,
                     # not the error id, is the discriminator.
                     if (@(([string]$AErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERAdministrativeUnit') {
-                        Write-Warning "Could not read administrative units: $($AErr.Exception.Message)"
                         # Counted unread as well as warned, for the same reason as the group list read in
-                        # Get-OERInventoryGroup.ps1.
+                        # Get-OERInventoryGroup.ps1. Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE
+                        # the warning, as at the group read above.
                         Add-UnreadSection -Key 'administrativeUnits' -Cause "Could not read administrative units: $($AErr.Exception.Message)"
+                        Write-Warning "Could not read administrative units: $($AErr.Exception.Message)"
                     } else {
                         Write-Verbose ("Get-OERInventory: ignoring a foreign error record seen while reading " +
                             "administrative units ($($AErr.FullyQualifiedErrorId)): $($AErr.Exception.Message)")
@@ -1055,8 +1071,10 @@ function Get-OERInventory {
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId -notlike 'AdministrativeUnitNotFound*') {
-                    Write-Warning "Could not read administrative units: $($PSItem.Exception.Message)"
+                    # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning, as above. This
+                    # catch also catches the stop the warning of the record loop raises.
                     Add-UnreadSection -Key 'administrativeUnits' -Cause "Could not read administrative units: $($PSItem.Exception.Message)"
+                    Write-Warning "Could not read administrative units: $($PSItem.Exception.Message)"
                 }
             }
             foreach ($Au in $AuItems) {
@@ -2012,10 +2030,11 @@ function Get-OERInventory {
                     # plus a bare, message-less RuntimeException. Membership, not a suffix match:
                     # Write-Error appends a further name when a record is republished.
                     if (@(([string]$ArErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERAccessReviewDefinition') {
-                        Write-Warning "Could not read access reviews: $($ArErr.Exception.Message)"
                         # Counted unread as well as warned, for the same reason as the group list read in
-                        # Get-OERInventoryGroup.ps1.
+                        # Get-OERInventoryGroup.ps1. Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE
+                        # the warning, as at the group read above.
                         Add-UnreadSection -Key 'accessReviews' -Cause "Could not read access reviews: $($ArErr.Exception.Message)"
+                        Write-Warning "Could not read access reviews: $($ArErr.Exception.Message)"
                     } else {
                         # Routed to verbose rather than dropped: a stray is still evidence when a read
                         # misbehaves, it just is not a section-level finding the operator must act on.
@@ -2026,8 +2045,10 @@ function Get-OERInventory {
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId -notlike 'AccessReviewDefinitionNotFound*') {
-                    Write-Warning "Could not read access reviews: $($PSItem.Exception.Message)"
+                    # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning, as above. This
+                    # catch also catches the stop the warning of the record loop raises.
                     Add-UnreadSection -Key 'accessReviews' -Cause "Could not read access reviews: $($PSItem.Exception.Message)"
+                    Write-Warning "Could not read access reviews: $($PSItem.Exception.Message)"
                 }
             }
             # BL-142: the engine's two name lookups, cached for the invocation (Get-AccessReviewUniqueReference):
