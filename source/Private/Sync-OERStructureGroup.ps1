@@ -61,7 +61,9 @@ function Sync-OERStructureGroup {
        is explicit that a member of a dynamic membership group cannot be added or removed manually, so
        every declared member is reported as a Skipped record instead, nothing is added, and the
        Extra/prune pass does not run (a group with no declared members but a live membership still gets
-       one summary Skipped record so the inaction is visible under -Prune too).
+       one summary Skipped record so the inaction is visible under -Prune too -- except when the
+       document's members is an explicit null, the "leave it untouched" signal that Get-OERInventory
+       writes for a dynamic group: nothing is declared then, and no member row of any kind is written).
     2b. Reconcile declared owners (add missing; emit Extra or prune undeclared with -Prune, or report
         them Skipped while a declared owner cannot be resolved -- see "Withheld prune" below; a
         service principal is never pruned -- see "Service principals" below; an owner PIM for Groups
@@ -882,7 +884,13 @@ function Sync-OERStructureGroup {
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
                     -Detail "member '$MRef' was not reconciled: group '$Name' is dynamic and its membership is owned by its membership rule -- members cannot be added or removed manually. Change the rule (membershipRule) to change the membership"
             }
-            if ($DeclaredMembers.Count -eq 0 -and $CurrentMembers.Count -gt 0) {
+            # Sprint 11 step 10 (BL-43, R-2): not when 'members' is an EXPLICIT null. Null is the document's
+            # "leave the membership untouched", which Get-OERInventory writes for a dynamic group, so nothing is
+            # declared and there is nothing to report: the summary row would be a finding about an export's own
+            # null on every dynamic group that has members, and the prompt asks for a -Prune plan of such an
+            # export to show no member row at all. A declared list keeps its per-member rows above; [] and an
+            # omitted key keep this one. -Prune never touched a dynamic group's members and still does not.
+            if ($DeclaredMembers.Count -eq 0 -and $CurrentMembers.Count -gt 0 -and -not $MembersDeclaredNull) {
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
                     -Detail "the $($CurrentMembers.Count) current member(s) were not reconciled: group '$Name' is dynamic and its membership is owned by its membership rule -- members cannot be removed manually, so -Prune does not apply to them"
             }

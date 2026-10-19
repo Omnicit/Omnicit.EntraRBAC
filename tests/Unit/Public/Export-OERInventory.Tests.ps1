@@ -8675,3 +8675,100 @@ Describe 'Export-OERInventory (the bookkeeping of a failed read stands before it
         $Violations | Should -Be @()
     }
 }
+
+Describe 'Export-OERInventory (the roster count of a dynamic group, through the real group reader, Sprint 11 step 10, BL-43, R-15)' {
+    # A dynamic group's members are written as an explicit null, so the roster's memberCount, which used to be
+    # the length of that list, comes from the reader's DynamicMembers list instead: the real
+    # Get-OERInventoryGroup reads a dynamic group's members when it reads the group in full and counts them.
+    # The reads above the transport are mocked (the list, the per-group collections, the criterion).
+    BeforeAll {
+        # Per group id: the members the live read finds. g-ra is role-assignable and kept; g-dyn is a dynamic
+        # security group, which no criterion of the export's keep filter holds.
+        $script:DynSpecs = @(
+            @{ Id = 'g-ra'; Name = 'role_sec_ra'; Dynamic = $false; RoleAssignable = $true; Members = @(@{ id = 'u-1'; userPrincipalName = 'person1@contoso.com' }) }
+            @{ Id = 'g-dyn'; Name = 'dyn_x'; Dynamic = $true; RoleAssignable = $false
+                Members = @(@{ id = 'u-2'; userPrincipalName = 'person2@contoso.com' }, @{ id = 'u-3'; userPrincipalName = 'person3@contoso.com' }) }
+        )
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:DynRefuse = @()
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        # The roster read carries no collection switch; a full read carries all three; a relevant-only read none.
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            param([switch]$IncludeMembers, [switch]$IncludeOwners, [switch]$IncludePimEligibility)
+            foreach ($Spec in $script:DynSpecs) {
+                $G = [PSCustomObject]@{
+                    Id = $Spec.Id; DisplayName = $Spec.Name; Description = $null; GroupType = $(if ($Spec.Dynamic) { 'Dynamic' } else { 'Assigned' })
+                    IsAssignableToRole = $Spec.RoleAssignable; SecurityEnabled = $true
+                    MembershipRule = $(if ($Spec.Dynamic) { 'user.department -eq "IT"' } else { $null })
+                }
+                if ($IncludeMembers) { $G | Add-Member -NotePropertyName Members -NotePropertyValue @($Spec.Members) }
+                if ($IncludeOwners) { $G | Add-Member -NotePropertyName Owners -NotePropertyValue @() }
+                if ($IncludePimEligibility) { $G | Add-Member -NotePropertyName PimEligibility -NotePropertyValue @() }
+                $G
+            }
+        }
+        Mock -ModuleName $script:moduleName Read-OERGroupCollection {
+            param($GroupId, $Collection)
+            if ("$($Collection):$GroupId" -in $script:DynRefuse) {
+                return [PSCustomObject]@{ Collection = $Collection; Read = $false; Value = $null; ErrorId = 'Forbidden'; Message = "Could not read $Collection for group $($GroupId): refused (403)."; Exception = $null }
+            }
+            $Spec = @($script:DynSpecs | Where-Object { $_.Id -eq $GroupId })[0]
+            $Value = switch ($Collection) { 'Members' { @($Spec.Members) } default { @() } }
+            [PSCustomObject]@{ Collection = $Collection; Read = $true; Value = $Value; ErrorId = $null; Message = $null; Exception = $null }
+        }
+        Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+    }
+
+    It 'writes the dynamic group''s members as an explicit null and counts them in the roster, under -AllGroupsDetailed' {
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'dyn-all') -Include Groups -AllGroupsDetailed `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+        $Inv = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        $Dyn = @($Inv.Groups | Where-Object { $_.displayName -eq 'dyn_x' })
+        $Dyn.Count | Should -Be 1 -Because '-AllGroupsDetailed keeps every group it reads in full'
+        $Dyn[0].PSObject.Properties.Name | Should -Contain 'members'
+        $null -eq $Dyn[0].members | Should -BeTrue
+        $Roster = @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
+        ($Roster | Where-Object { $_.displayName -eq 'dyn_x' }).memberCount | Should -Be 2
+        # Non-vacuity: the assigned group is counted as it always was.
+        ($Roster | Where-Object { $_.displayName -eq 'role_sec_ra' }).memberCount | Should -Be 1
+        @($Bundle.IncompleteReads).Count | Should -Be 0 -Because 'a dynamic group''s null members are no gap'
+        @($ExErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+    }
+
+    It 'counts a dynamic group read in full that inventory.json does not keep, and names no members unread for it' {
+        # The relevance of g-dyn could not be read (its eligibility is refused), so it is read in full, and the
+        # export's keep filter then drops it from inventory.json: it is neither role-assignable nor eligible
+        # nor carries a pimPolicy. The roster still counts what the read found.
+        $script:DynRefuse = @('PimEligibility:g-dyn')
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'dyn-undecided') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $Inv = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_ra')
+        $Roster = @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
+        ($Roster | Where-Object { $_.displayName -eq 'dyn_x' }).memberCount | Should -Be 2
+        # Reach proof: the group was read in full (its members read once), and its eligibility is named unread.
+        Should -Invoke -ModuleName $script:moduleName Read-OERGroupCollection -Exactly -Times 1 -ParameterFilter { $GroupId -eq 'g-dyn' -and $Collection -eq 'Members' }
+        # The bundle joins the names of one section into one entry, so they are read as one text.
+        (@($Bundle.IncompleteReads) -join ' | ') | Should -BeLike '*groups/dyn_x/eligibility*'
+        (@($Bundle.IncompleteReads) -join ' | ') | Should -Not -BeLike '*groups/dyn_x/members*'
+    }
+
+    It 'leaves the roster count null for a dynamic group whose members read failed, and does not name its members unread' {
+        $script:DynRefuse = @('PimEligibility:g-dyn', 'Members:g-dyn')
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'dyn-failed') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $Roster = @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
+        $Dyn = @($Roster | Where-Object { $_.displayName -eq 'dyn_x' })
+        $Dyn.Count | Should -Be 1
+        $Dyn[0].PSObject.Properties.Name | Should -Contain 'memberCount'
+        $null -eq $Dyn[0].memberCount | Should -BeTrue -Because 'the members read failed, so the count is not known, which is not zero'
+        (@($Bundle.IncompleteReads) -join ' | ') | Should -Not -BeLike '*groups/dyn_x/members*'
+        # Reach proof: the failed read was reached, and the group's own cause is in the bundle's partial signal.
+        Should -Invoke -ModuleName $script:moduleName Read-OERGroupCollection -Exactly -Times 1 -ParameterFilter { $GroupId -eq 'g-dyn' -and $Collection -eq 'Members' }
+    }
+}

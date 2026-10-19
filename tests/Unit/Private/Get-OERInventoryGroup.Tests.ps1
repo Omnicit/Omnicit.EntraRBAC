@@ -453,7 +453,8 @@ Describe 'Get-OERInventoryGroup' {
             $Group.dynamic | Should -BeFalse
             $Group.description | Should -Be 'Team'
             $Group.mailNickname | Should -Be 'roleSecTeam'
-            $Group.members | Should -Be @('person1@contoso.com', 'dev-1')
+            # BL-121 (R-16): the members stand in the fixed order, 'dev-1' before 'person1@contoso.com' (the order Graph listed them in was the reverse).
+            $Group.members | Should -Be @('dev-1', 'person1@contoso.com')
             $Group.owners | Should -Be @('person2@contoso.com')
             @($Group.eligibility).Count | Should -Be 1
             $Group.eligibility[0].principal | Should -Be 'Person Eleven'
@@ -898,6 +899,239 @@ Describe 'Get-OERInventoryGroup' {
         }
     }
 
+    Context 'the lists a projection writes stand in one fixed order (Sprint 11 step 10, BL-121, R-16)' {
+        # Graph answers a group's members, owners and eligibility in no fixed order, so two reads of one
+        # unchanged tenant used to write one set in two orders. Members and owners are texts (a UPN, else the
+        # object id): ordered without regard to letter case, ties by ordinal comparison, so 'Alice' stands
+        # before 'alice'. Eligibility is ordered by principal, then accessType, then durationDays (a permanent
+        # eligibility, which has none, first), then -- under -IncludeId -- id. The group listing is fed in two
+        # orders (the second the reverse of the first), and each answer is a read in full.
+        BeforeEach {
+            $script:OrderMembers = @(
+                @{ id = 'm-5'; userPrincipalName = 'bob@contoso.com' }
+                @{ id = 'm-4'; userPrincipalName = 'alice@contoso.com' }
+                @{ id = 'dev-9'; displayName = 'DEVICE-0009' }
+                @{ id = 'm-3'; userPrincipalName = 'Alice@contoso.com' }
+                @{ id = 'm-2'; userPrincipalName = 'Carol@contoso.com' }
+                @{ id = 'm-1' }
+            )
+            $script:OrderOwners = @(
+                @{ id = 'o-3'; userPrincipalName = 'zed@contoso.com' }
+                @{ id = 'o-2'; userPrincipalName = 'Zed@contoso.com' }
+                @{ id = 'o-1'; userPrincipalName = 'amy@contoso.com' }
+            )
+            # Scrambled: an owner eligibility first, a time-bound one before a permanent one of the same
+            # principal, two principals that differ only in letter case, and one principal with both access
+            # types. Start and end are fixed, so the durations are 30 and 7 days.
+            $script:OrderEligibility = @(
+                @{ principalId = 'p-1'; accessId = 'owner'; startDateTime = $null; endDateTime = $null }
+                @{ principalId = 'p-2'; accessId = 'member'; startDateTime = '2026-01-01T09:00:00Z'; endDateTime = '2026-01-31T09:00:00Z' }
+                @{ principalId = 'p-3'; accessId = 'member'; startDateTime = $null; endDateTime = $null }
+                @{ principalId = 'p-1'; accessId = 'member'; startDateTime = '2026-01-01T09:00:00Z'; endDateTime = '2026-01-08T09:00:00Z' }
+                @{ principalId = 'p-2'; accessId = 'member'; startDateTime = $null; endDateTime = $null }
+                @{ principalId = 'p-1'; accessId = 'member'; startDateTime = $null; endDateTime = $null }
+            )
+            $script:OrderReverse = $false
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                $Members = $script:OrderMembers; $Owners = $script:OrderOwners; $Eligibility = $script:OrderEligibility
+                if ($script:OrderReverse) { $Members = @($Members[($Members.Count - 1)..0]); $Owners = @($Owners[($Owners.Count - 1)..0]); $Eligibility = @($Eligibility[($Eligibility.Count - 1)..0]) }
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_team'; Description = 'Team'; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; MembershipRule = $null; MailNickname = 'roleSecTeam'
+                    Members = $Members; Owners = $Owners; PimEligibility = $Eligibility
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipalName {
+                @{ 'p-1' = 'bob@contoso.com'; 'p-2' = 'Alice@contoso.com'; 'p-3' = 'alice@contoso.com' }
+            }
+        }
+
+        It 'writes the members in the fixed order, an id standing for a member that has no user principal name' {
+            $Group = (Invoke-GroupRead).Result.Groups[0]
+            (@($Group.members) -join '|') | Should -BeExactly 'Alice@contoso.com|alice@contoso.com|bob@contoso.com|Carol@contoso.com|dev-9|m-1'
+        }
+
+        It 'writes the owners in the fixed order' {
+            $Group = (Invoke-GroupRead).Result.Groups[0]
+            (@($Group.owners) -join '|') | Should -BeExactly 'amy@contoso.com|Zed@contoso.com|zed@contoso.com'
+        }
+
+        It 'writes the eligibility by principal, then access type, then duration with a permanent one first' {
+            $Group = (Invoke-GroupRead).Result.Groups[0]
+            $Written = @($Group.eligibility | ForEach-Object { "$($_.principal)/$($_.accessType)/$(if ($null -eq $_.durationDays) { 'permanent' } else { $_.durationDays })" })
+            $Written -join '|' | Should -BeExactly 'Alice@contoso.com/member/permanent|Alice@contoso.com/member/30|alice@contoso.com/member/permanent|bob@contoso.com/member/permanent|bob@contoso.com/member/7|bob@contoso.com/owner/permanent'
+        }
+
+        It 'writes the same JSON for the same tenant listed in two orders' {
+            $First = Invoke-GroupRead
+            $script:OrderReverse = $true
+            $Second = Invoke-GroupRead
+            # Reach proof: the second read really was fed in the other order.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERGroup -Exactly -Times 2
+            (ConvertTo-Json -InputObject @($First.Result.Groups) -Depth 12) | Should -BeExactly (ConvertTo-Json -InputObject @($Second.Result.Groups) -Depth 12)
+        }
+
+        It 'writes the same JSON under -IncludeId, where two principals that share a name are told apart by their id' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipalName {
+                @{ 'p-1' = 'bob@contoso.com'; 'p-2' = 'bob@contoso.com'; 'p-3' = 'bob@contoso.com' }
+            }
+            $First = Invoke-GroupRead -IncludeId
+            $script:OrderReverse = $true
+            $Second = Invoke-GroupRead -IncludeId
+            $FirstJson = ConvertTo-Json -InputObject @($First.Result.Groups) -Depth 12
+            $FirstJson | Should -BeExactly (ConvertTo-Json -InputObject @($Second.Result.Groups) -Depth 12)
+            # Non-vacuity: the three principals share one name, so the id is what decides the order of the
+            # three permanent member eligibilities.
+            (@($First.Result.Groups[0].eligibility | Where-Object { $_.accessType -eq 'member' -and $null -eq $_.durationDays } | ForEach-Object { $_.id }) -join '|') | Should -BeExactly 'p-1|p-2|p-3'
+        }
+    }
+
+    Context 'a dynamic group writes its members as an explicit null and counts them (Sprint 11 step 10, BL-43, R-1, R-15)' {
+        # A dynamic group's membership is its rule's. Its members are READ (one request, for a group read in
+        # full) and COUNTED in DynamicMembers, never written: members is an explicit null, not an omitted key
+        # and not named unread, and the members take no part in the PIM decision.
+        BeforeEach {
+            $script:DynMembers = @(@{ id = 'u-1'; userPrincipalName = 'person1@contoso.com' }, @{ id = 'u-2'; userPrincipalName = 'person2@contoso.com' })
+            $script:DynOwners = @(@{ id = 'o-1'; userPrincipalName = 'person3@contoso.com' })
+            $script:DynGroupType = 'Dynamic'
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = 'role_sec_dynamic'; Description = $null; GroupType = $script:DynGroupType
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'
+                    MembershipRuleProcessingState = 'On'; Members = $script:DynMembers; Owners = $script:DynOwners; PimEligibility = @()
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+        }
+
+        It 'writes members as an explicit null, names nothing unread, and counts the members it read' {
+            $Read = Invoke-GroupRead
+            $Group = $Read.Result.Groups[0]
+            $Group.dynamic | Should -BeTrue
+            $Group.PSObject.Properties.Name | Should -Contain 'members' -Because 'an omitted key still reconciles and prunes'
+            $Group.members | Should -BeNullOrEmpty
+            $null -eq $Group.members | Should -BeTrue
+            (ConvertTo-Json -InputObject $Group -Depth 5) | Should -Match '"members": null'
+            $Group.membershipRule | Should -Be 'user.department -eq "IT"'
+            @($Read.Result.Unread).Count | Should -Be 0
+            @($Read.Result.Causes).Count | Should -Be 0
+            @($Read.Result.DynamicMembers).Count | Should -Be 1
+            $Read.Result.DynamicMembers[0].GroupId | Should -Be 'g-d'
+            $Read.Result.DynamicMembers[0].Group | Should -Be 'role_sec_dynamic'
+            $Read.Result.DynamicMembers[0].Members | Should -Be 2
+            # Non-vacuity: the same group, assigned, writes the members and counts none.
+            $script:DynGroupType = 'Assigned'
+            $Control = Invoke-GroupRead
+            (@($Control.Result.Groups[0].members) -join '|') | Should -BeExactly 'person1@contoso.com|person2@contoso.com'
+            @($Control.Result.DynamicMembers).Count | Should -Be 0
+        }
+
+        It 'leaves the owners and the eligibility of a dynamic group as for any group' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = 'role_sec_dynamic'; Description = $null; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'
+                    Members = $script:DynMembers; Owners = $script:DynOwners
+                    PimEligibility = @(@{ principalId = 'p-1'; accessId = 'member'; startDateTime = $null; endDateTime = $null })
+                }
+            }
+            $Group = (Invoke-GroupRead).Result.Groups[0]
+            (@($Group.owners) -join '|') | Should -BeExactly 'person3@contoso.com'
+            @($Group.eligibility).Count | Should -Be 1
+            $Group.eligibility[0].principal | Should -Be 'Person Eleven'
+        }
+
+        It 'sends no assignment read for a dynamic group with members and no owners, and one for the same group assigned' {
+            $script:DynOwners = @()
+            $null = Invoke-GroupRead
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment -Exactly -Times 0
+            # Non-vacuity: the same members decide the read for an assigned group.
+            $script:DynGroupType = 'Assigned'
+            $null = Invoke-GroupRead
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment -Exactly -Times 1
+        }
+
+        It 'lets the owners of a dynamic group decide the assignment read, leaves out a held owner, and counts every member it read' {
+            # u-1 holds an activation, which would be left out of an assigned group's members; here the members
+            # are never written, so nothing is left out of them and the count is the read's own.
+            Mock -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment {
+                [PSCustomObject]@{
+                    Read = $true; Message = $null; Exception = $null
+                    Value = @(
+                        @{ principalId = 'u-1'; accessId = 'member'; memberType = 'direct'; assignmentType = 'activated'; startDateTime = '2026-10-13T08:00:00Z'; endDateTime = '2026-10-13T16:00:00Z' }
+                        @{ principalId = 'o-1'; accessId = 'owner'; memberType = 'direct'; assignmentType = 'activated'; startDateTime = '2026-10-13T08:00:00Z'; endDateTime = '2026-10-13T16:00:00Z' }
+                    )
+                }
+            }
+            $Read = Invoke-GroupRead
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment -Exactly -Times 1
+            $Read.Result.Groups[0].PSObject.Properties.Name | Should -Not -Contain 'owners'
+            @($Read.Result.PimLeftOut).Count | Should -Be 1
+            $Read.Result.PimLeftOut[0].Members | Should -Be 0
+            $Read.Result.PimLeftOut[0].Owners | Should -Be 1
+            $Read.Result.DynamicMembers[0].Members | Should -Be 2
+        }
+
+        It 'names no members unread when the members read failed, keeps the cause the read recorded, and has no count for the group' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -Message "Could not read members for group 'g-d': Too many requests (429)." `
+                    -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'g-d' -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = 'role_sec_dynamic'; Description = $null; GroupType = $script:DynGroupType
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'
+                    Owners = $script:DynOwners; PimEligibility = @()
+                }
+            }
+            $Read = Invoke-GroupRead
+            $Group = $Read.Result.Groups[0]
+            $Group.PSObject.Properties.Name | Should -Contain 'members'
+            $null -eq $Group.members | Should -BeTrue
+            @($Read.Result.Unread) | Should -Not -Contain 'groups/role_sec_dynamic/members'
+            @($Read.Result.Unread).Count | Should -Be 0
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Read.Result.Causes[0].Cause | Should -Be "Could not read members for group 'g-d': Too many requests (429)."
+            @($Read.Result.DynamicMembers).Count | Should -Be 0
+            # Non-vacuity: the same failure on an assigned group names the members unread.
+            $script:DynGroupType = 'Assigned'
+            $Control = Invoke-GroupRead
+            @($Control.Result.Unread) | Should -Contain 'groups/role_sec_dynamic/members'
+        }
+
+        It 'drops the count of a dynamic group left out for a shared name' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = 'role_sec_shared'; Description = $null; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'
+                    Members = $script:DynMembers; Owners = @(); PimEligibility = @()
+                }
+                [PSCustomObject]@{
+                    Id = 'g-s'; DisplayName = 'ROLE_SEC_SHARED'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Members = @(); Owners = @(); PimEligibility = @()
+                }
+                [PSCustomObject]@{
+                    Id = 'g-o'; DisplayName = 'role_sec_other'; Description = $null; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "HR"'
+                    Members = @(@{ id = 'u-9'; userPrincipalName = 'person9@contoso.com' }); Owners = @(); PimEligibility = @()
+                }
+            }
+            $Read = Invoke-GroupRead -ExcludeSharedName
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_other')
+            @($Read.Result.DynamicMembers | ForEach-Object { "$($_.GroupId):$($_.Members)" }) | Should -Be @('g-o:1')
+            # Non-vacuity: without the switch both dynamic groups are counted.
+            $Control = Invoke-GroupRead
+            @($Control.Result.DynamicMembers | ForEach-Object { "$($_.GroupId):$($_.Members)" }) | Should -Be @('g-d:2', 'g-o:1')
+        }
+
+        It 'counts only the members that are there: a null in the list is no member' {
+            $script:DynMembers = @($null, @{ id = 'u-1'; userPrincipalName = 'person1@contoso.com' })
+            $Read = Invoke-GroupRead
+            $Read.Result.DynamicMembers[0].Members | Should -Be 1
+        }
+    }
+
     Context 'a PIM activation is never a standing membership (BL-125, A3)' {
         # The listing is a list of group specs: Id, Name, RoleAssignable, and the collections the read
         # can find -- Members, Owners, Eligibility -- each present only when that read succeeds. A
@@ -1218,7 +1452,7 @@ Describe 'Get-OERInventoryGroup' {
             $script:PimRows['g-pim'] = @((& $script:Standing 'u-std' 'member'), (& $script:Standing 'dev-1' 'member'), (& $script:Standing 'o-std' 'owner'))
             $Read = & $script:ReadIn $Mode
             (ConvertTo-Json -InputObject @($Read.Result.Groups) -Depth 8) | Should -BeExactly (ConvertTo-Json -InputObject @($Baseline.Result.Groups) -Depth 8)
-            (& $script:ProjectionOf $Read 'role_sec_pim').members | Should -Be @('person1@contoso.com', 'dev-1')
+            (& $script:ProjectionOf $Read 'role_sec_pim').members | Should -Be @('dev-1', 'person1@contoso.com')
             @($Read.Result.PimLeftOut).Count | Should -Be 0
             $Read.Result.Unread.Count | Should -Be 0
         }
@@ -1572,6 +1806,24 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 6 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
         }
 
+        It 'reads a dynamic group whose criterion was refused in full, asks its members once, counts them, and writes members as an explicit null (BL-43, R-15)' {
+            $script:Refuse["criterion:$script:IdDyn"] = 'Insufficient privileges to complete the operation.'
+            $script:Refuse["criterion:$script:IdPlain"] = 'Insufficient privileges to complete the operation.'
+            $Read = Invoke-GroupRead -RelevantOnly
+            $Dyn = @($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-DYN' })
+            $Dyn.Count | Should -Be 1 -Because 'a group whose relevance is unknown is read in full, a dynamic one too'
+            $Dyn[0].PSObject.Properties.Name | Should -Contain 'members'
+            $null -eq $Dyn[0].members | Should -BeTrue
+            # The group's criterion is what could not be read; its members are no gap.
+            @($Read.Result.Unread) | Should -Be @('groups/G-PLAIN/pimPolicy', 'groups/G-DYN/pimPolicy')
+            @($Read.Result.DynamicMembers | ForEach-Object { "$($_.GroupId):$($_.Group):$($_.Members)" }) | Should -Be @("$($script:IdDyn):G-DYN:1")
+            # The request pattern is the one it was: the members of a group read in full, once.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/66666666-6666-6666-6666-666666666666/members' }
+            # Non-vacuity: the assigned group read the same way writes its members, and none is counted for it.
+            $Plain = @($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-PLAIN' })
+            @($Plain[0].members) | Should -Be @('person7@contoso.com')
+        }
+
         It 'drops no group when the eligibility of every group could not be read (Review Focus 1)' {
             foreach ($G in $script:Tenant) { $script:Refuse["eligibility:$($G.Id)"] = 'Too many requests (429)' }
             $Read = Invoke-GroupRead -RelevantOnly
@@ -1904,6 +2156,25 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             }
             # The members, the owners, the eligibility and the criterion: what a full read costs G-PLAIN.
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 6 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
+        }
+
+        It 'reads the members of a dynamic group once, writes them as an explicit null, and counts them (BL-43, R-1, R-15)' {
+            $Read = Invoke-GroupRead
+            $Dyn = @($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-DYN' })
+            $Dyn.Count | Should -Be 1
+            $Dyn[0].dynamic | Should -BeTrue
+            $Dyn[0].PSObject.Properties.Name | Should -Contain 'members'
+            $null -eq $Dyn[0].members | Should -BeTrue
+            (@($Dyn[0].owners) -join '|') | Should -BeExactly 'person12@contoso.com'
+            @($Read.Result.Unread).Count | Should -Be 0
+            @($Read.Result.DynamicMembers | ForEach-Object { "$($_.GroupId):$($_.Group):$($_.Members)" }) | Should -Be @("$($script:IdDyn):G-DYN:1")
+            # The requests are the ones a full read has always made for it.
+            Get-GraphCallCount -Like "GET v1.0/groups/$($script:IdDyn)/members" | Should -Be 1
+            Get-GraphCallCount -Like "GET v1.0/groups/$($script:IdDyn)/owners" | Should -Be 1
+            # Non-vacuity: the assigned groups of the same read write their members.
+            $ByName = @{}
+            foreach ($G in $Read.Result.Groups) { $ByName[$G.displayName] = $G }
+            (@($ByName['G-PLAIN'].members) -join '|') | Should -BeExactly 'person7@contoso.com'
         }
     }
 }

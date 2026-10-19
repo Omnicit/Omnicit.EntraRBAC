@@ -522,6 +522,54 @@ Describe 'Sync-OERStructureGroup' {
         }
     }
 
+    It 'reports the members of a live dynamic group by what the document says: <Case> (Sprint 11 step 10, BL-43, R-2)' -ForEach @(
+        # Null is the schema's "leave it untouched", which an export writes for a dynamic group: nothing is
+        # declared, so there is nothing to report and no member row of any kind is written, -Prune or not.
+        @{ Case = 'an explicit null with -Prune'; Json = '{ "displayName": "role_sec_x", "dynamic": true, "members": null }'; Prune = $true; Aggregate = 0; PerMember = 0 }
+        @{ Case = 'an explicit null without -Prune'; Json = '{ "displayName": "role_sec_x", "dynamic": true, "members": null }'; Prune = $false; Aggregate = 0; PerMember = 0 }
+        # An omitted key and an empty list keep the one summary row of the 2 current members.
+        @{ Case = 'an omitted key'; Json = '{ "displayName": "role_sec_x", "dynamic": true }'; Prune = $true; Aggregate = 1; PerMember = 0 }
+        @{ Case = 'an empty list'; Json = '{ "displayName": "role_sec_x", "dynamic": true, "members": [] }'; Prune = $true; Aggregate = 1; PerMember = 0 }
+        # A declared list keeps its row for each declared member, and no summary row.
+        @{ Case = 'a declared list'; Json = '{ "displayName": "role_sec_x", "dynamic": true, "members": [ "person34@example.com", "person35@example.com" ] }'; Prune = $true; Aggregate = 0; PerMember = 2 }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Json = $Json; Prune = $Prune; Aggregate = $Aggregate; PerMember = $PerMember } {
+            param($Json, $Prune, $Aggregate, $PerMember)
+            function Invoke-SyncGroupViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Resolve-OERGroupId { 'g-1' }
+            Mock Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
+                    IsAssignableToRole = $false; GroupType = 'Dynamic'; MembershipRule = '(user.department -eq "A")'
+                    Members = @([PSCustomObject]@{ id = 'u-1' }, [PSCustomObject]@{ id = 'u-2' })
+                    PimEligibility = @()
+                }
+            }
+            Mock Add-OERGroupMember { }
+            Mock Remove-OERGroupMember { }
+            Mock Initialize-OERAuth { }
+            Mock Resolve-OERStructureDefault { $null }
+            Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+            $Item = $Json | ConvertFrom-Json
+            $Records = @(Invoke-SyncGroupViaCaller -Item $Item -Prune:$Prune)
+            # Reach proof: the item was applied, and the live group was read as dynamic with its members.
+            @($Records | Where-Object { $_.Section -eq 'groups' -and $_.Item -eq 'role_sec_x' }).Count | Should -BeGreaterThan 0
+            Should -Invoke Get-OERGroup -Exactly -Times 1
+            @($Records | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'the 2 current member(s) were not reconciled*' }).Count | Should -Be $Aggregate
+            @($Records | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like "member '*' was not reconciled*" }).Count | Should -Be $PerMember
+            if ($Json -like '*"members": null*') {
+                # No row of any kind about members, whatever its action.
+                @($Records | Where-Object { $_.Detail -match 'member' }).Count | Should -Be 0
+            }
+            Should -Invoke Add-OERGroupMember -Exactly -Times 0
+            Should -Invoke Remove-OERGroupMember -Exactly -Times 0
+        }
+    }
+
     It 'still reconciles members on a static group' {
         InModuleScope $script:moduleName {
             function Invoke-SyncGroupViaCaller {

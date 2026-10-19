@@ -57,6 +57,21 @@ function Get-OERInventory {
     each group that left any out, how many members and owners it left out and on which basis. The
     read needs the Microsoft Graph permission PrivilegedAssignmentSchedule.Read.AzureADGroup
     (Get-OERRequiredScope lists it).
+    A dynamic group's members is written as an explicit null, and is not reported as unread: its
+    membership is owned by its membership rule, so a list would be only what the rule derived at the
+    time of the read, which Invoke-OERStructure never reconciles or removes. The null is the schema's
+    "leave the membership untouched" signal, and not an omitted key, since an omitted key still
+    reconciles and, under -Prune, removes the live members of a group that is no longer dynamic by the
+    time the document is applied. The group's members are not looked at for the PIM for Groups read
+    above (a dynamic group with members and no owners sends none), and its owners and eligibility are
+    written as for any group.
+    The lists a projection writes stand in one fixed order, so two reads of one unchanged tenant write
+    one document whatever order Graph answered in: a group's members and owners, and an administrative
+    unit's members, are ordered as text without regard to letter case and, for two texts that differ
+    only in it, by ordinal comparison (Alice, alice, Bob); a group's eligibility is ordered by
+    principal, then accessType, then durationDays (a permanent eligibility, which has none, first),
+    then id. The groups and units themselves, and the entries of every other section, stay in the
+    order they were listed in.
     The Groups pimPolicy projection is emitted only for a group found to use
     PIM for Groups: one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it
     carries a lastModifiedDateTime or a lastModifiedBy). Microsoft Graph lists those policies for
@@ -1103,13 +1118,17 @@ function Get-OERInventory {
                     if ($Au.PSObject.Properties.Name -contains 'Members') {
                         # Same rule as group members (Get-OERInventoryGroup.ps1): a user as its UPN (resolvable + friendly), every other
                         # member type as its object id (which the apply resolves verbatim); display name is
-                        # not resolvable so it is only a last-resort fallback.
-                        $Proj.members = @(foreach ($M in @($Au.Members)) {
+                        # not resolvable so it is only a last-resort fallback. Written in the fixed order of
+                        # Get-OEROrderedInventoryEntry, as a group's members are (Sprint 11 step 10, BL-121, R-16):
+                        # Graph lists a unit's members in no fixed order, and the one owner of the order keeps
+                        # two reads of one unchanged unit writing one list.
+                        $AuMemberRefs = @(foreach ($M in @($Au.Members)) {
                             if (-not $M) { continue }
                             if ($M.UserPrincipalName) { [string]$M.UserPrincipalName }
                             elseif ($M.Id)            { [string]$M.Id }
                             else                      { [string]$M.DisplayName }
                         })
+                        $Proj.members = @(Get-OEROrderedInventoryEntry -InputObject $AuMemberRefs)
                     } else {
                         # Explicit null, not an omitted key: an omitted administrativeUnits[].members
                         # key still reconciles and still prunes.

@@ -112,7 +112,9 @@ function Get-OERStructureSchemaJson {
     so an explicit null is the only way a document can say "leave this collection alone" -- and it
     is what Get-OERInventory emits when the live read failed (issue #76); for groups[].members it also
     emits null when the group has members and neither its PIM for Groups assignments nor its
-    eligibility could be read. For scopedRoles, resources
+    eligibility could be read, and for a dynamic group, whose membership its membership rule owns (no
+    read failed there: the null is the group's own "leave it untouched", Sprint 11 step 10, BL-43). For
+    scopedRoles, resources
     and resourceRoles it also emits null when an entry has no name and no object id the apply engine
     accepts, since the schema refuses an empty one (minLength 1). owners and eligibility
     are deliberately NOT widened: an omitted key is already hands-off for them, so nothing in the
@@ -210,7 +212,7 @@ function Get-OERStructureSchemaJson {
           "members": {
             "type": [ "array", "null" ],
             "items": { "type": "string" },
-            "description": "An omitted key still reconciles: existing members it does not name are removed under -Prune (or reported Extra without it), except a service principal, a member of a group synchronized from on-premises, and a member PIM for Groups holds or makes eligible, none of which -Prune removes from a group. An explicit null leaves membership untouched entirely -- null, not an omitted key, is how a group is declared without touching its members. [] reconciles to no declared members. Get-OERInventory emits null here when the live read failed, and when the group has members and neither its PIM for Groups assignments nor its eligibility could be read."
+            "description": "An omitted key still reconciles: existing members it does not name are removed under -Prune (or reported Extra without it), except a service principal, a member of a group synchronized from on-premises, and a member PIM for Groups holds or makes eligible, none of which -Prune removes from a group. An explicit null leaves membership untouched entirely -- null, not an omitted key, is how a group is declared without touching its members. [] reconciles to no declared members. Get-OERInventory emits null here when the live read failed, when the group has members and neither its PIM for Groups assignments nor its eligibility could be read, and for a dynamic group, whose membership its membership rule owns and Invoke-OERStructure never reconciles."
           },
           "owners": {
             "type": "array",

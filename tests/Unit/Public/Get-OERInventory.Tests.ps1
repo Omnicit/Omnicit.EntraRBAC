@@ -684,6 +684,36 @@ Describe 'Get-OERInventory' {
                 $IncludeMembers -eq $true -and $IncludeScopedRoles -eq $true
             }
         }
+
+        It 'writes the members of a unit in the fixed order, however Graph listed them (Sprint 11 step 10, BL-121, R-16)' {
+            # A UPN, else the object id, else the display name; two UPNs differ only in letter case. The listing
+            # is fed in an order that is not the sorted one, and then in the reverse of it.
+            $script:AuMembersListed = @(
+                [PSCustomObject]@{ Id = 'u-5'; DisplayName = 'Bob'; UserPrincipalName = 'bob@example.com' }
+                [PSCustomObject]@{ Id = 'u-4'; DisplayName = 'alice'; UserPrincipalName = 'alice@example.com' }
+                [PSCustomObject]@{ Id = 'dev-9'; DisplayName = 'DEVICE-0009' }
+                [PSCustomObject]@{ Id = 'u-3'; DisplayName = 'Alice'; UserPrincipalName = 'Alice@example.com' }
+                [PSCustomObject]@{ Id = $null; DisplayName = 'A Display Name Only' }
+                [PSCustomObject]@{ Id = 'g-2'; DisplayName = 'role_sec_x' }
+            )
+            $script:AuReverse = $false
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                $Listed = $script:AuMembersListed
+                if ($script:AuReverse) { $Listed = @($Listed[($Listed.Count - 1)..0]) }
+                [PSCustomObject]@{
+                    Id = 'au-1'; DisplayName = 'AU-IT'; Description = 'IT scoped'; IsMemberManagementRestricted = $false
+                    Members = $Listed; ScopedRoles = @()
+                }
+            }
+            $First = Get-OERInventory -Include AdministrativeUnits
+            # 'A Display Name Only' (no UPN, no id) stands first: an upper-case A before every other text.
+            (@($First.AdministrativeUnits[0].members) -join '|') | Should -BeExactly 'A Display Name Only|Alice@example.com|alice@example.com|bob@example.com|dev-9|g-2'
+            $script:AuReverse = $true
+            $Second = Get-OERInventory -Include AdministrativeUnits
+            # Reach proof: the second read was fed in the other order, and the document is the same.
+            Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 2 -Exactly
+            (ConvertTo-Json -InputObject @($Second.AdministrativeUnits) -Depth 12) | Should -BeExactly (ConvertTo-Json -InputObject @($First.AdministrativeUnits) -Depth 12)
+        }
     }
 
     Context 'administrativeUnits dynamic and visibility round-trip projection' {
@@ -10909,5 +10939,116 @@ Describe 'Get-OERInventory refuses an empty or white space -Scope, -Subscription
         # validated parameters sit after -AccessReviewFilter and before -Role, as they always did.
         $Declared = @((Get-Command Get-OERInventory).Parameters.Keys | Where-Object { $_ -in @('Include', 'GroupFilter', 'Catalog', 'AccessReviewFilter', 'Scope', 'Subscription', 'ManagementGroup', 'Role') })
         $Declared | Should -Be @('Include', 'GroupFilter', 'Catalog', 'AccessReviewFilter', 'Scope', 'Subscription', 'ManagementGroup', 'Role')
+    }
+}
+
+Describe 'Get-OERInventory and Invoke-OERStructure, a dynamic group round trip (Sprint 11 step 10, BL-43, R-1, R-2)' {
+    # ONE live state, answered at the cmdlet level (the readers, the resolvers and the writers), so the real
+    # Get-OERInventory, the real Get-OERInventoryGroup, the real validator, the real Invoke-OERStructure and
+    # the real Sync-OERStructureGroup run between export and apply. The transport is stubbed to throw, so any
+    # read the fixture does not answer fails loudly. A dynamic group's members are written as an explicit
+    # null (R-1), and the apply engine's one aggregate Skipped row for the members of a dynamic group is not
+    # written for a null (R-2), so a -Prune plan of the export shows no member row at all.
+    BeforeAll {
+        $script:DynGroupId = '11111111-0000-0000-0000-000000000001'
+        $script:StaticGroupId = '11111111-0000-0000-0000-000000000002'
+        $script:UserIdByUpn = @{
+            'person1@example.com' = 'aaaaaaaa-0000-0000-0000-000000000001'
+            'person2@example.com' = 'aaaaaaaa-0000-0000-0000-000000000002'
+            'person3@example.com' = 'aaaaaaaa-0000-0000-0000-000000000003'
+        }
+        function script:New-LiveMember {
+            param([string]$Upn)
+            [PSCustomObject]@{ id = $script:UserIdByUpn[$Upn]; displayName = $Upn; userPrincipalName = $Upn; ObjectType = 'User' }
+        }
+        # The live groups as Get-OERGroup answers them, the members listed in an order that is not the order the
+        # export writes them in.
+        function script:New-LiveGroups {
+            @(
+                [PSCustomObject]@{
+                    Id = $script:DynGroupId; DisplayName = 'dyn_all_it'; Description = 'Everyone in IT'; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; SecurityEnabled = $true; MembershipRule = '(user.department -eq "IT")'
+                    MembershipRuleProcessingState = 'On'; MailNickname = 'dynallit'
+                    Members = @((New-LiveMember 'person2@example.com'), (New-LiveMember 'person1@example.com'))
+                    Owners = @((New-LiveMember 'person3@example.com')); PimEligibility = @()
+                }
+                [PSCustomObject]@{
+                    Id = $script:StaticGroupId; DisplayName = 'role_sec_team'; Description = 'Team'; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; SecurityEnabled = $true; MembershipRule = $null
+                    MembershipRuleProcessingState = $null; MailNickname = 'roleSecTeam'
+                    Members = @((New-LiveMember 'person2@example.com'), (New-LiveMember 'person1@example.com'))
+                    Owners = @((New-LiveMember 'person3@example.com')); PimEligibility = @()
+                }
+            )
+        }
+        # The document the export writes, serialized and read back the way a file is, so an explicit null stays one.
+        function script:Export-GroupsDocument {
+            $Inv = Get-OERInventory -Include Groups -ErrorAction Stop -WarningAction SilentlyContinue
+            ([PSCustomObject][ordered]@{ version = '1.0'; groups = @($Inv.groups) } | ConvertTo-Json -Depth 12) | ConvertFrom-Json
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        $script:E2eLive = New-LiveGroups
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected transport call: $Uri" }
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            foreach ($LiveGroup in $script:E2eLive) { if (-not $Group -or $LiveGroup.Id -eq $Group) { $LiveGroup } }
+        }
+        Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility'; Manageable = $true } }
+        Mock -ModuleName $script:moduleName Read-OERGroupPimAssignment { [PSCustomObject]@{ Read = $true; Value = @(); Message = $null; Exception = $null } }
+        Mock -ModuleName $script:moduleName Read-OERGroupPimHold { [PSCustomObject]@{ Read = $true; Held = @{}; Cause = $null } }
+        Mock -ModuleName $script:moduleName Get-OERGroupNameIndex { & $script:NewEmptyGroupNameIndex }
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { param($DisplayName) @($script:E2eLive | Where-Object { $_.DisplayName -eq $DisplayName })[0].Id }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { param($Reference) $script:UserIdByUpn[[string]$Reference] }
+        Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+        Mock -ModuleName $script:moduleName Add-OERGroupMember { }
+        Mock -ModuleName $script:moduleName Remove-OERGroupMember { }
+        Mock -ModuleName $script:moduleName Set-OERGroup { }
+        Mock -ModuleName $script:moduleName New-OERGroup { }
+    }
+
+    It 'exports the dynamic group with members as an explicit null, and the static group with its members in the fixed order' {
+        $Doc = Export-GroupsDocument
+        $Dyn = @($Doc.groups | Where-Object { $_.displayName -eq 'dyn_all_it' })[0]
+        $Dyn.dynamic | Should -BeTrue
+        $Dyn.PSObject.Properties.Name | Should -Contain 'members'
+        $null -eq $Dyn.members | Should -BeTrue
+        (@($Dyn.owners) -join '|') | Should -BeExactly 'person3@example.com'
+        $Static = @($Doc.groups | Where-Object { $_.displayName -eq 'role_sec_team' })[0]
+        # The live read listed person2 before person1; the export writes them the other way round.
+        (@($Static.members) -join '|') | Should -BeExactly 'person1@example.com|person2@example.com'
+    }
+
+    It 'applies the export with -Prune -WhatIf, plans no member change, and writes no row about the dynamic group''s members' {
+        $Doc = Export-GroupsDocument
+        $Rows = @(Invoke-OERStructure -InputObject $Doc -Prune -WhatIf -ErrorAction SilentlyContinue -ErrorVariable ApplyErr -WarningAction SilentlyContinue)
+        # Reach proof: both groups were applied, and the run was not refused.
+        @($Rows | Where-Object { $_.Section -eq 'groups' -and $_.Item -eq 'dyn_all_it' }).Count | Should -BeGreaterThan 0
+        @($Rows | Where-Object { $_.Section -eq 'groups' -and $_.Item -eq 'role_sec_team' }).Count | Should -BeGreaterThan 0
+        @($ApplyErr).Count | Should -Be 0
+        # No row of any kind about the dynamic group's members, and nothing the run would change.
+        @($Rows | Where-Object { $_.Item -eq 'dyn_all_it' -and $_.Detail -match 'member' }) | Should -BeNullOrEmpty
+        @($Rows | Where-Object { $_.Item -eq 'dyn_all_it' -and $_.Action -eq 'Skipped' }) | Should -BeNullOrEmpty
+        @($Rows | Where-Object { $_.Action -in @('Created', 'Updated', 'Deleted', 'Extra') }) | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERGroup -Times 0
+        # The static group's members, written in another order than the live read listed them, are all present.
+        @($Rows | Where-Object { $_.Item -eq 'role_sec_team' -and $_.Detail -like "member '*' already present" }).Count | Should -Be 2
+    }
+
+    It 'still writes the aggregate row for a document whose members key is <Case>, since it is not the null that says leave it untouched (R-2 keeps today''s rows)' -ForEach @(
+        @{ Case = 'omitted'; Mutate = { param($Dyn) $Dyn.PSObject.Properties.Remove('members') } }
+        @{ Case = 'an empty list'; Mutate = { param($Dyn) $Dyn.members = @() } }
+    ) {
+        $Doc = Export-GroupsDocument
+        $Dyn = @($Doc.groups | Where-Object { $_.displayName -eq 'dyn_all_it' })[0]
+        & $Mutate $Dyn
+        $Rows = @(Invoke-OERStructure -InputObject $Doc -Prune -WhatIf -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+        $Aggregate = @($Rows | Where-Object { $_.Item -eq 'dyn_all_it' -and $_.Action -eq 'Skipped' -and $_.Detail -like 'the 2 current member(s) were not reconciled*' })
+        $Aggregate.Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0
     }
 }

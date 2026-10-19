@@ -57,7 +57,11 @@ function Export-OERInventory {
     are written as null for the reason given below, and every group that is not security-enabled.
     Null means not known, which is not zero: a count would cost a request per group. The count is
     the group's live member count, so it includes the members left out of inventory.json as PIM for
-    Groups access (see MEMBERS AND OWNERS THAT PIM FOR GROUPS HOLDS). Each row also carries the
+    Groups access (see MEMBERS AND OWNERS THAT PIM FOR GROUPS HOLDS). A dynamic group's members are
+    written as an explicit null in inventory.json and groups.json, since its membership rule owns
+    them and Invoke-OERStructure never reconciles them, and they are not named in IncompleteReads;
+    the export still reads them when it reads the group in full and counts them, so such a group's
+    row carries its count. Each row also carries the
     group's object id, so two groups with one display name, or a group that was renamed, can be
     told apart; its type, as the three values Microsoft Graph gives it (securityEnabled and
     mailEnabled, each true, false or null when Graph gave none, and groupTypes, always an array,
@@ -78,7 +82,9 @@ function Export-OERInventory {
     eligible for the same access is left out instead; when the group's eligibility could not be read
     either, a members collection that holds entries is written as an explicit null and an owners
     collection that holds entries is left out, both named in IncompleteReads, and the roster's
-    memberCount is null for a group whose members are written as null. The generated README.md names
+    memberCount is null for a group whose members are written as null for that reason. A dynamic
+    group is not one: PIM for Groups cannot manage it, so its members are not looked at for that
+    read, and it is counted as described under groupsRoster.json. The generated README.md names
     the groups concerned that inventory.json writes in a section "Members and owners left out as PIM
     for Groups access": for each group, by name and never by principal, how many members and owners
     were left out and on which basis, or the statement that none was. Leaving a member or owner out
@@ -821,11 +827,12 @@ function Export-OERInventory {
                 # Sprint 11 step 10 (BL-44): the stand-in result, the bookkeeping the rest of the export reads,
                 # is assigned BEFORE the warning (see the roster catch above).
                 $GroupRead = [PSCustomObject]@{
-                    Groups      = @()
-                    Unread      = @('groups')
-                    Causes      = @([PSCustomObject]@{ Cause = $GroupReadCause; Target = '' })
-                    PimLeftOut  = @()
-                    SharedNames = @()
+                    Groups         = @()
+                    Unread         = @('groups')
+                    Causes         = @([PSCustomObject]@{ Cause = $GroupReadCause; Target = '' })
+                    PimLeftOut     = @()
+                    DynamicMembers = @()
+                    SharedNames    = @()
                 }
                 Write-Warning $GroupReadCause
             }
@@ -1597,6 +1604,21 @@ function Export-OERInventory {
             $MemberCount = if ($null -ne $G.members) { @($G.members).Count } else { $null }
             if ($G.PSObject.Properties.Name -contains 'id' -and $G.id) {
                 $CountById[[string]$G.id] = $MemberCount
+            }
+        }
+        # Sprint 11 step 10 (BL-43, R-15): a DYNAMIC group's members are written as an explicit null, so the
+        # map above holds null for it, which would read as "not known". The reader still reads a dynamic
+        # group's members when it reads the group in full and counts what it found in DynamicMembers, one
+        # entry per such group (none for a group whose members read failed, whose count stays not known,
+        # nor for a group left out for a shared name). The count goes in BEFORE the PimLeftOut addition
+        # below, which cannot apply to a dynamic group: PIM for Groups cannot manage one. A reader result
+        # that carries no DynamicMembers list is filtered, as PimLeftOut's is, so it never becomes one null
+        # entry.
+        $DynamicMembers = @(if ($GroupRead) { @($GroupRead.DynamicMembers) | Where-Object { $null -ne $_ } })
+        foreach ($DynamicEntry in $DynamicMembers) {
+            $DynamicId = [string]$DynamicEntry.GroupId
+            if ($DynamicId -and $CountById.ContainsKey($DynamicId)) {
+                $CountById[$DynamicId] = [int]$DynamicEntry.Members
             }
         }
         # BL-125: the reader leaves a member whose membership PIM for Groups holds out of members,
