@@ -11315,7 +11315,9 @@ Describe 'Get-OERInventory uses the principal name cache of its run context (Spr
     # PrincipalNameCache, the very hashtable the export handed to its group read, so a principal the reader named
     # through a PIM eligibility is not looked up again by the reviewers of an access review or the principals of a
     # directory role section. The context is used only while its Owner is on the call stack (as the other members
-    # are), and its member only when it is a dictionary; without either, the invocation keeps a cache of its own.
+    # are), and its member only when it is a [hashtable] (R-27: the reader's -PrincipalNameCache is a [hashtable], which
+    # binds another dictionary as a COPY, and the sections call ContainsKey, which an [ordered] dictionary has not);
+    # without either, the invocation keeps a cache of its own.
     # The directory role section stands for the consumers, since it names a user through the cache with one mocked
     # lookup. No id below is version-4 shaped.
     BeforeAll {
@@ -11411,15 +11413,20 @@ Describe 'Get-OERInventory uses the principal name cache of its run context (Spr
         @{ Case = 'null'; Member = @{ PrincipalNameCache = $null } }
         @{ Case = 'a string'; Member = @{ PrincipalNameCache = 'not a dictionary' } }
         @{ Case = 'an array'; Member = @{ PrincipalNameCache = @('a', 'b') } }
+        # R-27: a dictionary that is no [hashtable] reads as none. The reader would take it as a copy and lose what
+        # it learns, and an [ordered] dictionary has no ContainsKey, which the sections call.
+        @{ Case = 'an ordered dictionary'; Member = @{ PrincipalNameCache = [ordered]@{} } }
+        @{ Case = 'a generic dictionary'; Member = @{ PrincipalNameCache = [System.Collections.Generic.Dictionary[string, string]]::new() } }
     ) {
         $Run = Invoke-PnAsExport -Member $Member -Times 2
         # Reach proof: both calls wrote the principal by its name, so each looked it up through a cache of its own.
         @($Run.Inventory[0].directoryRoleAssignments | ForEach-Object { $_.principal }) | Should -Be @('person1@contoso.com')
         @($Run.Inventory[1].directoryRoleAssignments | ForEach-Object { $_.principal }) | Should -Be @('person1@contoso.com')
         Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 2 -Exactly
-        # What the context carried is what it still carries.
+        # What the context carried is what it still carries, and a dictionary it carried was written nothing.
         if ($Member.ContainsKey('PrincipalNameCache')) {
             [object]::ReferenceEquals($Run.Context.PrincipalNameCache, $Member['PrincipalNameCache']) | Should -BeTrue
+            if ($Member['PrincipalNameCache'] -is [System.Collections.IDictionary]) { $Member['PrincipalNameCache'].Count | Should -Be 0 }
         } else {
             $Run.Context.PSObject.Properties.Name | Should -Not -Contain 'PrincipalNameCache'
         }

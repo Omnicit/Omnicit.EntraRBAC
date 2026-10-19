@@ -25,8 +25,11 @@ function Export-OERInventory {
     authenticates at entry; an ARM token is acquired only when -Include names RoleAssignments or
     RoleManagementPolicies, the two Azure sections. When that sign-in is refused, or the Azure Resource
     Manager token it was asked for cannot be acquired, the export stops before it reads or writes
-    anything: the sign-in's own error is published with its own ErrorId, no bundle folder is written and
-    no object is returned.
+    anything, under every error preference: no bundle folder is written and no object is returned. The
+    sign-in's own error is published with its own ErrorId, as a terminating error when the sign-in
+    terminated (a try around the call catches it) and as the non-terminating error the sign-in wrote
+    when it only failed to acquire the Azure Resource Manager token (under -ErrorAction Ignore that
+    error is not shown and is kept in $Error).
 
     HOW THE GROUPS ARE READ. Without -AllGroupsDetailed the export decides which groups are relevant
     BEFORE it reads any group in full, so in a tenant with very many groups a group that is not
@@ -729,9 +732,15 @@ function Export-OERInventory {
         # try, directly in this command's own block (a try is no script block and no nested function, so
         # the sign-in latch is still keyed on this frame, and gate 10 of tests/QA/sourcehygiene.tests.ps1
         # allows it), and a refusal is caught: the record is scrubbed FIRST (it can reach a token call),
-        # then published as it is -- the sign-in's own record with its own ErrorId, no new one (A9) --
-        # and the export is marked refused. Under a Stop preference WriteError ends the command here,
-        # which is the preference's meaning.
+        # the export is marked refused, and the record is raised again with ThrowTerminatingError -- the
+        # sign-in's own record with its own ErrorId, no new one (A9), and the kind it always had. So a
+        # caller's try { Export-OERInventory ... } catch { } catches it exactly as it did before this
+        # step, a -WarningAction Stop on the sign-in's pre-call warning still reaches the caller as a
+        # terminating error, and outside any try only this statement ends and the script carries on
+        # (R-26). It is raised whatever the error preference, with a try above it or none: measured under
+        # every -ErrorAction value, ThrowTerminatingError ends the command and is not governed by one. The
+        # mark is therefore a second line of defence that costs nothing: were the record only written, as
+        # the first version did, process would still return on it.
         #
         # ArmTokenAcquisitionFailed is the one refusal Initialize-OERAuth WRITES without terminating
         # (it writes the error and returns, with the Graph half connected), so the catch never sees it.
@@ -743,14 +752,23 @@ function Export-OERInventory {
         # refused export reads nothing more, never asks for the tenant ID, writes no folder and emits no
         # object (process returns at once). Get-OERSignInRefusal is not asked for here: the latch is the
         # transports' to read, and this decision is made on the sign-in's own outcome.
+        #
+        # R-25: under -ErrorAction Ignore (or $ErrorActionPreference = 'Ignore') PowerShell adds a written
+        # record to NO -ErrorVariable (measured), so the variable would be empty and the export, not seeing
+        # the ARM refusal, would carry on and write the bundle folder this block exists to prevent. Only
+        # Ignore is pinned away: the call then runs under SilentlyContinue, which collects the record and
+        # shows nothing, as Ignore shows nothing. The cost is that under Ignore the record lands in
+        # $Error, as it does under SilentlyContinue; every other preference reaches the call unchanged.
         $SignInRefused = $false
         $SignInErrors = $null
+        $SignInSplat = @{}
+        if ($ErrorActionPreference -eq 'Ignore') { $SignInSplat.ErrorAction = 'SilentlyContinue' }
         try {
-            Initialize-OERAuth @AuthParams -ErrorVariable SignInErrors
+            Initialize-OERAuth @AuthParams @SignInSplat -ErrorVariable SignInErrors
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $SignInRefused = $true
-            $PSCmdlet.WriteError($PSItem)
+            $PSCmdlet.ThrowTerminatingError($PSItem)
         }
         foreach ($SignInError in @($SignInErrors)) {
             if ($null -eq $SignInError) { continue }
@@ -936,7 +954,7 @@ function Export-OERInventory {
         #
         # Sprint 11 step 10 (BL-122, R-12): one more member, PrincipalNameCache, the id to display name
         # hashtable the group read above was handed (see where it is created). Get-OERInventory uses it as its
-        # own cache of principal names when the context is its own and the member is a dictionary.
+        # own cache of principal names when the context is its own and the member is a [hashtable] (R-27).
         $RunContext = [PSCustomObject]@{
             Owner                = $MyInvocation
             GroupNameIndex       = $GroupNameIndex

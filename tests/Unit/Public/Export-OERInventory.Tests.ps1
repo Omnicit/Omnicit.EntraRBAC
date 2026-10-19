@@ -8863,12 +8863,14 @@ Describe 'Export-OERInventory (the roster count of a dynamic group, through the 
 Describe 'Export-OERInventory (a refused sign-in reads nothing, writes no folder and returns no object, Sprint 11 step 10, BL-101, R-8)' {
     # BL-101 (first point, R-8). A terminating refusal of Initialize-OERAuth ends only that function, and outside
     # any try the export carried on and wrote a bundle folder of empty files. The export now calls it in a try, with
-    # -ErrorVariable, directly in its begin block: a terminating refusal is caught, scrubbed and published as the
-    # sign-in's own record, and so is ArmTokenAcquisitionFailed, the one refusal that is only WRITTEN, which the
-    # variable holds. Either marks the export refused, and a refused export reads nothing more, never asks for the
-    # tenant ID, writes no folder and returns no object. The errors are counted on the error STREAM (2>&1), what the
-    # caller is shown: -ErrorVariable also keeps the errors a command caught, so its count says less. No id below is
-    # version-4 shaped.
+    # -ErrorVariable, directly in its begin block: a terminating refusal is caught, scrubbed and raised again as the
+    # sign-in's own record, a terminating error as it always was (R-26: a caller's try catches it, with or without
+    # -ErrorAction Stop), and ArmTokenAcquisitionFailed, the one refusal that is only WRITTEN, is found in the
+    # variable (R-25: also under Ignore, which adds a written record to no variable, so the call is pinned to
+    # SilentlyContinue then). Either marks the export refused, and a refused export reads nothing more, never asks
+    # for the tenant ID, writes no folder and returns no object. A written error is counted on the error STREAM
+    # (2>&1), what the caller is shown: -ErrorVariable also keeps the errors a command caught, so its count says
+    # less. No id below is version-4 shaped.
     BeforeAll {
         # The refusals as Initialize-OERAuth makes them. [CmdletBinding()] gives each mock the common parameters
         # the export's -ErrorVariable needs, as the real function has them. ThrowTerminatingError is how the real
@@ -8890,12 +8892,13 @@ Describe 'Export-OERInventory (a refused sign-in reads nothing, writes no folder
                 -Category AuthenticationError -TargetObject 'fixture-tenant' -ErrorAction Continue
         }
         # What the inner calls of a SUCCESSFUL sign-in can leave in -ErrorVariable: records of other ids, among them
-        # three that only LOOK like the one refusal -- the id inside a longer one, the id with a suffix, and the id
-        # after a comma, where it is no longer the first segment.
+        # four that only LOOK like the one refusal -- the id inside a longer one, the id with a suffix, the id
+        # after a comma, where it is no longer the first segment, and the id in another letter case, which the
+        # comparison (ordinal) does not read as the same id.
         $script:RsStrays = {
             [CmdletBinding()]
             param([string]$TenantId, [switch]$IncludeARM)
-            foreach ($StrayId in 'TenantLookupRetried', 'NotArmTokenAcquisitionFailed', 'ArmTokenAcquisitionFailedLater', 'Inner,ArmTokenAcquisitionFailed') {
+            foreach ($StrayId in 'TenantLookupRetried', 'NotArmTokenAcquisitionFailed', 'ArmTokenAcquisitionFailedLater', 'Inner,ArmTokenAcquisitionFailed', 'armTokenAcquisitionFailed') {
                 Write-Error -Exception ([System.Exception]::new("A stray record of a successful sign-in ($StrayId).")) -ErrorId $StrayId `
                     -Category NotSpecified -TargetObject 'fixture-tenant' -ErrorAction Continue
             }
@@ -8910,17 +8913,26 @@ Describe 'Export-OERInventory (a refused sign-in reads nothing, writes no folder
             }
         }
         # One export, its result, the records that reached the caller's streams (warnings and errors, as 3>&1 2>&1
-        # delivers them) and what it wrote. A root of its own per call, so a folder that was written cannot be
-        # another call's.
+        # delivers them), the terminating error that ended it (R-26: a terminating refusal is raised to the caller,
+        # so it is caught here and never on the streams) and what it wrote. A root of its own per call, so a folder
+        # that was written cannot be another call's. -ErrorAction Continue is the caller's own preference, so a
+        # record the export WRITES reaches the stream and one it RAISES reaches the catch.
         function script:Invoke-RsExport {
             param([hashtable]$Splat)
             $Root = Join-Path $TestDrive ('rs-' + [guid]::NewGuid().ToString('N'))
-            $All = @(Export-OERInventory -OutputPath $Root @Splat -ErrorAction Continue -WarningAction Continue 3>&1 2>&1)
+            $All = @()
+            $Terminated = $null
+            try {
+                $All = @(Export-OERInventory -OutputPath $Root @Splat -ErrorAction Continue -WarningAction Continue 3>&1 2>&1)
+            } catch {
+                $Terminated = $PSItem
+            }
             [PSCustomObject]@{
-                Root     = $Root
-                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
-                Errors   = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
-                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                Root       = $Root
+                Result     = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+                Errors     = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                Terminated = $Terminated
+                Warnings   = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
             }
         }
         # The ErrorId of a record: the first segment of its FullyQualifiedErrorId, before the ',<command>' suffix.
@@ -8963,9 +8975,18 @@ Describe 'Export-OERInventory (a refused sign-in reads nothing, writes no folder
         $Run = Invoke-RsExport -Splat @{ Include = $Include; TenantId = 'fixture-tenant'; AllRolePolicies = $true }
         # Reach proof: the sign-in was attempted, with the tenant named.
         Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $TenantId -ceq 'fixture-tenant' }
-        # The record: the sign-in's own, once, and nothing else on either stream.
-        @($Run.Errors).Count | Should -Be 1
-        Get-RsErrorId -Record $Run.Errors[0] | Should -BeExactly $Id
+        # The record: the sign-in's own, once. A refusal that terminated is raised to the caller as a terminating
+        # error (R-26) and is never also written to the stream; one the sign-in only wrote is on the stream (the
+        # sign-in wrote it) and is never raised.
+        if ($Kind -eq 'terminating') {
+            $Run.Terminated | Should -Not -BeNullOrEmpty
+            Get-RsErrorId -Record $Run.Terminated | Should -BeExactly $Id
+            @($Run.Errors).Count | Should -Be 0
+        } else {
+            $Run.Terminated | Should -BeNullOrEmpty
+            @($Run.Errors).Count | Should -Be 1
+            Get-RsErrorId -Record $Run.Errors[0] | Should -BeExactly $Id
+        }
         @($Run.Warnings).Count | Should -Be 0
         # No object, no folder, no read of any kind, no tenant ID asked for.
         @($Run.Result).Count | Should -Be 0
@@ -8989,9 +9010,11 @@ Describe 'Export-OERInventory (a refused sign-in reads nothing, writes no folder
         Should -Invoke -ModuleName $script:moduleName Get-OERInventoryTenantId -Times 1 -Exactly
         Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 1 -Exactly
         # The stray records are the sign-in's own to publish, and reached the caller's error stream as they were
-        # written (four of them), with no refusal beside them.
-        @($Run.Errors | ForEach-Object { Get-RsErrorId -Record $_ } | Where-Object { $_ -in @('TenantLookupRetried', 'NotArmTokenAcquisitionFailed', 'ArmTokenAcquisitionFailedLater', 'Inner') }).Count | Should -Be 4
-        @($Run.Errors | ForEach-Object { Get-RsErrorId -Record $_ } | Where-Object { $_ -eq 'ArmTokenAcquisitionFailed' }).Count | Should -Be 0
+        # written (five of them), with no refusal beside them. The id in another letter case is one of the five and
+        # is not the refusal's id, so the refusal's is counted with -ceq, which -eq would not do.
+        @($Run.Errors | ForEach-Object { Get-RsErrorId -Record $_ } | Where-Object { $_ -in @('TenantLookupRetried', 'NotArmTokenAcquisitionFailed', 'ArmTokenAcquisitionFailedLater', 'Inner', 'armTokenAcquisitionFailed') }).Count | Should -Be 5
+        @($Run.Errors | ForEach-Object { Get-RsErrorId -Record $_ } | Where-Object { $_ -ceq 'ArmTokenAcquisitionFailed' }).Count | Should -Be 0
+        $Run.Terminated | Should -BeNullOrEmpty
     }
 
     It 'ends the export with the sign-in''s own record under -ErrorAction Stop when the sign-in is refused, and writes no folder' {
@@ -9012,17 +9035,44 @@ Describe 'Export-OERInventory (a refused sign-in reads nothing, writes no folder
         Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 0
     }
 
-    It 'scrubs the refused sign-in''s record first, once, before it publishes it' {
+    It 'raises a terminating refusal as a terminating error, so a caller''s try catches it with no -ErrorAction Stop, and writes no folder (R-26)' {
+        # Before this step a refusal at the export's entry propagated as a terminating error whenever a try stood up
+        # the stack, and a caller's try { Export-OERInventory ... } catch { } caught it. The caller here passes
+        # -ErrorAction Continue, not Stop: the catch must fire on the kind of the error, not on the preference. A
+        # record the export only WROTE (WriteError) would reach the stream, the try would not fire and the script
+        # would carry on as though it had a bundle.
+        Mock -ModuleName $script:moduleName Initialize-OERAuth -MockWith (Get-RsMockBody -Kind 'terminating')
+        $Root = Join-Path $TestDrive ('rs-catch-' + [guid]::NewGuid().ToString('N'))
+        $Caught = $null
+        $Carried = $false
+        try {
+            $null = @(Export-OERInventory -OutputPath $Root -Include Groups -ErrorAction Continue 2>&1)
+            $Carried = $true
+        } catch {
+            $Caught = $PSItem
+        }
+        # Reach proof: the sign-in was attempted once.
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        $Carried | Should -BeFalse
+        $Caught | Should -Not -BeNullOrEmpty
+        Get-RsErrorId -Record $Caught | Should -BeExactly 'TenantResolutionFailed'
+        Test-Path -LiteralPath $Root | Should -BeFalse
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryTenantId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 0
+    }
+
+    It 'scrubs the refused sign-in''s record first, once, before it raises it' {
         # The record can reach a token call, so Remove-OERErrorRecord is the catch's first statement: the order the
         # two reach the module's own commands is the proof, the scrub as a mock that notes it and the record
-        # published through the error stream after it.
+        # raised to the caller's catch after it.
         Mock -ModuleName $script:moduleName Initialize-OERAuth -MockWith (Get-RsMockBody -Kind 'terminating')
         $script:RsSeq = [System.Collections.Generic.List[string]]::new()
         Mock -ModuleName $script:moduleName Remove-OERErrorRecord { param($Record) $script:RsSeq.Add("scrub: $(([string]$Record.FullyQualifiedErrorId).Split(',')[0])") }
         $Root = Join-Path $TestDrive ('rs-scrub-' + [guid]::NewGuid().ToString('N'))
         $Caught = $null
         try {
-            Export-OERInventory -OutputPath $Root -Include Groups -ErrorAction Stop | Out-Null
+            Export-OERInventory -OutputPath $Root -Include Groups -ErrorAction Continue | Out-Null
         } catch {
             $script:RsSeq.Add('published')
             $Caught = $PSItem
@@ -9037,49 +9087,73 @@ Describe 'Export-OERInventory (a refused sign-in reads nothing, writes no folder
         # one, so the export runs in a runspace and a script with no try (the pattern of the run context test above).
         # The sign-in is the REAL Initialize-OERAuth: the marker is set in the runspace's own copy of the module, and
         # a call that names no tenant is refused with SignInRefused before any token call, so the transport tripwire
-        # installed in that runspace records nothing.
+        # installed in that runspace records nothing. The refusal reaches the caller as a TERMINATING error (R-26),
+        # which ends only the export's statement here and is not part of what 2>&1 carries, so the script reads it
+        # from $Error, cleared directly before the call.
         $Root = Join-Path $TestDrive 'rs-no-try'
         $HitsBefore = @($global:OERTransportTripwireHits).Count
         $Scenario = [scriptblock]::Create((@'
 Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
 & (Get-Module Omnicit.EntraRBAC) { $null = Set-OERSessionUncertain -Value $true }
+$Error.Clear()
 $Items = @(Export-OERInventory -OutputPath '#ROOT#' -Include Groups -Confirm:$false 2>&1)
 foreach ($Item in $Items) {
-    if ($Item -is [System.Management.Automation.ErrorRecord]) { "ERR:$(([string]$Item.FullyQualifiedErrorId).Split(',')[0])" }
+    if ($Item -is [System.Management.Automation.ErrorRecord]) { "STREAM:$(([string]$Item.FullyQualifiedErrorId).Split(',')[0])" }
     elseif ($Item.PSObject.TypeNames[0] -eq 'Omnicit.EntraRBAC.InventoryBundle') { 'BUNDLE' }
     else { "OTHER:$Item" }
 }
+foreach ($Record in @($Error)) { "ERR:$(([string]$Record.FullyQualifiedErrorId).Split(',')[0])" }
 'END'
 '@).Replace('#ROOT#', $Root.Replace("'", "''")))
         $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
-        # The script reached its end; the one error is the sign-in's own; no bundle object came back.
+        # The script reached its end; the one error is the sign-in's own, raised and not written to the stream; no
+        # bundle object came back.
         ($Run.Output -join '|') | Should -Be 'ERR:SignInRefused|END'
+        @($Run.Errors).Count | Should -Be 1
         @($Run.Warnings).Count | Should -Be 0
         # Nothing was written, and the tripwire recorded no transport call (no token request, no connection).
         Test-Path -LiteralPath $Root | Should -BeFalse
         @($global:OERTransportTripwireHits).Count | Should -Be $HitsBefore
     }
 
-    It 'stops when a plain sign-in function only WRITES ArmTokenAcquisitionFailed, under -ErrorAction <Preference>, with the record once and nothing read or written' -ForEach @(
-        @{ Preference = 'Continue'; Call = '$Items = @(Export-OERInventory -OutputPath ''#ROOT#'' -Include Groups -ErrorAction Continue -Confirm:$false 2>&1)' }
-        @{ Preference = 'Stop'; Call = 'try { $Items = @(Export-OERInventory -OutputPath ''#ROOT#'' -Include Groups -ErrorAction Stop -Confirm:$false 2>&1) } catch { $Items = @($PSItem) }' }
+    It 'stops when a plain sign-in function <Does>, under <Preference>, with nothing read or written and <Shown>' -ForEach @(
+        @{ Name = 'continue'; Does = 'only WRITES ArmTokenAcquisitionFailed'; SignIn = 'arm'; Preference = '-ErrorAction Continue'; Shown = 'the record once'; Expected = 'ERR:ArmTokenAcquisitionFailed|END'; Call = '$Items = @(Export-OERInventory -OutputPath ''#ROOT#'' -Include Groups -ErrorAction Continue -Confirm:$false 2>&1)' }
+        @{ Name = 'stop'; Does = 'only WRITES ArmTokenAcquisitionFailed'; SignIn = 'arm'; Preference = '-ErrorAction Stop'; Shown = 'the record once'; Expected = 'ERR:ArmTokenAcquisitionFailed|END'; Call = 'try { $Items = @(Export-OERInventory -OutputPath ''#ROOT#'' -Include Groups -ErrorAction Stop -Confirm:$false 2>&1) } catch { $Items = @($PSItem) }' }
+        # R-25: SilentlyContinue and Ignore show nothing, and the export is refused all the same. Ignore is the
+        # preference under which PowerShell adds a written record to no -ErrorVariable, so only the pin of the
+        # sign-in call to SilentlyContinue lets the export see the refusal; both spellings of it are held.
+        @{ Name = 'silentlycontinue'; Does = 'only WRITES ArmTokenAcquisitionFailed'; SignIn = 'arm'; Preference = '-ErrorAction SilentlyContinue'; Shown = 'nothing shown'; Expected = 'END'; Call = '$Items = @(Export-OERInventory -OutputPath ''#ROOT#'' -Include Groups -ErrorAction SilentlyContinue -Confirm:$false 2>&1)' }
+        @{ Name = 'ignore-parameter'; Does = 'only WRITES ArmTokenAcquisitionFailed'; SignIn = 'arm'; Preference = '-ErrorAction Ignore'; Shown = 'nothing shown'; Expected = 'END'; Call = '$Items = @(Export-OERInventory -OutputPath ''#ROOT#'' -Include Groups -ErrorAction Ignore -Confirm:$false 2>&1)' }
+        @{ Name = 'ignore-variable'; Does = 'only WRITES ArmTokenAcquisitionFailed'; SignIn = 'arm'; Preference = '$ErrorActionPreference = ''Ignore'''; Shown = 'nothing shown'; Expected = 'END'; Call = '$ErrorActionPreference = ''Ignore''; $Items = @(Export-OERInventory -OutputPath ''#ROOT#'' -Include Groups -Confirm:$false 2>&1)' }
+        # R-26: the sign-in's pre-call warning (a client secret switch it predicts will not take effect) under
+        # -WarningAction Stop is itself a terminating error. The export's catch sees it like any refusal and must
+        # raise it again, so a caller's try catches it with no -ErrorAction Stop, as it did before this step.
+        @{ Name = 'warning-stop'; Does = 'writes its pre-call warning'; SignIn = 'warn'; Preference = '-WarningAction Stop with -ErrorAction Continue'; Shown = 'a terminating error caught by the caller'; Expected = 'CAUGHT:ActionPreferenceStop|END'; Call = 'try { $Items = @(Export-OERInventory -OutputPath ''#ROOT#'' -Include Groups -ErrorAction Continue -WarningAction Stop -Confirm:$false 2>&1); ''CARRIED'' } catch { "CAUGHT:$(([string]$PSItem.FullyQualifiedErrorId).Split('','')[0])" }' }
     ) {
         # A Pester mock runs under the Stop preference, so it cannot show the non-terminating shape of this refusal:
         # the real function writes the record with the calling command's own preference, through the caller's error
         # stream under Continue and as a terminating error under Stop. A runspace has no Pester above it, and a plain
         # function stands in for the sign-in there. The reads below it are stubs that log a call, so an export that
         # was NOT refused would show in the log and as a folder.
-        $Root = Join-Path $TestDrive "rs-arm-$Preference"
-        $Log = Join-Path $TestDrive "rs-arm-$Preference.log"
+        $SignInBody = switch ($SignIn) {
+            'arm' {
+                @'
+        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Failed to acquire an Azure Resource Manager token (fixture).'), 'ArmTokenAcquisitionFailed',
+                [System.Management.Automation.ErrorCategory]::AuthenticationError, 'fixture-tenant'))
+'@
+            }
+            'warn' { "        Write-Warning 'The client secret switch will not take effect (fixture).'" }
+        }
+        $Root = Join-Path $TestDrive "rs-arm-$Name"
+        $Log = Join-Path $TestDrive "rs-arm-$Name.log"
         $Scenario = [scriptblock]::Create((@'
 Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
 & (Get-Module Omnicit.EntraRBAC) {
     Set-Item -Path function:script:Initialize-OERAuth -Value {
         [CmdletBinding()]
         param([string]$TenantId, [switch]$IncludeARM)
-        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new('Failed to acquire an Azure Resource Manager token (fixture).'), 'ArmTokenAcquisitionFailed',
-                [System.Management.Automation.ErrorCategory]::AuthenticationError, 'fixture-tenant'))
+#SIGNIN#
     }
     Set-Item -Path function:script:Get-OERInventoryTenantId -Value { Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value 'TENANT' }
     Set-Item -Path function:script:Get-OERConfiguration -Value { Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value 'CONFIG' }
@@ -9098,17 +9172,19 @@ foreach ($Item in $Items) {
     else { "OTHER:$Item" }
 }
 'END'
-'@).Replace('#CALL#', $Call).Replace('#ROOT#', $Root.Replace("'", "''")).Replace('#LOG#', $Log.Replace("'", "''")))
+'@).Replace('#SIGNIN#', $SignInBody).Replace('#CALL#', $Call).Replace('#ROOT#', $Root.Replace("'", "''")).Replace('#LOG#', $Log.Replace("'", "''")))
         $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
-        ($Run.Output -join '|') | Should -Be 'ERR:ArmTokenAcquisitionFailed|END'
-        @($Run.Warnings).Count | Should -Be 0
+        # The script reached its end in every row; the record, when it is shown at all, is the sign-in's own.
+        ($Run.Output -join '|') | Should -Be $Expected
+        # No warning but the sign-in's own pre-call one, which the Stop preference writes before it ends the call.
+        @($Run.Warnings).Count | Should -Be $(if ($SignIn -eq 'warn') { 1 } else { 0 })
         Test-Path -LiteralPath $Root | Should -BeFalse
         Test-Path -LiteralPath $Log | Should -BeFalse
     }
 
-    It 'says in the help that a refused sign-in ends the export before it reads or writes anything' {
+    It 'says in the help that a refused sign-in ends the export before it reads or writes anything, under every error preference' {
         $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
-        $Description | Should -Match ([regex]::Escape('When that sign-in is refused, or the Azure Resource Manager token it was asked for cannot be acquired, the export stops before it reads or writes anything: the sign-in''s own error is published with its own ErrorId, no bundle folder is written and no object is returned.'))
+        $Description | Should -Match ([regex]::Escape('When that sign-in is refused, or the Azure Resource Manager token it was asked for cannot be acquired, the export stops before it reads or writes anything, under every error preference: no bundle folder is written and no object is returned. The sign-in''s own error is published with its own ErrorId, as a terminating error when the sign-in terminated (a try around the call catches it) and as the non-terminating error the sign-in wrote when it only failed to acquire the Azure Resource Manager token (under -ErrorAction Ignore that error is not shown and is kept in $Error).'))
     }
 }
 

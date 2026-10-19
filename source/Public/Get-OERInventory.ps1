@@ -735,12 +735,16 @@ function Get-OERInventory {
         # review or by the principals of a directory role section; what this call learns stays there for the
         # calls after it. Read through PSObject.Properties, as SubscriptionTenant is below, so a context
         # without the member -- an older shape, a test fixture's -- reads as none, and the member is used only
-        # when it is a dictionary. Without a context of its own the invocation keeps the hashtable it made at
-        # the top of this block, as it always did, and nothing outlives the call. It stands before the first
-        # reader of the cache (the Groups section's call of Get-OERInventoryGroup, below).
+        # when it is a [hashtable] (R-27): its consumers need one, since Get-OERInventoryGroup takes the cache
+        # as a [hashtable] parameter (any other dictionary binds as a COPY, so what the reader learns would be
+        # lost to this call without an error) and the sections below call ContainsKey, which an [ordered]
+        # dictionary has not. Anything else reads as none. Without a context of its own the invocation keeps
+        # the hashtable it made at the top of this block, as it always did, and nothing outlives the call. It
+        # stands before the first reader of the cache (the Groups section's call of Get-OERInventoryGroup,
+        # below).
         if ($null -ne $RunContext) {
             $PrincipalNameCacheMember = $RunContext.PSObject.Properties['PrincipalNameCache']
-            if ($null -ne $PrincipalNameCacheMember -and $PrincipalNameCacheMember.Value -is [System.Collections.IDictionary]) {
+            if ($null -ne $PrincipalNameCacheMember -and $PrincipalNameCacheMember.Value -is [hashtable]) {
                 $PrincipalNameCache = $PrincipalNameCacheMember.Value
             }
         }
