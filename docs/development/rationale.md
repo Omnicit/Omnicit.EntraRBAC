@@ -7449,12 +7449,14 @@ left on the token ([How a long run renews its token](#how-a-long-run-renews-its-
 near expiry is renewed there, just before the policy list -- as the per-scope
 `Get-OERRoleManagementPolicy` call inside `Get-OERInventory` does on the `-AllRolePolicies` path.
 `Get-OERInventoryRolePolicy` never signs in. A failure of the role assignment read costs the
-selection, not the scope: its `catch` scrubs the record first, writes one warning ("Could not read
-the role assignments at scope '...', so a role management policy there not kept by a use or a change
-is kept without being judged: ..." with the cause) and marks the scope unread for the selection, and
-the policy list is still read. A failed
-policy list reaches the per-scope `catch` and skips the scope exactly as a failed policy read always
-has. Cost if wrong: an interactive long export prompts at a 401 instead of five minutes before.
+selection, not the scope: its `catch` scrubs the record first, marks the scope unread for the selection
+and holds one warning ("Could not read the role assignments at scope '...', so a role management
+policy there not kept by a use or a change is kept without being judged: ..." with the cause), and the
+policy list is still read. Since Sprint 11 step 10 (BL-123, third point) the held warning is written
+only after the policy list of the scope has been read, so a scope whose policy list fails too has ONE
+warning, the skip's ([Sprint 11 step 10: the three reads after the walk report a stop](#sprint-11-step-10-the-three-reads-after-the-walk-report-a-stop-bl-123-r-5-r-6-bl-44)).
+A failed policy list reaches the per-scope `catch` and skips the scope exactly as a failed policy read
+always has. Cost if wrong: an interactive long export prompts at a 401 instead of five minutes before.
 
 **R5 (a policy that cannot be judged is kept).** A policy not kept by an assignment, an eligibility
 or a change is kept anyway, and its scope named once, when its `Modified` is `$null` (the row carried
@@ -7570,6 +7572,147 @@ wrong: one such test in a follow-up.
   showed its change record on the list's first read afterwards and was kept from then on; the
   exported document applied twice gave only `Unchanged`. A management-group scope and a failed read
   are offline-only there (the checklist says why).
+
+### Sprint 11 step 10: the three reads after the walk report a stop (BL-123, R-5, R-6, BL-44)
+
+**The problem (BL-123, first point).** The per-scope calls of the Azure walk and the scope tree each stand
+in a `try`, but the three calls after the walk did not: the PIM eligibility read
+(`Get-OERInventoryAzureEligibility`), the Azure Lighthouse read (`Get-OERInventoryLighthouseDelegation`) and
+the role policy selection (`Select-OERInventoryRolePolicy`). Each helper catches what it expects -- a scope
+whose eligibility read failed, a subscription whose delegations could not be read -- and names it, but an
+error nothing in it catches ended the call, and where no `try` stands up the call stack it ended the EXPORT,
+after the whole read and before a file was written: no bundle, where every other unread read ends in the
+bundle summary followed by `InventoryPartial`.
+
+**The decision (R-5).** Each of the three calls has a `catch` of its own. It scrubs the record first
+(`Remove-OERErrorRecord`, the bearer rule), completes its bookkeeping, writes ONE warning that names the cause
+-- before the bundle's `ShouldProcess`, so `-WhatIf` shows it and a Stop warning preference ends the export
+there -- and the export carries on. What each one records:
+
+- **Eligibility.** No scope was read. Every scope of the tree not already in `SkippedEligibilityScopes` goes
+  there, as the real canonical scope strings: an entry in the `<...>` form would be counted by the clause that
+  counts tree levels, as a level that could not be listed, and not as a scope. The selection below reads every
+  scope as one whose eligibility was not read (`$EligStopScopes`, joined with the scopes whose role assignment
+  read failed and the scopes the helper itself skipped), so a policy there not kept on other grounds is kept
+  and its scope named. `azurePimEligibility.json` is written as `[]` and `AzurePimEligibility` is 0. The
+  stand-in result is empty, so the code after the call needs no branch. Warning, with the record's message as
+  the cause: `Export-OERInventory: could not read the Azure PIM eligibilities, so no scope is read for
+  azurePimEligibility.json: ...`.
+- **Lighthouse.** One entry, `lighthouseDelegations at <all Azure scopes: the read stopped>`, in
+  `$LighthouseUnread`, and the record's message as a cause with no target (the stop belongs to no one scope)
+  in `$LighthouseCauses`, as the reader names its own causes; `$LighthouseRead` stays `$null`, which the lines
+  after the call already read as no delegation. `lighthouseDelegations.json` is written as `[]`. Warning:
+  `Export-OERInventory: could not read the Azure Lighthouse delegations, so lighthouseDelegations.json holds
+  none: ...`.
+- **Selection.** The selection decided nothing, so every candidate is kept -- merged on `scope|role` with the
+  same set as the kept ones are, so a scope the walk lists twice, or in another letter case, writes a policy
+  once -- and each distinct canonical scope among the candidates (`ConvertTo-OERCanonicalScope`, compared
+  without regard to letter case, in the order first seen, as `Select-OERInventoryRolePolicy`'s own unjudged
+  scopes are) is named `roleManagementPolicies/role selection at <scope>`. Warning: `Export-OERInventory: could
+  not select the Azure role management policies, so every policy read is kept and each scope is named as not
+  judged: ...`. The direction is the safe one, as for every unjudged policy: more is kept than the selection
+  would keep, nothing is dropped on a guess.
+
+The bookkeeping is complete in each `catch` BEFORE its warning (BL-44, below); the merge and the naming of the
+selection are done in the `catch` itself, and a few lines repeat the merge the success path makes, so the proof
+could name statements of one block.
+
+**What the bundle prints for these entries (read in `Get-OERInventoryReadme` and the export's clauses, and held
+by the tests).** An eligibility stop is a list of real scopes in `SkippedEligibilityScopes`: the
+`InventoryPartial` message counts them ("N of N Azure scopes could not be read for azurePimEligibility.json,
+and their eligible assignments are absent from it. Skipped: ...") and the README lists each under "Azure scope,
+absent from `azurePimEligibility.json`". The cause is in the warning only, as the cause of a scope the helper
+itself skipped is. A Lighthouse stop is the one `IncompleteReads` entry; the message gives it in the
+Lighthouse clause with its cause ("1 Azure Lighthouse read(s) failed, so lighthouseDelegations.json holds no
+delegation of a scope named here and writes the name of a role named here as null: ENTRY. Causes of the
+unread Azure Lighthouse reads: ...", where ENTRY is `lighthouseDelegations at <all Azure scopes: the read stopped>`),
+and the README lists it under the label "Azure Lighthouse read that failed", as a code span, so the angle
+brackets are shown. **Known gap, for the step's text task:** the README's explanatory prose names two
+entries of that label that name no single scope, `<all Azure scopes: scope enumeration failed>` and
+`<subscriptions: the listing failed>`, and does not name this third one; it is the template's text
+(`Get-OERInventoryReadme`), which only the step's last task edits. A selection stop gives the unjudged scope entries and the clause "at N Azure
+scope(s) every role management policy that could not be judged was kept, none of them left out ...", under
+the label "Azure role management policies kept without being judged"; its cause is in the warning only.
+
+**What changed for a caller.** An export whose eligibility read, Lighthouse read or selection stops ends in
+the bundle and `InventoryPartial`; it used to end in an exception and no bundle. A script with no `try`
+above it sees the bundle object, then `InventoryPartial`, then carries on (the no-`try` runspace test, for
+each of the three). Nothing of the stop reaches the error stream but `InventoryPartial`; a caller's
+`-ErrorVariable` still holds the engine's own copies of a thrown error, which no `catch` can keep out of it
+(the tests count the records the export owns, those whose id ends `,Export-OERInventory`).
+
+**One older test changed.** 'ignores a context an export left behind when its walk stopped: the next
+standalone Get-OERInventory lists for itself' stopped the walk with an eligibility read that threw. That stop
+is now caught, so the test stops the walk with the warning of the catch, which a Stop warning preference
+(`-WarningAction Stop`) makes terminating, and still matches the cause in the message. Its reach proofs are
+unchanged.
+
+**R-6 (the two switches that do nothing).** `-AllRolePolicies` while `-Include` does not name
+`RoleManagementPolicies`, and `-AllDirectoryRolePolicies` while it does not name
+`DirectoryRoleManagementPolicies`, each write one warning at the top of `process`, before any read and before
+the export's own `ShouldProcess`: `Export-OERInventory: -AllRolePolicies has no effect, since -Include does
+not name RoleManagementPolicies.` and `Export-OERInventory: -AllDirectoryRolePolicies has no effect, since
+-Include does not name DirectoryRoleManagementPolicies.` (BL-123, fourth and fifth points). Why in the export
+and not in `Get-OERInventory`: the export forwards `-AllDirectoryRolePolicies` to its `Get-OERInventory` call,
+which has no gate of its own and stays silent for it, so a warning there would be written twice. The help of
+both parameters says the export warns. A caller who passes either switch while the section is left out was
+told nothing before; the bundle simply lacked the effect. Cost if wrong: two `if` statements and their tests.
+
+**One warning for a scope (BL-123, third point).** A failed role assignment read of the selection kept its
+warning in its `catch`, before the policy list of the scope was read, so a scope whose policy list failed too
+was warned about twice: once for a read that only cost the selection of a scope the second read then dropped,
+once for the skip. The `catch` keeps the bookkeeping (`$ScopeAssignmentsUnread`) and holds the text; the
+warning is written only after `Get-OERInventoryRolePolicy` has succeeded for the scope. A scope whose policy
+list fails is skipped with `Skipping scope '...'` as its one warning, and is not named as unjudged, since it
+merges no row. Under a Stop warning preference the held warning, now after the policy list, stops the scope
+through the same outer `catch` as before. Cost if wrong: the text moves back into the `catch`.
+
+**Bookkeeping before the warning (BL-44, at the export).** A `Write-Warning` under a Stop warning preference is
+a terminating error, so a statement after it never runs: a failed read told as a warning and not carried to the
+partial signal. Seven sites stand before their warning in the same statement block, and an AST test of
+`Export-OERInventory.Tests.ps1` holds each (R-7: the bookkeeping here is a variable or a list, which a verbose
+line cannot show): the roster read (`$RosterUnread`), the group reader that stops (the stand-in `$GroupRead`),
+the scope enumeration (`$Tree` and three `.Add` calls), the skipped scope (`$SkippedScopes` and the four
+takebacks) and the three catches above. The test finds each warning by the start of its text, requires exactly
+one, and requires each named statement the right number of times in the warning's own block and starting
+before it; a known-answer test of the checker feeds it a warning that stands first, a missing statement and a
+warning that is not unique. The bookkeeping of the three new catches is the stand-in result (eligibility), the
+two list additions (Lighthouse) and the merge loop (selection).
+
+**Mutation proofs.** Each mutation was made in a copy of the step's tree at this commit's source and tests, and
+run against the Describes whose names carry "step 10" in `tests/Unit/Public/Export-OERInventory.Tests.ps1`;
+every mutant turned at least one test red, and the restored source was green. Lines are the source's.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| E1, L1, S1 | each of the three reads has a `catch`, `Export-OERInventory.ps1:1307`, `:1338`, `:1382` | the `catch` rethrows (the call unguarded) | 4, 4 and 3 red |
+| E2 | the scopes of an eligibility stop are named, `:1310` | the scopes are not added | 5 red |
+| E3 | the selection reads every scope as unread, `:1371` | `$EligStopScopes` left out of the unread list | 1 red |
+| E4 | "not already there", `:1310` | the guard dropped | 1 red |
+| E5, L6, S8 | the three warning texts, `:1312`, `:1340`, `:1392` | the text shortened | 2 red each |
+| E6, L5, S7 | the scrub first in each `catch`, `:1306`, `:1336`, `:1381` | the scrub removed | 1 red each |
+| E7 | the scrub stands before the warning, `:1306` | the scrub moved after the warning | 1 red |
+| L2, L3, L4 | the Lighthouse entry text, its cause and its entry, `:1338`, `:1339`, `:1338` | the text changed; the cause not added; the entry not added | 1, 2 and 4 red |
+| S2, S3 | every candidate kept and each scope named, `:1387`, `:1390` | nothing merged; nothing named | 2 and 4 red |
+| S4, S5, S6 | the canonical scope, the case-insensitive set, the `scope\|role` merge, `:1389`, `:1382`, `:1387` | the scope as read; an ordinal set; no merge set | 1 red each |
+| A1, A2 | the two switch warnings, `:723`, `:726` | each removed | 5 red each |
+| A3, A4 | their conditions, `:722`, `:725` | inverted; the wrong section | 7 and 3 red |
+| A5, A6 | before any read, exact text, `:723` | the warning moved after the group reads; the text changed | 2 and 5 red |
+| W1, W2, W3 | the held assignment warning, `:1221`, `:1227` | back in the `catch`; never written; written before the policy list | 2 red each |
+| W4 | the unread flag of the assignment read, `:1220` | removed | 1 red |
+| B1-B7 | the seven BL-44 sites, `:783`, `:824`, `:1098`, `:1240`, `:1312`, `:1340`, `:1392` | each warning moved before its bookkeeping | 1 red each, the AST test of that site |
+| B8, B9 | one statement of several, `:1097`, `:1239` | one `.Add` of the three, and one takeback of the four, after the warning | 1 red each |
+| H1-H6 | the help of the three stops, the held warning and the two switches, `:134`, `:192`, `:248`, `:244`, `:552`, `:542` | one clause changed | 1 red each |
+
+**Known limits.**
+
+- An eligibility stop names every scope, although the helper may have read some before it stopped: it returns
+  its result only on completion, so what it read is lost. Naming too many is the safe direction.
+- A stop is reported with the record's message only; nothing says which scope or request it came from. The
+  three helpers catch their per-scope failures, so a stop is by construction not one of those.
+- The per-scope skip warning now carries the whole `InventoryPartial` text when the inner read fails that way
+  (Get-OERInventory's own message, since the call passes `-ErrorAction Stop`). That is unchanged by this step
+  and parked for a later one.
 
 ## typed-group-member-read
 
