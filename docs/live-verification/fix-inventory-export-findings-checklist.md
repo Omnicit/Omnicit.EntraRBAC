@@ -233,7 +233,7 @@ function Read-S1110Export {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched. #type/subtask
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -258,13 +258,13 @@ worktree on this branch with 0 tracked changes; `True` on every mark.
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main clone; a `False`
 mark -- build the worktree first (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. The module loads from the step worktree's build (1.3.1); the main clone is on main, never switched; the three build marks are present.
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build. #type/subtask
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -277,11 +277,11 @@ Disconnect-OerLive
 **Expect:** every identity line `True`, `identity check passed`, `The module is the worktree's build: True`.
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), or `False`.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. Identity check passed as oer-live-cc; the module is the worktree's build. (The first run's leak check counted 2: the protected module name and the organization name inside it, no leak; the runner now skips protected strings, and this rerun counts 0.)
 
 ### 0.2. The prerequisite objects
 
-- [ ] **0.2** `Initialize-OerS1110Prereq.ps1 -Unattended` checks the permissions, writes the baseline, creates the step's objects and waits until the dynamic group's rule lists both users. #type/subtask
+- [x] **0.2** `Initialize-OerS1110Prereq.ps1 -Unattended` checks the permissions, writes the baseline, creates the step's objects and waits until the dynamic group's rule lists both users. #type/subtask
 
 ```powershell
 & pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS1110Prereq.ps1') -Unattended
@@ -293,11 +293,11 @@ eligibility requests answered without a `Failed` status; the dynamic group listi
 **Failure looks like:** a refusal (a missing permission, an unknown prefixed object), a `NOTE` that the dynamic
 group did not list both users within 15 minutes (1.2 then says so), or exit code 1 or 3.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. Permissions present, baseline written (users 22, groups 99), the ten objects created, both eligibilities Provisioned, the dynamic group listing both users; exit code 0.
 
 ### 0.3. Read back what the prerequisite script created
 
-- [ ] **0.3** Each recorded object is there: both users, the dynamic group with its two members, four twin groups, the nested group, the typed group with its three members, and two member eligibilities in the PIM group. #type/subtask
+- [x] **0.3** Each recorded object is there: both users, the dynamic group with its two members, four twin groups, the nested group, the typed group with its three members, and two member eligibilities in the PIM group. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -320,13 +320,13 @@ service principal members typed, and 1.1 shows all 3); `nested`, the four twins 
 with 2 member eligibility schedules.
 **Failure looks like:** a missing id, a read that is not 200, or `dyn` with fewer than 2 members.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. 10 ids; dyn dynamic with 2 members; typed lists 2 through this untyped read -- its third member, the service principal, is the untyped read's known gap (6.2 measures it; 1.1 shows the module's 3). The expectation said 3 and was corrected in the commit "docs: count an empty list as empty in the live checklist and expect the untyped read's known gap".
 
 ## 1. A stable export, and a dynamic group's members
 
 ### 1.1. Two exports in a row are equal, and write members, owners and eligibility in the fixed order
 
-- [ ] **1.1** Two exports of the prefixed groups, read in full, one after the other, send no write and write the same files, byte for byte apart from the folder's time stamp; every member, owner and eligibility list in them is in the fixed order. #type/subtask
+- [x] **1.1** Two exports of the prefixed groups, read in full, one after the other, send no write and write the same files, byte for byte apart from the folder's time stamp; every member, owner and eligibility list in them is in the fixed order. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -373,11 +373,11 @@ other than the four twins, every one prefixed; `oer-s1110-typed` members 3, `oer
 every list `in order True`; `oer-s1110-dyn` members `null` (1.2 reads it further).
 **Failure looks like:** a write or a token request; a file that differs; a list `in order False`.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. Two exports, 0 writes, 0 token requests, the same 58 Graph requests each; all 15 files identical apart from the time stamp; every list in order; dyn members null. (Rerun after a block fix: the first run printed an empty list as null, since an if statement's output unrolls an empty list; a local read of the first export showed nested members [] and dyn members null.) The one IncompleteReads entry names both twin groups in one entry, separated by a comma.
 
 ### 1.2. The dynamic group: members null, counted in the roster, and no PIM read for them
 
-- [ ] **1.2** In the first export of 1.1, `oer-s1110-dyn` is written with `dynamic` true and `members` an explicit null, is not named in `IncompleteReads`, has a roster `memberCount` equal to what its rule lists, and no PIM assignment read was sent for it. #type/subtask
+- [x] **1.2** In the first export of 1.1, `oer-s1110-dyn` is written with `dynamic` true and `members` an explicit null, is not named in `IncompleteReads`, has a roster `memberCount` equal to what its rule lists, and no PIM assignment read was sent for it. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -402,11 +402,11 @@ it, and its members read once (the count the roster carries).
 **Failure looks like:** a members list, an omitted key, an `IncompleteReads` entry, a null `memberCount`, or a
 PIM assignment read naming the group (the base build sends one, which Microsoft Graph answers 400).
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. dyn: members key present and null, not named in IncompleteReads, roster memberCount 2 = what the rule lists, 0 PIM assignment reads. Its "members reads: 2" are ONE members read of two requests (the untyped read and the typed servicePrincipal cast), read locally by path shape.
 
 ### 1.3. -Prune -WhatIf on the export plans no member change for the dynamic group
 
-- [ ] **1.3** `Invoke-OERStructure -Prune -WhatIf` on the first export of 1.1 returns no row about the dynamic group's members, no `Skipped` row, and only `Unchanged` rows; it sends no write. #type/subtask
+- [x] **1.3** `Invoke-OERStructure -Prune -WhatIf` on the first export of 1.1 returns no row about the dynamic group's members, no `Skipped` row, and only `Unchanged` rows; it sends no write. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -428,11 +428,11 @@ Disconnect-OerLive
 **Failure looks like:** a row about the dynamic group's members (the base build writes the aggregate `Skipped`
 row "the N current member(s) were not reconciled"), a write, or a row other than `Unchanged`.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. -Prune -WhatIf: 11 rows, all Unchanged, none about the dynamic group's members, 0 Skipped rows, 0 writes.
 
 ### 1.4. The document applied twice changes nothing (G8)
 
-- [ ] **1.4** The same document applied for real, with `-Prune`, twice in a row behind the write fence: both runs return only `Unchanged` rows and send no write. #type/subtask
+- [x] **1.4** The same document applied for real, with `-Prune`, twice in a row behind the write fence: both runs return only `Unchanged` rows and send no write. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -452,13 +452,13 @@ Disconnect-OerLive
 **Failure looks like:** a row `Failed` whose error is the S1110 fence (the engine tried to write), or any row
 other than `Unchanged`.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS (G8). Applied for real with -Prune twice behind the write fence: 11 Unchanged rows each run, 0 writes, no error.
 
 ## 2. Two names, two causes
 
 ### 2.1. Each shared display name is a cause of its own in InventoryPartial
 
-- [ ] **2.1** The first export of 1.1 and a `Get-OERInventory -Include Groups` of the prefixed groups each report InventoryPartial whose causes name `oer-s1110-twin-a` and `oer-s1110-twin-b` separately; neither twin is in `inventory.json`, and the roster lists all four. #type/subtask
+- [x] **2.1** The first export of 1.1 and a `Get-OERInventory -Include Groups` of the prefixed groups each report InventoryPartial whose causes name `oer-s1110-twin-a` and `oer-s1110-twin-b` separately; neither twin is in `inventory.json`, and the roster lists all four. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -494,13 +494,13 @@ only, its message holding a shared-name cause of each name (`True` twice), 0 twi
 **Failure looks like:** one name missing from the causes (the base build folds the two names into one cause),
 or a twin written to the document.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. Each twin name is a shared-name cause of its own in the export's partial message and in Get-OERInventory's; 0 twins written, 4 in the roster. (Rerun after a block fix: the first run looked for the name in quotes after a literal "Causes: ", which the cause text does not use.)
 
 ## 3. Azure reads that cannot be read, and a blank scope
 
 ### 3.1. A role assignment read that fails is an unread section
 
-- [ ] **3.1** `Get-OERInventory -Include RoleAssignments -ManagementGroup oer-s1110-no-such-group`, in a script with no `try`, writes the inventory with `RoleAssignments` empty, then one InventoryPartial naming `roleAssignments` with the cause, and the script carries on. #type/subtask
+- [x] **3.1** `Get-OERInventory -Include RoleAssignments -ManagementGroup oer-s1110-no-such-group`, in a script with no `try`, writes the inventory with `RoleAssignments` empty, then one InventoryPartial naming `roleAssignments` with the cause, and the script carries on. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -527,11 +527,11 @@ Disconnect-OerLive
 `InventoryPartial` (Ruling R-17: the reader's deposit reaches a caller's `-ErrorVariable`, not its error stream).
 **Failure looks like:** the reader's own error in the error stream, a missing InventoryPartial, or no `END` line.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. One object with 0 rows before one InventoryPartial naming roleAssignments with its cause; END reached. A -ErrorVariable also collects the inner layers' records (AuthorizationFailed) and the reader's InvalidScope beside InventoryPartial, as R-17 rules and as measured before (inner-layer records in -ErrorVariable).
 
 ### 3.2. A -Scope of white space is refused at binding
 
-- [ ] **3.2** `Get-OERInventory -Include RoleAssignments -Scope '   '` and `Export-OERInventory -Include RoleAssignments -Scope '   '`, in a script with no `try`, are each refused at parameter binding with the white space message, send nothing, and the script carries on. #type/subtask
+- [x] **3.2** `Get-OERInventory -Include RoleAssignments -Scope '   '` and `Export-OERInventory -Include RoleAssignments -Scope '   '`, in a script with no `try`, are each refused at parameter binding with the white space message, send nothing, and the script carries on. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -562,11 +562,11 @@ Disconnect-OerLive
 `$Error` whose message is the white space one; no export folder; `END`.
 **Failure looks like:** a request, an object, another message, or no `END` line.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. Both commands refused '   ' at binding with the white space message, 0 requests, no folder, END. (Rerun after a block fix: a binding refusal ends the statement, so 2>&1 carried nothing; the block now reads $Error.)
 
 ### 3.3. A subscription named by its display name is resolved once and read by its id
 
-- [ ] **3.3** `Get-OERInventory -Include RoleAssignments, RoleManagementPolicies -AllRolesAtScope -Subscription` with the test subscription's display name lists the subscriptions once (the home-tenant check), reads both sections at the subscription's id, never sends the name, and is not partial. #type/subtask
+- [x] **3.3** `Get-OERInventory -Include RoleAssignments, RoleManagementPolicies -AllRolesAtScope -Subscription` with the test subscription's display name lists the subscriptions once (the home-tenant check), reads both sections at the subscription's id, never sends the name, and is not partial. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -595,13 +595,13 @@ reads at `/subscriptions/{id}`; 0 requests holding the name; one object with its
 **Failure looks like:** more than one list read (the base build lists the subscriptions once for the check and
 once per section), a request holding the name, or an error.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. One subscription list read (the name resolved once) and one single read (the home-tenant check's own read of the resolved id), both sections read at /subscriptions/{id}, 0 requests holding the name, rows and no error. (Rerun after a block fix: Invoke-OerLiveArm takes -Path; the expectation of 0 single reads was corrected for the home-tenant check's read.)
 
 ## 4. An export whose own sign-in is refused
 
 ### 4.1. A tenant the lookup refuses: no bundle, no folder, and the script carries on
 
-- [ ] **4.1** After a session in the test tenant, `Export-OERInventory -TenantId oer-sovereign-verify-doesnotexist.onmicrosoft.com`, in a script with no `try`, raises the sign-in's own `TenantResolutionFailed` as a terminating error, emits nothing, creates nothing under its output path, sends no Microsoft Graph or Azure Resource Manager request and no token request, and the script carries on with its next statement. #type/subtask
+- [x] **4.1** After a session in the test tenant, `Export-OERInventory -TenantId oer-sovereign-verify-doesnotexist.onmicrosoft.com`, in a script with no `try`, raises the sign-in's own `TenantResolutionFailed` as a terminating error, emits nothing, creates nothing under its output path, sends no Microsoft Graph or Azure Resource Manager request and no token request, and the script carries on with its next statement. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -632,13 +632,13 @@ after; `END`.
 **Failure looks like:** a folder under the output path (the base build names it after the previous session's
 tenant), an object, a request, or no `END` line.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. One tenant lookup, 0 token, Graph and ARM requests; TenantResolutionFailed once in $Error (terminating, R-26); 0 objects; no entry under the output path; END reached.
 
 ## 5. -AllRolePolicies and -AllDirectoryRolePolicies without their section
 
 ### 5.1. Each switch without its section is warned about
 
-- [ ] **5.1** `Export-OERInventory -Include AdministrativeUnits -AllRolePolicies -AllDirectoryRolePolicies -WhatIf` writes the two warnings, each once, and sends no write. #type/subtask
+- [x] **5.1** `Export-OERInventory -Include AdministrativeUnits -AllRolePolicies -AllDirectoryRolePolicies -WhatIf` writes the two warnings, each once, and sends no write. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -657,13 +657,13 @@ Disconnect-OerLive
 **Expect:** 0 writes; each warning exactly once, the two first; no bundle folder (`-WhatIf`).
 **Failure looks like:** a missing or repeated warning, or a write.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. Each -All* warning exactly once and first; 0 writes; no folder (-WhatIf).
 
 ## 6. Measurements
 
 ### 6.1. BL-21: what Microsoft Graph answers for an access review and an instance that do not exist
 
-- [ ] **6.1** The raw answers for a missing definition, the instance list of a missing definition, a missing instance of a missing and of an existing definition, and a missing catalog; and what the module now writes for each through `Get-OERAccessReviewInstance`, `Get-OERCatalog -Id` and `Get-OERInventory -Include Catalogs -Catalog`. #type/subtask
+- [x] **6.1** The raw answers for a missing definition, the instance list of a missing definition, a missing instance of a missing and of an existing definition, and a missing catalog; and what the module now writes for each through `Get-OERAccessReviewInstance`, `Get-OERCatalog -Id` and `Get-OERInventory -Include Catalogs -Catalog`. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -710,11 +710,11 @@ the module, a missing instance (of an existing or a missing definition) exactly 
 **Failure looks like:** a code in the access review bodies (then the expected code is wrong), more than one
 record for a missing instance, or the catalog read named unread instead of not found.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. MEASURED. Every access review probe 404 with an empty code; the catalog 404 CatalogNotFound; through the module a missing instance gives exactly AccessReviewInstanceNotFound (of an existing and of a missing definition); Get-OERCatalog -Id CatalogNotFound (its -ErrorVariable also holds the inner layers' records); the inventory republishes CatalogNotFound.
 
 ### 6.2. BL-83: the typed member read on a group with a user, a group and a service principal member
 
-- [ ] **6.2** For `oer-s1110-typed` (members: a user, a group, a service principal) and `oer-s1110-dyn`, the untyped `members` and `owners` reads against the typed casts `user`, `group`, `device`, `orgContact` and `servicePrincipal`, and what the module returns for the typed group's members. #type/subtask
+- [x] **6.2** For `oer-s1110-typed` (members: a user, a group, a service principal) and `oer-s1110-dyn`, the untyped `members` and `owners` reads against the typed casts `user`, `group`, `device`, `orgContact` and `servicePrincipal`, and what the module returns for the typed group's members. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -746,7 +746,7 @@ Disconnect-OerLive
 read typed is a finding for the report.
 **Failure looks like:** a read that is not 200 where a cast is documented to work.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. MEASURED. typed: the untyped members read lists the user and the group member and misses only the service principal member, which the typed servicePrincipal cast lists; the typed user and group casts find nothing missing. Owners: the group, device and orgContact casts answer 400 Request_UnsupportedQuery. dyn: 2 users, nothing missing. Get-OERGroupMember returns 3.
 
 ## B. Proved offline (class B)
 
@@ -771,7 +771,7 @@ Result: not run yet.
 
 ### T.1. The prerequisite objects are removed
 
-- [ ] **T.1** `Initialize-OerS1110Prereq.ps1 -Teardown -Unattended` removes the eligibility, the groups and the users, the sweep lists no `oer-s1110-` object, and the counts equal the baseline. #type/subtask
+- [x] **T.1** `Initialize-OerS1110Prereq.ps1 -Teardown -Unattended` removes the eligibility, the groups and the users, the sweep lists no `oer-s1110-` object, and the counts equal the baseline. #type/subtask
 
 ```powershell
 & pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS1110Prereq.ps1') -Teardown -Unattended
@@ -781,11 +781,11 @@ Write-OerLiveStep "The teardown ended with exit code $LASTEXITCODE."
 **Expect:** every removal answered, the sweep empty, the counts equal to the baseline, exit code 0.
 **Failure looks like:** a residue row (exit code 3), or counts that differ.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. Teardown removed 15 (2 eligibilities, 3 assignments, 8 groups, 2 users), residue 0; users 22 and groups 99, equal to the baseline; exit code 0. The five sweep lines after the converged sweep list deleted items carrying the prefix, not live objects.
 
 ### T.2. Nothing is left, and the step's raw folder is gone
 
-- [ ] **T.2** A read-back lists no `oer-s1110-` object and no residue row of this prefix, and the step's raw folder is deleted. The redaction map is deleted with `Clear-OerLiveRedactionMap` once every result is written up, after this check. #type/subtask
+- [x] **T.2** A read-back lists no `oer-s1110-` object and no residue row of this prefix, and the step's raw folder is deleted. The redaction map is deleted with `Clear-OerLiveRedactionMap` once every result is written up, after this check. #type/subtask
 
 ```powershell
 & pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS1110Prereq.ps1') -ReadBack
@@ -797,4 +797,4 @@ Write-OerLiveStep "The step's raw folder exists: $(Test-Path -LiteralPath $Raw)"
 **Expect:** 0 prefixed objects, 0 unread collections, 0 residue rows of this prefix; the raw folder gone.
 **Failure looks like:** a prefixed object or a residue row of this prefix.
 
-Result: not run yet.
+Result: run 2026-10-19 between 21:48 and 22:03 UTC as oer-live-cc against the test tenant, from the checklist as committed with its five fixes to the check blocks and expectations. PASS. Read-back: 0 prefixed objects, 0 unread collections, 0 residue rows of this prefix (5 rows of older prefixes, untouched); the step's raw folder deleted.
