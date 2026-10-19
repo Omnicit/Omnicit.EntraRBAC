@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 1.3.0. A preview published from this point differs from 1.3.0 only
+in documentation, tests or the build.
+
+## [1.3.0] - 2026-10-19
+
 A PIM for Groups activation is no longer written or applied as a standing membership. Inventories
 leave out a member or owner held by an activation or time-bound active assignment, counted per group
 in the export README; with PIM assignments unread, they omit eligible ones and report
