@@ -7476,14 +7476,14 @@ reader marks the whole Groups section unread, never empty. The cost: `Get-OERInv
 catch on a path no known input reaches (its known output is unchanged), and the causes and unread
 names the reader had gathered before it stopped are lost; only `groups` survives.
 
-### Sprint 11 step 10: what the group section writes (BL-43, BL-121; R-1, R-2, R-15, R-16)
+### Sprint 11 step 10: what the group section writes (BL-43, BL-121; R-1, R-2, R-15, R-16, R-24)
 
 **The problem (BL-43).** A dynamic group's membership is owned by its membership rule: Microsoft Learn
 states that a member of a dynamic membership group cannot be added or removed manually, and the apply engine
 accordingly adds none and removes none (`Sync-OERStructureGroup`, step 2). The export still wrote every member
 the read found, as a list. That list is a snapshot of what the rule derived at the time of the read, which a
 document can do nothing with: every declared member was reported `Skipped` on the next apply, and a dynamic
-group that had members and declared none got one more `Skipped` row ("the N current member(s) were not
+group that had members and declared none got one `Skipped` row ("the N current member(s) were not
 reconciled ...") on every run, `-Prune` or not. Each of those rows is a finding about the export's own output.
 
 **R-1 (the form: an explicit null, and no unread entry).** `Get-OERInventoryGroup` writes a dynamic group's
@@ -7493,8 +7493,20 @@ declared one, but `Set-OERGroup` cannot convert a group's membership type. A gro
 (assigned) after the export would meet an omitted `members` key on the static path, which reconciles the
 members and, under `-Prune`, removes every live one; an explicit null is the schema's "leave it untouched" on
 both paths. It is no gap, so nothing names `groups/<name>/members` unread, and a failed members read of a
-dynamic group adds no such entry either: the cause the read already recorded stays in the causes list, where
-every counted read leaves it, and the roster count of that group is then not known (R-15). A dynamic group's
+dynamic group adds no such entry either. **R-24 (the cause of that failed read).** The reader records no
+cause for a dynamic group's failed members read, as `-SecurityEnabledOnly` removes the causes of a group it
+leaves out ("that failed read is no gap"): the document's `members` is the explicit null either way, so
+nothing in it is missing, and a cause clause must never name a read that no unread entry names. The first
+version of this step kept the cause "where every counted read leaves it", and a measured run showed what that
+leaves the operator: with the failed read alone there was no `InventoryPartial`, no `IncompleteReads` entry and
+nothing in the bundle README, only the verbose line; and beside another group's failed read, the
+`InventoryPartial` cause clause listed the dynamic group's members cause while the unread list named only the
+other entry, and the message counted "1 collection(s)" with two causes. Now the verbose line is all that
+remains of it, in both cases (`Get-OERInventoryGroup` skips the record in the full read's record loop, and the
+members read of a relevant-only read, for a group whose `GroupType` is `Dynamic`; a record without a target
+matches no group and keeps its cause), and the roster count of that group is not known, so its `memberCount`
+stays null and not 0 (R-15). Cost if wrong: one condition in each of the two places, and a dynamic group's
+failed members read is a cause again with nothing unread to belong to. A dynamic group's
 members are also not looked at for the PIM decision (`$NeedPimRead` counts a non-dynamic group's members, and
 owners as before), so a dynamic group with members and no owners sends no
 `Read-OERGroupPimAssignment`. That read answered `ResourceTypeNotSupported` for a dynamic group when it was
@@ -7504,8 +7516,9 @@ wrong: one line in `Get-OERInventoryGroup` (the null to an omitted key), and R-2
 
 **R-2 (the engine).** `Sync-OERStructureGroup` writes its one aggregate `Skipped` row for a dynamic group
 only when the document's `members` is not an explicit null (`$MembersDeclaredNull`, decided by
-`Test-OERDeclaredNull` above it). Null says "leave it untouched", so there is nothing to report, and the
-prompt asks a `-Prune` plan of an export to show no member row at all. A declared list keeps its row for each
+`Test-OERDeclaredNull` above it). Null says "leave it untouched", so there is nothing to report, and a
+`-Prune` plan of the module's own export must report nothing for a collection the export declared
+untouched. A declared list keeps its row for each
 declared member, and `[]` and an omitted key keep the aggregate row. `-Prune` never touched a dynamic group's
 members and still does not. Cost if wrong: drop the condition, and one `Skipped` row per dynamic group that has
 members returns.
@@ -7536,9 +7549,15 @@ reconciles by identity, never by position, so no engine change is needed for it.
 The helper is a private function and not one comparison per file for two reasons: the rule is a
 single-owner rule like the others of this module (a second copy in the unit reader would be one more place
 for the two orders to drift apart), and the form matters for a large group. The lists are ordered with LINQ's
-`OrderBy` and `ThenBy`, which take .NET's own comparers and are stable, one key pass per key (the least
-significant first), so the script block that reads a key runs once per entry; a `List.Sort` with a comparison
-script block calls it for every comparison. Measured offline with plain PowerShell on the development
+`OrderBy` and `ThenBy`, which take .NET's own comparers and are stable, one pass per key (the least
+significant first), so the script block that reads a key runs twice per entry in a text pass (`OrderBy`, then
+`ThenBy`) and once in a number pass, never once per comparison; a `List.Sort` with a comparison script block
+calls it for every comparison. The generic arguments of those calls are inferred from the typed arguments and
+never written out: an explicit type argument on a generic method call (`::OrderBy[object, string](...)`) is
+syntax PowerShell has only since 7.3, which fails to parse under the module's 7.2 floor and with it the whole
+merged module, and no gate runs 7.2 (CI runs a current PowerShell, and PSScriptAnalyzer's compatible syntax
+rule reports nothing for it), so the helper's test file parses the helper's own source and refuses any call
+that carries generic type arguments. Measured offline with plain PowerShell on the development
 machine, 50,000 texts: about 0.4 s through LINQ and about 7 s through `List.Sort`, and 5,000 texts about 0.8 s
 through `List.Sort` with the comparison inline, and about 1.9 s when it calls a function. Cost if wrong: put the
 comparison inline per file, which costs a second copy and the time above for a group with thousands of
@@ -10391,8 +10410,12 @@ message saw one name where two were left out. Both sites now register the cause 
 the clause reads as "no id to normalise", so the key is the full text: each name is a cause of its own, and one
 name is still stated once however many objects carry it. `Format-OERUnreadCauseClause` and the id
 normalisation of every other cause are unchanged. The cost is length: a tenant with many shared names states
-each, and since these causes are added last, the cap of 23 distinct causes drops them before it drops a cause
-of another kind, and says how many it dropped; the verbose stream carries every one. Cost if wrong: put the
+each, and the cap of 23 distinct causes can drop a shared-name cause like any other, and says how many it
+dropped; the unread keys stay and the verbose stream carries every one. Where a shared-name cause stands in
+that order depends on the call: the group reader and the five calls `Get-OERInventory` makes once every section
+is read add theirs after the other causes, so the cap drops those first, while the assignment policies' call
+adds its causes as each access package is read, ahead of the causes of the sections read after it. Cost if
+wrong: put the
 `Target` back, and a second name of one count disappears from the clause again.
 
 **BL-45 (a role name of white space).** A role assignment's `role` and a directory role entry's `role` fell
@@ -10413,8 +10436,9 @@ catalog with none has no binding to name, and a failed list is already named unr
 `accessPackages/<catalog>/packages`, with no resource read behind it. A failed resource read of a catalog that
 does hold a package is named as before. The Catalogs section reads a catalog's resources for the catalog's own
 entry, separately, and is not changed; the shared name map is still filled by whichever section needs it
-first. The order of the unread entries of one catalog changes (the packages before the resource names), and no
-other entry does. Cost if wrong: one resource read more per catalog that holds no package, and a
+first. A failed package list now names `packages` alone for its catalog, since a failed list reads no
+resources, so a catalog's `packages` and `catalogResourceNames` entries can no longer both be named, and no
+other entry changes. Cost if wrong: one resource read more per catalog that holds no package, and a
 `catalogResourceNames` entry for a read that was never needed.
 
 ## export-run-context
