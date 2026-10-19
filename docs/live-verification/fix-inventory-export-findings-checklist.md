@@ -314,8 +314,10 @@ Write-OerLiveStep "pim: eligibility schedules $(@($Elig.Body['value']).Count), m
 Disconnect-OerLive
 ```
 
-**Expect:** 10 recorded ids; `dyn` dynamic with 2 members; `typed` with 3 members; `nested`, the four twins and
-`pim` with 0 members; `pim` with 2 member eligibility schedules.
+**Expect:** 10 recorded ids; `dyn` dynamic with 2 members; `typed` with 2 members through this untyped read,
+since its third member, the service principal, is the untyped read's known gap (6.2 measures it; the module reads
+service principal members typed, and 1.1 shows all 3); `nested`, the four twins and `pim` with 0 members; `pim`
+with 2 member eligibility schedules.
 **Failure looks like:** a missing id, a read that is not 200, or `dyn` with fewer than 2 members.
 
 Result: not run yet.
@@ -350,7 +352,9 @@ Write-OerLiveStep "inventory.json: groups $($Groups.Count), every one prefixed: 
 foreach ($G in $Groups) {
     $Parts = foreach ($Key in 'members', 'owners', 'eligibility') {
         $Has = $G.PSObject.Properties.Name -contains $Key
-        $Value = if ($Has) { $G.$Key } else { $null }
+        # A plain assignment: an if statement's output would unroll an empty list to $null.
+        $Value = $null
+        if ($Has) { $Value = $G.$Key }
         $State = if (-not $Has) { 'omitted' } elseif ($null -eq $Value) { 'null' } else {
             $Order = if ($Key -eq 'eligibility') { $S1110EligibilityOrder } else { $S1110TextOrder }
             "$(@($Value).Count), in order $(Test-S1110Order -Items @($Value) -Compare $Order)"
