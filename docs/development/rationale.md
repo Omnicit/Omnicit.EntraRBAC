@@ -10318,6 +10318,47 @@ stamps it ([#unresolved-principals](#unresolved-principals)). A group principal 
 not return, or whose lookup failed, carries its object id as its name, which `Get-OERGroupReference`
 returns as it is, with no index read.
 
+### Sprint 11 step 10: names and the order of reads in Get-OERInventory (BL-156, BL-45, BL-24; R-10, R-11)
+
+**BL-156 and R-10 (a shared name is a cause of its own).** `Format-OERUnreadCauseClause` deduplicates the
+causes of an `InventoryPartial` message on a key: the message with its `Target` -- the failing object's own
+id, taken from its record -- replaced by `<id>`, so that seven units that fail for one reason are one cause.
+A shared-name cause was registered with the name's own unread entry as its `Target` (`groups/Admins`), and
+`Get-OERSharedNameCause` writes that entry into its text, so the replacement turned every name of one count
+into the same key (`2 live objects share the name <id> (compared ...`), and the clause kept the first name
+only. That happened in `Get-OERInventory`'s `Select-UniqueNamedEntry` and in the group clause of
+`Export-OERInventory`, which formats the causes `Get-OERInventoryGroup -ExcludeSharedName` returns. The unread
+entries and the README still named every name; only the causes clause lost one, so an operator reading the
+message saw one name where two were left out. Both sites now register the cause with a BLANK `Target`, which
+the clause reads as "no id to normalise", so the key is the full text: each name is a cause of its own, and one
+name is still stated once however many objects carry it. `Format-OERUnreadCauseClause` and the id
+normalisation of every other cause are unchanged. The cost is length: a tenant with many shared names states
+each, and since these causes are added last, the cap of 23 distinct causes drops them before it drops a cause
+of another kind, and says how many it dropped; the verbose stream carries every one. Cost if wrong: put the
+`Target` back, and a second name of one count disappears from the clause again.
+
+**BL-45 (a role name of white space).** A role assignment's `role` and a directory role entry's `role` fell
+back to the role definition id only when the name was empty or missing, so a name of spaces was written as
+it was, and the validator refuses an empty name and cannot tell white space from one. Both now use
+`[string]::IsNullOrWhiteSpace` on the name and fall back to the id the row already carries, the rule the
+administrative unit's scoped role line already has. The duplicate schedule warning of the directory
+section names the role the same way, so the warning and the entry it is about agree. A name that is not blank
+is written as it is. Cost if wrong: a role whose name is white space is written as that white space again.
+
+**BL-24 and R-11 (the package list is read before the catalog resources).** The AccessPackages section read
+each catalog's resources first, only to name the bindings of the packages it listed next, and sent that read
+for a catalog that holds no package at all, and for one whose package list then failed, naming
+`accessPackages/<catalog>/catalogResourceNames` unread for a read nothing needed. It now reads the package
+list first and reads the catalog's resources, and asks `Resolve-OERPrincipalName` for the group and
+application names through the shared name map, only for a catalog whose list was read and holds a package: a
+catalog with none has no binding to name, and a failed list is already named unread as
+`accessPackages/<catalog>/packages`, with no resource read behind it. A failed resource read of a catalog that
+does hold a package is named as before. The Catalogs section reads a catalog's resources for the catalog's own
+entry, separately, and is not changed; the shared name map is still filled by whichever section needs it
+first. The order of the unread entries of one catalog changes (the packages before the resource names), and no
+other entry does. Cost if wrong: one resource read more per catalog that holds no package, and a
+`catalogResourceNames` entry for a read that was never needed.
+
 ## export-run-context
 
 Sprint 11 step 6 (R-2 of step 5, ruling R-1, amended on the review of Task 1) gave one export a
