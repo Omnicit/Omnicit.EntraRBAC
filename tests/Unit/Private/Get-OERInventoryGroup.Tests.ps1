@@ -1149,6 +1149,58 @@ Describe 'Get-OERInventoryGroup' {
             @($Read.Verbose) | Should -Contain "Get-OERInventory: Could not read members for group 'g-m': Forbidden (403)."
         }
 
+        It 'finds the dynamic group by its id without regard to letter case (R-24, fix round 2)' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -Message "Could not read members for group 'G-D': Too many requests (429)." `
+                    -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'G-D' -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = 'role_sec_dynamic'; Description = $null; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'
+                    Owners = $script:DynOwners; PimEligibility = @()
+                }
+            }
+            $Read = Invoke-GroupRead
+            @($Read.Result.Groups).Count | Should -Be 1
+            @($Read.Result.Unread).Count | Should -Be 0
+            @($Read.Result.Causes).Count | Should -Be 0 -Because 'a record''s target that differs from the group''s id in letter case only still names that group'
+        }
+
+        It 'looks the dynamic groups up once, so the lookup does not grow with the number of failed members reads (R-24, fix round 2)' {
+            # Each listed group counts how often its GroupType is read. A healthy read reads it once per group
+            # for the projection; the lookup adds one read per group, once, when any record was written, and not
+            # one per record (a scan per failed record cost failures times listed groups: 15.5 s for 2000 groups
+            # with every members read failing).
+            $script:CountedGroups = @(foreach ($GroupId in 'g-1', 'g-2', 'g-3', 'g-4') {
+                $Counted = [PSCustomObject]@{
+                    Id = $GroupId; DisplayName = "role_sec_$GroupId"; Description = $null; IsAssignableToRole = $false
+                    MembershipRule = $null; Members = @(); Owners = @(); PimEligibility = @(); TypeReads = 0
+                }
+                $Counted | Add-Member -MemberType ScriptProperty -Name GroupType -Value { $this.TypeReads++; 'Assigned' }
+                $Counted
+            })
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                foreach ($Target in $script:FailedGroupTargets) {
+                    Write-Error -Message "Could not read members for group '${Target}': Too many requests (429)." `
+                        -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject $Target -ErrorAction $Ea
+                }
+                $script:CountedGroups
+            }
+            $Reads = @{}
+            foreach ($Run in @(@{ Name = 'none'; Targets = @() }, @{ Name = 'one'; Targets = @('g-1') }, @{ Name = 'four'; Targets = @('g-1', 'g-2', 'g-3', 'g-4') })) {
+                foreach ($Counted in $script:CountedGroups) { $Counted.TypeReads = 0 }
+                $script:FailedGroupTargets = $Run.Targets
+                $null = Invoke-GroupRead
+                $Reads[$Run.Name] = [int](($script:CountedGroups | Measure-Object -Property TypeReads -Sum).Sum)
+            }
+            $Reads['none'] | Should -BeGreaterThan 0 -Because 'the projection reads the type of every group, so the counter is live'
+            $Reads['one'] | Should -Be ($Reads['none'] + 4) -Because 'a read with a failed record looks every listed group up once'
+            $Reads['four'] | Should -Be $Reads['one'] -Because 'four failed records look the groups up no more often than one'
+        }
+
         It 'drops the count of a dynamic group left out for a shared name' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
                 [PSCustomObject]@{

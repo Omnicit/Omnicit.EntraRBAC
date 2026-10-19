@@ -15,7 +15,9 @@ function Get-OERInventoryGroup {
     explicit null for a members read that failed and for the members of a dynamic group (below), the
     PIM-for-Groups pimPolicy only for a group that Test-OERGroupPimInUse finds in use, and
     onPremisesSynced only for a group synchronized from on-premises. A failed read is never an empty
-    fact: it is named in the Unread list and its cause is kept in the Causes list.
+    fact: it is named in the Unread list and its cause is kept in the Causes list, except the members
+    read of a DYNAMIC group, which is no gap since those members are not part of the document (below;
+    a dynamic administrative unit's members are the same, which Get-OERInventory handles the same way).
 
     The lists a projection writes stand in one fixed order, Get-OEROrderedInventoryEntry's (Sprint 11 step
     10, BL-121): members and owners as text, and eligibility by principal, then access type, then
@@ -319,6 +321,20 @@ function Get-OERInventoryGroup {
         try {
             $GroupItems = @(Get-OERGroup @GroupParams -ErrorAction SilentlyContinue -ErrorVariable GroupReadErrors |
                     Where-Object { $null -ne $_ })
+            # Sprint 11 step 10 (BL-43, R-24, fix round 2): the dynamic groups among those just listed, by id and
+            # without regard to letter case, built ONCE and only when a record was written, so the record loop
+            # below asks a set instead of scanning every listed group per failed members read (a bad run in
+            # which every group's members read failed cost failures times groups: 15.5 s for 2000 groups, 95 s
+            # extrapolated for 5000, none of it for a healthy tenant). It is complete here: the listing above has
+            # finished, and the -SecurityEnabledOnly removal that reassigns $GroupItems comes after the loop.
+            $DynamicGroupIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            if (@($GroupReadErrors | Where-Object { $null -ne $_ }).Count -gt 0) {
+                foreach ($ListedGroup in $GroupItems) {
+                    if ($ListedGroup.GroupType -eq 'Dynamic' -and -not [string]::IsNullOrEmpty([string]$ListedGroup.Id)) {
+                        $null = $DynamicGroupIds.Add([string]$ListedGroup.Id)
+                    }
+                }
+            }
             foreach ($GErr in @($GroupReadErrors)) {
                 if ($null -eq $GErr) { continue }
                 # No Remove-OERErrorRecord here: these records were WRITTEN deliberately by
@@ -338,11 +354,11 @@ function Get-OERInventoryGroup {
                     # members are the explicit null whether the read worked or not and nothing in the document
                     # is missing, so its cause is not recorded: a cause clause must never name a read that no
                     # unread entry names (the verbose line above is all that remains of it). The group is found
-                    # by the record's Target, its id, among the groups just listed; a record with no Target
-                    # matches none and keeps its cause.
+                    # by the record's Target, its id, in the set of dynamic groups just listed; a record with no
+                    # Target matches none and keeps its cause.
                     $DynamicMembersFailure = $GErr.FullyQualifiedErrorId -like 'GroupMemberReadFailed*' -and
                         -not [string]::IsNullOrEmpty([string]$GErr.TargetObject) -and
-                        @($GroupItems | Where-Object { $_.GroupType -eq 'Dynamic' -and [string]$_.Id -ieq [string]$GErr.TargetObject }).Count -gt 0
+                        $DynamicGroupIds.Contains([string]$GErr.TargetObject)
                     if (-not $DynamicMembersFailure) {
                         Add-UnreadCause -Cause $GroupCause -Target ([string]$GErr.TargetObject)
                     }

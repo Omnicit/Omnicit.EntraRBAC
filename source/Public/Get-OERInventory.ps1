@@ -97,8 +97,11 @@ function Get-OERInventory {
     after the inventory object is emitted, a non-terminating InventoryPartial error names every
     affected section/displayName/key, so a caller using -ErrorAction Stop or a try/catch finds out
     instead of treating a document with holes in it as a full tenant snapshot. (A dynamic group's
-    members are the one collection that is no gap when its read fails, since they are not part of the
-    document: see above.) Do not hand-edit
+    members and a dynamic administrative unit's members are the two collections that are no gap when
+    their read fails, since neither is part of the document, a group's written as an explicit null
+    and a unit's omitted: the failed read names nothing unread and adds no cause either, and only the
+    verbose stream shows it. A static unit's failed members read is a gap, named unread with its
+    cause.) Do not hand-edit
     such a null to an empty array -- that turns "unknown" into "declared empty", which
     Invoke-OERStructure -Prune acts on by deleting every live member (a group's service principals,
     the members of a group synchronized from on-premises and the members PIM for Groups holds or
@@ -1089,6 +1092,17 @@ function Get-OERInventory {
             try {
                 $AuItems = @(Get-OERAdministrativeUnit -IncludeMembers -IncludeScopedRoles -ErrorAction SilentlyContinue -ErrorVariable AuReadErrors |
                         Where-Object { $null -ne $_ })
+                # Sprint 11 step 10 (BL-43, R-28): the dynamic units among those just listed, by id and without
+                # regard to letter case, built ONCE and only when a record was written, for the record loop
+                # below (the same set as the group reader's, so no listed unit is scanned per failed record).
+                $DynamicUnitIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                if (@($AuReadErrors | Where-Object { $null -ne $_ }).Count -gt 0) {
+                    foreach ($ListedUnit in $AuItems) {
+                        if ([string]$ListedUnit.MembershipType -eq 'Dynamic' -and -not [string]::IsNullOrEmpty([string]$ListedUnit.Id)) {
+                            $null = $DynamicUnitIds.Add([string]$ListedUnit.Id)
+                        }
+                    }
+                }
                 foreach ($AErr in @($AuReadErrors)) {
                     if ($null -eq $AErr) { continue }
                     if ($AErr.FullyQualifiedErrorId -like 'AdministrativeUnitNotFound*') { continue }
@@ -1099,7 +1113,20 @@ function Get-OERInventory {
                         # Keep the CAUSE, same reasoning as the group record loop in Get-OERInventoryGroup.ps1.
                         $AuCause = [string]$AErr.Exception.Message
                         Write-Verbose "Get-OERInventory: $AuCause"
-                        Add-UnreadCause -Cause $AuCause -Target ([string]$AErr.TargetObject)
+                        # Sprint 11 step 10 (BL-43, R-28): as for a dynamic GROUP's members (R-24, in
+                        # Get-OERInventoryGroup.ps1), the members read of a DYNAMIC unit is no gap, since a
+                        # dynamic unit's members are omitted from the document below whether the read worked or
+                        # not and no unread entry names them, so its cause is not recorded: a cause clause must
+                        # never name a read that no unread entry names (the verbose line above is all that
+                        # remains of it). The unit is found by the record's Target, its id, in the set of
+                        # dynamic units just listed; a record with no Target matches none and keeps its cause,
+                        # and so does every scoped-role record and every record of a static unit.
+                        $DynamicUnitMembersFailure = $AErr.FullyQualifiedErrorId -like 'AdministrativeUnitMemberReadFailed*' -and
+                            -not [string]::IsNullOrEmpty([string]$AErr.TargetObject) -and
+                            $DynamicUnitIds.Contains([string]$AErr.TargetObject)
+                        if (-not $DynamicUnitMembersFailure) {
+                            Add-UnreadCause -Cause $AuCause -Target ([string]$AErr.TargetObject)
+                        }
                         continue
                     }
                     # Same publisher test as the group record loop in Get-OERInventoryGroup.ps1, and for

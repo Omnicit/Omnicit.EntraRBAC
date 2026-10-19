@@ -6166,6 +6166,237 @@ Describe 'Get-OERInventory' {
             @($Verbose) | Should -Contain "Get-OERInventory: Could not read members for group 'g-dyn': Too many requests (429)."
         }
 
+        # Sprint 11 step 10 (BL-43, R-28): the members of a dynamic administrative unit are omitted from the
+        # document, so a failed read of them is no gap and records no cause, exactly as for a dynamic group
+        # (R-24, above); a static unit's failed members read, and every other failed read of a unit, still
+        # does. The mocks give each failure its OWN reason, so the cause clause's deduplication cannot hide a
+        # restored cause, and honour the caller's -ErrorAction as the group mocks do.
+        It 'states no cause for the failed members read of a dynamic administrative unit, alone, and writes the unit without members (Sprint 11 step 10, BL-43, R-28)' {
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Could not read members for administrative unit au-dyn: Too many requests (429).'),
+                        'AdministrativeUnitMemberReadFailed,Get-OERAdministrativeUnit',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, 'au-dyn')) -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'au-dyn'; DisplayName = 'AU-Dynamic'; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Dynamic'
+                    MembershipRule = 'user.department -eq "IT"'; Visibility = $null; ScopedRoles = @()
+                }
+            }
+
+            $Stream = @(Get-OERInventory -Include AdministrativeUnits -Verbose -ErrorVariable InvErr -WarningAction SilentlyContinue -ErrorAction SilentlyContinue 4>&1)
+            $Inv = @($Stream | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })[0]
+            $Verbose = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+            $Au = @($Inv.administrativeUnits | Where-Object { $_.displayName -eq 'AU-Dynamic' })
+            $Au.Count | Should -Be 1
+            $Au[0].dynamic | Should -BeTrue
+            $Au[0].PSObject.Properties.Name | Should -Not -Contain 'members' -Because 'a dynamic unit''s members are omitted, not written'
+            $Published = @($InvErr) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory'
+            }
+            $Partial = @($Published | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 0 -Because ('the failed read is no gap, so nothing is unread and no cause stands alone; got: ' +
+                (@($Partial | ForEach-Object { $_.Exception.Message }) -join ' | '))
+            # The failed read is not lost: its verbose line stays.
+            @($Verbose) | Should -Contain 'Get-OERInventory: Could not read members for administrative unit au-dyn: Too many requests (429).'
+        }
+
+        It 'states no cause for the failed members read of a dynamic administrative unit, beside a static group''s failed owners read, and counts the one collection that is unread (Sprint 11 step 10, BL-43, R-28)' {
+            # The re-review's probe: before R-28 the unit's cause stood in the clause beside the owners cause
+            # while the unread list named only the owners, and the message counted one collection with two causes.
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not read owners for group 'g-sta': Forbidden (403)."),
+                        'GroupOwnerReadFailed,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, 'g-sta')) -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'g-sta'; DisplayName = 'role_sec_sta'; IsAssignableToRole = $false
+                    GroupType = 'Assigned'; Description = $null; MailNickname = $null
+                    Members = @(); PimEligibility = @()
+                }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Could not read members for administrative unit au-dyn: Too many requests (429).'),
+                        'AdministrativeUnitMemberReadFailed,Get-OERAdministrativeUnit',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, 'au-dyn')) -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'au-dyn'; DisplayName = 'AU-Dynamic'; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Dynamic'
+                    MembershipRule = 'user.department -eq "IT"'; Visibility = $null; ScopedRoles = @()
+                }
+            }
+
+            $Inv = Get-OERInventory -Include Groups, AdministrativeUnits -ErrorVariable InvErr -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            @($Inv.administrativeUnits).Count | Should -Be 1
+            $Published = @($InvErr) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory'
+            }
+            $Partial = @($Published | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1 -Because 'the static group''s failed owners read is a gap'
+            $Msg = $Partial[0].Exception.Message
+            [string]$Partial[0].TargetObject | Should -Be 'groups/role_sec_sta/owners'
+            $Msg | Should -Match ([regex]::Escape('1 collection(s) or object(s) could not be read'))
+            $Msg | Should -Not -Match 'AU-Dynamic'
+            $Causes = ($Msg -split 'Causes: ')[1]
+            $Causes | Should -Match ([regex]::Escape("Could not read owners for group 'g-sta': Forbidden (403)."))
+            $Causes | Should -Not -Match 'au-dyn'
+            $Causes | Should -Not -Match '429'
+        }
+
+        It 'names the failed members read of a static administrative unit unread and keeps its cause (Sprint 11 step 10, BL-43, R-28)' {
+            # Non-vacuity of the two tests above: the same failure on an assigned unit is a gap.
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Could not read members for administrative unit au-sta: Too many requests (429).'),
+                        'AdministrativeUnitMemberReadFailed,Get-OERAdministrativeUnit',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, 'au-sta')) -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'au-sta'; DisplayName = 'AU-Static'; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null; ScopedRoles = @()
+                }
+            }
+
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorVariable InvErr -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            $Au = @($Inv.administrativeUnits | Where-Object { $_.displayName -eq 'AU-Static' })
+            $Au.Count | Should -Be 1
+            $Au[0].PSObject.Properties.Name | Should -Contain 'members' -Because 'an omitted members key still reconciles and prunes'
+            $null -eq $Au[0].members | Should -BeTrue
+            $Published = @($InvErr) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory'
+            }
+            $Partial = @($Published | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'administrativeUnits/AU-Static/members'
+            $Msg = $Partial[0].Exception.Message
+            $Msg | Should -Match ([regex]::Escape('1 collection(s) or object(s) could not be read'))
+            ($Msg -split 'Causes: ')[1] | Should -Match ([regex]::Escape('Could not read members for administrative unit au-sta: Too many requests (429).'))
+        }
+
+        It 'finds the dynamic unit by its id without regard to letter case (Sprint 11 step 10, BL-43, R-28)' {
+            # A cause with no unread entry beside it raises no InventoryPartial of its own, so the proof needs an
+            # unread collection to stand beside: the static group's failed owners read, as in the test above.
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not read owners for group 'g-sta': Forbidden (403)."),
+                        'GroupOwnerReadFailed,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, 'g-sta')) -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'g-sta'; DisplayName = 'role_sec_sta'; IsAssignableToRole = $false
+                    GroupType = 'Assigned'; Description = $null; MailNickname = $null
+                    Members = @(); PimEligibility = @()
+                }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Could not read members for administrative unit AU-DYN: Too many requests (429).'),
+                        'AdministrativeUnitMemberReadFailed,Get-OERAdministrativeUnit',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, 'AU-DYN')) -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'au-dyn'; DisplayName = 'AU-Dynamic'; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Dynamic'
+                    MembershipRule = 'user.department -eq "IT"'; Visibility = $null; ScopedRoles = @()
+                }
+            }
+
+            $null = Get-OERInventory -Include Groups, AdministrativeUnits -ErrorVariable InvErr -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            $Published = @($InvErr) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory'
+            }
+            $Partial = @($Published | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            $Causes = ($Partial[0].Exception.Message -split 'Causes: ')[1]
+            $Causes | Should -Match ([regex]::Escape("Could not read owners for group 'g-sta': Forbidden (403)."))
+            $Causes | Should -Not -Match '429' -Because 'a record''s target that differs from the unit''s id in letter case only still names that unit'
+            $Causes | Should -Not -Match 'AU-DYN'
+        }
+
+        It 'keeps the cause of every other failed read of a dynamic unit, and of a members read that names no unit (Sprint 11 step 10, BL-43, R-28)' {
+            # The skip is of the MEMBERS read of a DYNAMIC unit found by the record's target: the same unit's
+            # scoped-role read (the unit is the same, the collection is not) stays a gap with its cause, named
+            # unread, and so does a members record with no target, which matches no unit.
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Could not read members for administrative unit au-dyn: Too many requests (429).'),
+                        'AdministrativeUnitMemberReadFailed,Get-OERAdministrativeUnit',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, 'au-dyn')) -ErrorAction $Ea
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Could not read scoped roles for administrative unit au-dyn: Forbidden (403).'),
+                        'AdministrativeUnitScopedRoleReadFailed,Get-OERAdministrativeUnit',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, 'au-dyn')) -ErrorAction $Ea
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Could not read members for a unit with no target: Bad gateway (502).'),
+                        'AdministrativeUnitMemberReadFailed,Get-OERAdministrativeUnit',
+                        [System.Management.Automation.ErrorCategory]::ReadError, $null)) -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'au-dyn'; DisplayName = 'AU-Dynamic'; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Dynamic'
+                    MembershipRule = 'user.department -eq "IT"'; Visibility = $null
+                }
+            }
+
+            $null = Get-OERInventory -Include AdministrativeUnits -ErrorVariable InvErr -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            $Published = @($InvErr) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory'
+            }
+            $Partial = @($Published | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'administrativeUnits/AU-Dynamic/scopedRoles'
+            $Causes = ($Partial[0].Exception.Message -split 'Causes: ')[1]
+            $Causes | Should -Match ([regex]::Escape('Could not read scoped roles for administrative unit au-dyn: Forbidden (403).'))
+            $Causes | Should -Match ([regex]::Escape('Could not read members for a unit with no target: Bad gateway (502).'))
+            $Causes | Should -Not -Match '429' -Because 'the dynamic unit''s members read is no gap'
+        }
+
+        It 'looks the dynamic units up once, so the lookup does not grow with the number of failed members reads (Sprint 11 step 10, BL-43, R-28)' {
+            # Each listed unit counts how often its MembershipType is read. A healthy read reads it once per unit
+            # for the projection; the lookup adds one read per unit, once, when any record was written, and not
+            # one per record (a scan per failed record cost failures times listed units).
+            $script:CountedUnits = @(foreach ($UnitId in 'au-1', 'au-2', 'au-3', 'au-4') {
+                $Unit = [PSCustomObject]@{
+                    Id = $UnitId; DisplayName = "AU-$UnitId"; Description = $null; IsMemberManagementRestricted = $false
+                    Visibility = $null; Members = @(); ScopedRoles = @(); TypeReads = 0
+                }
+                $Unit | Add-Member -MemberType ScriptProperty -Name MembershipType -Value { $this.TypeReads++; 'Assigned' }
+                $Unit
+            })
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                foreach ($Target in $script:FailedUnitTargets) {
+                    Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Could not read members for administrative unit ${Target}: Too many requests (429)."),
+                            'AdministrativeUnitMemberReadFailed,Get-OERAdministrativeUnit',
+                            [System.Management.Automation.ErrorCategory]::LimitsExceeded, $Target)) -ErrorAction $Ea
+                }
+                $script:CountedUnits
+            }
+            $Reads = @{}
+            foreach ($Run in @(@{ Name = 'none'; Targets = @() }, @{ Name = 'one'; Targets = @('au-1') }, @{ Name = 'four'; Targets = @('au-1', 'au-2', 'au-3', 'au-4') })) {
+                foreach ($Unit in $script:CountedUnits) { $Unit.TypeReads = 0 }
+                $script:FailedUnitTargets = $Run.Targets
+                $null = Get-OERInventory -Include AdministrativeUnits -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+                $Reads[$Run.Name] = [int](($script:CountedUnits | Measure-Object -Property TypeReads -Sum).Sum)
+            }
+            $Reads['none'] | Should -BeGreaterThan 0 -Because 'the projection reads the type of every unit, so the counter is live'
+            $Reads['one'] | Should -Be ($Reads['none'] + 4) -Because 'a read with a failed record looks every listed unit up once'
+            $Reads['four'] | Should -Be $Reads['one'] -Because 'four failed records look the units up no more often than one'
+        }
+
         It 'names the cause for an administrative unit collection read failure too' {
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
                 Write-Error -Message "Could not read scoped roles for unit 'au-1': Forbidden (403)." `
