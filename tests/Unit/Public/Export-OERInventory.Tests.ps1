@@ -5026,8 +5026,13 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
     It 'ignores a context an export left behind when its walk stopped: the next standalone Get-OERInventory lists for itself' {
         # There is no finally: an export that stops inside the walk never reaches the statement that clears
         # its context. The context is then ignored by ownership, since its Owner is on no call stack.
+        #
+        # Sprint 11 step 10 (BL-123): an eligibility read that stops is now caught and reported, so it no longer
+        # ends the export on its own. What still ends it inside the walk is the warning the catch writes, under
+        # a Stop warning preference (-WarningAction Stop): that warning is a terminating error, and it carries the
+        # cause, which is what the message below is matched on.
         Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { throw 'the eligibility read stopped' }
-        { Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-left-behind') -Include Groups, RoleAssignments -WarningAction SilentlyContinue } |
+        { Export-OERInventory -OutputPath (Join-Path $TestDrive 'rc-left-behind') -Include Groups, RoleAssignments -WarningAction Stop } |
             Should -Throw -ExpectedMessage '*the eligibility read stopped*'
         # Reach proof: both scopes were read, the walk stopped at the eligibility read, and the context the
         # export left behind holds the roster's index (the tenant of the roster: 'Ops' carried by two groups).
@@ -7950,5 +7955,647 @@ $Bundle = Export-OERInventory -OutputPath '#ROOT#' -Include RoleAssignments -Sco
         $Run.Errors[0] | Should -BeLike '*The Scope consists only of white space. Pass an Azure Resource Manager scope, or leave the parameter out.*'
         Test-Path -LiteralPath $Log | Should -BeFalse
         Test-Path -LiteralPath $Root | Should -BeFalse
+    }
+}
+
+Describe 'Export-OERInventory (a read after the Azure walk that stops is reported and never ends the export, Sprint 11 step 10, BL-123)' {
+    # BL-123 (first point). The three reads after the Azure walk -- the PIM eligibilities, the Azure Lighthouse
+    # delegations and the role policy selection -- each catch what their helpers do not, so an error that ends one
+    # of them no longer ends the EXPORT after its whole read. Each stop is named as what it is: the eligibility read
+    # as every scope of the walk skipped for azurePimEligibility.json (and unread for the selection), the Lighthouse
+    # read as one entry for all Azure scopes with its cause, the selection as every candidate kept and each distinct
+    # scope named as not judged. Each writes ONE warning that names the cause, the bundle is still written, and the
+    # error stream carries only InventoryPartial. The reads are mocked to throw; the real Select-OERInventoryRolePolicy
+    # runs where the selection is not the stop. No id below is version-4 shaped.
+    BeforeAll {
+        $script:StSubA = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:StSubB = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'
+        $script:StMgSkip = '<management groups: the listing failed>'
+        $script:StRoleGuid = @{ Reader = 'aaaaaaaa-0000-0000-0000-00000000000a'; Contributor = 'aaaaaaaa-0000-0000-0000-00000000000c' }
+        $script:StUnjudgedA = "roleManagementPolicies/role selection at $script:StSubA"
+        $script:StUnjudgedB = "roleManagementPolicies/role selection at $script:StSubB"
+        $script:StLighthouseEntry = 'lighthouseDelegations at <all Azure scopes: the read stopped>'
+        # The candidates of one scope in the shape Get-OERInventoryRolePolicy hands over: the entry the export
+        # writes, the scope in the form the selection keys on, the role definition id and Modified. Two roles,
+        # neither changed, so with no role assignment and no eligibility the selection OMITS both when it can judge
+        # them, and keeps and names them when it cannot.
+        $script:StCandidates = {
+            param([string]$Scope, [string]$AsScope)
+            foreach ($Role in @('Reader', 'Contributor')) {
+                [PSCustomObject]@{
+                    Entry            = [PSCustomObject]@{ scope = $Scope; role = $Role; allowPermanentEligibility = $null; activationMaxHours = 8 }
+                    Scope            = $AsScope
+                    RoleDefinitionId = "$Scope/providers/Microsoft.Authorization/roleDefinitions/$($script:StRoleGuid[$Role])"
+                    Modified         = $false
+                }
+            }
+        }
+        # One export: its result, the text of every warning that reached the caller's stream, and its errors.
+        function script:Invoke-StExport {
+            param([hashtable]$Splat)
+            $ExErr = $null
+            $All = @(Export-OERInventory @Splat -WarningAction Continue -ErrorAction SilentlyContinue -ErrorVariable ExErr 3>&1)
+            [PSCustomObject]@{
+                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                Errors   = @($ExErr)
+                Partial  = @($ExErr | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        $script:StSeq = [System.Collections.Generic.List[string]]::new()
+        $script:StTreeScopes = @($script:StSubA, $script:StSubB)
+        $script:StTreeSkipped = @()
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes        = @($script:StTreeScopes)
+                Hierarchy     = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+                SkippedScopes = @($script:StTreeSkipped)
+            }
+        }
+        # The per-scope call of RoleAssignments reads nothing; the role assignment list of the selection finds none.
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryRolePolicy {
+            param($Scope, $ErrorAction)
+            & $script:StCandidates $Scope $Scope
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @(); RoleScopes = @() }
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'reports an eligibility read that stops: every scope unread for azurePimEligibility.json, the selection sees every scope as unread, one warning, the bundle written' {
+        # A level of the tree that could not be listed is already named, so it stays first and the scopes follow it.
+        $script:StTreeSkipped = @($script:StMgSkip)
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { throw 'ARM eligibility list refused (403)' }
+        $Run = Invoke-StExport -Splat @{ OutputPath = (Join-Path $TestDrive 'st-elig'); Include = @('RoleAssignments', 'RoleManagementPolicies') }
+
+        # Reach proofs: the read was made once over both scopes, after both scopes were read, and the selection ran.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Exactly -Times 1 -ParameterFilter { @($Scope).Count -eq 2 }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryRolePolicy -Exactly -Times 2
+        $Run.Result.ScopeCount | Should -Be 2
+        # The bundle was written, with azurePimEligibility.json as [] and named, never read as "no eligibility".
+        Test-Path $Run.Result.BundlePath | Should -BeTrue
+        $Run.Result.Files | Should -Contain 'azurePimEligibility.json'
+        (Get-Content (Join-Path $Run.Result.BundlePath 'azurePimEligibility.json') -Raw).Trim() | Should -Be '[]'
+        $Run.Result.AzurePimEligibility | Should -Be 0
+        @($Run.Result.SkippedEligibilityScopes) | Should -Be @($script:StMgSkip, $script:StSubA, $script:StSubB)
+        @($Run.Result.SkippedScopes) | Should -Be @($script:StMgSkip)
+        # The selection saw both scopes as unread: all four policies are kept, and each scope is named.
+        @($Run.Result.IncompleteReads) | Should -Be @($script:StUnjudgedA, $script:StUnjudgedB)
+        $Written = @(Get-Content (Join-Path $Run.Result.BundlePath 'roleManagementPolicies.json') -Raw | ConvertFrom-Json)
+        @($Written | ForEach-Object { "$($_.scope)|$($_.role)" }) | Should -Be @("$($script:StSubA)|Reader", "$($script:StSubA)|Contributor", "$($script:StSubB)|Reader", "$($script:StSubB)|Contributor")
+        # ONE warning, with the cause; nothing of the stop reaches the error stream but InventoryPartial.
+        $Run.Warnings | Should -Be @('Export-OERInventory: could not read the Azure PIM eligibilities, so no scope is read for azurePimEligibility.json: ARM eligibility list refused (403)')
+        @($Run.Errors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Export-OERInventory' } | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('InventoryPartial,Export-OERInventory')
+        $Run.Partial[0].Exception.Message | Should -BeLike "*2 of 2 Azure scopes could not be read for azurePimEligibility.json, and 1 level(s) of the Azure scope tree could not be listed, so none of their scopes was walked for azurePimEligibility.json, and their eligible assignments are absent from it. Skipped: $($script:StMgSkip), $($script:StSubA), $($script:StSubB)*"
+        # And the README names each scope under the eligibility file.
+        $Section = Get-ReadmeCouldNotReadSection -BundlePath $Run.Result.BundlePath
+        @(Get-SectionBullets -Section $Section) | Should -Be @(
+            ('- Azure role management policies kept without being judged: `' + $script:StUnjudgedA + '`')
+            ('- Azure role management policies kept without being judged: `' + $script:StUnjudgedB + '`')
+            ('- Azure scope, absent from `roleAssignments.json` and `roleManagementPolicies.json`: `' + $script:StMgSkip + '`')
+            ('- Azure scope, absent from `azurePimEligibility.json`: `' + $script:StMgSkip + '`')
+            ('- Azure scope, absent from `azurePimEligibility.json`: `' + $script:StSubA + '`')
+            ('- Azure scope, absent from `azurePimEligibility.json`: `' + $script:StSubB + '`')
+        )
+    }
+
+    It 'names a scope the tree already lists as skipped for eligibility once, not twice, when the eligibility read stops' {
+        # The tree never lists a real scope as skipped (it lists levels, as '<...>' entries), so this is the
+        # defensive half of "every scope not already there": a scope already named stays named once, in its place.
+        $script:StTreeSkipped = @($script:StSubA)
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { throw 'ARM eligibility list refused (403)' }
+        $Run = Invoke-StExport -Splat @{ OutputPath = (Join-Path $TestDrive 'st-elig-twice'); Include = @('RoleAssignments') }
+        # Reach proof: the read stopped and the scopes were read.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Exactly -Times 1
+        $Run.Result.ScopeCount | Should -Be 2
+        @($Run.Result.SkippedEligibilityScopes) | Should -Be @($script:StSubA, $script:StSubB)
+    }
+
+    It 'reports a Lighthouse read that stops: one entry for every Azure scope with its cause, no delegation, one warning, the bundle written' {
+        Mock -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation { throw 'ARM Lighthouse list refused (503)' }
+        $Run = Invoke-StExport -Splat @{ OutputPath = (Join-Path $TestDrive 'st-lh'); Include = @('RoleAssignments') }
+
+        # Reach proofs: the read was made once over both scopes, after both scopes were read and the eligibility read.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Exactly -Times 1 -ParameterFilter { @($Scope).Count -eq 2 }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Exactly -Times 1
+        $Run.Result.ScopeCount | Should -Be 2
+        Test-Path $Run.Result.BundlePath | Should -BeTrue
+        # No delegation is written, and the file stands as [] -- named, never read as "no delegation".
+        $Run.Result.Files | Should -Contain 'lighthouseDelegations.json'
+        (Get-Content (Join-Path $Run.Result.BundlePath 'lighthouseDelegations.json') -Raw).Trim() | Should -Be '[]'
+        @($Run.Result.IncompleteReads) | Should -Be @($script:StLighthouseEntry)
+        @($Run.Result.SkippedScopes).Count | Should -Be 0
+        @($Run.Result.SkippedEligibilityScopes).Count | Should -Be 0
+        $Run.Warnings | Should -Be @('Export-OERInventory: could not read the Azure Lighthouse delegations, so lighthouseDelegations.json holds none: ARM Lighthouse list refused (503)')
+        @($Run.Errors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Export-OERInventory' } | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('InventoryPartial,Export-OERInventory')
+        # The cause reaches the message, in the Lighthouse clause.
+        $Run.Partial[0].Exception.Message | Should -BeExactly ("This inventory bundle is PARTIAL: 1 Azure Lighthouse read(s) failed, so lighthouseDelegations.json holds no delegation of a scope named here and writes the name of a role named here as null: $($script:StLighthouseEntry). " +
+            'Causes of the unread Azure Lighthouse reads: ARM Lighthouse list refused (503). Do not treat it as a full tenant snapshot.')
+        # The README lists it under the Lighthouse label, shown as a code span and not swallowed as an HTML tag.
+        $Section = Get-ReadmeCouldNotReadSection -BundlePath $Run.Result.BundlePath
+        @(Get-SectionBullets -Section $Section) | Should -Be @('- Azure Lighthouse read that failed: `' + $script:StLighthouseEntry + '`')
+        ($Section -replace '`[^`]*`', '') | Should -Not -Match '<'
+    }
+
+    It 'reports a selection that stops: every candidate kept and merged on scope and role, each distinct canonical scope named once, one warning, the bundle written' {
+        # The third scope is the first one in capitals: its candidates merge into the first's, and the scope is
+        # named once. The second scope is handed over with a trailing slash, and is named without it.
+        $script:StTreeScopes = @($script:StSubA, $script:StSubB, $script:StSubA.ToUpperInvariant())
+        Mock -ModuleName $script:moduleName Get-OERInventoryRolePolicy {
+            param($Scope, $ErrorAction)
+            $AsScope = if ($Scope -eq $script:StSubB) { "$Scope/" } else { $Scope }
+            & $script:StCandidates $Scope $AsScope
+        }
+        Mock -ModuleName $script:moduleName Select-OERInventoryRolePolicy { throw 'role policy selection refused' }
+        $Run = Invoke-StExport -Splat @{ OutputPath = (Join-Path $TestDrive 'st-sel'); Include = @('RoleManagementPolicies') }
+
+        # Reach proofs: three scopes were read, the selection was asked once, and it stopped.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryRolePolicy -Exactly -Times 3
+        Should -Invoke -ModuleName $script:moduleName Select-OERInventoryRolePolicy -Exactly -Times 1
+        $Run.Result.ScopeCount | Should -Be 3
+        Test-Path $Run.Result.BundlePath | Should -BeTrue
+        # Every candidate is kept, merged once, in the order read.
+        $Written = @(Get-Content (Join-Path $Run.Result.BundlePath 'roleManagementPolicies.json') -Raw | ConvertFrom-Json)
+        @($Written | ForEach-Object { "$($_.scope)|$($_.role)" }) | Should -Be @("$($script:StSubA)|Reader", "$($script:StSubA)|Contributor", "$($script:StSubB)|Reader", "$($script:StSubB)|Contributor")
+        $Run.Result.RoleManagementPolicies | Should -Be 4
+        # Each distinct canonical scope is named, once, in the order first seen.
+        @($Run.Result.IncompleteReads) | Should -Be @($script:StUnjudgedA, $script:StUnjudgedB)
+        $Run.Warnings | Should -Be @('Export-OERInventory: could not select the Azure role management policies, so every policy read is kept and each scope is named as not judged: role policy selection refused')
+        @($Run.Errors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Export-OERInventory' } | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('InventoryPartial,Export-OERInventory')
+        $Run.Partial[0].Exception.Message | Should -BeLike '*at 2 Azure scope(s) every role management policy that could not be judged was kept, none of them left out*'
+        $Section = Get-ReadmeCouldNotReadSection -BundlePath $Run.Result.BundlePath
+        @(Get-SectionBullets -Section $Section) | Should -Be @(
+            ('- Azure role management policies kept without being judged: `' + $script:StUnjudgedA + '`')
+            ('- Azure role management policies kept without being judged: `' + $script:StUnjudgedB + '`')
+        )
+    }
+
+    It 'omits the policies it can judge and names nothing when the selection does not stop (the control for the three tests above)' {
+        $Run = Invoke-StExport -Splat @{ OutputPath = (Join-Path $TestDrive 'st-control'); Include = @('RoleAssignments', 'RoleManagementPolicies') }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Exactly -Times 1
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryLighthouseDelegation -Exactly -Times 1
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryRolePolicy -Exactly -Times 2
+        $Run.Result.ScopeCount | Should -Be 2
+        $Run.Result.RoleManagementPolicies | Should -Be 0
+        @($Run.Result.IncompleteReads).Count | Should -Be 0
+        @($Run.Result.SkippedEligibilityScopes).Count | Should -Be 0
+        $Run.Warnings.Count | Should -Be 0
+        $Run.Errors.Count | Should -Be 0
+    }
+
+    It 'scrubs the record of a stopped <Name> read first, then writes one warning, and leaves no record of the stop in the caller''s error list' -ForEach @(
+        @{ Name = 'eligibility'; Command = 'Get-OERInventoryAzureEligibility'; Include = @('RoleAssignments'); StopMessage = 'ARM eligibility list refused (403)'
+            WarningStart = 'Export-OERInventory: could not read the Azure PIM eligibilities, so no scope is read for azurePimEligibility.json: ' }
+        @{ Name = 'Lighthouse'; Command = 'Get-OERInventoryLighthouseDelegation'; Include = @('RoleAssignments'); StopMessage = 'ARM Lighthouse list refused (503)'
+            WarningStart = 'Export-OERInventory: could not read the Azure Lighthouse delegations, so lighthouseDelegations.json holds none: ' }
+        @{ Name = 'selection'; Command = 'Select-OERInventoryRolePolicy'; Include = @('RoleManagementPolicies'); StopMessage = 'role policy selection refused'
+            WarningStart = 'Export-OERInventory: could not select the Azure role management policies, so every policy read is kept and each scope is named as not judged: ' }
+    ) {
+        $script:StMessage = $StopMessage
+        Mock -ModuleName $script:moduleName $Command { throw $script:StMessage }
+        # The scrub first: the order the two calls reach the module's own commands is the proof, since the warning
+        # is the last statement of the catch and the scrub the first.
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord { param($Record) $script:StSeq.Add("scrub: $($Record.Exception.Message)") }
+        Mock -ModuleName $script:moduleName Write-Warning { param($Message) $script:StSeq.Add("warn: $Message") }
+        $Run = Invoke-StExport -Splat @{ OutputPath = (Join-Path $TestDrive "st-scrub-$Name"); Include = $Include }
+        Should -Invoke -ModuleName $script:moduleName $Command -Exactly -Times 1
+        @($script:StSeq) | Should -Be @("scrub: $StopMessage", "warn: $WarningStart$StopMessage")
+        $Run.Result.ScopeCount | Should -BeGreaterThan 0
+        @($Run.Errors | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Export-OERInventory' } | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('InventoryPartial,Export-OERInventory')
+    }
+
+    It 'writes the bundle object, then InventoryPartial, then reaches the end of a script with no try above it, when a <Name> read stops' -ForEach @(
+        @{ Name = 'eligibility'; Include = 'RoleAssignments'; Stopped = 'Get-OERInventoryAzureEligibility' }
+        @{ Name = 'Lighthouse'; Include = 'RoleAssignments'; Stopped = 'Get-OERInventoryLighthouseDelegation' }
+        @{ Name = 'selection'; Include = 'RoleManagementPolicies'; Stopped = 'Select-OERInventoryRolePolicy' }
+    ) {
+        # An error nothing catches ends the export only where no try stands up the call stack, and Pester stands
+        # in one, so the export runs in a runspace and a script with no try (the pattern of the run context test
+        # above). The stubs replace the module's functions in that runspace's own copy.
+        $Root = Join-Path $TestDrive "st-no-try-$Name"
+        $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Get-OERConfiguration -Value { }
+    Set-Item -Path function:script:Test-OERStructureSchema -Value { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+    Set-Item -Path function:script:Resolve-OERInventoryScopeTree -Value {
+        [PSCustomObject]@{
+            Scopes    = @('/subscriptions/aaaa1111-0000-0000-0000-000000000001')
+            Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+        }
+    }
+    Set-Item -Path function:script:Get-OERInventory -Value {
+        [PSCustomObject]@{
+            Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+            AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+        }
+    }
+    Set-Item -Path function:script:Get-OERRoleAssignment -Value { }
+    Set-Item -Path function:script:Get-OERInventoryRolePolicy -Value {
+        [PSCustomObject]@{
+            Entry            = [PSCustomObject]@{ scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; role = 'Reader'; allowPermanentEligibility = $null; activationMaxHours = 8 }
+            Scope            = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            RoleDefinitionId = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/aaaaaaaa-0000-0000-0000-00000000000a'
+            Modified         = $false
+        }
+    }
+    Set-Item -Path function:script:Get-OERInventoryAzureEligibility -Value { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @(); RoleScopes = @() } }
+    Set-Item -Path function:script:Get-OERInventoryLighthouseDelegation -Value { [PSCustomObject]@{ Delegations = @(); Unread = @(); Causes = @() } }
+    Set-Item -Path function:script:#STOPPED# -Value { throw 'the read stopped' }
+}
+$Items = @(Export-OERInventory -OutputPath '#ROOT#' -Include #INCLUDE# -ErrorAction Continue -Confirm:$false 2>&1)
+foreach ($Item in $Items) {
+    if ($Item -is [System.Management.Automation.ErrorRecord]) { "ERR:$($Item.FullyQualifiedErrorId)" }
+    elseif ($Item.PSObject.TypeNames[0] -eq 'Omnicit.EntraRBAC.InventoryBundle') { 'BUNDLE' }
+    else { "OTHER:$Item" }
+}
+'END'
+'@).Replace('#STOPPED#', $Stopped).Replace('#INCLUDE#', $Include).Replace('#ROOT#', $Root.Replace("'", "''")))
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        # The script reached its end; the bundle object came first, InventoryPartial after it, and nothing else.
+        ($Run.Output -join '|') | Should -Be 'BUNDLE|ERR:InventoryPartial,Export-OERInventory|END'
+        # The one warning of the stop reached the host, and the bundle is on disk.
+        @($Run.Warnings | Where-Object { $_ -like 'Export-OERInventory: could not *: the read stopped' }).Count | Should -Be 1
+        @(Get-ChildItem -Path $Root -Filter 'inventory.json' -Recurse -File).Count | Should -Be 1
+    }
+
+    It 'says in the help that an eligibility read, a Lighthouse read and a selection that stop are reported' {
+        $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('An eligibility read that stops as a whole, on an error nothing in it catches, is reported the same way and never ends the export: every scope of the walk is named in SkippedEligibilityScopes, azurePimEligibility.json is written as [], and ONE warning names the cause.'))
+        $Description | Should -Match ([regex]::Escape("A read that stopped as a whole, on an error nothing in the reader catches, is named as 'lighthouseDelegations at <all Azure scopes: the read stopped>', with the cause in the causes of the InventoryPartial message and ONE warning, and lighthouseDelegations.json is written as []."))
+        $Description | Should -Match ([regex]::Escape('A selection that stops as a whole, on an error nothing in it catches, keeps every policy read at every scope, merged as the kept ones are, names the scope of each as above, and writes ONE warning that names the cause; so does an eligibility read that stopped, which leaves every scope''s eligibility unread.'))
+        $Description | Should -Match ([regex]::Escape('and its one warning (''Could not read the role assignments at scope ...'') is written once the scope''s policy list has been read.'))
+    }
+}
+
+Describe 'Export-OERInventory (-AllRolePolicies and -AllDirectoryRolePolicies without their section warn once, before any read, Sprint 11 step 10, BL-123)' {
+    # BL-123 (fourth and fifth points, R-6). A switch that steers one section only was accepted and ignored when
+    # -Include left the section out. The export now says so, in one warning per switch, at the top of process and so
+    # before any read and before its own ShouldProcess. Get-OERInventory stays silent for the directory switch it is
+    # forwarded, so the warning is written once. No id below is version-4 shaped.
+    BeforeAll {
+        $script:AwAllRole = 'Export-OERInventory: -AllRolePolicies has no effect, since -Include does not name RoleManagementPolicies.'
+        $script:AwAllDirectory = 'Export-OERInventory: -AllDirectoryRolePolicies has no effect, since -Include does not name DirectoryRoleManagementPolicies.'
+        function script:Invoke-AwExport {
+            param([hashtable]$Splat)
+            $ExErr = $null
+            $All = @(Export-OERInventory @Splat -WarningAction Continue -ErrorAction SilentlyContinue -ErrorVariable ExErr 3>&1)
+            [PSCustomObject]@{
+                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                Errors   = @($ExErr)
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @('/subscriptions/aaaa1111-0000-0000-0000-000000000001')
+                Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            param($Include, $AllDirectoryRolePolicies)
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryRolePolicy {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @(); RoleScopes = @() }
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'warns once, with exactly the text, for <Label>' -ForEach @(
+        @{ Label = '-AllRolePolicies with -Include Groups'; Splat = @{ Include = @('Groups'); AllRolePolicies = $true }; Expected = @('Export-OERInventory: -AllRolePolicies has no effect, since -Include does not name RoleManagementPolicies.') }
+        @{ Label = '-AllRolePolicies with the default -Include'; Splat = @{ AllRolePolicies = $true }; Expected = @('Export-OERInventory: -AllRolePolicies has no effect, since -Include does not name RoleManagementPolicies.') }
+        @{ Label = '-AllRolePolicies with only RoleAssignments'; Splat = @{ Include = @('RoleAssignments'); AllRolePolicies = $true }; Expected = @('Export-OERInventory: -AllRolePolicies has no effect, since -Include does not name RoleManagementPolicies.') }
+        @{ Label = '-AllDirectoryRolePolicies with -Include Groups'; Splat = @{ Include = @('Groups'); AllDirectoryRolePolicies = $true }; Expected = @('Export-OERInventory: -AllDirectoryRolePolicies has no effect, since -Include does not name DirectoryRoleManagementPolicies.') }
+        @{ Label = '-AllDirectoryRolePolicies with only DirectoryRoleAssignments'; Splat = @{ Include = @('DirectoryRoleAssignments'); AllDirectoryRolePolicies = $true }; Expected = @('Export-OERInventory: -AllDirectoryRolePolicies has no effect, since -Include does not name DirectoryRoleManagementPolicies.') }
+        @{ Label = 'both switches without their sections, in the order of the parameters'; Splat = @{ Include = @('Groups'); AllRolePolicies = $true; AllDirectoryRolePolicies = $true }
+            Expected = @('Export-OERInventory: -AllRolePolicies has no effect, since -Include does not name RoleManagementPolicies.', 'Export-OERInventory: -AllDirectoryRolePolicies has no effect, since -Include does not name DirectoryRoleManagementPolicies.') }
+    ) {
+        $Splat.OutputPath = Join-Path $TestDrive ('aw-' + [guid]::NewGuid().ToString('N'))
+        $Run = Invoke-AwExport -Splat $Splat
+        # Reach proof: the export ran to its bundle.
+        Test-Path $Run.Result.BundlePath | Should -BeTrue
+        $Run.Warnings | Should -Be $Expected
+    }
+
+    It 'warns for none of them when the switch is not given, or when -Include names the section the switch steers (<Label>)' -ForEach @(
+        @{ Label = 'no switch'; Splat = @{ Include = @('Groups') } }
+        @{ Label = '-AllRolePolicies with RoleManagementPolicies'; Splat = @{ Include = @('RoleManagementPolicies'); AllRolePolicies = $true } }
+        @{ Label = '-AllDirectoryRolePolicies with DirectoryRoleManagementPolicies'; Splat = @{ Include = @('DirectoryRoleManagementPolicies'); AllDirectoryRolePolicies = $true } }
+        @{ Label = 'both switches with both sections'; Splat = @{ Include = @('RoleManagementPolicies', 'DirectoryRoleManagementPolicies'); AllRolePolicies = $true; AllDirectoryRolePolicies = $true } }
+    ) {
+        $Splat.OutputPath = Join-Path $TestDrive ('aw-none-' + [guid]::NewGuid().ToString('N'))
+        $Run = Invoke-AwExport -Splat $Splat
+        Test-Path $Run.Result.BundlePath | Should -BeTrue
+        $Run.Warnings.Count | Should -Be 0
+    }
+
+    It 'forwards -AllDirectoryRolePolicies to Get-OERInventory as before, and the warning is the export''s alone' {
+        $Run = Invoke-AwExport -Splat @{ OutputPath = (Join-Path $TestDrive 'aw-forward'); Include = @('AdministrativeUnits'); AllDirectoryRolePolicies = $true }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Exactly -Times 1 -ParameterFilter { $AllDirectoryRolePolicies -eq $true }
+        $Run.Warnings | Should -Be @($script:AwAllDirectory)
+    }
+
+    It 'warns before it reads anything: under -WarningAction Stop the export stops at the warning, with no read and no bundle' {
+        $Root = Join-Path $TestDrive 'aw-stop'
+        $Caught = $null
+        try {
+            Export-OERInventory -OutputPath $Root -Include Groups, RoleAssignments -AllRolePolicies -WarningAction Stop -ErrorAction Stop | Out-Null
+        } catch {
+            $Caught = $PSItem
+        }
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeLike "*$script:AwAllRole*"
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERInventoryScopeTree -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 0
+        Test-Path $Root | Should -BeFalse
+    }
+
+    It 'shows the warning under -WhatIf too, and writes nothing' {
+        $Root = Join-Path $TestDrive 'aw-whatif'
+        $Run = Invoke-AwExport -Splat @{ OutputPath = $Root; Include = @('Groups'); AllDirectoryRolePolicies = $true; WhatIf = $true }
+        $Run.Warnings | Should -Be @($script:AwAllDirectory)
+        Test-Path $Root | Should -BeFalse
+    }
+
+    It 'says in the help of both switches that the export warns' {
+        $Help = Get-Help Export-OERInventory -Full
+        $Role = @($Help.Parameters.Parameter) | Where-Object { $_.Name -eq 'AllRolePolicies' }
+        $RoleText = ((@($Role.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $RoleText | Should -Match ([regex]::Escape('Has no effect unless -Include names RoleManagementPolicies, and the export writes one warning before it reads anything when it does not;'))
+        $Directory = @($Help.Parameters.Parameter) | Where-Object { $_.Name -eq 'AllDirectoryRolePolicies' }
+        $DirectoryText = ((@($Directory.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $DirectoryText | Should -Match ([regex]::Escape('has no effect unless -Include names DirectoryRoleManagementPolicies, and the export writes one warning before it reads anything when it does not.'))
+    }
+}
+
+Describe 'Export-OERInventory (one warning for a scope whose role assignment read and policy list both fail, Sprint 11 step 10, BL-123)' {
+    # BL-123 (third point). A failed role assignment read costs only the selection and its warning stands for that;
+    # a scope whose policy list fails too is skipped, and 'Skipping scope' is then its one warning. The warning of the
+    # assignment read is held until the policy list of the scope has been read. No id below is version-4 shaped.
+    BeforeAll {
+        $script:OwSubA = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:OwSubB = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'
+        $script:OwRoleGuid = 'aaaaaaaa-0000-0000-0000-00000000000a'
+        $script:OwAssignmentWarning = {
+            param([string]$Scope, [string]$Cause)
+            "Could not read the role assignments at scope '$Scope', so a role management policy there not kept by a use or a change is kept without being judged: $Cause"
+        }
+        # A role assignment read that fails the way the real cmdlet does: a non-terminating record, which only the
+        # caller's -ErrorAction Stop turns into a terminating one.
+        $script:OwFailingAssignmentRead = {
+            [CmdletBinding()]
+            param($Scope, [switch]$AtScope)
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Forbidden (403): the client has no authorization to list role assignments'),
+                    'AuthorizationFailed', [System.Management.Automation.ErrorCategory]::PermissionDenied, $Scope))
+        }
+        function script:Invoke-OwExport {
+            param([hashtable]$Splat)
+            $ExErr = $null
+            $All = @(Export-OERInventory @Splat -WarningAction Continue -ErrorAction SilentlyContinue -ErrorVariable ExErr 3>&1)
+            [PSCustomObject]@{
+                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                Errors   = @($ExErr)
+                Partial  = @($ExErr | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        $script:OwSeq = [System.Collections.Generic.List[string]]::new()
+        $script:OwPolicyListFails = $false
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @($script:OwSubA, $script:OwSubB)
+                Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @(); RoleScopes = @() }
+        }
+        # The role assignment list answers nothing; the policy list answers one unchanged policy per scope, and
+        # fails at the first scope when the test says so. Every call is noted in the sequence.
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryRolePolicy {
+            param($Scope, $ErrorAction)
+            $script:OwSeq.Add("list: $Scope")
+            if ($script:OwPolicyListFails -and $Scope -eq $script:OwSubA) { throw 'Service unavailable (503)' }
+            [PSCustomObject]@{
+                Entry            = [PSCustomObject]@{ scope = $Scope; role = 'Reader'; allowPermanentEligibility = $null; activationMaxHours = 8 }
+                Scope            = $Scope
+                RoleDefinitionId = "$Scope/providers/Microsoft.Authorization/roleDefinitions/$($script:OwRoleGuid)"
+                Modified         = $false
+            }
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'writes ONE warning, Skipping scope, for a scope whose role assignment read and policy list both fail, and names the scope as skipped' {
+        $script:OwPolicyListFails = $true
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment $script:OwFailingAssignmentRead -ParameterFilter { $Scope -eq $script:OwSubA }
+        $Run = Invoke-OwExport -Splat @{ OutputPath = (Join-Path $TestDrive 'ow-both'); Include = @('RoleManagementPolicies') }
+
+        # Reach proofs: both reads were attempted at the first scope, the second scope was read.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Exactly -Times 1 -ParameterFilter { $Scope -eq $script:OwSubA -and $AtScope -eq $true }
+        @($script:OwSeq) | Should -Be @("list: $($script:OwSubA)", "list: $($script:OwSubB)")
+        # One warning for the scope, and it is the skip: the assignment warning is not written.
+        $Run.Warnings | Should -Be @("Skipping scope '$($script:OwSubA)': Service unavailable (503)")
+        @($Run.Result.SkippedScopes) | Should -Be @($script:OwSubA)
+        $Run.Result.ScopeCount | Should -Be 1
+        # The skipped scope is not named as unjudged: it merges no row. The other scope was judged.
+        @($Run.Result.IncompleteReads).Count | Should -Be 0
+        $Run.Partial.Count | Should -Be 1
+    }
+
+    It 'writes the role assignment warning ONCE, after the policy list of the scope has been read, and names the scope as not judged' {
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment $script:OwFailingAssignmentRead -ParameterFilter { $Scope -eq $script:OwSubA }
+        Mock -ModuleName $script:moduleName Write-Warning { param($Message) $script:OwSeq.Add("warn: $Message") }
+        $Run = Invoke-OwExport -Splat @{ OutputPath = (Join-Path $TestDrive 'ow-assignment'); Include = @('RoleManagementPolicies') }
+
+        $Expected = & $script:OwAssignmentWarning $script:OwSubA 'Forbidden (403): the client has no authorization to list role assignments'
+        # The order: the policy list of the first scope, THEN its warning, then the second scope's policy list.
+        @($script:OwSeq) | Should -Be @("list: $($script:OwSubA)", "warn: $Expected", "list: $($script:OwSubB)")
+        # The scope was read, not skipped, and is named as not judged; the second scope was judged.
+        @($Run.Result.SkippedScopes).Count | Should -Be 0
+        $Run.Result.ScopeCount | Should -Be 2
+        @($Run.Result.IncompleteReads) | Should -Be @("roleManagementPolicies/role selection at $($script:OwSubA)")
+        $Run.Result.RoleManagementPolicies | Should -Be 1
+    }
+
+    It 'shows the role assignment warning exactly once on the warning stream, with its text unchanged' {
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment $script:OwFailingAssignmentRead -ParameterFilter { $Scope -eq $script:OwSubA }
+        $Run = Invoke-OwExport -Splat @{ OutputPath = (Join-Path $TestDrive 'ow-assignment-stream'); Include = @('RoleManagementPolicies') }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Exactly -Times 2
+        $Run.Warnings | Should -Be @(& $script:OwAssignmentWarning $script:OwSubA 'Forbidden (403): the client has no authorization to list role assignments')
+    }
+
+    It 'writes no warning for a scope whose two reads succeed (the control for the three tests above)' {
+        $Run = Invoke-OwExport -Splat @{ OutputPath = (Join-Path $TestDrive 'ow-control'); Include = @('RoleManagementPolicies') }
+        @($script:OwSeq) | Should -Be @("list: $($script:OwSubA)", "list: $($script:OwSubB)")
+        $Run.Warnings.Count | Should -Be 0
+        $Run.Result.ScopeCount | Should -Be 2
+        @($Run.Result.SkippedScopes).Count | Should -Be 0
+        @($Run.Result.IncompleteReads).Count | Should -Be 0
+    }
+}
+
+Describe 'Export-OERInventory (the bookkeeping of a failed read stands before its warning, Sprint 11 step 10, BL-44)' {
+    # BL-44. A Write-Warning under a Stop warning preference is a terminating error, so a statement after it never
+    # runs: a failed read whose bookkeeping (the unread flag, the stand-in result, the skipped scope) stands after
+    # its warning is told as a warning and not carried to the partial signal. The export's sites hold a variable or
+    # a list, which a verbose line cannot show, so the proof reads the source with the AST: for each warning, found by
+    # the start of its text, each named bookkeeping statement stands in the SAME statement block and starts before
+    # the warning. The checker has a known-answer test of its own, so it cannot pass for nothing.
+    BeforeAll {
+        $script:BkSourcePath = (Resolve-Path (Join-Path $PSScriptRoot '../../../source/Public/Export-OERInventory.ps1')).Path
+        $BkErrors = $null
+        $script:BkAst = [System.Management.Automation.Language.Parser]::ParseFile($script:BkSourcePath, [ref]$null, [ref]$BkErrors)
+        if (@($BkErrors).Count -gt 0) { throw "Export-OERInventory.ps1 does not parse: $(@($BkErrors)[0].Message)" }
+        # The violations of one warning: an empty list when it is found once and each named statement stands in its
+        # block, the right number of times, before it.
+        function script:Get-BkViolation {
+            param([System.Management.Automation.Language.Ast]$Ast, [string]$WarningStart, [object[]]$Bookkeeping)
+            $Violations = [System.Collections.Generic.List[string]]::new()
+            $Warnings = @($Ast.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq 'Write-Warning' }, $true) |
+                    Where-Object {
+                        $Elements = @($_.CommandElements)
+                        $Elements.Count -ge 2 -and $Elements[1].Extent.Text.TrimStart([char[]]@('"', "'")).StartsWith($WarningStart, [System.StringComparison]::Ordinal)
+                    })
+            if ($Warnings.Count -ne 1) {
+                $Violations.Add("expected exactly one Write-Warning starting '$WarningStart', found $($Warnings.Count)")
+                return $Violations.ToArray()
+            }
+            $Statement = $Warnings[0]
+            while ($null -ne $Statement.Parent -and $Statement.Parent -isnot [System.Management.Automation.Language.StatementBlockAst]) { $Statement = $Statement.Parent }
+            $Block = $Statement.Parent
+            foreach ($Item in $Bookkeeping) {
+                $Hits = @($Block.Statements | Where-Object { $_.Extent.Text -match $Item.Pattern })
+                if ($Hits.Count -ne $Item.Count) {
+                    $Violations.Add("expected $($Item.Count) statement(s) matching '$($Item.Pattern)' in the block of the warning, found $($Hits.Count)")
+                    continue
+                }
+                foreach ($Hit in $Hits) {
+                    if ($Hit.Extent.StartOffset -ge $Statement.Extent.StartOffset) {
+                        $Violations.Add("a statement matching '$($Item.Pattern)' starts at $($Hit.Extent.StartOffset), not before the warning at $($Statement.Extent.StartOffset)")
+                    }
+                }
+            }
+            $Violations.ToArray()
+        }
+    }
+
+    It 'holds the known answer: the checker finds a warning that stands before its bookkeeping, a bookkeeping statement that is missing and a warning that is not unique' {
+        $Parse = {
+            param([string]$Text)
+            $E = $null
+            [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$E)
+        }
+        $Pattern = @(@{ Pattern = '^\$Unread = \$true$'; Count = 1 })
+        $Good = & $Parse 'try { x } catch { $Unread = $true; Write-Warning "Could not read: $($PSItem.Exception.Message)" }'
+        @(Get-BkViolation -Ast $Good -WarningStart 'Could not read:' -Bookkeeping $Pattern).Count | Should -Be 0
+        $Late = & $Parse 'try { x } catch { Write-Warning "Could not read: $($PSItem.Exception.Message)"; $Unread = $true }'
+        @(Get-BkViolation -Ast $Late -WarningStart 'Could not read:' -Bookkeeping $Pattern).Count | Should -Be 1
+        @(Get-BkViolation -Ast $Late -WarningStart 'Could not read:' -Bookkeeping $Pattern)[0] | Should -BeLike "a statement matching '*' starts at *, not before the warning at *"
+        $Missing = & $Parse 'try { x } catch { Write-Warning "Could not read: $($PSItem.Exception.Message)" }'
+        @(Get-BkViolation -Ast $Missing -WarningStart 'Could not read:' -Bookkeeping $Pattern)[0] | Should -BeLike 'expected 1 statement(s) matching*found 0'
+        $Twice = & $Parse 'try { x } catch { $Unread = $true; Write-Warning "Could not read: a"; Write-Warning "Could not read: b" }'
+        @(Get-BkViolation -Ast $Twice -WarningStart 'Could not read:' -Bookkeeping $Pattern)[0] | Should -BeLike 'expected exactly one Write-Warning starting*found 2'
+        $Absent = & $Parse 'try { x } catch { $Unread = $true; Write-Warning "Another text" }'
+        @(Get-BkViolation -Ast $Absent -WarningStart 'Could not read:' -Bookkeeping $Pattern)[0] | Should -BeLike 'expected exactly one Write-Warning starting*found 0'
+    }
+
+    It 'stands the bookkeeping before the warning of <Name>' -ForEach @(
+        @{ Name = 'the group roster read'; Warning = 'Could not read the group roster:'
+            Bookkeeping = @(@{ Pattern = '^\$RosterUnread = \$true$'; Count = 1 }) }
+        @{ Name = 'the group reader that stops'; Warning = '$GroupReadCause'
+            Bookkeeping = @(@{ Pattern = '^\$GroupRead = \[PSCustomObject\]@\{'; Count = 1 }) }
+        @{ Name = 'the scope enumeration that fails'; Warning = 'Could not enumerate Azure scopes:'
+            Bookkeeping = @(
+                @{ Pattern = '^\$Tree = \$null$'; Count = 1 }
+                @{ Pattern = '^\$SkippedScopes\.Add\('; Count = 1 }
+                @{ Pattern = '^\$SkippedEligibilityScopes\.Add\('; Count = 1 }
+                @{ Pattern = '^\$LighthouseUnread\.Add\('; Count = 1 }
+            ) }
+        @{ Name = 'the scope that is skipped'; Warning = "Skipping scope '"
+            Bookkeeping = @(
+                @{ Pattern = '^\$SkippedScopes\.Add\('; Count = 1 }
+                @{ Pattern = '^& \$UndoScopeHandover '; Count = 4 }
+            ) }
+        @{ Name = 'the eligibility read that stops'; Warning = 'Export-OERInventory: could not read the Azure PIM eligibilities'
+            Bookkeeping = @(
+                @{ Pattern = '^\$EligResult = \[PSCustomObject\]@\{'; Count = 1 }
+                @{ Pattern = '^\$EligStopScopes = @\('; Count = 1 }
+                @{ Pattern = '(?s)^foreach \(\$EligStopScope in .*\$SkippedEligibilityScopes\.Add\('; Count = 1 }
+            ) }
+        @{ Name = 'the Lighthouse read that stops'; Warning = 'Export-OERInventory: could not read the Azure Lighthouse delegations'
+            Bookkeeping = @(
+                @{ Pattern = '^\$LighthouseRead = \$null$'; Count = 1 }
+                @{ Pattern = '^\$LighthouseUnread\.Add\('; Count = 1 }
+                @{ Pattern = '^\$LighthouseCauses\.Add\('; Count = 1 }
+            ) }
+        @{ Name = 'the selection that stops'; Warning = 'Export-OERInventory: could not select the Azure role management policies'
+            Bookkeeping = @(
+                @{ Pattern = '(?s)^foreach \(\$StopCandidate in .*\$RoleManagementPolicies\.Add\('; Count = 1 }
+                @{ Pattern = '(?s)^foreach \(\$StopCandidate in .*\$RolePolicySelectionReads\.Add\('; Count = 1 }
+            ) }
+    ) {
+        $Violations = @(Get-BkViolation -Ast $script:BkAst -WarningStart $Warning -Bookkeeping $Bookkeeping)
+        $Violations | Should -Be @()
     }
 }
