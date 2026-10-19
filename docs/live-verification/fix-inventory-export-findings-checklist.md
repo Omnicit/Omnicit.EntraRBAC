@@ -537,21 +537,29 @@ Result: not run yet.
 Connect-OerLive -Arm
 Start-S1110NoPrompt
 Start-S1110Count
-$Out1 = @(Get-OERInventory -Include RoleAssignments -Scope '   ' 2>&1)
-$Out2 = @(Export-OERInventory -Include RoleAssignments -Scope '   ' -OutputPath (Join-Path $Work 'export-blank') 2>&1)
+# A binding refusal ends the statement before the command runs: the assignment never happens and 2>&1 carries
+# nothing, so each refusal is read from $Error.
+$Error.Clear()
+$Out1 = $null
+$Out1 = @(Get-OERInventory -Include RoleAssignments -Scope '   ')
+$Errs1 = @($Error)
+$Error.Clear()
+$Out2 = $null
+$Out2 = @(Export-OERInventory -Include RoleAssignments -Scope '   ' -OutputPath (Join-Path $Work 'export-blank'))
+$Errs2 = @($Error)
 Write-OerLiveStep (Get-S1110Sent)
 Stop-S1110Count
-foreach ($Pair in @(@('Get-OERInventory', $Out1), @('Export-OERInventory', $Out2))) {
-    $Errs = @($Pair[1] | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
-    Write-OerLiveStep "$($Pair[0]): objects $(@($Pair[1] | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }).Count); errors: $((Get-S1110FirstId $Errs) -join ', '); the message is the white space one: $([string]$Errs[0].Exception.Message -like '*The Scope consists only of white space. Pass an Azure Resource Manager scope, or leave the parameter out.*')"
+foreach ($Pair in @(@('Get-OERInventory', $Out1, $Errs1), @('Export-OERInventory', $Out2, $Errs2))) {
+    $Errs = @($Pair[2] | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+    Write-OerLiveStep "$($Pair[0]): objects $(@($Pair[1]).Count); records in `$Error: $((Get-S1110FirstId $Errs) -join ', '); the message is the white space one: $([string]$Errs[0].Exception.Message -like '*The Scope consists only of white space. Pass an Azure Resource Manager scope, or leave the parameter out.*')"
 }
 Write-OerLiveStep "Export folder written: $(Test-Path -LiteralPath (Join-Path $Work 'export-blank'))"
 Write-OerLiveStep 'END: the script carried on.'
 Disconnect-OerLive
 ```
 
-**Expect:** 0 requests of every kind; each command 0 objects and one `ParameterArgumentValidationError` whose
-message is the white space one; no export folder; `END`.
+**Expect:** 0 requests of every kind; each command 0 objects and one `ParameterArgumentValidationError` in
+`$Error` whose message is the white space one; no export folder; `END`.
 **Failure looks like:** a request, an object, another message, or no `END` line.
 
 Result: not run yet.
