@@ -887,9 +887,10 @@ function Sync-OERStructureGroup {
             # Sprint 11 step 10 (BL-43, R-2): not when 'members' is an EXPLICIT null. Null is the document's
             # "leave the membership untouched", which Get-OERInventory writes for a dynamic group, so nothing is
             # declared and there is nothing to report: the summary row would be a finding about an export's own
-            # null on every dynamic group that has members, and the prompt asks for a -Prune plan of such an
-            # export to show no member row at all. A declared list keeps its per-member rows above; [] and an
-            # omitted key keep this one. -Prune never touched a dynamic group's members and still does not.
+            # null on every dynamic group that has members, and a -Prune plan of the module's own export must
+            # report nothing for a collection the export declared untouched. A declared list keeps its
+            # per-member rows above; [] and an omitted key keep this one. -Prune never touched a dynamic
+            # group's members and still does not.
             if ($DeclaredMembers.Count -eq 0 -and $CurrentMembers.Count -gt 0 -and -not $MembersDeclaredNull) {
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
                     -Detail "the $($CurrentMembers.Count) current member(s) were not reconciled: group '$Name' is dynamic and its membership is owned by its membership rule -- members cannot be removed manually, so -Prune does not apply to them"

@@ -1073,7 +1073,7 @@ Describe 'Get-OERInventoryGroup' {
             $Read.Result.DynamicMembers[0].Members | Should -Be 2
         }
 
-        It 'names no members unread when the members read failed, keeps the cause the read recorded, and has no count for the group' {
+        It 'names no members unread when the members read failed, records no cause for it, keeps its verbose line, and has no count for the group (R-24)' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
                 param($ErrorAction)
                 $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
@@ -1091,13 +1091,62 @@ Describe 'Get-OERInventoryGroup' {
             $null -eq $Group.members | Should -BeTrue
             @($Read.Result.Unread) | Should -Not -Contain 'groups/role_sec_dynamic/members'
             @($Read.Result.Unread).Count | Should -Be 0
-            @($Read.Result.Causes).Count | Should -Be 1
-            $Read.Result.Causes[0].Cause | Should -Be "Could not read members for group 'g-d': Too many requests (429)."
+            # R-24: the failed read is no gap, so no cause is recorded for it (a cause clause must never name a
+            # read that no unread entry names); the verbose line is all that remains of it.
+            @($Read.Result.Causes).Count | Should -Be 0
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: Could not read members for group 'g-d': Too many requests (429)."
             @($Read.Result.DynamicMembers).Count | Should -Be 0
-            # Non-vacuity: the same failure on an assigned group names the members unread.
+            # Non-vacuity: the same failure on an assigned group names the members unread and records its cause.
             $script:DynGroupType = 'Assigned'
             $Control = Invoke-GroupRead
             @($Control.Result.Unread) | Should -Contain 'groups/role_sec_dynamic/members'
+            @($Control.Result.Causes).Count | Should -Be 1
+            $Control.Result.Causes[0].Cause | Should -Be "Could not read members for group 'g-d': Too many requests (429)."
+        }
+
+        It 'records no cause for the dynamic group''s members read and every cause of the other reads that failed beside it, an owners read of the same dynamic group included (R-24)' {
+            # Three groups, four failed reads: g-d is dynamic and its members AND owners reads failed, g-s is
+            # assigned and its owners read failed, g-m is assigned and its members read failed. Only the first read
+            # is no gap. The other three are, and each keeps its cause and its unread entry: the owners of the SAME
+            # dynamic group (so the skip is of the members read, not of the group), another group's owners, and
+            # another group's members (so the skip is of a dynamic group, found by the record's target).
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -Message "Could not read members for group 'g-d': Too many requests (429)." `
+                    -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'g-d' -ErrorAction $Ea
+                Write-Error -Message "Could not read owners for group 'g-d': Too many requests (429)." `
+                    -ErrorId 'GroupOwnerReadFailed' -Category LimitsExceeded -TargetObject 'g-d' -ErrorAction $Ea
+                Write-Error -Message "Could not read owners for group 'g-s': Forbidden (403)." `
+                    -ErrorId 'GroupOwnerReadFailed' -Category PermissionDenied -TargetObject 'g-s' -ErrorAction $Ea
+                Write-Error -Message "Could not read members for group 'g-m': Forbidden (403)." `
+                    -ErrorId 'GroupMemberReadFailed' -Category PermissionDenied -TargetObject 'g-m' -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = 'role_sec_dynamic'; Description = $null; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'; PimEligibility = @()
+                }
+                [PSCustomObject]@{
+                    Id = 'g-s'; DisplayName = 'role_sec_static'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Members = $script:DynMembers; PimEligibility = @()
+                }
+                [PSCustomObject]@{
+                    Id = 'g-m'; DisplayName = 'role_sec_member'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Owners = $script:DynOwners; PimEligibility = @()
+                }
+            }
+            $Read = Invoke-GroupRead
+            @($Read.Result.Groups).Count | Should -Be 3
+            @($Read.Result.Unread) | Should -Be @('groups/role_sec_dynamic/owners', 'groups/role_sec_static/owners', 'groups/role_sec_member/members')
+            @($Read.Result.Causes | ForEach-Object { "$($_.Target)|$($_.Cause)" }) | Should -Be @(
+                "g-d|Could not read owners for group 'g-d': Too many requests (429)."
+                "g-s|Could not read owners for group 'g-s': Forbidden (403)."
+                "g-m|Could not read members for group 'g-m': Forbidden (403)."
+            )
+            # All four failures reached the verbose stream, so the dynamic group's members read is not lost, only not a cause.
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: Could not read members for group 'g-d': Too many requests (429)."
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: Could not read owners for group 'g-d': Too many requests (429)."
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: Could not read owners for group 'g-s': Forbidden (403)."
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: Could not read members for group 'g-m': Forbidden (403)."
         }
 
         It 'drops the count of a dynamic group left out for a shared name' {
@@ -1822,6 +1871,39 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             # Non-vacuity: the assigned group read the same way writes its members, and none is counted for it.
             $Plain = @($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-PLAIN' })
             @($Plain[0].members) | Should -Be @('person7@contoso.com')
+        }
+
+        It 'records no cause for the refused members read of a dynamic group read in full, and every cause of the other refused reads (BL-43, R-24)' {
+            # G-DYN is read in full since its criterion is refused, and its members read is refused too, and so is
+            # its owners read, which is a gap. G-PLAIN is the same shape, assigned: its members read is refused as
+            # well, and is a gap.
+            $script:Refuse["criterion:$script:IdDyn"] = 'Insufficient privileges to complete the operation.'
+            $script:Refuse["criterion:$script:IdPlain"] = 'Insufficient privileges to complete the operation.'
+            $script:Refuse["members:$script:IdDyn"] = 'Forbidden (403)'
+            $script:Refuse["owners:$script:IdDyn"] = 'Forbidden (403)'
+            $script:Refuse["members:$script:IdPlain"] = 'Forbidden (403)'
+            $Read = Invoke-GroupRead -RelevantOnly
+            $Dyn = @($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-DYN' })
+            $Dyn.Count | Should -Be 1
+            $Dyn[0].PSObject.Properties.Name | Should -Contain 'members'
+            $null -eq $Dyn[0].members | Should -BeTrue
+            @($Read.Result.DynamicMembers).Count | Should -Be 0 -Because 'a members read that failed has no count'
+            # Reach proof: the members read of both groups was sent and refused.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/66666666-6666-6666-6666-666666666666/members' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/44444444-4444-4444-4444-444444444444/members' }
+            # The gaps are the two criteria, the assigned group's members and the dynamic group's owners, and no
+            # members entry of G-DYN.
+            @($Read.Result.Unread) | Should -Be @('groups/G-PLAIN/members', 'groups/G-PLAIN/pimPolicy', 'groups/G-DYN/owners', 'groups/G-DYN/pimPolicy')
+            # The causes of G-DYN: its criterion and its owners read, and none for its members. The assigned group's
+            # failed members read is the only cause of that read.
+            $DynCauses = @($Read.Result.Causes | Where-Object { $_.Target -eq $script:IdDyn } | ForEach-Object { $_.Cause })
+            $DynCauses.Count | Should -Be 2
+            @($DynCauses | Where-Object { $_ -like 'Could not read members*' }).Count | Should -Be 0
+            @($DynCauses | Where-Object { $_ -like 'Could not read owners for group*' }).Count | Should -Be 1
+            @($DynCauses | Where-Object { $_ -like 'Could not determine whether group*uses PIM for Groups*' }).Count | Should -Be 1
+            @($Read.Result.Causes | Where-Object { $_.Cause -like 'Could not read members for group*' } | ForEach-Object { $_.Target }) | Should -Be @($script:IdPlain)
+            # The verbose stream still carries the dynamic group's failed read.
+            @($Read.Verbose | Where-Object { $_ -like "Get-OERInventory: Could not read members for group $script:IdDyn*" }).Count | Should -Be 1
         }
 
         It 'drops no group when the eligibility of every group could not be read (Review Focus 1)' {

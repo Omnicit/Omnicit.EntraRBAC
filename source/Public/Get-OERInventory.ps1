@@ -59,7 +59,9 @@ function Get-OERInventory {
     (Get-OERRequiredScope lists it).
     A dynamic group's members is written as an explicit null, and is not reported as unread: its
     membership is owned by its membership rule, so a list would be only what the rule derived at the
-    time of the read, which Invoke-OERStructure never reconciles or removes. The null is the schema's
+    time of the read, which Invoke-OERStructure never reconciles or removes. The members are not part
+    of the document, so a failed read of them is no gap either: it names nothing unread and adds no
+    cause to the InventoryPartial error, and only the verbose stream shows it. The null is the schema's
     "leave the membership untouched" signal, and not an omitted key, since an omitted key still
     reconciles and, under -Prune, removes the live members of a group that is no longer dynamic by the
     time the document is applied. The group's members are not looked at for the PIM for Groups read
@@ -94,7 +96,9 @@ function Get-OERInventory {
     from an omitted key, so an unread one is simply left out. Either way the gap is reported:
     after the inventory object is emitted, a non-terminating InventoryPartial error names every
     affected section/displayName/key, so a caller using -ErrorAction Stop or a try/catch finds out
-    instead of treating a document with holes in it as a full tenant snapshot. Do not hand-edit
+    instead of treating a document with holes in it as a full tenant snapshot. (A dynamic group's
+    members are the one collection that is no gap when its read fails, since they are not part of the
+    document: see above.) Do not hand-edit
     such a null to an empty array -- that turns "unknown" into "declared empty", which
     Invoke-OERStructure -Prune acts on by deleting every live member (a group's service principals,
     the members of a group synchronized from on-premises and the members PIM for Groups holds or

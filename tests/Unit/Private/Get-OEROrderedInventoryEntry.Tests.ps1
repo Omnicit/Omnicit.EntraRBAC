@@ -135,6 +135,54 @@ Describe 'Get-OEROrderedInventoryEntry (Sprint 11 step 10, BL-121, R-16)' {
         }
     }
 
+    Context 'it uses no syntax newer than the module floor (PowerShell 7.2)' {
+        # Fix round 1 of Sprint 11 step 10, task 4, finding 1. A generic method called with explicit type
+        # arguments ([System.Linq.Enumerable]::OrderBy[object, string](...)) is syntax PowerShell has only
+        # since 7.3 (about_Calling_Generic_Methods). Under the 7.2 grammar it is an index expression followed
+        # by a parenthesis, a parse error, so the whole merged module would fail to load. CI runs a current
+        # PowerShell only and PSScriptAnalyzer's PSUseCompatibleSyntax reports nothing for it, so the helper's
+        # own source is read with the parser instead: no InvokeMemberExpressionAst in it may carry generic
+        # type arguments, and a parser that refuses the file (the 7.2 case) is a finding too. The checker has
+        # a known-answer test of its own, so it cannot pass for nothing.
+        BeforeAll {
+            $script:HelperSourcePath = (Resolve-Path -Path (Join-Path -Path $PSScriptRoot -ChildPath '../../../source/Private/Get-OEROrderedInventoryEntry.ps1')).Path
+
+            function script:Get-GenericTypeArgumentUse {
+                param([string]$Path, [string]$Text)
+                $ParseErrors = $null
+                $Ast = if ($Path) {
+                    [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$ParseErrors)
+                } else {
+                    [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$ParseErrors)
+                }
+                $Uses = [System.Collections.Generic.List[string]]::new()
+                foreach ($ParseError in @($ParseErrors)) {
+                    if ($null -ne $ParseError) { $Uses.Add("does not parse: $($ParseError.Message)") }
+                }
+                $Calls = $Ast.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true)
+                foreach ($Call in $Calls) {
+                    $TypeArguments = $Call.GenericTypeArguments
+                    if ($null -ne $TypeArguments -and @($TypeArguments).Count -gt 0) {
+                        $Uses.Add("line $($Call.Extent.StartLineNumber): $($Call.Extent.Text)")
+                    }
+                }
+                , $Uses.ToArray()
+            }
+        }
+
+        It 'finds an explicit generic type argument on a method call, and finds none on a call that infers them (known answer)' {
+            $Explicit = Get-GenericTypeArgumentUse -Text '[System.Linq.Enumerable]::OrderBy[object, string]($Pairs, $Key)'
+            @($Explicit).Count | Should -BeGreaterThan 0 -Because 'a call with explicit type arguments is exactly what the checker is for'
+            $Inferred = Get-GenericTypeArgumentUse -Text '[System.Linq.Enumerable]::OrderBy($Pairs, $Key); $List.Add($Item); [System.Math]::Max(1, 2)'
+            @($Inferred).Count | Should -Be 0
+        }
+
+        It 'has no method call with explicit generic type arguments, which PowerShell 7.2 cannot parse' {
+            $Uses = Get-GenericTypeArgumentUse -Path $script:HelperSourcePath
+            @($Uses).Count | Should -Be 0 -Because "the module declares PowerShell 7.2 as its floor and an explicit generic type argument on a method call is syntax of 7.3 and later, so the merged module would not load there: $(@($Uses) -join ' | ')"
+        }
+    }
+
     Context 'it is pure' {
         It 'sends no request and signs in nowhere' {
             Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }

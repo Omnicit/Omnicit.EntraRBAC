@@ -56,8 +56,10 @@ function Get-OERInventoryGroup {
     membership type, so a group that was made static after the export would meet an omitted key on
     the static path, which reconciles the members and, under -Prune, removes every live one, while an
     explicit null is hands-off on both paths. The null is no gap in the document, so a dynamic
-    group's members are never named in the Unread list, and not when their read failed either (the
-    cause that read recorded stays in the Causes list). The members are not looked at for the PIM
+    group's members are never named in the Unread list, and not when their read failed either: that
+    failed read is no gap, so its cause is not recorded in the Causes list (the verbose stream carries
+    it), as -SecurityEnabledOnly below removes the causes of a group it leaves out, and a cause clause
+    never names a read that no unread entry names (R-24). The members are not looked at for the PIM
     decision above, since PIM for Groups cannot manage a dynamic group: a dynamic group with members
     and no owners sends no assignment read. They are still READ when the group is read in full, one
     request as before, and COUNTED, in the DynamicMembers list below, so that Export-OERInventory
@@ -126,8 +128,8 @@ function Get-OERInventoryGroup {
     - DynamicMembers: one object per projected dynamic group whose members were read, in list order:
       GroupId, Group (the display name) and Members (how many members the read found; none is
       written, see above). A dynamic group whose members read failed has no entry, so its count is
-      not known, and neither has a group left out under -ExcludeSharedName. An empty array when no
-      dynamic group's members were read.
+      not known (which is not zero), and neither has a group left out under -ExcludeSharedName. An
+      empty array when no dynamic group's members were read.
     - SharedNames: one object per name -ExcludeSharedName reported, in the order reported: Section
       ('groups'), Name (the spelling of the first listed group that carries it, as in the Unread
       list) and Count (the larger count described above). Always an array, empty when no name was
@@ -332,7 +334,18 @@ function Get-OERInventoryGroup {
                     # message and it lives nowhere else once the record is dropped here.
                     $GroupCause = [string]$GErr.Exception.Message
                     Write-Verbose "Get-OERInventory: $GroupCause"
-                    Add-UnreadCause -Cause $GroupCause -Target ([string]$GErr.TargetObject)
+                    # Sprint 11 step 10 (BL-43, R-24): the members read of a DYNAMIC group is no gap, since its
+                    # members are the explicit null whether the read worked or not and nothing in the document
+                    # is missing, so its cause is not recorded: a cause clause must never name a read that no
+                    # unread entry names (the verbose line above is all that remains of it). The group is found
+                    # by the record's Target, its id, among the groups just listed; a record with no Target
+                    # matches none and keeps its cause.
+                    $DynamicMembersFailure = $GErr.FullyQualifiedErrorId -like 'GroupMemberReadFailed*' -and
+                        -not [string]::IsNullOrEmpty([string]$GErr.TargetObject) -and
+                        @($GroupItems | Where-Object { $_.GroupType -eq 'Dynamic' -and [string]$_.Id -ieq [string]$GErr.TargetObject }).Count -gt 0
+                    if (-not $DynamicMembersFailure) {
+                        Add-UnreadCause -Cause $GroupCause -Target ([string]$GErr.TargetObject)
+                    }
                     continue
                 }
                 # Warn only for a record Get-OERGroup itself PUBLISHED. -ErrorVariable is filled
@@ -536,6 +549,9 @@ function Get-OERInventoryGroup {
             if ($ProgressActivity) {
                 Write-Progress -Activity $ProgressActivity -Status "Group $GroupIndex of $GroupTotal" -PercentComplete ([int](($GroupIndex / [Math]::Max($GroupTotal, 1)) * 100))
             }
+            # Decided once, here at the top, since the members read below and the projection both need it: it
+            # sets the dynamic key, the rule keys, and what members is for this group (BL-43).
+            $GroupIsDynamic = ($G.GroupType -eq 'Dynamic')
             if ($RelevantOnly) {
                 $GroupId = [string]$G.Id
                 # THE FIRST REQUEST: the eligibility, which is both a relevance criterion and a collection
@@ -581,14 +597,16 @@ function Get-OERInventoryGroup {
                         $G | Add-Member -NotePropertyName $RelevantCollection -NotePropertyValue $RelevantRead.Value -Force
                     } else {
                         Write-Verbose "Get-OERInventory: $($RelevantRead.Message)"
-                        Add-UnreadCause -Cause $RelevantRead.Message -Target $GroupId
+                        # BL-43 (R-24): the members read of a dynamic group is no gap, so its cause is not
+                        # recorded, exactly as the record loop of a full read does not record it; the verbose
+                        # line above is all that remains of it.
+                        if (-not ($GroupIsDynamic -and $RelevantCollection -eq 'Members')) {
+                            Add-UnreadCause -Cause $RelevantRead.Message -Target $GroupId
+                        }
                     }
                 }
             }
 
-            # Decided once: it sets the dynamic key, the rule keys, and what members is for this group (BL-43,
-            # below).
-            $GroupIsDynamic = ($G.GroupType -eq 'Dynamic')
             $Proj = [ordered]@{
                 displayName    = $G.DisplayName
                 roleAssignable = [bool]$G.IsAssignableToRole
@@ -675,16 +693,19 @@ function Get-OERInventoryGroup {
             #
             # Sprint 11 step 10 (BL-43, R-1): a DYNAMIC group's members are the same explicit null, for a
             # different reason, and it is no gap, so it is never named unread, and not when the members read
-            # failed either (the cause that read recorded stays in the cause list, as it does for any read the
-            # reader counted). The membership is owned by the membership rule: what the read found is a
-            # snapshot of what the rule derived, which Invoke-OERStructure can do nothing with (it adds no
-            # member to a dynamic group and removes none). It is a null and not an omitted key, as for a
-            # dynamic administrative unit, which the engine converts back to the declared type, but
-            # Set-OERGroup cannot convert a group's membership type: a group that was made static after the
-            # export would meet an omitted key on the static path, which reconciles and, under -Prune,
-            # removes every live member, while an explicit null is hands-off on both paths. The members read
-            # is kept (one request, only for a group read in full) and the COUNT of what it found goes in
-            # $DynamicMembers, so the export's roster keeps a memberCount (R-15).
+            # failed either: that failed read is no gap, so its cause is not recorded either (R-24; the two
+            # places that would record it, the record loop of a full read and the members read of a relevant-only
+            # one, skip a dynamic group, and the verbose line stays), exactly as -SecurityEnabledOnly removes the
+            # causes of a group it leaves out. The membership is owned by the membership rule: what the read
+            # found is a snapshot of what the rule derived, which Invoke-OERStructure can do nothing with (it
+            # adds no member to a dynamic group and removes none). It is a null and not an omitted key, unlike a
+            # dynamic administrative unit, whose members are OMITTED since the engine converts a unit's
+            # membership type back to the declared one, but Set-OERGroup cannot convert a group's membership
+            # type: a group that was made static after the export would meet an omitted key on the static path,
+            # which reconciles and, under -Prune, removes every live member, while an explicit null is hands-off
+            # on both paths. The members read is kept (one request, only for a group read in full) and the COUNT
+            # of what it found goes in $DynamicMembers, so the export's roster keeps a memberCount (R-15); a read
+            # that failed has no count, so the roster's memberCount stays null, which is not zero.
             if ($GroupIsDynamic) {
                 $Proj.members = $null
                 if ($MembersRead) {

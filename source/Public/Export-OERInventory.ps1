@@ -56,8 +56,10 @@ function Export-OERInventory {
     true for a group synchronized from on-premises Active Directory and false otherwise, and
     memberCount: the group's member count when the export read the group in full, and null
     otherwise -- for a group the export found not relevant, one outside -GroupFilter, one left out
-    because another group shares its name, one whose members could not be read, one whose members
-    are written as null for the reason given below, and every group that is not security-enabled.
+    because another group shares its name, one whose members could not be read (a dynamic group's
+    members read included: its count stays null and the export names nothing unread for it), one
+    whose members are written as null for the reason given below, and every group that is not
+    security-enabled.
     Null means not known, which is not zero: a count would cost a request per group. The count is
     the group's live member count, so it includes the members left out of inventory.json as PIM for
     Groups access (see MEMBERS AND OWNERS THAT PIM FOR GROUPS HOLDS). A dynamic group's members are

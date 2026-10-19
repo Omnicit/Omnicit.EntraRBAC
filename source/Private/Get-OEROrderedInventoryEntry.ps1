@@ -58,8 +58,8 @@ function Get-OEROrderedInventoryEntry {
     $Ordered = [object[]]@($InputObject | Where-Object { $null -ne $_ })
     if ($Ordered.Count -lt 2) { return $Ordered }
 
-    # The key functions read nothing but the pair they are given: a script block that .NET calls as a
-    # delegate does not see the local variables of this function, so the key is carried by the pair.
+    # The key functions read nothing but the pair they are given: the key is carried by the pair, so the
+    # delegate reads nothing else.
     $TextKey = [System.Func[object, string]] { param($Pair) $Pair.Key }
     $NumberKey = [System.Func[object, double]] { param($Pair) $Pair.Key }
 
@@ -94,15 +94,21 @@ function Get-OEROrderedInventoryEntry {
             }
             $Pairs[$EntryIndex] = [PSCustomObject]@{ Key = $Key; Entry = $Ordered[$EntryIndex] }
         }
-        # OrderBy and ThenBy are .NET's own, with .NET's own comparers, and OrderBy is stable: the order
-        # costs one call of the key function per entry and pass, never one per comparison.
+        # OrderBy and ThenBy are .NET's own, with .NET's own comparers, and OrderBy is stable: a text pass
+        # (OrderBy, then ThenBy) calls the key function twice per entry and a number pass once, never once
+        # per comparison. The generic arguments are INFERRED from the typed arguments ($Pairs is an
+        # [object[]], the key is a [Func[object, string]] or [Func[object, double]]), never written out:
+        # an explicit type argument on a generic method call (::OrderBy[object, string](...)) is syntax
+        # PowerShell has only since 7.3, a parse error in a module whose floor is 7.2, which fails the
+        # whole merged module and which CI (a current PowerShell only) would not show. The test file
+        # holds it: no call in this file may carry generic type arguments.
         $Sorted = if ($IsNumber) {
-            [System.Linq.Enumerable]::ToArray[object](
-                [System.Linq.Enumerable]::OrderBy[object, double]($Pairs, $NumberKey))
+            [System.Linq.Enumerable]::ToArray(
+                [System.Linq.Enumerable]::OrderBy($Pairs, $NumberKey))
         } else {
-            [System.Linq.Enumerable]::ToArray[object](
-                [System.Linq.Enumerable]::ThenBy[object, string](
-                    [System.Linq.Enumerable]::OrderBy[object, string]($Pairs, $TextKey, [System.StringComparer]::OrdinalIgnoreCase),
+            [System.Linq.Enumerable]::ToArray(
+                [System.Linq.Enumerable]::ThenBy(
+                    [System.Linq.Enumerable]::OrderBy($Pairs, $TextKey, [System.StringComparer]::OrdinalIgnoreCase),
                     $TextKey, [System.StringComparer]::Ordinal))
         }
         $Ordered = [object[]]@(foreach ($Pair in $Sorted) { $Pair.Entry })

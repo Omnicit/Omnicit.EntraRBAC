@@ -6114,6 +6114,58 @@ Describe 'Get-OERInventory' {
                 Should -Be 1 -Because 'one throttle reason repeated per group would bury the signal'
         }
 
+        It 'states no cause for the failed members read of a dynamic group, beside another group''s failed owners read, and counts the one collection that is unread (Sprint 11 step 10, BL-43, R-24)' {
+            # A dynamic group's members are the explicit null whether or not their read worked, so nothing in the
+            # document is missing and no unread entry names them. The cause clause must not name a read that no
+            # unread entry names: before R-24 it listed the dynamic group's members cause beside the owners cause
+            # and the message counted "1 collection(s)" with two causes.
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not read members for group 'g-dyn': Too many requests (429)."),
+                        'GroupMemberReadFailed,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, 'g-dyn')) -ErrorAction $Ea
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not read owners for group 'g-sta': Forbidden (403)."),
+                        'GroupOwnerReadFailed,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, 'g-sta')) -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'g-dyn'; DisplayName = 'role_sec_dyn'; IsAssignableToRole = $false
+                    GroupType = 'Dynamic'; Description = $null; MailNickname = $null; MembershipRule = 'user.department -eq "IT"'
+                    Owners = @(); PimEligibility = @()
+                }
+                [PSCustomObject]@{
+                    Id = 'g-sta'; DisplayName = 'role_sec_sta'; IsAssignableToRole = $false
+                    GroupType = 'Assigned'; Description = $null; MailNickname = $null
+                    Members = @(); PimEligibility = @()
+                }
+            }
+
+            $Stream = @(Get-OERInventory -Include Groups -Verbose -ErrorVariable InvErr -WarningAction SilentlyContinue -ErrorAction SilentlyContinue 4>&1)
+            $Inv = @($Stream | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })[0]
+            $Verbose = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+            $Dyn = @($Inv.groups | Where-Object { $_.displayName -eq 'role_sec_dyn' })
+            $Dyn.Count | Should -Be 1
+            $Dyn[0].PSObject.Properties.Name | Should -Contain 'members'
+            $null -eq $Dyn[0].members | Should -BeTrue
+            $Published = @($InvErr) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory'
+            }
+            $Partial = @($Published | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1 -Because 'the static group''s failed owners read is a gap'
+            $Msg = $Partial[0].Exception.Message
+            [string]$Partial[0].TargetObject | Should -Be 'groups/role_sec_sta/owners'
+            $Msg | Should -Match ([regex]::Escape('1 collection(s) or object(s) could not be read'))
+            $Msg | Should -Not -Match 'role_sec_dyn'
+            $Causes = ($Msg -split 'Causes: ')[1]
+            $Causes | Should -Match ([regex]::Escape("Could not read owners for group 'g-sta': Forbidden (403)."))
+            $Causes | Should -Not -Match 'g-dyn'
+            $Causes | Should -Not -Match '429'
+            # The dynamic group's failed read is not lost: its verbose line stays.
+            @($Verbose) | Should -Contain "Get-OERInventory: Could not read members for group 'g-dyn': Too many requests (429)."
+        }
+
         It 'names the cause for an administrative unit collection read failure too' {
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
                 Write-Error -Message "Could not read scoped roles for unit 'au-1': Forbidden (403)." `

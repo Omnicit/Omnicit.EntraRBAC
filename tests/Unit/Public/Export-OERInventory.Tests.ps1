@@ -8724,19 +8724,30 @@ Describe 'Export-OERInventory (the roster count of a dynamic group, through the 
     BeforeEach {
         InModuleScope $script:moduleName { $script:_OERAuthState = $null }
         $script:DynRefuse = @()
+        # The ids of the groups whose members read fails inside a FULL read: Get-OERGroup writes its
+        # GroupMemberReadFailed record and leaves Members off, as the real cmdlet does.
+        $script:DynFailMembers = @()
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Get-OERConfiguration {}
         Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
         # The roster read carries no collection switch; a full read carries all three; a relevant-only read none.
         Mock -ModuleName $script:moduleName Get-OERGroup {
-            param([switch]$IncludeMembers, [switch]$IncludeOwners, [switch]$IncludePimEligibility)
+            param([switch]$IncludeMembers, [switch]$IncludeOwners, [switch]$IncludePimEligibility, $ErrorAction)
+            $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
             foreach ($Spec in $script:DynSpecs) {
                 $G = [PSCustomObject]@{
                     Id = $Spec.Id; DisplayName = $Spec.Name; Description = $null; GroupType = $(if ($Spec.Dynamic) { 'Dynamic' } else { 'Assigned' })
                     IsAssignableToRole = $Spec.RoleAssignable; SecurityEnabled = $true
                     MembershipRule = $(if ($Spec.Dynamic) { 'user.department -eq "IT"' } else { $null })
                 }
-                if ($IncludeMembers) { $G | Add-Member -NotePropertyName Members -NotePropertyValue @($Spec.Members) }
+                if ($IncludeMembers -and $Spec.Id -in $script:DynFailMembers) {
+                    # A different reason per kind of group: the cause clause deduplicates on the text with the group's
+                    # id taken out, so two groups that fail for one reason would be stated once.
+                    Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Could not read members for group $($Spec.Id): $(if ($Spec.Dynamic) { 'throttled (429)' } else { 'refused (403)' })."),
+                            'GroupMemberReadFailed,Get-OERGroup',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $Spec.Id)) -ErrorAction $Ea
+                } elseif ($IncludeMembers) { $G | Add-Member -NotePropertyName Members -NotePropertyValue @($Spec.Members) }
                 if ($IncludeOwners) { $G | Add-Member -NotePropertyName Owners -NotePropertyValue @() }
                 if ($IncludePimEligibility) { $G | Add-Member -NotePropertyName PimEligibility -NotePropertyValue @() }
                 $G
@@ -8788,18 +8799,64 @@ Describe 'Export-OERInventory (the roster count of a dynamic group, through the 
         (@($Bundle.IncompleteReads) -join ' | ') | Should -Not -BeLike '*groups/dyn_x/members*'
     }
 
-    It 'leaves the roster count null for a dynamic group whose members read failed, and does not name its members unread' {
+    It 'leaves the roster count null for a dynamic group whose members read failed, does not name its members unread, and states no cause for that read' {
         $script:DynRefuse = @('PimEligibility:g-dyn', 'Members:g-dyn')
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'dyn-failed') -Include Groups `
-            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
         $Roster = @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
         $Dyn = @($Roster | Where-Object { $_.displayName -eq 'dyn_x' })
         $Dyn.Count | Should -Be 1
         $Dyn[0].PSObject.Properties.Name | Should -Contain 'memberCount'
         $null -eq $Dyn[0].memberCount | Should -BeTrue -Because 'the members read failed, so the count is not known, which is not zero'
         (@($Bundle.IncompleteReads) -join ' | ') | Should -Not -BeLike '*groups/dyn_x/members*'
-        # Reach proof: the failed read was reached, and the group's own cause is in the bundle's partial signal.
+        # Reach proof: the failed read was reached, and the group's own eligibility cause is in the bundle's partial signal.
         Should -Invoke -ModuleName $script:moduleName Read-OERGroupCollection -Exactly -Times 1 -ParameterFilter { $GroupId -eq 'g-dyn' -and $Collection -eq 'Members' }
+        $Partial = @($ExErr | Where-Object { $null -ne $_ -and [string]$_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+        $Partial.Count | Should -Be 1
+        $Partial[0].Exception.Message | Should -BeLike '*Could not read PimEligibility for group g-dyn: refused (403).*'
+        # R-24: the members read of a dynamic group is no gap, so the cause clause does not name it.
+        $Partial[0].Exception.Message | Should -Not -BeLike '*Could not read Members for group g-dyn*'
+    }
+
+    It 'leaves the roster count null for a dynamic group whose members read failed in a full read, names nothing unread, and publishes no partial (BL-43, R-15, R-24)' {
+        $script:DynFailMembers = @('g-dyn')
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'dyn-full-failed') -Include Groups -AllGroupsDetailed `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+        $Inv = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        $Dyn = @($Inv.Groups | Where-Object { $_.displayName -eq 'dyn_x' })
+        $Dyn.Count | Should -Be 1 -Because '-AllGroupsDetailed keeps every group it reads in full'
+        $Dyn[0].PSObject.Properties.Name | Should -Contain 'members'
+        $null -eq $Dyn[0].members | Should -BeTrue
+        $Roster = @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
+        $RosterDyn = @($Roster | Where-Object { $_.displayName -eq 'dyn_x' })
+        $RosterDyn.Count | Should -Be 1
+        $RosterDyn[0].PSObject.Properties.Name | Should -Contain 'memberCount'
+        $null -eq $RosterDyn[0].memberCount | Should -BeTrue -Because 'the members read failed, so the count is not known, which is not zero'
+        # Non-vacuity: the group that read fine is counted as ever.
+        ($Roster | Where-Object { $_.displayName -eq 'role_sec_ra' }).memberCount | Should -Be 1
+        # The failed read is no gap: nothing unread, no partial, no cause. Reach proof below.
+        @($Bundle.IncompleteReads).Count | Should -Be 0
+        @($ExErr | Where-Object { $null -ne $_ -and [string]$_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -ParameterFilter { $IncludeMembers } -Times 1 -Exactly
+    }
+
+    It 'states the cause of an assigned group''s failed members read in the partial and none for a dynamic group''s failed members read beside it, in a full read (BL-43, R-24)' {
+        # Alone, the dynamic group's failed read publishes nothing at all (the test above), so a cause recorded for
+        # it would only show beside a gap: here the assigned group's members read fails too, which is a gap, and
+        # the partial's cause clause names that read and not the dynamic group's.
+        $script:DynFailMembers = @('g-dyn', 'g-ra')
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'dyn-full-beside') -Include Groups -AllGroupsDetailed `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+        (@($Bundle.IncompleteReads) -join ' | ') | Should -BeLike '*groups/role_sec_ra/members*'
+        (@($Bundle.IncompleteReads) -join ' | ') | Should -Not -BeLike '*groups/dyn_x/members*'
+        $Partial = @($ExErr | Where-Object { $null -ne $_ -and [string]$_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+        $Partial.Count | Should -Be 1
+        $Partial[0].Exception.Message | Should -BeLike '*Could not read members for group g-ra: refused (403).*'
+        $Partial[0].Exception.Message | Should -Not -BeLike '*Could not read members for group g-dyn*'
+        $Partial[0].Exception.Message | Should -Not -BeLike '*throttled (429)*'
+        # The dynamic group's count is not known, as when it fails alone.
+        $Roster = @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json)
+        $null -eq ($Roster | Where-Object { $_.displayName -eq 'dyn_x' }).memberCount | Should -BeTrue
     }
 }
 

@@ -112,8 +112,9 @@ function Get-OERStructureSchemaJson {
     so an explicit null is the only way a document can say "leave this collection alone" -- and it
     is what Get-OERInventory emits when the live read failed (issue #76); for groups[].members it also
     emits null when the group has members and neither its PIM for Groups assignments nor its
-    eligibility could be read, and for a dynamic group, whose membership its membership rule owns (no
-    read failed there: the null is the group's own "leave it untouched", Sprint 11 step 10, BL-43). For
+    eligibility could be read, and for a dynamic group, whose membership its membership rule owns (the
+    null does not mean a read failed: it is the group's own "leave it untouched", Sprint 11 step 10,
+    BL-43, and it is written whether or not the group's members could be read). For
     scopedRoles, resources
     and resourceRoles it also emits null when an entry has no name and no object id the apply engine
     accepts, since the schema refuses an empty one (minLength 1). owners and eligibility
