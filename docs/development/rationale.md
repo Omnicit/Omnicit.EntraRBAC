@@ -7418,6 +7418,74 @@ reader marks the whole Groups section unread, never empty. The cost: `Get-OERInv
 catch on a path no known input reaches (its known output is unchanged), and the causes and unread
 names the reader had gathered before it stopped are lost; only `groups` survives.
 
+### Sprint 11 step 10: what the group section writes (BL-43, BL-121; R-1, R-2, R-15, R-16)
+
+**The problem (BL-43).** A dynamic group's membership is owned by its membership rule: Microsoft Learn
+states that a member of a dynamic membership group cannot be added or removed manually, and the apply engine
+accordingly adds none and removes none (`Sync-OERStructureGroup`, step 2). The export still wrote every member
+the read found, as a list. That list is a snapshot of what the rule derived at the time of the read, which a
+document can do nothing with: every declared member was reported `Skipped` on the next apply, and a dynamic
+group that had members and declared none got one more `Skipped` row ("the N current member(s) were not
+reconciled ...") on every run, `-Prune` or not. Each of those rows is a finding about the export's own output.
+
+**R-1 (the form: an explicit null, and no unread entry).** `Get-OERInventoryGroup` writes a dynamic group's
+`members` as an EXPLICIT null, and does not name it unread. It is a null and not an omitted key for the reason
+a dynamic administrative unit is not the model: the engine converts a unit's membership type back to the
+declared one, but `Set-OERGroup` cannot convert a group's membership type. A group that was made static
+(assigned) after the export would meet an omitted `members` key on the static path, which reconciles the
+members and, under `-Prune`, removes every live one; an explicit null is the schema's "leave it untouched" on
+both paths. It is no gap, so nothing names `groups/<name>/members` unread, and a failed members read of a
+dynamic group adds no such entry either: the cause the read already recorded stays in the causes list, where
+every counted read leaves it, and the roster count of that group is then not known (R-15). A dynamic group's
+members are also not looked at for the PIM decision (`$NeedPimRead` counts a non-dynamic group's members, and
+owners as before), so a dynamic group with members and no owners sends no
+`Read-OERGroupPimAssignment`. That read answered `ResourceTypeNotSupported` for a dynamic group when it was
+measured (Rule 10 of [#pim-activation-is-not-membership](#pim-activation-is-not-membership)), so nothing was
+left out by it; the request is saved. The owners and the eligibility of a dynamic group are unchanged. Cost if
+wrong: one line in `Get-OERInventoryGroup` (the null to an omitted key), and R-2's condition goes with it.
+
+**R-2 (the engine).** `Sync-OERStructureGroup` writes its one aggregate `Skipped` row for a dynamic group
+only when the document's `members` is not an explicit null (`$MembersDeclaredNull`, decided by
+`Test-OERDeclaredNull` above it). Null says "leave it untouched", so there is nothing to report, and the
+prompt asks a `-Prune` plan of an export to show no member row at all. A declared list keeps its row for each
+declared member, and `[]` and an omitted key keep the aggregate row. `-Prune` never touched a dynamic group's
+members and still does not. Cost if wrong: drop the condition, and one `Skipped` row per dynamic group that has
+members returns.
+
+**R-15 (the roster count).** The reader still READS a dynamic group's members when it reads the group in full
+(one request, the request pattern unchanged) and counts them, per group, in a new result list
+`DynamicMembers` (`GroupId`, `Group`, `Members`; an empty array when none). `Export-OERInventory` puts that
+count in the roster's `memberCount` before the `PimLeftOut` addition, which cannot apply to a dynamic group
+(PIM for Groups cannot manage one), so `-AllGroupsDetailed` keeps the count it documents, and a dynamic
+group read in full only because its relevance was unknown is counted too. A group left out for a shared name
+drops its entry, as its `PimLeftOut` entry goes, and a group whose members read failed has none, so its count
+stays null, which is "not known" and not zero. Cost if wrong: the roster's `memberCount` of a dynamic group
+is null, which loses a count and nothing else.
+
+**BL-121 and R-16 (the order of the lists).** Graph answers a group's members, owners and eligibility, and an
+administrative unit's members, in no fixed order, so two exports of one unchanged tenant wrote one set in two
+orders (the live comparison above had to sort them before comparing, for that reason). They are now written in one
+order, and `Get-OEROrderedInventoryEntry` is its single owner: text is ordered by
+`[System.StringComparer]::OrdinalIgnoreCase` and, where two texts differ only in letter case, by
+`[System.StringComparer]::Ordinal`, so the order is total and `Alice` stands before `alice`; both comparers
+are culture independent, so the order is the same on every machine. Eligibility is ordered by principal, then
+`accessType`, then `durationDays` (a permanent eligibility, which has none, first, then ascending), then the
+id, which only an `-IncludeId` read writes and which keeps two principals that share a display name in one
+order. `Get-OERInventoryGroup` orders the three group lists, `Get-OERInventory` the unit members; the groups,
+the units and every other section stay in the order they were listed in. Apply is not affected: the engine
+reconciles by identity, never by position, so no engine change is needed for it.
+
+The helper is a private function and not one comparison per file for two reasons: the rule is a
+single-owner rule like the others of this module (a second copy in the unit reader would be one more place
+for the two orders to drift apart), and the form matters for a large group. The lists are ordered with LINQ's
+`OrderBy` and `ThenBy`, which take .NET's own comparers and are stable, one key pass per key (the least
+significant first), so the script block that reads a key runs once per entry; a `List.Sort` with a comparison
+script block calls it for every comparison. Measured offline with plain PowerShell on the development
+machine, 50,000 texts: about 0.4 s through LINQ and about 7 s through `List.Sort`, and 5,000 texts about 0.8 s
+through `List.Sort` with the comparison inline, and about 1.9 s when it calls a function. Cost if wrong: put the
+comparison inline per file, which costs a second copy and the time above for a group with thousands of
+members.
+
 ## export-role-policy-selection
 
 Sprint 10 step 9 (BL-107, decisions A8 and A14) made `Export-OERInventory` keep only the Azure role
@@ -9174,7 +9242,10 @@ its owner with no partial signal. Every other group's assignment read answered 2
 onboarded one included, or 403 for a role-assignable group read without the permission (above). A
 failure that arrives thrown, of any kind, is unread. If wrong: a group answering
 `ResourceTypeNotSupported` that PIM for Groups could still hold access in would have that access
-written as standing; Graph's answer is that PIM for Groups does not manage the group at all.
+written as standing; Graph's answer is that PIM for Groups does not manage the group at all. Since
+Sprint 11 step 10 (BL-43) the members of a dynamic group are neither written nor looked at for this read:
+the group's members are an explicit null, and a dynamic group with members and no owners sends no
+assignment read ([#export-group-selection](#export-group-selection)).
 
 **The permission.** Microsoft Learn names `PrivilegedAssignmentSchedule.Read.AzureADGroup` as the
 least privileged application permission for the read and
