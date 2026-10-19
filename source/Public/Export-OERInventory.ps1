@@ -106,11 +106,7 @@ function Export-OERInventory {
     not. When anything was skipped the bundle summary is still emitted first and is then followed by
     a non-terminating InventoryPartial error, so a caller using -ErrorAction Stop or a try/catch
     finds out that roleAssignments.json and roleManagementPolicies.json are incomplete instead of
-    treating a truncated bundle as a full tenant snapshot. The Entra ID sections other than Groups are
-    read by an inner Get-OERInventory call that pins -ErrorAction Continue, so that a partial read
-    never stops the bundle, and its own InventoryPartial error therefore reaches the caller's error
-    stream before the summary is emitted, also under -ErrorAction SilentlyContinue and Ignore on the
-    export, which silence only the export's own InventoryPartial error that follows. A level of the
+    treating a truncated bundle as a full tenant snapshot. A level of the
     tree that could not be LISTED is skipped the same way: a refused or failed management-group
     listing is named in
     SkippedScopes and SkippedEligibilityScopes as '<management groups: the listing failed>' (a failed
@@ -120,7 +116,11 @@ function Export-OERInventory {
     skipped -- because it cannot know it exists. Wait until Get-OERManagementGroup lists it before
     relying on an export that should include it. Of the subscriptions, ScopesEnumerated counts only
     those of this tenant: a subscription of another tenant, or one whose home tenant could not be read,
-    is not walked and not counted (see SUBSCRIPTIONS OF ANOTHER TENANT below).
+    is not walked and not counted (see SUBSCRIPTIONS OF ANOTHER TENANT below). The Entra ID sections
+    other than Groups are read by an inner Get-OERInventory call that pins -ErrorAction Continue, so
+    that a partial read never stops the bundle, and its own InventoryPartial error therefore reaches
+    the caller's error stream before the summary is emitted, also under -ErrorAction SilentlyContinue
+    and Ignore on the export, which silence only the export's own InventoryPartial error that follows.
 
     Azure PIM eligibility is read the same walk over, into azurePimEligibility.json, but only when an
     Azure section (RoleAssignments or RoleManagementPolicies) is included -- the file is absent
@@ -149,8 +149,10 @@ function Export-OERInventory {
     it carries nothing. A scope whose eligibility read fails is named in SkippedEligibilityScopes and
     folds into the same trailing InventoryPartial error as a failed role-assignment scope. An
     eligibility read that stops as a whole, on an error nothing in it catches, is reported the same way
-    and never ends the export: every scope of the walk is named in SkippedEligibilityScopes,
-    azurePimEligibility.json is written as [], and ONE warning names the cause. The Azure Lighthouse
+    and does not end the export (only a Stop warning preference does, at its warning, as at every
+    warning before the bundle is written): every scope of the walk is named in
+    SkippedEligibilityScopes, azurePimEligibility.json is written as [], and ONE warning names the
+    cause. The Azure Lighthouse
     read (AZURE LIGHTHOUSE DELEGATIONS below) and the role policy selection (WHICH AZURE ROLE
     MANAGEMENT POLICIES ARE EXPORTED below) each report a stop of their own in the same way.
 

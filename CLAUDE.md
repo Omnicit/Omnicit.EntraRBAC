@@ -634,8 +634,10 @@ terminating refusal is caught, scrubbed first and raised again with `$PSCmdlet.T
 the sign-in's own record and ErrorId, so a caller's `try` still catches it and, outside one, only
 that statement ends -- never `WriteError`, which changed what a caller sees. The one refusal written
 without terminating, `ArmTokenAcquisitionFailed`, is found in `SignInErrors` by the first comma
-segment of its `FullyQualifiedErrorId`, compared whole and ordinally and never searched for; under
-`-ErrorAction Ignore`, which adds a record to no `-ErrorVariable`, the call is pinned to
+segment of its `FullyQualifiedErrorId`, compared whole and ordinally and never searched for; the export
+marks itself refused and raises nothing for it, since the record already reached the error stream (a
+caller's `try` catches it only under a Stop error preference). Under `-ErrorAction Ignore` or
+`$ErrorActionPreference = 'Ignore'`, which add a record to no `-ErrorVariable`, the call is pinned to
 `SilentlyContinue`, and under no other preference. A refused export asks for no tenant ID, reads
 nothing, writes no folder and returns no object, under every error preference. For every other
 command the sentence above still holds. `Get-OERInventory` keeps its behaviour.
@@ -1349,7 +1351,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   same converters as `Get-OERInventory -AllRolesAtScope`) and the assignments with one extra
   `Get-OERRoleAssignment -AtScope` list per scope, read before the policy list; `-AllRolePolicies`
   makes the per-scope call earlier versions made and selects nothing. Never decide the selection
-  anywhere else, never drop a policy that cannot be judged, and never add a request per policy.
+  anywhere else -- except the export's fallback when the selection itself stops (Sprint 11 step 10,
+  R-5), which keeps every candidate and names each distinct scope among them as not judged -- never drop a
+  policy that cannot be judged, and never add a request per policy.
   `Why: docs/development/rationale.md#export-role-policy-selection`
 - **`Resolve-OERTenantDomain` is the single owner of the module's one network call outside the
   Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
@@ -1365,9 +1369,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 - **`Get-OERDocumentTenantMismatch` is the single owner of the comparison of a structure document's
   `tenantId`** with the tenant `Invoke-OERStructure` acts in, and of the `DocumentTenantMismatch` id
-  and message (BL-88, A14); `Get-OERInventoryTenantId` is the single owner of which tenant an export
-  names -- the Graph token's granted tenant (`TokenTenantId`) when it is a GUID, never the tenant as
-  named, and otherwise no key at all, with no warning. `Get-OERInventory` and `Export-OERInventory`
+  and message (BL-88, A14); `Get-OERInventoryTenantId` is the single owner of which tenant an export's
+  `inventory.json` names -- the Graph token's granted tenant (`TokenTenantId`) when it is a GUID, never
+  the tenant as named, and otherwise no key at all, with no warning. `Get-OERInventory` and `Export-OERInventory`
   call it in `begin`, directly after their own sign-in (the export not at all when that sign-in was
   refused). It is also the second term of the bundle folder's label (BL-101, R-9): the export names
   the folder, and the summary's `TenantId`, after the tenant the session names unless that is blank

@@ -475,7 +475,8 @@ management policies kept without being judged", "Role assignment principal that 
 entry below names collections or objects that could not be read, could not be written without an
 empty name, or were left out because two or more live objects share a name; none of them is stated
 as a fact in this bundle. An entry labelled "Entra ID" can name several of them at once, separated
-by a comma and a space, since the collections one read could not read are reported as one entry.
+by a comma and a space, since the collections that one read could not read are reported together as
+one entry.
 An entry labelled "Role
 assignment principal that could not be read" names a row of `roleAssignments.json` as
 `roleAssignments/<role> -> <principal id> @ <scope>`, followed by `/principal` or `/principalStatus`.
@@ -1010,9 +1011,10 @@ written with an empty name. A group or application binding whose name cannot be 
 under its object id, and a catalog resource with a blank name under its origin id; an entry the
 export could name by nothing the apply engine accepts (a SharePoint binding with no name, for
 example) makes its whole collection `null`, named in `InventoryPartial`, exactly like an unread one. The
-`members` of a dynamic group are also written `null`, though no read failed: its membership rule
-owns its members, so that `null` is not an unread collection, no entry under "What this export could
-not read" names it, and `Invoke-OERStructure` leaves the members alone. Keep it `null` in a proposal.
+`members` of a dynamic group are also written `null`, whether or not a read of them failed: its
+membership rule owns its members, so that `null` is not an unread collection, no entry under "What
+this export could not read" names it, and `Invoke-OERStructure` leaves the members alone. Keep it
+`null` in a proposal.
 `Export-OERInventory` ends with an `InventoryPartial` error naming each collection it reports as
 unread, these four and any other; the others are left out or written only as far as they were read,
 so their absence is not evidence the tenant has none. A section that could not be read at all (the

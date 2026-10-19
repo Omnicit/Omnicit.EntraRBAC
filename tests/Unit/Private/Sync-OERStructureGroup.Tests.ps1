@@ -1135,7 +1135,7 @@ Describe 'Sync-OERStructureGroup' {
                 # Mirrors the real Remove-OERGroupEligibility (ConfirmImpact = High), which warns before
                 # its own ShouldProcess gate every time it is called, to prove the handler's
                 # -WarningAction SilentlyContinue on the call site actually silences that duplicate.
-                Mock Remove-OERGroupEligibility { Write-Warning 'Remove-OERGroupEligibility: removing eligibility for principal.' }
+                Mock Remove-OERGroupEligibility { Microsoft.PowerShell.Utility\Write-Warning 'Remove-OERGroupEligibility: removing eligibility for principal.' }
                 Mock Get-OERGroupPimPolicy { $null }
                 Mock Initialize-OERAuth { }
                 Mock Resolve-OERStructureDefault { $null }

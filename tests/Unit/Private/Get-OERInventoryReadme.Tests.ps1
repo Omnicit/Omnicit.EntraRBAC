@@ -199,7 +199,7 @@ Describe 'Get-OERInventoryReadme' {
             $Bullet | Should -Not -Match '[<>]'
             # The Unread collections section: the null is the rule's, not a failed read, and is kept in a proposal.
             $Section = (($Md -split '(?m)^## Unread collections\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
-            $Section | Should -Match ([regex]::Escape('The `members` of a dynamic group are also written `null`, though no read failed: its membership rule owns its members, so that `null` is not an unread collection, no entry under "What this export could not read" names it, and `Invoke-OERStructure` leaves the members alone. Keep it `null` in a proposal.'))
+            $Section | Should -Match ([regex]::Escape('The `members` of a dynamic group are also written `null`, whether or not a read of them failed: its membership rule owns its members, so that `null` is not an unread collection, no entry under "What this export could not read" names it, and `Invoke-OERStructure` leaves the members alone. Keep it `null` in a proposal.'))
             # It stands after the sentence about the entry that has no usable name, ahead of the InventoryPartial sentence.
             $Section.IndexOf('The `members` of a dynamic group') | Should -BeGreaterThan $Section.IndexOf('exactly like an unread one.')
             $Section.IndexOf('The `members` of a dynamic group') | Should -BeLessThan $Section.IndexOf('`Export-OERInventory` ends with an `InventoryPartial` error')
@@ -417,7 +417,7 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
         $Section = Get-TestSection -Readme (Get-TestReadme -IncompleteReads @('groups/Alpha/members, groups/Beta/owners'))
         ((Get-TestBullets -Section $Section) -join "`n") | Should -BeExactly '- Entra ID: `groups/Alpha/members, groups/Beta/owners`'
         $Collapsed = $Section -replace '\s+', ' '
-        $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Entra ID" can name several of them at once, separated by a comma and a space, since the collections one read could not read are reported as one entry.'))
+        $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Entra ID" can name several of them at once, separated by a comma and a space, since the collections that one read could not read are reported together as one entry.'))
         # It follows the sentence that says what an entry names, ahead of the labels of the other kinds.
         $Collapsed.IndexOf('can name several of them at once') | Should -BeGreaterThan $Collapsed.IndexOf('none of them is stated as a fact in this bundle.')
         $Collapsed.IndexOf('can name several of them at once') | Should -BeLessThan $Collapsed.IndexOf('An entry labelled "Role assignment principal that could not be read"')

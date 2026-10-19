@@ -548,11 +548,12 @@ section warnings, the unread names, the causes and `InventoryPartial` are what t
 ### Sprint 11 step 10: the inner call's error under the export's own preference (BL-46)
 
 **What the export's `-ErrorAction` does not reach.** `Export-OERInventory` reads the Entra ID sections other
-than Groups with an inner `Get-OERInventory` call that pins `-ErrorAction Continue`: unpinned, the call inherits the caller's
-preference, and under the `-ErrorAction Stop` the help tells operators to adopt, its `InventoryPartial` would
-terminate at the call site, outside any `try` and before a file is written. The export's own `InventoryPartial`,
-written after the summary, is the one that honours `Stop`. A pinned `Continue` is not governed by the export's
-own preference either, so the inner `InventoryPartial` reaches the caller's error stream, ahead of the summary,
+than Groups with an inner `Get-OERInventory` call that pins `-ErrorAction Continue`: unpinned, the call
+inherits the caller's preference, and under the `-ErrorAction Stop` the help tells operators to adopt, its
+`InventoryPartial` would terminate at the call site, outside any `try` and before a file is written. The
+export's own `InventoryPartial`, written after the summary, is the one that honours `Stop`. A pinned
+`Continue` is not governed by the export's own preference either, so the inner `InventoryPartial` reaches
+the caller's error stream, ahead of the summary,
 also under `-ErrorAction SilentlyContinue` and `Ignore` on the export, which silence only the export's own
 `InventoryPartial` that follows. Measured offline in Pester with a stand-in for `Get-OERInventory` that honours
 the call's `-ErrorAction` as the real cmdlet does: under each of the two preferences `2>&1` carried exactly one
@@ -7556,30 +7557,34 @@ remains of it, in both cases (`Get-OERInventoryGroup` skips the record in the fu
 members read of a relevant-only read, for a group whose `GroupType` is `Dynamic`; a record without a target
 matches no group and keeps its cause), and the roster count of that group is not known, so its `memberCount`
 stays null and not 0 (R-15). Cost if wrong: one condition in each of the two places, and a dynamic group's
-failed members read is a cause again with nothing unread to belong to. **R-28 (a dynamic administrative unit
-is the same).** A dynamic unit's members are not written either (`Get-OERInventory` omits them, and omits
-rather than nulls them, since the engine converts a unit's membership type back to the declared one), so a
-failed read of them is no gap in the document and no unread entry names it. The re-review of the group
-round measured that its cause still reached the `InventoryPartial` clause, beside another collection's
-(`Unread: groups/role_sec_sta/owners` with `Could not read members for unit 'au-dyn': Too many requests
-(429)` in the causes), which is the defect R-24 removed for groups. The record loop of the administrative
-unit section now skips the cause of an `AdministrativeUnitMemberReadFailed` record whose target is the id of a
-listed unit whose `MembershipType` is `Dynamic`, ids compared without regard to letter case, and the verbose
-line stays. A static unit's failed members read, every scoped-role record and a record with no target keep
-their cause and, where the projection names one, their unread entry. So a dynamic group's members and a
-dynamic unit's members are the two collections whose failed read is no gap, and the help of
-`Get-OERInventory` and of the reader says so (an earlier sentence called a dynamic group's members "the one
-collection", which was untrue of the unit). Both loops find the dynamic ids in a set built once, only when a
-record was written, instead of scanning every listed group or unit per failed record: the scan cost failures
-times listed groups, measured in plain PowerShell at 2.0 s for 500 groups, 4.8 s for 1000 and 15.5 s for 2000
-with every members read failing, none of it for a healthy tenant. Cost if wrong: one condition in the unit
-record loop, and a dynamic unit's failed members read is a cause again with nothing unread to belong to. A dynamic group's
+failed members read is a cause again with nothing unread to belong to. A dynamic group's
 members are also not looked at for the PIM decision (`$NeedPimRead` counts a non-dynamic group's members, and
 owners as before), so a dynamic group with members and no owners sends no
 `Read-OERGroupPimAssignment`. That read answered `ResourceTypeNotSupported` for a dynamic group when it was
 measured (Rule 10 of [#pim-activation-is-not-membership](#pim-activation-is-not-membership)), so nothing was
 left out by it; the request is saved. The owners and the eligibility of a dynamic group are unchanged. Cost if
 wrong: one line in `Get-OERInventoryGroup` (the null to an omitted key), and R-2's condition goes with it.
+
+**R-28 (a dynamic administrative unit is the same).** A dynamic unit's members are not written either
+(`Get-OERInventory` omits them, and omits rather than nulls them, since the engine converts a unit's
+membership type back to the declared one), so a failed read of them is no gap in the document and no unread
+entry names it. The re-review of the group round measured that its cause still reached the `InventoryPartial`
+clause, beside another collection's (`Unread: groups/role_sec_sta/owners` with the cause
+`Could not read members for administrative unit au-dyn: Too many requests (429).` and the rest of the
+reader's message in the causes), which is the defect R-24 removed for groups. The record loop of the
+administrative unit section now skips the cause of an `AdministrativeUnitMemberReadFailed` record whose
+target is the id of a listed unit whose `MembershipType` is `Dynamic`, ids compared without regard to
+letter case, and the verbose line stays. A static unit's failed members read, every scoped-role record and
+a record with no target keep their cause and, where the projection names one, their unread entry. So a
+dynamic group's members and a
+dynamic unit's members are the two collections whose failed read is no gap, and the help of
+`Get-OERInventory` and of the reader says so (an earlier sentence called a dynamic group's members "the one
+collection", which was untrue of the unit). Both loops find the dynamic ids in a set built once, only when a
+record was written, so neither scans the listed groups or units per failed record (the group loop once did:
+the scan cost failures times listed groups, measured in plain PowerShell at 2.0 s for 500 groups, 4.8 s for
+1000 and 15.5 s for 2000 with every members read failing, none of it for a healthy tenant). Cost if wrong:
+one condition in the unit record loop, and a dynamic unit's failed members read is a cause again with
+nothing unread to belong to.
 
 **R-2 (the engine).** `Sync-OERStructureGroup` writes its one aggregate `Skipped` row for a dynamic group
 only when the document's `members` is not an explicit null (`$MembersDeclaredNull`, decided by
@@ -10543,7 +10548,10 @@ resources, so a catalog's `packages` and `catalogResourceNames` entries can no l
 other entry changes. Cost if wrong: one resource read more per catalog that holds no package, and a
 `catalogResourceNames` entry for a read that was never needed.
 
-### Sprint 11 step 10: the not-found codes of two reads are the ones measured (BL-21, R-13)
+## measured-not-found-codes
+
+Sprint 11 step 10 (BL-21, R-13): the not-found codes of two reads are the ones measured. This anchor records
+which code each read declares and why it declares no other.
 
 **The problem (BL-21).** `Get-OERAccessReviewInstance -Instance` sorted a failed single-instance GET as a
 missing instance when the converted error id was one of four codes (`ResourceNotFound`,
@@ -10809,8 +10817,10 @@ read, an ambiguous name or no policy as much as a role missing at the scope -- w
 that were read, which may be fewer than the curated set, and it is not reported partial: a refused read
 stated as an absent role is the failed-read-as-a-fact gap this section closes everywhere else, left open
 here because the reader is outside this step, and raised as a finding. Only a scope the reader cannot
-resolve (`InvalidScope`) is a record, so only that reaches `Get-OERInventory`'s `catch` under
-`-CommonRoles`; the test fixtures write `InvalidScope` for that call, and the `-CommonRoles` per-role
+resolve (`InvalidScope`), or a sign-in or Azure Resource Manager token its own `begin` cannot get
+(`ArmTokenAcquisitionFailed`, which the inherited `Stop` makes terminating, or the terminating
+`SignInRefused` when this command's own sign-in left it latched), reaches `Get-OERInventory`'s `catch`
+under `-CommonRoles`; the test fixtures write `InvalidScope` for that call, and the `-CommonRoles` per-role
 failures are driven through the REAL reader
 with its helpers mocked (a mock of the reader cannot show them). Under a Stop warning preference
 (`-WarningAction Stop`, or `$WarningPreference` set to `Stop`) the stop at that `Skipping role` warning
@@ -10867,7 +10877,7 @@ the files before this paragraph was written.
 | F4 | a `-Subscription` verdict decided on the holder, `:808` | the verdict's own id | 1 red, the `NoSubscription` answer with an id |
 | F5 | the scrub in the assignment `catch`, `:1641` | removed | 1 red, the R-17 runspace test, besides the static gate (S1) |
 | F3 | the policy read's `try`, `:2537` | the original unguarded block | 2 red, the Stop warning preference tests of the real `-CommonRoles` reader |
-| F6 | the assignment read's `try`, `:1637` | the original unguarded call | 1 red, the first assignment test (it stops at the call: the reader's record is terminating under the test's `Stop`) |
+| F6 | the assignment read's `try`, `:1638` | the original unguarded call | 1 red, the first assignment test (it stops at the call: the reader's record is terminating under the test's `Stop`) |
 
 **R-4 (the apply engine; A18).** `Sync-OERStructureRoleAssignment` takes the `principal` of an entry
 that declares `principalStatus` as the object id it names, with no principal lookup at all, for the

@@ -8344,7 +8344,7 @@ foreach ($Item in $Items) {
 
     It 'says in the help that an eligibility read, a Lighthouse read and a selection that stop are reported' {
         $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
-        $Description | Should -Match ([regex]::Escape('An eligibility read that stops as a whole, on an error nothing in it catches, is reported the same way and never ends the export: every scope of the walk is named in SkippedEligibilityScopes, azurePimEligibility.json is written as [], and ONE warning names the cause.'))
+        $Description | Should -Match ([regex]::Escape('An eligibility read that stops as a whole, on an error nothing in it catches, is reported the same way and does not end the export (only a Stop warning preference does, at its warning, as at every warning before the bundle is written): every scope of the walk is named in SkippedEligibilityScopes, azurePimEligibility.json is written as [], and ONE warning names the cause.'))
         $Description | Should -Match ([regex]::Escape("A read that stopped as a whole, on an error nothing in the reader catches, is named as 'lighthouseDelegations at <all Azure scopes: the read stopped>', with the cause in the causes of the InventoryPartial message and ONE warning, and lighthouseDelegations.json is written as []."))
         $Description | Should -Match ([regex]::Escape('A selection that stops as a whole, on an error nothing in it catches, keeps every policy read at every scope, merged as the kept ones are, names the scope of each as above, and writes ONE warning that names the cause.'))
         # Fix round 1: an eligibility stop names a scope only where a policy is kept without being judged, which

@@ -22,8 +22,8 @@ function Get-OERInventoryGroup {
     The lists a projection writes stand in one fixed order, Get-OEROrderedInventoryEntry's (Sprint 11 step
     10, BL-121): members and owners as text, and eligibility by principal, then access type, then
     duration (a permanent eligibility, which has no durationDays, first), then id. Two reads of one
-    unchanged tenant therefore write the same document, whatever order Graph answered in. The groups
-    themselves stay in list order.
+    unchanged tenant therefore write these lists in the same order, whatever order Graph answered in.
+    The groups themselves stay in list order.
 
     A PIM activation is never written as a standing membership (BL-125, A3). Members and owners are
     written only when they are standing. For each group whose members or owners were read and hold

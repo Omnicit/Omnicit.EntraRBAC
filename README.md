@@ -216,10 +216,9 @@ refused, or the Azure Resource Manager token it asked for cannot be acquired, it
 writes no bundle folder and returns no object, under every error preference. The sign-in's own
 error reaches the caller, as a terminating error when the sign-in terminated, so a `try` around the
 export catches it and, outside a `try`, only that statement ends. A `Connect-OER` whose parameters
-PowerShell cannot bind never runs, so it leaves
-nothing behind for the module to see. An empty `-TenantAlias`, typed or piped, is refused with
-`InvalidTenantAlias`, and an empty, whitespace or `$null` `-TenantId` with `InvalidTenantId`; both
-count as a refused sign-in. Every other cmdlet refuses an empty or `$null` `-TenantId` while
+PowerShell cannot bind never runs, so it leaves nothing behind for the module to see. An empty
+`-TenantAlias`, typed or piped, is refused with `InvalidTenantAlias`, and an empty, whitespace or
+`$null` `-TenantId` with `InvalidTenantId`; both count as a refused sign-in. Every other cmdlet refuses an empty or `$null` `-TenantId` while
 PowerShell binds its parameters, so that command never runs and sends nothing: an empty cell in a
 loop over tenants no longer stands for the current session's tenant. `New-OERConfiguration` and
 `Set-OERConfiguration` store the tenant instead of signing in to it, so they also refuse a
@@ -1071,8 +1070,9 @@ policy the export cannot judge, because a read it needs failed or the list gives
 by, is kept, and its scope is named in `IncompleteReads` as
 `roleManagementPolicies/role selection at <scope>` and in `InventoryPartial`. `-AllRolePolicies`
 exports every policy at every scope, as earlier versions did. It has nothing to act on without
-`RoleManagementPolicies` in `-Include`, and neither has `-AllDirectoryRolePolicies` without
-`DirectoryRoleManagementPolicies`: the export warns once, at the start, for each.
+`RoleManagementPolicies` in `-Include` (the default `-Include` does not name it), and neither has
+`-AllDirectoryRolePolicies` without `DirectoryRoleManagementPolicies`: the export warns once, at the
+start, for each.
 `Invoke-OERStructure` reads and writes only the policies a document declares, so a policy the export
 left out stays as it is.
 
@@ -1098,8 +1098,8 @@ whole, the export still writes the bundle and ends with `InventoryPartial`, with
 names the cause: the eligibility read names every scope in `SkippedEligibilityScopes` and writes
 `azurePimEligibility.json` as `[]`, the Lighthouse read is named
 `lighthouseDelegations at <all Azure scopes: the read stopped>` in `IncompleteReads` and writes
-`lighthouseDelegations.json` as `[]`, and the selection keeps every policy it read and names each
-scope as not judged.
+`lighthouseDelegations.json` as `[]`, and the selection keeps every policy it read and names the
+scope of each as not judged.
 
 `Export-OERInventory -IncludeServicePrincipalAccess` also writes `servicePrincipalAccess.json`:
 read-only context on the app roles and delegated permission grants of the tenant's service

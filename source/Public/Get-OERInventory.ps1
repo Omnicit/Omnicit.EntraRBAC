@@ -68,12 +68,12 @@ function Get-OERInventory {
     above (a dynamic group with members and no owners sends none), and its owners and eligibility are
     written as for any group.
     The lists a projection writes stand in one fixed order, so two reads of one unchanged tenant write
-    one document whatever order Graph answered in: a group's members and owners, and an administrative
-    unit's members, are ordered as text without regard to letter case and, for two texts that differ
-    only in it, by ordinal comparison (Alice, alice, Bob); a group's eligibility is ordered by
-    principal, then accessType, then durationDays (a permanent eligibility, which has none, first),
-    then id. The groups and units themselves, and the entries of every other section, stay in the
-    order they were listed in.
+    these lists in the same order whatever order Graph answered in: a group's members and owners, and
+    an administrative unit's members, are ordered as text without regard to letter case and, for two
+    texts that differ only in it, by ordinal comparison (Alice, alice, Bob); a group's eligibility is
+    ordered by principal, then accessType, then durationDays (a permanent eligibility, which has none,
+    first), then id. The groups and units themselves, and the entries of every other section, stay in
+    the order they were listed in.
     The Groups pimPolicy projection is emitted only for a group found to use
     PIM for Groups: one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it
     carries a lastModifiedDateTime or a lastModifiedBy). Microsoft Graph lists those policies for
@@ -243,8 +243,9 @@ function Get-OERInventory {
     definition or policy it cannot read -- a refused or failed read as much as a role that is missing at
     the scope -- with a warning of its own (Skipping role, the role's name and the reason), and carries
     on. That skip is not reported through InventoryPartial, so the section holds the policies of the
-    roles that were read, which may be fewer than the curated set; only a scope that cannot be resolved
-    is reported unread. Under a Stop warning preference (-WarningAction Stop, or $WarningPreference set
+    roles that were read, which may be fewer than the curated set; only a scope that cannot be resolved,
+    or a sign-in or Azure Resource Manager token the reader cannot get, is reported unread. Under a Stop
+    warning preference (-WarningAction Stop, or $WarningPreference set
     to 'Stop') the stop at that warning is caught here as well: the section is reported unread, with the
     warning's text in its cause, and the command carries on.
     A role assignment at the Azure root scope '/', above every management group and subscription in
@@ -1342,6 +1343,7 @@ function Get-OERInventory {
             # failure that carries one of them is therefore a catalog list that could not be read, named
             # unread with its cause: the safe direction to be wrong in, since a gap that is reported is
             # never a silent empty answer.
+            # Why: docs/development/rationale.md#measured-not-found-codes
             try {
                 $ResolvedCatalogList = if ($Catalog) {
                     if ($Catalog -as [guid]) { @(Get-OERCatalog -Id $Catalog -ErrorAction Stop) } else { @(Get-OERCatalog -DisplayName $Catalog -ErrorAction Stop) }
@@ -2652,10 +2654,13 @@ function Get-OERInventory {
                 # policy -- a refused or failed ARM read or an ambiguous name as much as a role missing at the
                 # scope -- into a 'Skipping role' warning of its own and carries on, so none of those is a failure
                 # here or named unread, and the section holds the policies of the roles that were read. Only a
-                # scope the reader cannot resolve (InvalidScope) is a record, and reaches the catch below. Under
-                # a Stop warning preference the stop at that warning leaves the reader and is caught below too:
-                # the section is named unread with the warning's text, and the command carries on (measured with
-                # the real reader, in the Describe 'Get-OERInventory -CommonRoles through the real
+                # scope the reader cannot resolve (InvalidScope), or a sign-in or Azure Resource Manager token
+                # its own begin cannot get (ArmTokenAcquisitionFailed, which the inherited Stop makes
+                # terminating, or the terminating SignInRefused when this command's own sign-in left it
+                # latched), is a record or a stop that reaches the catch below. Under a Stop warning
+                # preference the stop at that warning leaves the reader and is caught below too: the section is
+                # named unread with the warning's text, and the command carries on (measured with the real
+                # reader, in the Describe 'Get-OERInventory -CommonRoles through the real
                 # Get-OERRoleManagementPolicy').
                 $Policies = @()
                 try {

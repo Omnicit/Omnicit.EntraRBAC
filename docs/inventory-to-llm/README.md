@@ -53,8 +53,9 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
   Lighthouse delegations, which are the rows of `lighthouseDelegations.json`.
 
 `<tenant>` in the folder name is the tenant the session names: an ID, or the domain given to
-`-TenantId`. A session signed in without `-TenantId` names `organizations`, which names no tenant, so
-the folder is then named by the tenant ID the session's Microsoft Graph token was issued for, else by
+`-TenantId`. A sign-in with no `-TenantId` and no session to inherit the tenant from, or with
+`-TenantId organizations`, names `organizations`, which names no tenant, so the folder is then named
+by the tenant ID the session's Microsoft Graph token was issued for, else by
 `-TenantId` as it was given, else by the word `tenant`; the `TenantId` of the returned object is the
 same label. If the export's own sign-in is refused, or the Azure Resource Manager token it asks for
 when an Azure section is included cannot be acquired, it reads nothing, writes no folder and returns
@@ -71,11 +72,12 @@ role has an active role assignment or a PIM eligibility exactly at that scope, o
 changed, at the cost of one more role assignment list per scope, and a policy that cannot be judged
 is kept and its scope named in `IncompleteReads`. Add `-AllRolePolicies` to export the policy of
 every Azure role at every scope instead. Either switch has nothing to act on without its section in
-`-Include`, and the export then warns once, at the start. An Azure PIM eligibility read, an Azure
-Lighthouse read or a role policy selection that stops as a whole does not end the export: the bundle
-is still written, with `InventoryPartial` and one warning that names the cause. Only RBAC-relevant
-groups are detailed in `inventory.json`;
-the full landscape is in `groupsRoster.json`. The export decides which groups are relevant before it
+`-Include` (the default `-Include` does not name `RoleManagementPolicies`), and the export then
+warns once, at the start. An Azure PIM eligibility read, an Azure Lighthouse read or a role policy
+selection that stops as a whole does not end the export (only a Stop warning preference does, at its
+warning): the bundle is still written, with `InventoryPartial` and one warning that names the cause.
+Only RBAC-relevant groups are detailed in `inventory.json`; the full landscape is in
+`groupsRoster.json`. The export decides which groups are relevant before it
 reads any group in full, so a group it finds not relevant costs two requests and has `memberCount`
 `null` in the roster; use `-AllGroupsDetailed` to read and keep every group in full detail.
 `-GroupFilter` narrows the groups `inventory.json` is read from and never widens them, and
@@ -1081,8 +1083,8 @@ The bundle's `README.md` lists every such report, and every Azure scope the expo
 (for `roleAssignments.json` and `roleManagementPolicies.json`, or for `azurePimEligibility.json`),
 under "What this export could not read" -- one bullet per entry, each written as a code span so an
 entry such as `<all Azure scopes: scope enumeration failed>` is shown as it is. An Entra ID entry can
-name several collections, separated by a comma and a space: the collections one read could not read
-are reported as one entry. An Azure scope where
+name several collections, separated by a comma and a space: the collections that one read could not
+read are reported together as one entry. An Azure scope where
 at least one role management policy could not be judged is listed there too, after the Entra ID
 entries and after the role assignment principals that could not be read (see "Role assignments whose
 principal the directory did not return", labelled "Role assignment principal that could not be

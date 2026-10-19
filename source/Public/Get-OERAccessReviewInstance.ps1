@@ -165,9 +165,10 @@ function Get-OERAccessReviewInstance {
                 # 'Request_ResourceNotFound' and 'ItemNotFound' used to stand beside it as a superset
                 # declared while the real code was unknown; none was observed on this endpoint, and they
                 # are gone, since unobserved codes are what made the set a guess (the same rule as
-                # Resolve-OERAccessPackageId's declared codes). Graph-named code outside the declared one is
+                # Resolve-OERAccessPackageId's declared codes). A code Graph names outside the declared one is
                 # raised and published as itself, still loud and never a silent empty answer, which is the
                 # safe direction to be wrong in.
+                # Why: docs/development/rationale.md#measured-not-found-codes
                 # The wrapper compares WHOLE tokens, and reads the failure's message text only when the id is
                 # status-derived, so a 403 carrying a real Graph code (Forbidden is status-derived, but
                 # Authorization_RequestDenied is not) is never softened into "not found" by prose such as

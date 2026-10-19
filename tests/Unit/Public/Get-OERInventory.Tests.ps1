@@ -6365,7 +6365,7 @@ Describe 'Get-OERInventory' {
         It 'looks the dynamic units up once, so the lookup does not grow with the number of failed members reads (Sprint 11 step 10, BL-43, R-28)' {
             # Each listed unit counts how often its MembershipType is read. A healthy read reads it once per unit
             # for the projection; the lookup adds one read per unit, once, when any record was written, and not
-            # one per record (a scan per failed record cost failures times listed units).
+            # one per record.
             $script:CountedUnits = @(foreach ($UnitId in 'au-1', 'au-2', 'au-3', 'au-4') {
                 $Unit = [PSCustomObject]@{
                     Id = $UnitId; DisplayName = "AU-$UnitId"; Description = $null; IsMemberManagementRestricted = $false
@@ -10184,7 +10184,7 @@ Describe 'Get-OERInventory help documents the subscriptions of another tenant (B
         $Description | Should -Match ([regex]::Escape("The reader's own error is not written to the caller's error stream beside it (a caller's -ErrorVariable still collects it), and no warning is written for it."))
         # R-19: what -CommonRoles really does (the Describe 'Get-OERInventory -CommonRoles through the real
         # Get-OERRoleManagementPolicy' holds each claim), and the Stop warning preference.
-        $Description | Should -Match ([regex]::Escape("-CommonRoles is the exception: the reader reads each curated role on its own and skips any role whose definition or policy it cannot read -- a refused or failed read as much as a role that is missing at the scope -- with a warning of its own (Skipping role, the role's name and the reason), and carries on. That skip is not reported through InventoryPartial, so the section holds the policies of the roles that were read, which may be fewer than the curated set; only a scope that cannot be resolved is reported unread."))
+        $Description | Should -Match ([regex]::Escape("-CommonRoles is the exception: the reader reads each curated role on its own and skips any role whose definition or policy it cannot read -- a refused or failed read as much as a role that is missing at the scope -- with a warning of its own (Skipping role, the role's name and the reason), and carries on. That skip is not reported through InventoryPartial, so the section holds the policies of the roles that were read, which may be fewer than the curated set; only a scope that cannot be resolved, or a sign-in or Azure Resource Manager token the reader cannot get, is reported unread."))
         $Description | Should -Match ([regex]::Escape("Under a Stop warning preference (-WarningAction Stop, or `$WarningPreference set to 'Stop') the stop at that warning is caught here as well: the section is reported unread, with the warning's text in its cause, and the command carries on."))
         # The sentence that said the reader skips a curated role that does not exist, and nothing more, is gone.
         $Description | Should -Not -Match ([regex]::Escape('With -CommonRoles the reader still skips a curated role that does not exist in the subscription'))
@@ -10999,7 +10999,7 @@ Describe 'Get-OERInventory reports a failed Azure section read as an unread sect
             Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {
                 [CmdletBinding()]
                 param($Role, [switch]$CommonRoles, [switch]$AllRolesAtScope, $Scope, $Subscription, $ManagementGroup)
-                Write-Warning "Skipping common role 'Role Based Access Control Administrator': it was not found in this scope."
+                Microsoft.PowerShell.Utility\Write-Warning "Skipping common role 'Role Based Access Control Administrator': it was not found in this scope."
                 & $script:FrPolicy 'Reader'
             }
             $Inv = Get-OERInventory -Include RoleManagementPolicies -Scope $script:FrScope -CommonRoles -IncludeARM `

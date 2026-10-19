@@ -142,7 +142,7 @@ GROUPS IN AN EXPORT
     the export did not read in full has memberCount null, meaning not known
     rather than zero.
 
-    A dynamic group's members is written null, not as the list its rule
+    A dynamic group's members key is written null, not as the list its rule
     happened to derive, and is not an unread collection: its membership rule
     owns the membership, so a failed read of those members names nothing in
     InventoryPartial. The null is the document's "leave it untouched", and
@@ -222,11 +222,11 @@ AZURE ROLE POLICIES IN AN EXPORT
     as 'roleManagementPolicies/role selection at <scope>' and in
     InventoryPartial. -AllRolePolicies exports every policy at every scope,
     as earlier versions did. It has nothing to act on without
-    RoleManagementPolicies in -Include, and neither has
-    -AllDirectoryRolePolicies without DirectoryRoleManagementPolicies: the
-    export warns once, at the start, for each. Invoke-OERStructure reads and
-    writes only the policies a document declares, so a policy the export left
-    out stays as it is.
+    RoleManagementPolicies in -Include (the default -Include does not name it),
+    and neither has -AllDirectoryRolePolicies without
+    DirectoryRoleManagementPolicies: the export warns once, at the start, for
+    each. Invoke-OERStructure reads and writes only the policies a document
+    declares, so a policy the export left out stays as it is.
 
 AZURE LIGHTHOUSE DELEGATIONS IN AN EXPORT
 
@@ -263,7 +263,8 @@ AZURE LIGHTHOUSE DELEGATIONS IN AN EXPORT
     azurePimEligibility.json as [], the Lighthouse read is named
     'lighthouseDelegations at <all Azure scopes: the read stopped>' in
     IncompleteReads and writes lighthouseDelegations.json as [], and the
-    selection keeps every policy it read and names each scope as not judged.
+    selection keeps every policy it read and names the scope of each as not
+    judged.
 
 SUBSCRIPTIONS OF ANOTHER TENANT
 
