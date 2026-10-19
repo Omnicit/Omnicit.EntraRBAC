@@ -9,12 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 More failed inventory reads are now reported. `Get-OERInventory` names a failed role assignment or
 role management policy read as unread through `InventoryPartial` (a `-CommonRoles` role it cannot
-read is still skipped with a warning), and refuses a `-Scope`, `-Subscription` or `-ManagementGroup`
-of white space. `Export-OERInventory` reports a stopped Azure eligibility, Lighthouse or policy
-selection read, warns when `-AllRolePolicies` or `-AllDirectoryRolePolicies` has no section to act
-on, writes no bundle when its own sign-in is refused, and writes members, owners and eligibility in
-one fixed order. A dynamic group's members are written as null and left to its rule, so a `-Prune`
-plan of the export shows no member row for it.
+read is still skipped with a warning). It refuses an empty, `$null` or white space `-Scope`,
+`-Subscription` or `-ManagementGroup` at binding, and `Export-OERInventory` does so for `-Scope` and
+`-ManagementGroup`; an empty value used to read as not given, so an empty `-Scope` meant a
+tenant-wide walk. `Export-OERInventory` also reports a stopped Azure eligibility, Lighthouse or
+policy selection read, warns when `-AllRolePolicies` or `-AllDirectoryRolePolicies` has no section
+to act on, and writes no bundle when its own sign-in is refused. When the session names no tenant,
+the export names the bundle folder and the returned `TenantId` by the granted tenant ID, not
+`organizations`. Both write members, owners, eligibility and unit members in one fixed order. A
+dynamic group's members are written as null and left to its rule, so a `-Prune` plan shows no
+member row for it.
 
 ## [1.3.0] - 2026-10-19
 
