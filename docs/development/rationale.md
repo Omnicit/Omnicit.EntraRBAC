@@ -4195,41 +4195,72 @@ request that has no token to send; that refusal neither latches nor marks, since
 `Initialize-OERAuth` does either (see the bullet on a request never sent without an ARM token under
 [#arm-transport](#arm-transport)).
 
-**The export wraps its sign-in (Sprint 11 step 10, BL-101, R-8).** The one public cmdlet that writes files
+**The export wraps its sign-in (Sprint 11 step 10, BL-101, R-8, R-25, R-26).** The one public cmdlet that writes files
 used to carry on past a refusal like every other: every request it then made was refused by the latch, and
 it still wrote a bundle folder of empty files with a README that named every section unread, a folder that
 looks like the export of a tenant that holds nothing. `Export-OERInventory`'s `begin` block now calls
 `Initialize-OERAuth` directly in a `try`, with `-ErrorVariable SignInErrors`. A `try` is neither a script
 block nor a nested function, so the call still stands in the command's own frame, the latch is still keyed on
 the export's invocation, and gate 10 of [#static-source-gates](#static-source-gates) allows it. A terminating
-refusal is caught, and the catch scrubs the record first (it can reach a token call) and publishes it with
-`$PSCmdlet.WriteError($PSItem)`: the sign-in's own record with its own ErrorId, so no ErrorId and no
-parameter was added (A9), and under a Stop preference the write terminates, which is the preference's
-meaning. `ArmTokenAcquisitionFailed`, the one refusal that is only written, is not terminating, so the catch
+refusal is caught, and the catch scrubs the record first (it can reach a token call), marks the export
+refused and raises the record again with `$PSCmdlet.ThrowTerminatingError($PSItem)` (R-26): the sign-in's own
+record with its own ErrorId, so no ErrorId and no parameter was added (A9), and the kind it always had. The
+first version published it with `WriteError`, which was measured to change what a caller sees: a caller's
+`try { Export-OERInventory ... } catch { }` no longer caught the refusal unless the export ran under
+`-ErrorAction Stop`, and a `-WarningAction Stop` on the sign-in's pre-call warning (the one it writes before a
+client secret switch it predicts will not take effect) reached the caller as a non-terminating record. A
+refusal at the export's entry used to propagate as a terminating error wherever a try stood up the stack, and
+it still does. `ThrowTerminatingError` ends the command whatever the error preference, with a try above it or
+none (measured with plain functions under every `-ErrorAction` value and as `$ErrorActionPreference`), so a
+caller's try catches the refusal under every preference, and outside any try only the export's statement ends
+and the script carries on, with the error in `$Error` and not in what `2>&1` carries. The mark the catch sets is
+therefore a second line of defence: were the record only written, `process` would still return on it. The
+tests hold the caller's try without `-ErrorAction Stop`, the pre-call warning under `-WarningAction Stop` in a
+runspace, and the no-`try` runspace.
+
+`ArmTokenAcquisitionFailed`, the one refusal that is only written, is not terminating, so the catch
 never sees it: `-ErrorVariable` collects it, and the first comma segment of a record's
 `FullyQualifiedErrorId` (the ErrorId, before the `,<command>` suffix) says whether it is that one. The
 variable also holds whatever the inner calls of a SUCCESSFUL sign-in wrote, which is no refusal, so the
-segment is compared whole and ordinally and never searched for: the tests write four other records into it,
-three of which only look like the one id (it inside a longer id, with a suffix, and after a comma), and the
-export is not refused. That record reached the error stream when it was written, and is not written again
-(the test counts the stream). Under a Stop preference PowerShell turns that write into a terminating error,
-which the catch sees like any other. A Pester mock cannot write it non-terminating -- Pester runs a mock
-under the Stop preference -- so the unit tests write it with `Write-Error -ErrorAction Continue`, and a
-runspace with a plain function as the sign-in shows both preferences.
+segment is compared whole and ordinally and never searched for: the tests write five other records into it,
+four of which only look like the one id (it inside a longer id, with a suffix, after a comma, and in another
+letter case, which an ordinal comparison does not read as the same id), and the export is not refused. That
+record reached the error stream when it was written, and is not written again (the test counts the stream); it
+stays the non-terminating record `Initialize-OERAuth` wrote, and the export raises nothing for it. Under a Stop
+preference PowerShell turns that write into a terminating error, which the catch sees like any other. A Pester
+mock cannot write it non-terminating -- Pester runs a mock under the Stop preference -- so the unit tests write
+it with `Write-Error -ErrorAction Continue`, and a runspace with a plain function as the sign-in shows the
+preferences.
+
+One preference needed a pin of its own (R-25). Under `-ErrorAction Ignore`, and under
+`$ErrorActionPreference = 'Ignore'`, PowerShell adds a written record to NO `-ErrorVariable` (measured with
+plain functions, both spellings), so the variable was empty and the export did not see
+`ArmTokenAcquisitionFailed`: it asked for the tenant ID, read, and wrote the very bundle folder this change
+exists to prevent. With the real module every request after the refusal is refused by the latch, so the folder
+held empty files and a README that named every section unread. `begin` therefore builds `$SignInSplat`, and
+only when `$ErrorActionPreference` is `Ignore` sets `ErrorAction` to `SilentlyContinue` on the sign-in call
+(`Initialize-OERAuth @AuthParams @SignInSplat -ErrorVariable SignInErrors`, still directly in the try, in the
+command's own block). SilentlyContinue collects the record and shows nothing, as Ignore shows nothing; every
+other preference reaches the call as it was, and a terminating refusal is not governed by either. The cost is that under Ignore the record lands in `$Error`, as it
+does under SilentlyContinue; nothing is shown. The runspace tests hold both spellings of Ignore, with
+SilentlyContinue, Continue and Stop beside them: the export reads and writes nothing and the script reaches its
+end, and without the pin the Ignore rows write the folder and return the bundle.
 
 A refused export reads nothing more: `process` returns before everything else, the two switch warnings
 (`-AllRolePolicies`, `-AllDirectoryRolePolicies` without their section) included, so it asks for no tenant
 ID (`Get-OERInventoryTenantId` is skipped in `begin`), reads no group, section or scope, writes no folder
-and returns no object. `Get-OERSignInRefusal` is not asked for: the latch is the transports' to read, and
-this decision is made on the sign-in's own outcome. `Get-OERInventory` keeps its behaviour, since it has no
-folder to leave behind, and its refused reads are findings in its own report. The no-`try` proof runs the
-REAL `Initialize-OERAuth` in a runspace with the session-uncertain marker set, which refuses a call that
-names no tenant before any token call, so the transport tripwire installed in the runspace records nothing;
-the script reaches its end, the one error is `SignInRefused`, and no folder exists. The sentence "no public
-cmdlet wraps its `Initialize-OERAuth` call" in [The Graph SDK session](#the-graph-sdk-session) and in the
-transports' comments is therefore true of every cmdlet but this one. Cost if wrong: a refusal that is not
-one -- a record of another id read as `ArmTokenAcquisitionFailed` -- would stop an export that could have
-run, and the comparison is exact for that reason; to go back, remove the `try` and the variable.
+and returns no object, under every error preference. `Get-OERSignInRefusal` is not asked for: the latch is the
+transports' to read, and this decision is made on the sign-in's own outcome. `Get-OERInventory` keeps its
+behaviour, since it has no folder to leave behind, and its refused reads are findings in its own report. The
+no-`try` proof runs the REAL `Initialize-OERAuth` in a runspace with the session-uncertain marker set, which
+refuses a call that names no tenant before any token call, so the transport tripwire installed in the runspace
+records nothing; the script reaches its end, the one error, in `$Error`, is `SignInRefused`, and no folder
+exists. The sentence "no public cmdlet wraps its `Initialize-OERAuth` call" stood in
+[The Graph SDK session](#the-graph-sdk-session), in the comment of `Initialize-OERAuth` and in the comments of
+the two transports, and names `Export-OERInventory` as the one exception in all four now. Cost if wrong: a
+refusal that is not one -- a record of another id read as `ArmTokenAcquisitionFailed` -- would stop an export
+that could have run, and the comparison is exact for that reason; to go back, remove the `try`, the variable and
+the pin.
 
 **Where the key is not the public cmdlet.** The latch keys on the IMMEDIATE caller of
 `Initialize-OERAuth`, which for the `begin`-block call of a public cmdlet is that cmdlet. Elsewhere:
@@ -4888,7 +4919,8 @@ cmdlet or a pipeline neighbour switched to by the time the document is assembled
 `Export-OERInventory` takes its own capture rather than reading the `tenantId` of the inventory
 `Get-OERInventory` returns, and passes it to both of its converter calls. The bundle folder's name
 and the summary's `TenantId` keep the tenant as named, as before, unless the session names none (the
-folder's label, below); only `inventory.json` carries the granted tenant. The validator (`Test-OERStructureSchema`, Rule 1b) and the schema
+folder's label, below), when they carry the granted tenant too; otherwise only `inventory.json` carries the
+granted tenant. The validator (`Test-OERStructureSchema`, Rule 1b) and the schema
 (`Get-OERStructureSchemaJson`) know the key: a present `tenantId` must be a string holding a
 canonical GUID, and an explicit `null`, an empty string, a value that is not a string or any other
 value is an Error (Ruling R3), which `Invoke-OERStructure` reports as `StructureValidationFailed`
@@ -4904,9 +4936,10 @@ that the value is a string, as the schema's `type: string` does. A document with
 as before. The prompt template tells an LLM to keep `tenantId` exactly as exported and never to
 invent, change or remove one.
 
-**The folder's tenant label (Sprint 11 step 10, BL-101, R-9).** `Initialize-OERAuth` stamps a session that
-was signed in with no `-TenantId` with the name `organizations`, which names no tenant, and the export used
-that name for its folder: every tenant an operator exported without `-TenantId` landed in a folder called
+**The folder's tenant label (Sprint 11 step 10, BL-101, R-9).** `Initialize-OERAuth` names a session
+`organizations` when the sign-in has no `-TenantId` and there is no session whose tenant it can inherit, or
+when the sign-in passes `-TenantId organizations`. That name names no tenant, and the export used it for its
+folder: every export signed in that way landed in a folder called
 `oer-inventory-organizations-<stamp>`, and nothing in the name said which tenant it held. The label is now,
 in this order: the tenant the session names (`$script:_OERAuthState.TenantId`) when it is not blank and not
 `organizations` (letter case ignored, compared ordinally); else the granted tenant ID the export captured in
@@ -10503,17 +10536,23 @@ and puts it in the context as `PrincipalNameCache`. `Get-OERInventory` takes it 
 `$PrincipalNameCache` right after it has decided that the context is its own (the owner check below), and
 before the Groups section reads, so what the reader learned is found by the reviewers and the directory
 role section, and what this call learns stays for the calls after it. The member is read through
-`PSObject.Properties`, as `SubscriptionTenant` is, and used only when it is an `IDictionary`: a context
-without it, or with one that is not a dictionary, reads as none, and the call keeps the hashtable it made
-at the top of its `process` block, which it always did. A call that has no context of its own -- a
-standalone one, or one that finds a stale context -- uses that hashtable and leaves the stale one alone. The
+`PSObject.Properties`, as `SubscriptionTenant` is, and used only when it is a `[hashtable]` (R-27): the
+consumers need one. `Get-OERInventoryGroup -PrincipalNameCache` is a `[hashtable]` parameter, which binds any
+other dictionary as a COPY, so what the reader learned would be lost to the call without an error, and the
+sections below call `ContainsKey`, which an `[ordered]` dictionary has not, so the reviewers and the directory
+role sections would throw. R-12 first copied the `IDictionary` test of the `SubscriptionTenant` member, whose
+consumer (`Get-OERSubscriptionHomeTenant -Cache`) is an `IDictionary` parameter; this member's consumers are
+not. A context without the member, or with one that is no `[hashtable]`, reads as none, and the call keeps
+the hashtable it made at the top of its `process` block, which it always did. A call that has no context of
+its own -- a standalone one, or one that finds a stale context -- uses that hashtable and leaves the stale
+one alone. The
 tests hold the same object in the reader and the context (`ReferenceEquals`), the lookups counted
 (`Resolve-OERPrincipalName` is not called for a principal the reader named, and once for one it did not),
-and the four readings of a context that has no usable member. Known limit: `Resolve-OERPrincipalName`'s map
-answers an id the directory did not return, and every id of a batch whose request failed, with the id
-itself, and the cache keeps that answer like any other, so a lookup that failed in the group read is not
-retried by the Entra ID call, which writes the id it would have written after a second failure. Cost if
-wrong: one lookup more for each principal both name, as before, and a hashtable that lives for one export.
+and the six readings of a context that has no usable member (missing, null, a string, an array, an
+`[ordered]` dictionary and a generic dictionary). Known limit: `Resolve-OERPrincipalName`'s map answers an id
+the directory did not return, and every id of a batch whose request failed, with the id itself, and the
+cache keeps that answer like any other, so a lookup that failed in the group read is not retried by the
+Entra ID call, which writes the id it would have written after a second failure. Cost if wrong: one lookup more for each principal both name, as before, and a hashtable that lives for one export.
 A test that builds a context by hand needs no new member: without it the call keeps its own cache.
 
 **The owner check.** `Get-OERInventory` reads the context ONCE per invocation and uses it only when its
