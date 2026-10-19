@@ -783,13 +783,13 @@ Describe 'Get-OERInventoryGroup' {
     }
 
     Context 'the bookkeeping of a failed list read stands before its warning (Sprint 11 step 10, BL-44)' {
-        # A Write-Warning under a Stop warning preference is a terminating error, so a statement after it never
-        # runs: a list that failed to read was then told as a warning and not carried to the unread list and the
-        # causes. Add-UnreadSection writes a verbose line first, so the proof is behavioural: under
+        # BL-44 asks for the bookkeeping before the warning at every site. A Write-Warning under a Stop warning
+        # preference is a terminating error and ends the read in either order, so the order shows only in the
+        # verbose stream. Add-UnreadSection writes a verbose line first, so the proof is behavioural: under
         # -WarningAction Stop -Verbose the section's verbose line is written before the warning stops the
         # command. The line is asserted WHOLE, and the two sites are told apart by it: the site in the record
         # loop writes the reader's own message, and the catch -- which also catches the stop the warning of the
-        # record loop raises -- writes a line that starts with the preference's own text.
+        # record loop raises -- writes 'Could not read groups: ' followed by that stop's own message.
         BeforeAll {
             function Invoke-GroupReadUnderStop {
                 InModuleScope Omnicit.EntraRBAC {

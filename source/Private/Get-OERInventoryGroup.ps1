@@ -278,8 +278,8 @@ function Get-OERInventoryGroup {
         # record written to the caller's -ErrorVariable, since the array subexpression runs the call as its
         # own nested pipeline and deposits the record again on the way out; only piping the call onward
         # before the @( ) closes leaks none. This call was that bare form, so every per-collection record
-        # Get-OERGroup writes (GroupMemberReadFailed and its two siblings) reached the operator's own error
-        # stream although this reader counts and words each of them itself. Do not "simplify" the filter away.
+        # Get-OERGroup writes (GroupMemberReadFailed and its two siblings) reached the caller's -ErrorVariable
+        # although this reader counts and words each of them itself. Do not "simplify" the filter away.
         $GroupReadErrors = $null
         # The try/catch still guards a genuinely TERMINATING failure of the whole read (auth,
         # a dead transport, an -ErrorAction Stop upstream); the inner loop handles the
@@ -319,11 +319,12 @@ function Get-OERInventoryGroup {
                 if (@(([string]$GErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERGroup') {
                     # The warning stays; the section is ALSO counted unread, since the groups array
                     # below is [] whether the tenant has none or the list could not be read. Sprint 11
-                    # step 10 (BL-44): the bookkeeping stands BEFORE the warning. A Write-Warning under a
-                    # Stop warning preference is a terminating error, so a statement after it would never
-                    # run, and the failed read would be told as a warning only and not carried to the
-                    # unread list and the causes. Held by the verbose line Add-UnreadSection writes first,
-                    # in the tests of this reader.
+                    # step 10 (BL-44): the bookkeeping stands BEFORE the warning, as at every site BL-44
+                    # names, so no warning stands between a failed read and its record. Under a Stop warning
+                    # preference the warning is a terminating error and ends the read in either order (the
+                    # catch below catches it and warns again), so no caller sees a difference here; only the
+                    # verbose stream does. Held by the verbose line Add-UnreadSection writes first, in the
+                    # tests of this reader.
                     Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($GErr.Exception.Message)"
                     Write-Warning "Could not read groups: $($GErr.Exception.Message)"
                 } else {

@@ -986,11 +986,12 @@ function Get-OERInventory {
                 $GroupRead = Get-OERInventoryGroup -Filter $GroupReadFilter -IncludeId:$IncludeId -PrincipalNameCache $PrincipalNameCache
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning. A Write-Warning
-                # under a Stop warning preference is a terminating error, so a statement after it would
-                # never run, and the failed read would be told as a warning only and not carried to the
-                # partial signal. Held by the verbose line Add-UnreadSection writes first, in the tests of
-                # this cmdlet.
+                # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning, as at every site
+                # BL-44 names, so no warning stands between a failed read and its record. Under a Stop
+                # warning preference the warning is a terminating error and ends the command in either
+                # order (InventoryPartial is never reached), so no caller sees a difference; only the
+                # verbose stream does. Held by the verbose line Add-UnreadSection writes first, in the
+                # tests of this cmdlet.
                 Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($PSItem.Exception.Message)"
                 Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
             }
@@ -1033,7 +1034,7 @@ function Get-OERInventory {
             # its own nested pipeline and deposits the record again on the way out; only piping the call onward
             # before the @( ) closes leaks none. This call was that bare form, so every per-collection record
             # Get-OERAdministrativeUnit writes (AdministrativeUnitMemberReadFailed and its sibling) reached the
-            # operator's own error stream although this read counts and words each of them itself. Do not
+            # caller's -ErrorVariable although this read counts and words each of them itself. Do not
             # "simplify" the filter away.
             $AuReadErrors = $null
             try {

@@ -354,9 +354,10 @@ function Sync-OERStructureAccessReview {
         # SilentlyContinue here means "captured", not "ignored": the records are inspected below, so
         # a failed read is still a failed read. The group read (Get-OERInventoryGroup) and the
         # administrative-unit and access review reads in Get-OERInventory share this capture
-        # (SilentlyContinue and a local -ErrorVariable) and, since BL-58, the pipe into Where-Object
-        # too: a bare call inside @( ) is the shape the access review read in that file measured to
-        # leak one record to the caller.
+        # (SilentlyContinue and a local -ErrorVariable) and the pipe into Where-Object, which the
+        # access review read always had and the group and unit reads took in BL-58: a bare call
+        # inside @( ) is the shape the access review read in that file measured to leak one record
+        # to the caller.
         function Find-ReviewDefinitionByName {
             param(
                 [string]$LookupName,
