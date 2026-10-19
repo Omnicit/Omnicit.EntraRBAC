@@ -3927,7 +3927,9 @@ PowerShell 7, with plain functions and no module code:
 3. Under the same preference with no `try` up the stack, a `throw` inside a `catch` block resumes
    after the whole `try` statement, not at the `catch` block's next statement.
 
-No public cmdlet wraps its `Initialize-OERAuth` call, so at a prompt or in a script a cmdlet carries
+No public cmdlet but `Export-OERInventory` wraps its `Initialize-OERAuth` call (that one since Sprint 11
+step 10, see [A command whose sign-in is refused sends nothing](#a-command-whose-sign-in-is-refused-sends-nothing)),
+so at a prompt or in a script a cmdlet carries
 on past the refusal at its entry (fact 1) and reaches its Graph calls. `Invoke-OERGraphRequest`
 therefore asks `Get-OERGraphSessionState` before every request it sends: at the head of each attempt
 -- the first, each throttled retry, each page under `-All` -- outside the attempt's `try`, whose
@@ -4074,7 +4076,8 @@ does.
 `GraphConnectFailed`, `TenantMismatch`, `AppOnlySessionCredentialUnavailable`, `MissingClientSecret`,
 `MissingClientCertificate` and `GraphSessionChanged`, and since Sprint 9 step 3 `TenantResolutionFailed`
 -- ends `Initialize-OERAuth` and not the cmdlet
-that called it, and no public cmdlet wraps its call. Finding F1 of the step 4b review (PR #24) was
+that called it, and until Sprint 11 step 10 no public cmdlet wrapped its call; one does now,
+`Export-OERInventory` (see **The export wraps its sign-in** below). Finding F1 of the step 4b review (PR #24) was
 therefore that a cmdlet run with `-TenantId B`, whose sign-in for B failed or was refused, carried on
 and sent its Graph calls under the Graph SDK session tenant A left, and its ARM calls with whatever
 ARM token the state held. For `Invoke-OERStructure -TenantId B -Prune` that is B's document applied
@@ -4192,6 +4195,42 @@ request that has no token to send; that refusal neither latches nor marks, since
 `Initialize-OERAuth` does either (see the bullet on a request never sent without an ARM token under
 [#arm-transport](#arm-transport)).
 
+**The export wraps its sign-in (Sprint 11 step 10, BL-101, R-8).** The one public cmdlet that writes files
+used to carry on past a refusal like every other: every request it then made was refused by the latch, and
+it still wrote a bundle folder of empty files with a README that named every section unread, a folder that
+looks like the export of a tenant that holds nothing. `Export-OERInventory`'s `begin` block now calls
+`Initialize-OERAuth` directly in a `try`, with `-ErrorVariable SignInErrors`. A `try` is neither a script
+block nor a nested function, so the call still stands in the command's own frame, the latch is still keyed on
+the export's invocation, and gate 10 of [#static-source-gates](#static-source-gates) allows it. A terminating
+refusal is caught, and the catch scrubs the record first (it can reach a token call) and publishes it with
+`$PSCmdlet.WriteError($PSItem)`: the sign-in's own record with its own ErrorId, so no ErrorId and no
+parameter was added (A9), and under a Stop preference the write terminates, which is the preference's
+meaning. `ArmTokenAcquisitionFailed`, the one refusal that is only written, is not terminating, so the catch
+never sees it: `-ErrorVariable` collects it, and the first comma segment of a record's
+`FullyQualifiedErrorId` (the ErrorId, before the `,<command>` suffix) says whether it is that one. The
+variable also holds whatever the inner calls of a SUCCESSFUL sign-in wrote, which is no refusal, so the
+segment is compared whole and ordinally and never searched for: the tests write four other records into it,
+three of which only look like the one id (it inside a longer id, with a suffix, and after a comma), and the
+export is not refused. That record reached the error stream when it was written, and is not written again
+(the test counts the stream). Under a Stop preference PowerShell turns that write into a terminating error,
+which the catch sees like any other. A Pester mock cannot write it non-terminating -- Pester runs a mock
+under the Stop preference -- so the unit tests write it with `Write-Error -ErrorAction Continue`, and a
+runspace with a plain function as the sign-in shows both preferences.
+
+A refused export reads nothing more: `process` returns before everything else, the two switch warnings
+(`-AllRolePolicies`, `-AllDirectoryRolePolicies` without their section) included, so it asks for no tenant
+ID (`Get-OERInventoryTenantId` is skipped in `begin`), reads no group, section or scope, writes no folder
+and returns no object. `Get-OERSignInRefusal` is not asked for: the latch is the transports' to read, and
+this decision is made on the sign-in's own outcome. `Get-OERInventory` keeps its behaviour, since it has no
+folder to leave behind, and its refused reads are findings in its own report. The no-`try` proof runs the
+REAL `Initialize-OERAuth` in a runspace with the session-uncertain marker set, which refuses a call that
+names no tenant before any token call, so the transport tripwire installed in the runspace records nothing;
+the script reaches its end, the one error is `SignInRefused`, and no folder exists. The sentence "no public
+cmdlet wraps its `Initialize-OERAuth` call" in [The Graph SDK session](#the-graph-sdk-session) and in the
+transports' comments is therefore true of every cmdlet but this one. Cost if wrong: a refusal that is not
+one -- a record of another id read as `ArmTokenAcquisitionFailed` -- would stop an export that could have
+run, and the comparison is exact for that reason; to go back, remove the `try` and the variable.
+
 **Where the key is not the public cmdlet.** The latch keys on the IMMEDIATE caller of
 `Initialize-OERAuth`, which for the `begin`-block call of a public cmdlet is that cmdlet. Elsewhere:
 
@@ -4211,7 +4250,9 @@ request that has no token to send; that refusal neither latches nor marks, since
   own sign-in too, before its token call: the latched cmdlet is a frame outside the helper, so an
   `Export-OERInventory -TenantId B` whose own sign-in to B was refused no longer has
   `Resolve-OERInventoryScopeTree` try B's sign-in again. The helper is not latched by that refusal;
-  the cmdlet's latch covers its requests. Read in the code, not measured.
+  the cmdlet's latch covers its requests. Read in the code, not measured. Since Sprint 11 step 10 an
+  export whose own sign-in was refused stops before it reaches the helper at all (see
+  **The export wraps its sign-in** above).
 - A transport's refresh is not reached by BL-74 in practice (read in the code): it follows a
   request that went out, and the latch gate in front of that request found no latched frame on the
   call stack the refresh shares.
@@ -4846,8 +4887,8 @@ so that the converter, the single owner of the inventory shape, stays pure). The
 cmdlet or a pipeline neighbour switched to by the time the document is assembled.
 `Export-OERInventory` takes its own capture rather than reading the `tenantId` of the inventory
 `Get-OERInventory` returns, and passes it to both of its converter calls. The bundle folder's name
-and the summary's `TenantId` keep the tenant as named, as before; only `inventory.json` carries the
-granted tenant. The validator (`Test-OERStructureSchema`, Rule 1b) and the schema
+and the summary's `TenantId` keep the tenant as named, as before, unless the session names none (the
+folder's label, below); only `inventory.json` carries the granted tenant. The validator (`Test-OERStructureSchema`, Rule 1b) and the schema
 (`Get-OERStructureSchemaJson`) know the key: a present `tenantId` must be a string holding a
 canonical GUID, and an explicit `null`, an empty string, a value that is not a string or any other
 value is an Error (Ruling R3), which `Invoke-OERStructure` reports as `StructureValidationFailed`
@@ -4862,6 +4903,23 @@ too). Both are now refused, the first by the predicate's `\z` and the second by 
 that the value is a string, as the schema's `type: string` does. A document without the key is valid
 as before. The prompt template tells an LLM to keep `tenantId` exactly as exported and never to
 invent, change or remove one.
+
+**The folder's tenant label (Sprint 11 step 10, BL-101, R-9).** `Initialize-OERAuth` stamps a session that
+was signed in with no `-TenantId` with the name `organizations`, which names no tenant, and the export used
+that name for its folder: every tenant an operator exported without `-TenantId` landed in a folder called
+`oer-inventory-organizations-<stamp>`, and nothing in the name said which tenant it held. The label is now,
+in this order: the tenant the session names (`$script:_OERAuthState.TenantId`) when it is not blank and not
+`organizations` (letter case ignored, compared ordinally); else the granted tenant ID the export captured in
+`begin` (`$DocumentTenantId`, from `Get-OERInventoryTenantId`, the tenant `inventory.json` names); else
+`-TenantId` as it was given; else `tenant`. A tenant named by a domain or a GUID keeps its folder name
+exactly as before, and so does a session that holds no state. The summary object's `TenantId` is the same
+label. When the session names a tenant and the granted tenant is another one, the label is still the one
+named, as before: only a name that names nothing is replaced. A token that reports no tenant ID (the
+documented limit of `TenantMismatch`) leaves nothing to replace it with, so `-TenantId`, then `tenant`,
+stand in. Nothing reads the folder name back, and `BundlePath` stays the supported way to address the
+bundle (the help says so). Cost if wrong: a script that globbed for the old
+`oer-inventory-organizations-*` name finds nothing for these exports; the rule is one expression, at the
+`$TenantLabel` assignment.
 
 **The two comparisons, and their order.** `Get-OERDocumentTenantMismatch` is the single owner of
 the comparison and of the `DocumentTenantMismatch` id and message. It returns nothing for a document
@@ -10400,10 +10458,39 @@ sets it back to `$null` with a plain statement directly after the Azure walk. It
   writes: the export hands it to `Resolve-OERInventoryScopeTree -Cache`, `Get-OERInventory` hands it
   to its own owner calls, and the owner stores there what a read or the list gave. A context without
   it, a test fixture's for one, reads as none, and `Get-OERInventory` then keeps a cache of its own for
-  the invocation.
+  the invocation;
+- `PrincipalNameCache` (added in Sprint 11 step 10, BL-122, R-12; third in the object, after
+  `GroupNameIndex`): the id to display name hashtable the export creates before its group read, hands to
+  `Get-OERInventoryGroup -PrincipalNameCache` and puts here, the very same object in all three places.
+  See the paragraph on it below.
 
 A local reference keeps the two lists after the context is cleared. Cost if wrong: one more member for
 each thing an export shares; the alternative, a parameter, would have been a new public parameter.
+
+**The cache of principal names (Sprint 11 step 10, BL-122, R-12).** The group reader names the principals of
+a group's PIM eligibility through `Resolve-OERPrincipalName` into an id to display name cache, and
+`Get-OERInventory` names the reviewers of an access review and the principals of a directory role section
+through another, so a principal that stands in both -- a user who is eligible for a group and also reviews
+an access review -- was looked up twice per export. The reader has always taken its cache as a parameter
+(`-PrincipalNameCache`), which `Get-OERInventory`'s own Groups section passes, so the export only had to hand
+the reader a hashtable it also keeps: `Export-OERInventory` creates it before its group read (an export that
+reads no Groups section leaves it empty, which is what the call used to start from), passes it to the reader
+and puts it in the context as `PrincipalNameCache`. `Get-OERInventory` takes it as its own
+`$PrincipalNameCache` right after it has decided that the context is its own (the owner check below), and
+before the Groups section reads, so what the reader learned is found by the reviewers and the directory
+role section, and what this call learns stays for the calls after it. The member is read through
+`PSObject.Properties`, as `SubscriptionTenant` is, and used only when it is an `IDictionary`: a context
+without it, or with one that is not a dictionary, reads as none, and the call keeps the hashtable it made
+at the top of its `process` block, which it always did. A call that has no context of its own -- a
+standalone one, or one that finds a stale context -- uses that hashtable and leaves the stale one alone. The
+tests hold the same object in the reader and the context (`ReferenceEquals`), the lookups counted
+(`Resolve-OERPrincipalName` is not called for a principal the reader named, and once for one it did not),
+and the four readings of a context that has no usable member. Known limit: `Resolve-OERPrincipalName`'s map
+answers an id the directory did not return, and every id of a batch whose request failed, with the id
+itself, and the cache keeps that answer like any other, so a lookup that failed in the group read is not
+retried by the Entra ID call, which writes the id it would have written after a second failure. Cost if
+wrong: one lookup more for each principal both name, as before, and a hashtable that lives for one export.
+A test that builds a context by hand needs no new member: without it the call keeps its own cache.
 
 **The owner check.** `Get-OERInventory` reads the context ONCE per invocation and uses it only when its
 `Owner` is the `InvocationInfo` of a frame of the current call stack, compared by reference through
