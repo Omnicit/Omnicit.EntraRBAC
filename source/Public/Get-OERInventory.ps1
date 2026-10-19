@@ -1328,23 +1328,27 @@ function Get-OERInventory {
             # the export (spec G3: only a null from a name search, or a 404 on an id, is NotFound):
             # a missing catalog id is answered by Graph with CatalogNotFound (measured live,
             # 2026-10-02), which Get-OERCatalog republishes by id, so that arm is the one that fires
-            # in production. It, AmbiguousCatalogName and the module's generic not-found codes on a
-            # by-id read are all facts about the caller's filter; by name a non-match returns
+            # in production. It and AmbiguousCatalogName (the module's own id for a name that more than
+            # one catalog carries) are facts about the caller's filter; by name a non-match returns
             # nothing at all. Such a record is republished as itself and counted as nothing. A 404
             # on a NAME or on the unfiltered list is not a missing object, so it stays unread.
+            # Sprint 11 step 10 (BL-21, R-13): the by-id arm is the one code MEASURED, and the module's
+            # generic not-found codes (ResourceNotFound, Request_ResourceNotFound, ItemNotFound, NotFound)
+            # are gone from it. They stood beside CatalogNotFound as a copy of the list
+            # Get-OERAccessReviewInstance used, declared while the real code was unknown. A live read on
+            # 2026-10-19 (read-only, the test tenant) asked for a catalog by a missing id: Graph answered
+            # 404 with the code CatalogNotFound, and Get-OERCatalog -Id republished CatalogNotFound, so
+            # that arm is the one that fires and none of the four was observed on this endpoint. A by-id
+            # failure that carries one of them is therefore a catalog list that could not be read, named
+            # unread with its cause: the safe direction to be wrong in, since a gap that is reported is
+            # never a silent empty answer.
             try {
                 $ResolvedCatalogList = if ($Catalog) {
                     if ($Catalog -as [guid]) { @(Get-OERCatalog -Id $Catalog -ErrorAction Stop) } else { @(Get-OERCatalog -DisplayName $Catalog -ErrorAction Stop) }
                 } else { @(Get-OERCatalog -ErrorAction Stop) }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                # The module's own not-found vocabulary (Get-OERAccessReviewInstance). Every comma
-                # separated segment of the id is compared WHOLE, never as a prefix, since a composed
-                # id ('ResourceNotFound,Get-OERCatalog') can carry the code outside the first slot.
-                $CatListIdSegment = @(([string]$PSItem.FullyQualifiedErrorId) -split ',' | ForEach-Object { $_.Trim() })
-                $CatListByIdNotFound = $Catalog -and ($null -ne ($Catalog -as [guid])) -and
-                    (@($CatListIdSegment | Where-Object { $_ -in @('ResourceNotFound', 'Request_ResourceNotFound', 'ItemNotFound', 'NotFound') }).Count -gt 0)
-                if ($PSItem.FullyQualifiedErrorId -like 'CatalogNotFound*' -or $PSItem.FullyQualifiedErrorId -like 'AmbiguousCatalogName*' -or $CatListByIdNotFound) {
+                if ($PSItem.FullyQualifiedErrorId -like 'CatalogNotFound*' -or $PSItem.FullyQualifiedErrorId -like 'AmbiguousCatalogName*') {
                     $PSCmdlet.WriteError($PSItem)
                 } else {
                     $CatListCause = "Could not read the catalogs: $($PSItem.Exception.Message)"

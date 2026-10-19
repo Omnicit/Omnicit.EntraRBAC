@@ -153,46 +153,46 @@ function Get-OERAccessReviewInstance {
 
         if ($Instance) {
             try {
-                $Raw = @(Invoke-OERGraphRequest -Uri "$BaseUri/$Instance`?`$select=$InstanceSelect")
+                # Sprint 11 step 10 (BL-21, R-13). A missing instance is an expected ANSWER of this GET, so
+                # the call DECLARES the one code Graph answers it with, 'NotFound', and gets the
+                # Omnicit.EntraRBAC.GraphExpectedError marker back instead of a raised error. The code is
+                # MEASURED, not guessed: a live read on 2026-10-19 (read-only, the test tenant) asked for a
+                # missing instance of a missing definition and for a missing instance of an existing one, and
+                # Graph answered 404 with NO error code in the body both times (so did the missing definition
+                # itself and the instance list of a missing definition). Convert-GraphHttpException derives
+                # the label NotFound from the HTTP status when the body names no code, which is the id the
+                # module then carries, and 'NotFound' is that label. 'ResourceNotFound',
+                # 'Request_ResourceNotFound' and 'ItemNotFound' used to stand beside it as a superset
+                # declared while the real code was unknown; none was observed on this endpoint, and they
+                # are gone, since unobserved codes are what made the set a guess (the same rule as
+                # Resolve-OERAccessPackageId's declared codes). Graph-named code outside the declared one is
+                # raised and published as itself, still loud and never a silent empty answer, which is the
+                # safe direction to be wrong in.
+                # The wrapper compares WHOLE tokens, and reads the failure's message text only when the id is
+                # status-derived, so a 403 carrying a real Graph code (Forbidden is status-derived, but
+                # Authorization_RequestDenied is not) is never softened into "not found" by prose such as
+                # "the caller does not have access to the resource, or it does not exist" -- a message-based
+                # signal was tried here and proven to misroute a 403 in review, and the module's whole job is
+                # RBAC, where a permissions failure diagnosed as a missing object is the wrong default.
+                $Response = Invoke-OERGraphRequest -Uri "$BaseUri/$Instance`?`$select=$InstanceSelect" -ExpectedErrorCode 'NotFound'
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                # A not-found on a single-item GET is a normal, expected outcome and deserves the same
-                # friendly, greppable ErrorId this cmdlet already uses for a missing definition.
-                # Convert-GraphHttpException sets FullyQualifiedErrorId from the Graph error.code when the
-                # body carries one, and derives the literal label NotFound from the HTTP status when it does
-                # not (a bare 404 with no body code) -- so every genuine not-found already arrives with a
-                # recognisable id. Match ONLY that converted code, deliberately excluding any free-text
-                # message check: Graph uses existence-ambiguous wording for some authorization failures (for
-                # example "the caller does not have access to the resource, or it does not exist", or
-                # "Resource ... does not exist or one of its queried reference-property objects are not
-                # present") precisely so it does not confirm existence to an unauthorized caller, and that
-                # phrasing carries no reliable authorization keyword to filter on -- a message-based signal
-                # was tried and proven to misroute a 403 in review. The message adds no coverage the code
-                # allowlist lacks, only the risk of misdiagnosing a permissions failure as a missing object,
-                # which is the wrong default for a module whose entire job is RBAC. Anything outside the
-                # allowlist (throttling, an uncategorized 403/5xx) falls through to the verbatim re-emit --
-                # surfacing the real error always beats a confident wrong diagnosis.
-                $KnownNotFoundCodes = @('ResourceNotFound', 'Request_ResourceNotFound', 'ItemNotFound', 'NotFound')
-                $ErrorIdCode = ([string]$PSItem.FullyQualifiedErrorId) -replace ',.*$', ''
-                $LooksNotFound = $KnownNotFoundCodes -contains $ErrorIdCode
-                if ($LooksNotFound) {
-                    Write-CmdletError `
-                        -Message ([System.Exception]::new(
-                            "Access review instance '$Instance' was not found on definition '$Definition'. " +
-                            "Run Get-OERAccessReviewInstance -Definition '$Definition' without -Instance to list the valid instance ids.")) `
-                        -InnerException $PSItem.Exception `
-                        -ErrorId 'AccessReviewInstanceNotFound' `
-                        -Category ObjectNotFound `
-                        -TargetObject $Instance `
-                        -Cmdlet $PSCmdlet
-                    return
-                }
+                # Every failure the marker does not answer (a 403, an exhausted 429, a 5xx, a code Graph
+                # named that is not the declared one) is published as itself: the real error always beats a
+                # confident wrong diagnosis.
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
 
-            # A successful GET that yields nothing is the same condition as a 404 from the caller's
-            # point of view, so report it identically instead of silently returning no output.
+            # The marker is a missing instance, and so is a successful GET that yields nothing, from the
+            # caller's point of view: report both identically instead of emitting a shell instance built
+            # from the marker or silently returning no output. There is no inner exception, since the
+            # marker is an answer and no exception was raised.
+            if (@($Response.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') {
+                $Raw = @()
+            } else {
+                $Raw = @($Response)
+            }
             if (-not @($Raw).Where({ $null -ne $PSItem }).Count) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new(

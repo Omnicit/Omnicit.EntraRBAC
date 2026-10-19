@@ -7524,15 +7524,21 @@ Describe 'Get-OERInventory' {
                 Should -Be 0 -Because 'a filter that names no catalog is a fact about the filter, not an unread collection'
         }
 
-        It 'republishes a by-id 404 on the -Catalog filter as itself and reports nothing as unread' {
-            # This covers the module's generic not-found codes on a by-id read as a defensive
-            # superset: Graph's own answer for a missing catalog id is CatalogNotFound (the test
-            # above), so these did not fire live. A missing catalog id is a FACT about the caller's
-            # filter (spec G3: a 404 on an id is NotFound), so it is republished and counted as nothing.
+        It 'counts a by-id <Code> on the -Catalog filter as unread, no longer as a missing catalog (Sprint 11 step 10, BL-21, R-13)' -ForEach @(
+            @{ Code = 'ResourceNotFound' }
+            @{ Code = 'Request_ResourceNotFound' }
+            @{ Code = 'ItemNotFound' }
+            @{ Code = 'NotFound' }
+        ) {
+            # The four generic not-found codes used to be republished here as a defensive superset, a copy of the
+            # list Get-OERAccessReviewInstance used. Graph's own answer for a missing catalog id is CatalogNotFound
+            # (the test above; measured again live on 2026-10-19), and none of the four was observed on this
+            # endpoint, so a by-id failure that carries one is a catalog list that could not be read: it is named
+            # unread with its cause and not republished, the safe direction to be wrong in.
             Mock -ModuleName $script:moduleName Get-OERCatalog {
                 [CmdletBinding()] param($Id, $DisplayName)
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new("Resource '$Id' does not exist."), 'ResourceNotFound',
+                        [System.Exception]::new("Catalog '$Id' could not be read ($Code)."), $Code,
                         [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Id))
             }
             $Inv = Get-OERInventory -Include Catalogs, AccessPackages -Catalog '22222222-2222-2222-2222-222222222222' -ErrorAction SilentlyContinue -ErrorVariable InvErr
@@ -7540,11 +7546,14 @@ Describe 'Get-OERInventory' {
             @($Inv.Catalogs).Count | Should -Be 0
             @($Inv.AccessPackages).Count | Should -Be 0
             @(@($InvErr) | Where-Object {
-                    $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like 'ResourceNotFound*' -and
+                    $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like "$Code*" -and
                     $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory'
-                }).Count | Should -Be 1 -Because 'the caller sees the not-found record itself'
-            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count |
-                Should -Be 0 -Because 'a catalog id that does not exist is a fact about the filter, not an unread collection'
+                }).Count | Should -Be 0 -Because 'the record is folded into the cause and not republished'
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'catalogs, accessPackages'
+            $Partial[0].Exception.Message | Should -Match 'Could not read the catalogs'
+            $Partial[0].Exception.Message | Should -Match ([regex]::Escape("Catalog '22222222-2222-2222-2222-222222222222' could not be read ($Code)."))
         }
 
         It 'still counts a 404 on a -Catalog NAME as unread, since a list read has no id to be missing' {

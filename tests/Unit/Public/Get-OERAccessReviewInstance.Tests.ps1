@@ -174,19 +174,108 @@ Describe 'Get-OERAccessReviewInstance' {
     }
 
     Context 'missing instance (audit PR8)' {
-        It 'reports AccessReviewInstanceNotFound when Graph returns a not-found error' {
+        # Sprint 11 step 10 (BL-21, R-13): the single-instance GET declares the one measured not-found code,
+        # 'NotFound' (a live read on 2026-10-19 measured a bare 404 with no error code in the body, which the
+        # module carries as the status-derived id NotFound), and gets the GraphExpectedError marker back for it
+        # instead of a raised error. A raised failure is no longer sorted by a list of four codes: it is
+        # published as itself.
+        BeforeAll {
+            # The marker as the wrapper builds it (Get-ExpectedGraphErrorResult): a PSCustomObject with the
+            # type name first, never shaped like a Graph response.
+            function New-InstanceNotFoundMarker {
+                param([string]$Detail = 'NotFound: The resource could not be found.')
+                $Marker = [PSCustomObject]@{
+                    ExpectedErrorCode = 'NotFound'
+                    StatusCode        = 404
+                    Message           = $Detail
+                    Uri               = 'v1.0/identityGovernance/accessReviews/definitions/def-1/instances/missing-instance'
+                }
+                $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                $Marker
+            }
+        }
+
+        It 'reports AccessReviewInstanceNotFound, and nothing else, when Graph answers the not-found marker' {
+            Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId { 'def-1' }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { New-InstanceNotFoundMarker }
+            Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
+            $Result = Get-OERAccessReviewInstance -Definition 'Review' -Instance 'missing-instance' `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Result | Should -BeNullOrEmpty -Because 'a shell instance built from the marker would be a junk object, not an error'
+            # The marker is an answer, not a raised error: exactly the one record this cmdlet writes, in the same
+            # id, category, target and message as before, and no inner exception since none exists.
+            @($Err).Count | Should -Be 1 -Because ('no other record may stand beside it; got: ' +
+                (@($Err | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | '))
+            $Err[0].FullyQualifiedErrorId | Should -Be 'AccessReviewInstanceNotFound,Get-OERAccessReviewInstance'
+            $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+            $Err[0].TargetObject | Should -Be 'missing-instance'
+            $Err[0].Exception.Message | Should -Be ("Access review instance 'missing-instance' was not found on definition 'Review'. " +
+                "Run Get-OERAccessReviewInstance -Definition 'Review' without -Instance to list the valid instance ids.")
+            $Err[0].Exception.InnerException | Should -BeNullOrEmpty
+            # Nothing was raised, so nothing was caught and scrubbed.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 0 -Exactly
+        }
+
+        It 'declares the measured code, and only it, on the single-instance GET and on no other read' {
+            Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId { 'def-1' }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -match '/instances/i1\?') { return @{ id = 'i1'; status = 'Completed' } }
+                @{ value = @(@{ id = 'i1'; status = 'Completed' }) }
+            }
+            $null = Get-OERAccessReviewInstance -Definition 'Review' -Instance 'i1' -IncludeStages -IncludeDecisions `
+                -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -match '/instances/i1\?' -and @($ExpectedErrorCode).Count -eq 1 -and @($ExpectedErrorCode)[0] -ceq 'NotFound'
+            }
+            # The stages, the decisions and the instance list declare nothing: a not-found there is not an answer.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter {
+                $Uri -match '/instances/i1/(stages|decisions)' -and -not $ExpectedErrorCode
+            }
+            $null = Get-OERAccessReviewInstance -Definition 'Review' -ErrorAction SilentlyContinue
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -match '/instances\?' -and $All -and -not $ExpectedErrorCode
+            }
+        }
+
+        It 'still emits the instance when the single-instance GET answers one' {
+            # Non-vacuity of the marker test above: the same call with a real answer emits the instance and no error.
+            Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId { 'def-1' }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { @{ id = 'i1'; status = 'Completed' } }
+            $Result = Get-OERAccessReviewInstance -Definition 'Review' -Instance 'i1' -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Result).Count | Should -Be 1
+            $Result.Id | Should -Be 'i1'
+            @($Err).Count | Should -Be 0
+        }
+
+        It 'publishes <Code> as itself, no longer as AccessReviewInstanceNotFound' -ForEach @(
+            @{ Code = 'ResourceNotFound' }
+            @{ Code = 'Request_ResourceNotFound' }
+            @{ Code = 'ItemNotFound' }
+        ) {
+            # The three codes the cmdlet used to sort as a missing instance beside NotFound. None was observed on
+            # this endpoint (2026-10-19), so a failure Graph names with one of them is a failure the cmdlet cannot
+            # explain and publishes as itself.
             Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId { 'def-1' }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
                 throw [System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new('NotFound: The resource could not be found.'),
-                    'NotFound',
-                    [System.Management.Automation.ErrorCategory]::OperationStopped,
+                    [System.Exception]::new("${Code}: The resource could not be found."),
+                    $Code,
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
                     $null)
             }
-            Get-OERAccessReviewInstance -Definition 'Review' -Instance 'missing-instance' `
+            Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
+            $Result = Get-OERAccessReviewInstance -Definition 'Review' -Instance 'inst-1' `
                 -ErrorAction SilentlyContinue -ErrorVariable Err
-            @($Err).FullyQualifiedErrorId -join ';' | Should -Match 'AccessReviewInstanceNotFound'
+            $Result | Should -BeNullOrEmpty
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq "$Code,Get-OERAccessReviewInstance" }).Count |
+                Should -Be 1 -Because 'the failure is republished under the cmdlet-qualified form of its own id'
+            (@($Err).FullyQualifiedErrorId -join ';') | Should -Not -Match 'AccessReviewInstanceNotFound'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         }
 
         It 'reports AccessReviewInstanceNotFound when the GET returns nothing' {
@@ -267,19 +356,15 @@ Describe 'Get-OERAccessReviewInstance' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
         }
 
-        It 'still routes a 404-derived NotFound id to AccessReviewInstanceNotFound even with an unhelpful message' {
+        It 'still routes the not-found marker to AccessReviewInstanceNotFound even with an unhelpful message' {
             Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId { 'def-1' }
-            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
-                throw [System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new('NotFound: oops.'),
-                    'NotFound',
-                    [System.Management.Automation.ErrorCategory]::OperationStopped,
-                    $null)
-            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { New-InstanceNotFoundMarker -Detail 'NotFound: oops.' }
             Get-OERAccessReviewInstance -Definition 'Review' -Instance 'inst-1' `
                 -ErrorAction SilentlyContinue -ErrorVariable Err
-            @($Err).FullyQualifiedErrorId -join ';' | Should -Match 'AccessReviewInstanceNotFound'
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessReviewInstanceNotFound,Get-OERAccessReviewInstance' }).Count |
+                Should -Be 1
+            @($Err).Count | Should -Be 1
         }
     }
 

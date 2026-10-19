@@ -47,9 +47,25 @@ function Get-OERGroupRelation {
         [string]$Relation
     )
     $MemberType = if ($Relation -eq 'owners') { 'Owner' } else { 'Member' }
-    # The object types the untyped v1.0 read leaves out, each read typed. Measured 2026-10-06:
-    # service principals only (members and owners); the user, group, device and organizational
-    # contact casts showed nothing missing. Add a type here only after measuring it.
+    # The object types the untyped v1.0 read leaves out, each read typed. Add a type here only after
+    # measuring it. What is measured, and what is not (Sprint 11 step 10, BL-83, R-14):
+    # - 2026-10-06 (live checklist fix-read-service-principal-group-members): service principal members
+    #   and owners are missing from the untyped read, which the typed servicePrincipal read lists. That
+    #   group held one group member (listed by the untyped read and by the group cast alike), one service
+    #   principal member and one service principal owner, and no user, device or organizational contact,
+    #   so the zeros of those three casts showed that a cast works, not that nothing is missing.
+    # - 2026-10-19 (read-only, every group of the test tenant, 99: 73 security, 9 role-assignable, 9
+    #   dynamic security, 6 Microsoft 365, 1 mail-enabled security and 1 distribution), members and owners,
+    #   the untyped read against the typed casts: the members found were users (154) and devices (91),
+    #   and the typed user and device casts found nothing the untyped read missed; the owners were users
+    #   (24) and 18 service principals that ONLY the typed servicePrincipal cast lists (the known gap), and
+    #   the user cast found nothing the untyped read missed. No group, organizational contact or service
+    #   principal member existed in that tenant, so those casts found nothing to compare there. The owner
+    #   casts to group, device and orgContact answer 400 Request_UnsupportedQuery. Synchronized groups
+    #   and dynamic Microsoft 365 groups were not measured: the tenant has none.
+    # So servicePrincipal stays the only typed read, and what the casts of the other types would find
+    # beyond the members counted above (an organizational contact was never seen, a group member once) is
+    # not known.
     # Why: docs/development/rationale.md#typed-group-member-read
     $TypedReadTypes = @('servicePrincipal')
 
