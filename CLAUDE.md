@@ -617,12 +617,29 @@ next piped document -- may sign in again. Only `Initialize-OERAuth` passes `-Out
 make that check walk the whole stack. A finished command is on no call stack, so the next command,
 or `Connect-OER`, sends again. An ARM call of a command whose entry was not refused still goes out
 with the module's own token: ARM has no session gate. Never write that the cmdlet stops -- it
-carries on and sends nothing -- and never call `Lock-OERSignIn` or `Unlock-OERSignIn` outside
+carries on and sends nothing -- except for `Export-OERInventory`, the one named exception (below),
+and never call `Lock-OERSignIn` or `Unlock-OERSignIn` outside
 `Initialize-OERAuth`. Call `Initialize-OERAuth` directly in the command's own block, never from a
 nested function, `& { }` or any other scriptblock: the latch is keyed on the frame that calls it,
 and such a frame ends at once (the transports' own refreshes, in `Invoke-GraphSingle` and
 `Invoke-ArmCallWithRefresh`, are the one exception).
 `Why: docs/development/rationale.md#auth-state`
+
+**`Export-OERInventory` stops on a refused sign-in and writes nothing -- the one public cmdlet that
+does (Sprint 11 step 10, BL-101).** It writes files, and used to carry on past the refusal into a
+bundle folder of empty files that reads like the export of a tenant that holds nothing. Its `begin`
+calls `Initialize-OERAuth` directly in a `try` (neither a script block nor a nested function, so the
+latch stays keyed on its own frame, and gate 10 allows it) with `-ErrorVariable SignInErrors`. A
+terminating refusal is caught, scrubbed first and raised again with `$PSCmdlet.ThrowTerminatingError`:
+the sign-in's own record and ErrorId, so a caller's `try` still catches it and, outside one, only
+that statement ends -- never `WriteError`, which changed what a caller sees. The one refusal written
+without terminating, `ArmTokenAcquisitionFailed`, is found in `SignInErrors` by the first comma
+segment of its `FullyQualifiedErrorId`, compared whole and ordinally and never searched for; under
+`-ErrorAction Ignore`, which adds a record to no `-ErrorVariable`, the call is pinned to
+`SilentlyContinue`, and under no other preference. A refused export asks for no tenant ID, reads
+nothing, writes no folder and returns no object, under every error preference. For every other
+command the sentence above still holds. `Get-OERInventory` keeps its behaviour.
+`Why: docs/development/rationale.md#a-command-whose-sign-in-is-refused-sends-nothing`
 
 **A command sends nothing under a sign-in a later command replaced.** In a pipeline every `begin`
 block runs first, so an upstream command's `process` block would act under the session a downstream
@@ -1172,9 +1189,30 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Test-OERGroupPimInUse`, so a group found not relevant costs exactly two requests and is never read
   further, and a group whose relevance could not be read is read in full. The export's keep filter on
   the projections stays the final say. The reader never writes an error record -- it returns
-  `Groups`, `Unread` and raw `Causes` -- and both callers catch a reader that stops and report the
-  groups section unread, never empty. Never read the Groups section, or decide relevance before a
-  full read, anywhere else. `Why: docs/development/rationale.md#export-group-selection`
+  `Groups`, `Unread`, raw `Causes`, `PimLeftOut`, `DynamicMembers` and `SharedNames` -- and both
+  callers catch a reader that stops and report the groups section unread, never empty. Never read
+  the Groups section, or decide relevance before a full read, anywhere else. **A dynamic group's
+  `members` is an EXPLICIT null, never an omitted key and never a list** (Sprint 11 step 10, BL-43,
+  R-1): its membership rule owns the membership, and `Set-OERGroup` cannot convert a group's
+  membership type, so an omitted key would meet the static path of a group made static after the
+  export, which reconciles and, under `-Prune`, removes every live member. The null is no gap, so it
+  is named unread nowhere, and a failed read of those members records no cause (R-24); the members
+  are still read, for a group read in full, and counted per group in `DynamicMembers` (beside
+  `PimLeftOut`) so the roster keeps a `memberCount`. `Sync-OERStructureGroup` writes no aggregate
+  member row for an explicit null (R-2); a declared list, `[]` and an omitted key keep their rows.
+  Never write a dynamic group's members, and never name their failed read unread.
+  `Why: docs/development/rationale.md#export-group-selection`
+- **`Get-OEROrderedInventoryEntry` is the single owner of the order the inventory writes its lists
+  in** (Sprint 11 step 10, BL-121): a group's `members`, `owners` and `eligibility` and an
+  administrative unit's `members`. Text is ordered by `[System.StringComparer]::OrdinalIgnoreCase`,
+  ties by `[System.StringComparer]::Ordinal`, so the order is total and culture independent;
+  eligibility by `principal`, `accessType`, `durationDays` (absent first, then ascending) and `id`.
+  `Get-OERInventoryGroup` orders the three group lists and `Get-OERInventory` the unit members; never
+  order such a list anywhere else. Its LINQ calls take their generic arguments by INFERENCE and never
+  write them out: an explicit type argument on a generic method call is PowerShell 7.3 syntax, a parse
+  error under the module's 7.2 floor that fails the whole merged module, and CI runs a current
+  PowerShell only, so nothing but the helper's own test (an AST check of its file) would show it.
+  `Why: docs/development/rationale.md#export-group-selection`
 - **`Read-OERGroupCollection` is the single owner of the three per-group collection reads
   `Get-OERGroup` attaches and the inventory's group reader uses** (members, owners and PIM
   eligibility) **and of wording their failure** exactly as `Get-OERGroup` publishes it. It returns the
@@ -1196,7 +1234,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   cap and the wording -- and `Get-OERSharedNameCause` of the text for objects left out because two of
   them share a name, which carries how many live objects share it (`-Count`). The clause is built by
   `Get-OERInventory` and `Export-OERInventory`, the shared-name text by `Get-OERInventory` and
-  `Get-OERInventoryGroup`; never word either inline.
+  `Get-OERInventoryGroup`; never word either inline. A cause registered with a BLANK `Target` is keyed
+  on its full text instead of a normalised one: the shared-name causes are registered with none, so
+  two names that share one count are two causes and one name is still stated once (BL-156).
   `Why: docs/development/rationale.md#export-group-selection`,
   `docs/development/rationale.md#roster-identity-and-shared-names`
 - **`Get-OERGroupNameIndex` is the single owner of which groups in the tenant carry a display
@@ -1214,9 +1254,10 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   Never re-implement either inline.
   `Why: docs/development/rationale.md#roster-identity-and-shared-names`
 - **`Export-OERInventory` is the only command that sets and clears the export run context
-  (`$script:_OERInventoryRunContext`)**, the one object its `Get-OERInventory` calls share (the group
-  name index, the deleted items answers, the role assignment principals that could not be read, and
-  the subscription home tenant answers, `SubscriptionTenant`);
+  (`$script:_OERInventoryRunContext`)**, the one object its `Get-OERInventory` calls share (the
+  group name index, the principal names the group read looked up, `PrincipalNameCache`, the deleted
+  items answers, the role assignment principals that could not be read, and the subscription home
+  tenant answers, `SubscriptionTenant`);
   `Get-OERInventory` fills its members, `Get-OERDeletedPrincipalStatus` through the `PrincipalStatus`
   dictionary it is handed, except `SubscriptionTenant`, which the export hands to
   `Resolve-OERInventoryScopeTree -Cache` and `Get-OERInventory` to the owner the same way, so
@@ -1229,7 +1270,14 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   call stack (`Microsoft.PowerShell.Utility\Get-PSCallStack`, compared by reference), and behaves
   standalone otherwise, so a context a stopped export left behind is ignored. Never read or write it
   anywhere else, never replace it by a public parameter (A9), and add a member to it rather than a
-  second module variable.
+  second module variable. `PrincipalNameCache` (Sprint 11 step 10, BL-122) is a `[hashtable]`, id to
+  name, that the export creates before its group read and hands, the very same object, to
+  `Get-OERInventoryGroup -PrincipalNameCache` and to the context, so a principal the group read named
+  is not looked up again by the Entra ID call; `Get-OERInventory` takes it, read through
+  `PSObject.Properties` as `SubscriptionTenant` is, only when the context is its own and the member
+  is a `[hashtable]` (its consumers bind one and call `ContainsKey`), and keeps its own otherwise.
+  Known limit: a lookup that failed in the group read is not retried, since the map
+  `Resolve-OERPrincipalName` returns answers the id as the name.
   `Why: docs/development/rationale.md#export-run-context`
 - **`Get-OERDeletedPrincipalStatus` is the single read of `directory/deletedItems`, and
   `Resolve-OERPrincipalName -Detailed` the lookup that tells a principal the directory returned from
@@ -1320,7 +1368,11 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   and message (BL-88, A14); `Get-OERInventoryTenantId` is the single owner of which tenant an export
   names -- the Graph token's granted tenant (`TokenTenantId`) when it is a GUID, never the tenant as
   named, and otherwise no key at all, with no warning. `Get-OERInventory` and `Export-OERInventory`
-  call it in `begin`, directly after their own sign-in. `Invoke-OERStructure` calls the comparison
+  call it in `begin`, directly after their own sign-in (the export not at all when that sign-in was
+  refused). It is also the second term of the bundle folder's label (BL-101, R-9): the export names
+  the folder, and the summary's `TenantId`, after the tenant the session names unless that is blank
+  or `organizations` (letter case ignored), else after that granted tenant ID, else after
+  `-TenantId` as given, else `tenant`. `Invoke-OERStructure` calls the comparison
   twice per document: before the sign-in whenever `-TenantId` is bound -- where the owner compares
   only a canonical GUID and leaves any other name (a domain, `organizations`) to the second call;
   keep that GUID test in the owner, never in the caller -- and after the sign-in against

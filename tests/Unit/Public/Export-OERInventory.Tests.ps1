@@ -9376,3 +9376,54 @@ Describe 'Export-OERInventory (the group read and the Entra ID call share one ca
         $script:PnReaderCache[$script:PnUser] | Should -BeExactly 'person1@contoso.com'
     }
 }
+
+Describe 'Export-OERInventory (the inner Get-OERInventory partial reaches the error stream whatever -ErrorAction the export is given, Sprint 11 step 10, BL-46)' {
+    # BL-46. The Entra ID sections other than Groups are read by an inner Get-OERInventory call that pins -ErrorAction Continue (so
+    # that a partial read never stops the bundle under -ErrorAction Stop), and a pinned Continue is not governed by
+    # the export's own preference either: the inner InventoryPartial reaches the caller's error stream also under
+    # -ErrorAction SilentlyContinue and Ignore, which silence only the export's own InventoryPartial. The help says
+    # so. The mock honours the call's -ErrorAction as the real cmdlet does: it falls back to the preference it
+    # inherited (NOT to a hardcoded 'Continue') when the call carries none, so removing the pin silences it.
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            param($Include, $ErrorAction)
+            $Ea = if ($ErrorAction) { $ErrorAction } else { $ErrorActionPreference }
+            Write-Error -Message 'This inventory is PARTIAL: administrativeUnits/AU-One scopedRoles could not be read.' `
+                -ErrorId 'InventoryPartial' -Category LimitsExceeded -TargetObject 'administrativeUnits/AU-One/scopedRoles' -ErrorAction $Ea
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'writes the inner InventoryPartial to the error stream under -ErrorAction <Preference> on the export, and not the export''s own' -ForEach @(
+        @{ Preference = 'SilentlyContinue' }
+        @{ Preference = 'Ignore' }
+    ) {
+        $Stream = @(Export-OERInventory -OutputPath (Join-Path $TestDrive ('ie-' + $Preference)) -Include AdministrativeUnits -WarningAction SilentlyContinue -ErrorAction $Preference 2>&1)
+        # Reach proofs: the inner call ran once, and the bundle was written (the export was not stopped).
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        @($Stream | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_.PSObject.TypeNames[0] -eq 'Omnicit.EntraRBAC.InventoryBundle' }).Count | Should -Be 1
+        # Exactly the inner record: the export's own InventoryPartial (suffix ',Export-OERInventory') is silenced.
+        @($Stream | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { $_.FullyQualifiedErrorId }) |
+            Should -Be @('InventoryPartial')
+    }
+
+    It 'says in the help that the inner Get-OERInventory error reaches the error stream also under SilentlyContinue and Ignore' {
+        $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('The Entra ID sections other than Groups are read by an inner Get-OERInventory call that pins -ErrorAction Continue, so that a partial read never stops the bundle, and its own InventoryPartial error therefore reaches the caller''s error stream before the summary is emitted, also under -ErrorAction SilentlyContinue and Ignore on the export, which silence only the export''s own InventoryPartial error that follows.'))
+    }
+}

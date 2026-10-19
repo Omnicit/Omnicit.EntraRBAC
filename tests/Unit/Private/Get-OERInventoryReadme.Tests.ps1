@@ -190,6 +190,22 @@ Describe 'Get-OERInventoryReadme' {
         }
     }
 
+    It 'says that the members of a dynamic group are written null, are not an unread collection, and that the roster still counts them (Sprint 11 step 10, BL-43, R-1, R-15)' {
+        InModuleScope $script:moduleName {
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @()
+            # The roster bullet: the count of a dynamic group read in full, and null when its members could not be read.
+            $Bullet = (($Md -split '(?m)^- `groupsRoster\.json` ')[1] -split '(?m)^- ')[0] -replace '\s+', ' '
+            $Bullet | Should -Match ([regex]::Escape('So has a security group outside the export''s `-GroupFilter`, which was not read. The `members` of a dynamic group are written `null` in `inventory.json` and `groups.json` (see "Unread collections"), but a dynamic group the export read in full has its count; when the read of its members failed, its count is `null`.'))
+            $Bullet | Should -Not -Match '[<>]'
+            # The Unread collections section: the null is the rule's, not a failed read, and is kept in a proposal.
+            $Section = (($Md -split '(?m)^## Unread collections\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
+            $Section | Should -Match ([regex]::Escape('The `members` of a dynamic group are also written `null`, though no read failed: its membership rule owns its members, so that `null` is not an unread collection, no entry under "What this export could not read" names it, and `Invoke-OERStructure` leaves the members alone. Keep it `null` in a proposal.'))
+            # It stands after the sentence about the entry that has no usable name, ahead of the InventoryPartial sentence.
+            $Section.IndexOf('The `members` of a dynamic group') | Should -BeGreaterThan $Section.IndexOf('exactly like an unread one.')
+            $Section.IndexOf('The `members` of a dynamic group') | Should -BeLessThan $Section.IndexOf('`Export-OERInventory` ends with an `InventoryPartial` error')
+        }
+    }
+
     It 'tells the reader in Next steps that a proposal keeping tenantId is applied only in the tenant the export came from' {
         InModuleScope $script:moduleName {
             $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @() -PimLeftOut @() -RootScopeAssignments @() -SharedNames @() -UnresolvedPrincipalAssignments @() -UndeclarableScopeAssignments @() -RestrictedUnitPimGroups @() -LighthouseDelegations @() -ForeignSubscriptions @()
@@ -392,6 +408,23 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
         $Section = Get-TestSection -Readme (Get-TestReadme -IncompleteReads @('', 'groups', '   ', 'groupsRoster'))
         $Expected = @('- Entra ID: `groups`', '- Entra ID: `groupsRoster`')
         ((Get-TestBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
+    }
+
+    It 'says that an Entra ID entry can name several collections, separated by a comma and a space, and only in the partial state (Sprint 11 step 10, BL-48)' {
+        # One report of Get-OERInventory, and the group read's own, is ONE entry: the section/displayName/key
+        # triples it could not read, joined with ', '. The bullet shows the entry as it is, and the prose says
+        # that it is a list.
+        $Section = Get-TestSection -Readme (Get-TestReadme -IncompleteReads @('groups/Alpha/members, groups/Beta/owners'))
+        ((Get-TestBullets -Section $Section) -join "`n") | Should -BeExactly '- Entra ID: `groups/Alpha/members, groups/Beta/owners`'
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Entra ID" can name several of them at once, separated by a comma and a space, since the collections one read could not read are reported as one entry.'))
+        # It follows the sentence that says what an entry names, ahead of the labels of the other kinds.
+        $Collapsed.IndexOf('can name several of them at once') | Should -BeGreaterThan $Collapsed.IndexOf('none of them is stated as a fact in this bundle.')
+        $Collapsed.IndexOf('can name several of them at once') | Should -BeLessThan $Collapsed.IndexOf('An entry labelled "Role assignment principal that could not be read"')
+        # The complete state makes no such claim.
+        (Get-TestSection -Readme (Get-TestReadme)) | Should -Not -Match 'separated by a comma'
+        # Outside its code spans the section holds no angle bracket.
+        ($Collapsed -replace '`[^`]*`', '') | Should -Not -Match '<'
     }
 
     It 'declares <Name> Mandatory, so a caller cannot forget it and write a README that claims a complete read' -ForEach @(
@@ -1346,8 +1379,8 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
                 roleName             = $RoleName
             }
         }
-        $script:LhProse = 'Azure Lighthouse lets another tenant -- a service provider, for example -- manage subscriptions or resource groups of this tenant: a delegation gives principals of that managing tenant Azure built-in roles over the delegated scope. That access is not listed as a role assignment of this tenant, so `roleAssignments.json` and `inventory.json` never show it, and `Invoke-OERStructure` never creates or removes it. `lighthouseDelegations.json` holds every delegation this export read, as read-only context: the delegated scope, the managing tenant, the offer and each authorization, with the eligible (just-in-time) ones apart. Review each delegation below as a finding. A scope whose delegations could not be read is named under "What this export could not read", and its delegations are absent from the file, which does not mean it has none. Listing a delegation changes nothing in the tenant.'
-        $script:LhNone = 'None. This export read no Azure Lighthouse delegation. Delegations are read only when the export includes `RoleAssignments` or `RoleManagementPolicies`, at the subscriptions its Azure walk visits; a `-Scope` at a management group or the root scope visits no subscription, so it reads no delegation. A scope whose delegations could not be read is named under "What this export could not read".'
+        $script:LhProse = 'Azure Lighthouse lets another tenant -- a service provider, for example -- manage subscriptions or resource groups of this tenant: a delegation gives principals of that managing tenant Azure built-in roles over the delegated scope. That access is not listed as a role assignment of this tenant, so `roleAssignments.json` and `inventory.json` never show it, and `Invoke-OERStructure` never creates or removes it. `lighthouseDelegations.json` holds every delegation this export read, as read-only context: the delegated scope, the managing tenant, the offer and each authorization, with the eligible (just-in-time) ones apart. Review each delegation below as a finding. A scope whose delegations could not be read is named under "What this export could not read", and its delegations are absent from the file, which does not mean it has none. A read of the delegations that stopped as a whole is named there too, and the file is then written `[]`, which does not mean it has none either. Listing a delegation changes nothing in the tenant.'
+        $script:LhNone = 'None. This export read no Azure Lighthouse delegation. Delegations are read only when the export includes `RoleAssignments` or `RoleManagementPolicies`, at the subscriptions its Azure walk visits; a `-Scope` at a management group or the root scope visits no subscription, so it reads no delegation. A scope whose delegations could not be read, or a read that stopped as a whole, is named under "What this export could not read".'
         # BL-150 (A19): the second paragraph says why every delegation is access another tenant holds here.
         $script:LhDirection = 'The Azure walk reads only this tenant''s own subscriptions (see "Subscriptions delegated from another tenant (not read)" below), and Azure Lighthouse refuses a delegation whose managing tenant is the subscription''s own tenant, so every delegation below is access another tenant holds over a subscription or resource group of this tenant.'
     }
@@ -1516,6 +1549,7 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
                 'lighthouseDelegations role dddddddd-dddd-dddd-dddd-dddddddddddd'
                 'lighthouseDelegations at <all Azure scopes: scope enumeration failed>'
                 'lighthouseDelegations at <subscriptions: the listing failed>'
+                'lighthouseDelegations at <all Azure scopes: the read stopped>'
             ))
         $Expected = @(
             '- Entra ID: `groupsRoster`'
@@ -1525,6 +1559,7 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
             '- Azure Lighthouse read that failed: `lighthouseDelegations role dddddddd-dddd-dddd-dddd-dddddddddddd`'
             '- Azure Lighthouse read that failed: `lighthouseDelegations at <all Azure scopes: scope enumeration failed>`'
             '- Azure Lighthouse read that failed: `lighthouseDelegations at <subscriptions: the listing failed>`'
+            '- Azure Lighthouse read that failed: `lighthouseDelegations at <all Azure scopes: the read stopped>`'
         )
         # One string, so a failure prints the whole list rather than the first element that differs.
         (@($Section -split '\r?\n' | Where-Object { $_ -like '- *' }) -join "`n") | Should -BeExactly ($Expected -join "`n")
@@ -1546,9 +1581,11 @@ Describe 'Get-OERInventoryReadme (Azure Lighthouse delegations, Sprint 11 step 6
         $Section = Get-LhCouldNotRead -Readme (Get-LhReadme -Incomplete @('lighthouseDelegations at /subscriptions/11111111-1111-1111-1111-111111111111'))
         $Collapsed = $Section -replace '\s+', ' '
         $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Azure Lighthouse read that failed" names either a scope, as `lighthouseDelegations at <scope>`, whose Azure Lighthouse delegations could not be read, so they are absent from `lighthouseDelegations.json`, which does not mean the scope has none, or a role, as `lighthouseDelegations role <id>`, whose name could not be read, so its `roleName` is written `null` there.'))
-        # The two entries the export adds for a walk that could not start and a subscription listing that
-        # failed name no single scope, and the prose says so.
-        $Collapsed | Should -Match ([regex]::Escape('Two such entries name no single scope: `lighthouseDelegations at <all Azure scopes: scope enumeration failed>` names a walk that could not start, and `lighthouseDelegations at <subscriptions: the listing failed>` a subscription listing that failed, so the delegations of no subscription were read.'))
+        # The three entries the export adds for a walk that could not start, a subscription listing that failed
+        # and a read of the delegations that stopped as a whole name no single scope, and the prose says so
+        # (Sprint 11 step 10, BL-123: the third entry is the stopped read's).
+        $Collapsed | Should -Match ([regex]::Escape('Three such entries name no single scope: `lighthouseDelegations at <all Azure scopes: scope enumeration failed>` names a walk that could not start, `lighthouseDelegations at <subscriptions: the listing failed>` a subscription listing that failed, so the delegations of no subscription were read, and `lighthouseDelegations at <all Azure scopes: the read stopped>` a read of the delegations that stopped as a whole, so no subscription''s delegations are in `lighthouseDelegations.json`, which is then written `[]` and does not mean there are none.'))
+        $Collapsed | Should -Not -Match ([regex]::Escape('Two such entries name no single scope'))
         # Outside its code spans the section holds no angle bracket: Markdown would read it as a tag.
         ($Collapsed -replace '`[^`]*`', '') | Should -Not -Match '<'
     }
@@ -1721,9 +1758,9 @@ Describe 'Get-OERInventoryReadme (subscriptions delegated from another tenant, B
         $Section = Get-FsSection -Heading '## What this export could not read' -Readme (Get-FsReadme -Incomplete @('subscriptionHomeTenant at /subscriptions/aaaa1111-0000-0000-0000-000000000003'))
         $Collapsed = $Section -replace '\s+', ' '
         $Collapsed | Should -Match ([regex]::Escape('An entry labelled "Azure subscription whose tenant could not be read" names a subscription, as `subscriptionHomeTenant at <scope>`, that the Azure walk did not enter since whether it belongs to this tenant could not be read: none of its role assignments, role management policies, PIM eligibilities or Azure Lighthouse delegations is in this bundle, which does not mean it has none.'))
-        # It follows the Lighthouse sentences.
-        $Collapsed.IndexOf('so the delegations of no subscription were read.') | Should -BeGreaterThan 0
-        $Collapsed.IndexOf('so the delegations of no subscription were read.') | Should -BeLessThan $Collapsed.IndexOf('An entry labelled "Azure subscription whose tenant could not be read"')
+        # It follows the Lighthouse sentences, the last of which ends with the stopped read's (Sprint 11 step 10, BL-123).
+        $Collapsed.IndexOf('which is then written `[]` and does not mean there are none.') | Should -BeGreaterThan 0
+        $Collapsed.IndexOf('which is then written `[]` and does not mean there are none.') | Should -BeLessThan $Collapsed.IndexOf('An entry labelled "Azure subscription whose tenant could not be read"')
         ($Collapsed -replace '`[^`]*`', '') | Should -Not -Match '<'
     }
 

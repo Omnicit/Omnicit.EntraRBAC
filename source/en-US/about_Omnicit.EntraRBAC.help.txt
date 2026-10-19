@@ -142,6 +142,18 @@ GROUPS IN AN EXPORT
     the export did not read in full has memberCount null, meaning not known
     rather than zero.
 
+    A dynamic group's members is written null, not as the list its rule
+    happened to derive, and is not an unread collection: its membership rule
+    owns the membership, so a failed read of those members names nothing in
+    InventoryPartial. The null is the document's "leave it untouched", and
+    Invoke-OERStructure plans no member row for such a group, with or without
+    -Prune, which never touched a dynamic group's members. A dynamic group the
+    export reads in full, and whose members it can read, still has its
+    memberCount in groupsRoster.json. A group's members, owners and
+    eligibility and an administrative unit's members are written in one fixed
+    order, so two reads of an unchanged tenant write the same lists whatever
+    order Microsoft Graph answered in.
+
     -GroupFilter narrows the groups inventory.json is read from and never widens
     them. The export lists groups with 'securityEnabled eq true and (your filter)'
     and then keeps only those the read shows as security-enabled, with one
@@ -209,9 +221,12 @@ AZURE ROLE POLICIES IN AN EXPORT
     nothing to judge by, is kept, and its scope is named in IncompleteReads
     as 'roleManagementPolicies/role selection at <scope>' and in
     InventoryPartial. -AllRolePolicies exports every policy at every scope,
-    as earlier versions did. Invoke-OERStructure reads and writes only the
-    policies a document declares, so a policy the export left out stays as it
-    is.
+    as earlier versions did. It has nothing to act on without
+    RoleManagementPolicies in -Include, and neither has
+    -AllDirectoryRolePolicies without DirectoryRoleManagementPolicies: the
+    export warns once, at the start, for each. Invoke-OERStructure reads and
+    writes only the policies a document declares, so a policy the export left
+    out stays as it is.
 
 AZURE LIGHTHOUSE DELEGATIONS IN AN EXPORT
 
@@ -240,6 +255,15 @@ AZURE LIGHTHOUSE DELEGATIONS IN AN EXPORT
     costs two paged lists per subscription and one read per distinct role,
     plus a listing of the subscription's resource groups and one read per
     group only when a delegation may sit at one; Reader covers it.
+
+    When the Azure PIM eligibility read, the Lighthouse read or the role
+    policy selection stops as a whole, the export still writes the bundle and
+    ends with InventoryPartial, with one warning that names the cause: the
+    eligibility read names every scope in SkippedEligibilityScopes and writes
+    azurePimEligibility.json as [], the Lighthouse read is named
+    'lighthouseDelegations at <all Azure scopes: the read stopped>' in
+    IncompleteReads and writes lighthouseDelegations.json as [], and the
+    selection keeps every policy it read and names each scope as not judged.
 
 SUBSCRIPTIONS OF ANOTHER TENANT
 
@@ -273,6 +297,16 @@ SUBSCRIPTIONS OF ANOTHER TENANT
     -IncludeARM does, so when that sign-in fails it sends nothing, its Entra ID
     sections included. Inside Export-OERInventory the walk's answers are
     reused, so the check sends no request.
+
+    A -Subscription is read by the ID the check found, never by the name as
+    given. A RoleAssignments or RoleManagementPolicies read that fails is
+    named in InventoryPartial too, by the section's own name, with the
+    reader's message as its cause, and the section is written empty, which
+    does not mean the scope has none; only -CommonRoles differs, since it
+    skips a role it cannot read with a warning and carries on. A -Scope,
+    -Subscription or -ManagementGroup of white space only is refused while
+    PowerShell binds the parameters of Get-OERInventory, as are the -Scope,
+    -ManagementGroup and -GroupFilter of Export-OERInventory.
 
 SERVICE PRINCIPAL ACCESS IN AN EXPORT
 
@@ -884,6 +918,13 @@ GRAPH SDK SESSION
     not name -TenantId. On any other cmdlet, a -TenantId of spaces is looked
     up like any value that is not a tenant ID, and refused with
     TenantResolutionFailed when it names no tenant.
+
+    Export-OERInventory ends instead of carrying on: when its own sign-in is
+    refused, or the Azure Resource Manager token it asked for cannot be
+    acquired, it reads nothing, writes no bundle folder and returns no object,
+    under every error preference. The sign-in's own error reaches the caller,
+    as a terminating error when the sign-in terminated, so a try around the
+    export catches it and, outside a try, only that statement ends.
 
     One OER pipeline works in one tenant with one identity. If commands in the
     same pipeline sign in to different tenants or identities, a command whose

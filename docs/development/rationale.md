@@ -506,9 +506,10 @@ every site BL-44 names, so no warning stands between a failed read and its recor
 export, nothing resumes after the warning: a `Write-Warning` under a Stop warning preference is a terminating
 error, and it ends the read or the command in either order (`InventoryPartial` is never reached), so the order
 is the rule and not a change a caller can see; only the verbose stream shows it. Seven sites wrote the warning
-first and counted the section unread second, and stand the other way round now: the group read's record loop and its `catch` in `Get-OERInventoryGroup`, the `catch` around the reader in
-`Get-OERInventory` (the group section), and the record loop and `catch` of each of the administrative unit and
-access review sections. `Add-UnreadSection` writes a verbose line first, so the proof is behavioural (R-7): each
+first and counted the section unread second, and stand the other way round now: the group read's record loop
+and its `catch` in `Get-OERInventoryGroup`, the `catch` around the reader in `Get-OERInventory` (the group
+section), and the record loop and `catch` of each of the administrative unit and access review sections.
+`Add-UnreadSection` writes a verbose line first, so the proof is behavioural (R-7): each
 test provokes the failure under `-WarningAction Stop -Verbose`, in a `try`, and asserts the section's verbose
 line was written. The line is asserted WHOLE, and that is what tells the two sites of a section apart: the record
 loop writes the reader's own message, while the `catch` -- which also catches the stop the record loop's warning
@@ -543,6 +544,21 @@ turned the named tests red and the restored copy was green. Lines are the source
 **Also touched.** The comment of the existence probe in `Sync-OERStructureAccessReview` said the group and unit
 reads were the bare form; it now says they pipe onward. `Get-OERInventory` is unchanged for a caller: the
 section warnings, the unread names, the causes and `InventoryPartial` are what they were.
+
+### Sprint 11 step 10: the inner call's error under the export's own preference (BL-46)
+
+**What the export's `-ErrorAction` does not reach.** `Export-OERInventory` reads the Entra ID sections other
+than Groups with an inner `Get-OERInventory` call that pins `-ErrorAction Continue`: unpinned, the call inherits the caller's
+preference, and under the `-ErrorAction Stop` the help tells operators to adopt, its `InventoryPartial` would
+terminate at the call site, outside any `try` and before a file is written. The export's own `InventoryPartial`,
+written after the summary, is the one that honours `Stop`. A pinned `Continue` is not governed by the export's
+own preference either, so the inner `InventoryPartial` reaches the caller's error stream, ahead of the summary,
+also under `-ErrorAction SilentlyContinue` and `Ignore` on the export, which silence only the export's own
+`InventoryPartial` that follows. Measured offline in Pester with a stand-in for `Get-OERInventory` that honours
+the call's `-ErrorAction` as the real cmdlet does: under each of the two preferences `2>&1` carried exactly one
+error record, the inner one, and under `SilentlyContinue` the export's `-ErrorVariable` held both records. The
+help says it, next to the `-ErrorAction Stop` sentence, and a test holds both the behaviour (without the pin the
+stand-in's record terminates and the test is red) and the sentence. Cost if wrong: one sentence in the help.
 
 ## static-source-gates
 
@@ -4241,9 +4257,10 @@ held empty files and a README that named every section unread. `begin` therefore
 only when `$ErrorActionPreference` is `Ignore` sets `ErrorAction` to `SilentlyContinue` on the sign-in call
 (`Initialize-OERAuth @AuthParams @SignInSplat -ErrorVariable SignInErrors`, still directly in the try, in the
 command's own block). SilentlyContinue collects the record and shows nothing, as Ignore shows nothing; every
-other preference reaches the call as it was, and a terminating refusal is not governed by either. The cost is that under Ignore the record lands in `$Error`, as it
-does under SilentlyContinue; nothing is shown. The runspace tests hold both spellings of Ignore, with
-SilentlyContinue, Continue and Stop beside them: the export reads and writes nothing and the script reaches its
+other preference reaches the call as it was, and a terminating refusal is not governed by either. The cost
+is that under Ignore the record lands in `$Error`, as it does under SilentlyContinue; nothing is shown. The
+runspace tests hold both spellings of Ignore, with SilentlyContinue, Continue and Stop beside them: the
+export reads and writes nothing and the script reaches its
 end, and without the pin the Ignore rows write the folder and return the bundle.
 
 A refused export reads nothing more: `process` returns before everything else, the two switch warnings
@@ -7613,6 +7630,18 @@ through `List.Sort` with the comparison inline, and about 1.9 s when it calls a 
 comparison inline per file, which costs a second copy and the time above for a group with thousands of
 members.
 
+**The texts (BL-48, Sprint 11 step 10, the text task).** A dynamic group's null `members` is told to the reader
+of a bundle in every text that explains a null, each saying that it is no unread collection: the schema
+description of `groups[].members`, the bundle README (the roster bullet and "Unread collections"), the prompt
+(its `null` bullet, and a `groups[]` bullet of its own that says what the engine does with such a group), the
+README of the repository, the about topic and `docs/inventory-to-llm/README.md`. The prompt's sentence that a
+null in `inventory.json` means unknown, not empty, stood without exception before, and a model that read a
+dynamic group's null as unknown would have looked for the group under "What this export could not read" and
+found nothing. The bundle README also says, since BL-48, that an Entra ID entry of "What this export could not
+read" can name several collections, separated by a comma and a space: one entry is the report of one read (the
+`InventoryPartial` target of `Get-OERInventory` and the group read's unread names are each joined with a comma
+and a space). Cost if wrong: sentences in those texts.
+
 ## export-role-policy-selection
 
 Sprint 10 step 9 (BL-107, decisions A8 and A14) made `Export-OERInventory` keep only the Azure role
@@ -7716,8 +7745,9 @@ and holds one warning ("Could not read the role assignments at scope '...', so a
 policy there not kept by a use or a change is kept without being judged: ..." with the cause), and the
 policy list is still read. Since Sprint 11 step 10 (BL-123, third point) the held warning is written
 only after the policy list of the scope has been read, so a scope whose policy list fails too has ONE
-warning, the skip's ([Sprint 11 step 10: the three reads after the walk report a stop](#sprint-11-step-10-the-three-reads-after-the-walk-report-a-stop-bl-123-r-5-r-6-bl-44)).
-A failed policy list reaches the per-scope `catch` and skips the scope exactly as a failed policy read
+warning, the skip's ([Sprint 11 step 10: the three reads after the walk report a
+stop](#sprint-11-step-10-the-three-reads-after-the-walk-report-a-stop-bl-123-r-5-r-6-bl-44)). A failed
+policy list reaches the per-scope `catch` and skips the scope exactly as a failed policy read
 always has. Cost if wrong: an interactive long export prompts at a 401 instead of five minutes before.
 
 **R5 (a policy that cannot be judged is kept).** A policy not kept by an assignment, an eligibility
@@ -7881,22 +7911,25 @@ The bookkeeping is complete in each `catch` BEFORE its warning (BL-44, below); t
 selection are done in the `catch` itself, and a few lines repeat the merge the success path makes, so the proof
 could name statements of one block.
 
-**What the bundle prints for these entries (read in `Get-OERInventoryReadme` and the export's clauses, and held
-by the tests).** An eligibility stop is a list of real scopes in `SkippedEligibilityScopes`: the
+**What the bundle prints for these entries (read in `Get-OERInventoryReadme` and the export's clauses, and
+held by the tests).** An eligibility stop is a list of real scopes in `SkippedEligibilityScopes`: the
 `InventoryPartial` message counts them ("N of N Azure scopes could not be read for azurePimEligibility.json,
-and their eligible assignments are absent from it. Skipped: ...") and the README lists each under "Azure scope,
-absent from `azurePimEligibility.json`". The cause is in the warning only, as the cause of a scope the helper
-itself skipped is. A Lighthouse stop is the one `IncompleteReads` entry; the message gives it in the
-Lighthouse clause with its cause ("1 Azure Lighthouse read(s) failed, so lighthouseDelegations.json holds no
-delegation of a scope named here and writes the name of a role named here as null: ENTRY. Causes of the
-unread Azure Lighthouse reads: ...", where ENTRY is `lighthouseDelegations at <all Azure scopes: the read stopped>`),
-and the README lists it under the label "Azure Lighthouse read that failed", as a code span, so the angle
-brackets are shown. **Known gap, for the step's text task:** the README's explanatory prose names two
-entries of that label that name no single scope, `<all Azure scopes: scope enumeration failed>` and
-`<subscriptions: the listing failed>`, and does not name this third one; it is the template's text
-(`Get-OERInventoryReadme`), which only the step's last task edits. A selection stop gives the unjudged scope entries and the clause "at N Azure
-scope(s) every role management policy that could not be judged was kept, none of them left out ...", under
-the label "Azure role management policies kept without being judged"; its cause is in the warning only.
+and their eligible assignments are absent from it. Skipped: ...") and the README lists each under "Azure
+scope, absent from `azurePimEligibility.json`". The cause is in the warning only, as the cause of a scope
+the helper itself skipped is. A Lighthouse stop is the one `IncompleteReads` entry; the message gives it in
+the Lighthouse clause with its cause ("1 Azure Lighthouse read(s) failed, so lighthouseDelegations.json
+holds no delegation of a scope named here and writes the name of a role named here as null: ENTRY. Causes of
+the unread Azure Lighthouse reads: ...", where ENTRY is
+`lighthouseDelegations at <all Azure scopes: the read stopped>`), and the README lists it under the label
+"Azure Lighthouse read that failed", as a code span, so the angle brackets are shown. The README's
+explanatory prose (`Get-OERInventoryReadme`, written by the step's text task) names this entry as the third
+of that label that names no single scope, beside `<all Azure scopes: scope enumeration failed>` and
+`<subscriptions: the listing failed>`, and says that no subscription's delegations are in
+`lighthouseDelegations.json` then, which is written `[]` and does not mean there are none; the Lighthouse
+section of the README and the prompt's bullet for the label say the same. A selection stop gives the
+unjudged scope entries and the clause "at N Azure scope(s) every role management policy that could not be
+judged was kept, none of them left out ...", under the label "Azure role management policies kept without
+being judged"; its cause is in the warning only.
 
 **What changed for a caller.** An export whose eligibility read, Lighthouse read or selection stops ends in
 the bundle and `InventoryPartial`; it used to end in an exception and no bundle. A script with no `try`
@@ -10620,8 +10653,9 @@ and the six readings of a context that has no usable member (missing, null, a st
 `[ordered]` dictionary and a generic dictionary). Known limit: `Resolve-OERPrincipalName`'s map answers an id
 the directory did not return, and every id of a batch whose request failed, with the id itself, and the
 cache keeps that answer like any other, so a lookup that failed in the group read is not retried by the
-Entra ID call, which writes the id it would have written after a second failure. Cost if wrong: one lookup more for each principal both name, as before, and a hashtable that lives for one export.
-A test that builds a context by hand needs no new member: without it the call keeps its own cache.
+Entra ID call, which writes the id it would have written after a second failure. Cost if wrong: one lookup
+more for each principal both name, as before, and a hashtable that lives for one export. A test that builds
+a context by hand needs no new member: without it the call keeps its own cache.
 
 **The owner check.** `Get-OERInventory` reads the context ONCE per invocation and uses it only when its
 `Owner` is the `InvocationInfo` of a frame of the current call stack, compared by reference through
@@ -10774,9 +10808,10 @@ read, an ambiguous name or no policy as much as a role missing at the scope -- w
 (`Skipping role '<name>': <message>`), and carries on. The section then holds the policies of the roles
 that were read, which may be fewer than the curated set, and it is not reported partial: a refused read
 stated as an absent role is the failed-read-as-a-fact gap this section closes everywhere else, left open
-here because the reader is outside this step, and raised as a finding. Only a scope the reader cannot resolve (`InvalidScope`) is a record,
-so only that reaches `Get-OERInventory`'s `catch` under `-CommonRoles`; the test fixtures write
-`InvalidScope` for that call, and the `-CommonRoles` per-role failures are driven through the REAL reader
+here because the reader is outside this step, and raised as a finding. Only a scope the reader cannot
+resolve (`InvalidScope`) is a record, so only that reaches `Get-OERInventory`'s `catch` under
+`-CommonRoles`; the test fixtures write `InvalidScope` for that call, and the `-CommonRoles` per-role
+failures are driven through the REAL reader
 with its helpers mocked (a mock of the reader cannot show them). Under a Stop warning preference
 (`-WarningAction Stop`, or `$WarningPreference` set to `Stop`) the stop at that `Skipping role` warning
 leaves the reader as a terminating error, which the policy section's `try` catches: the section is

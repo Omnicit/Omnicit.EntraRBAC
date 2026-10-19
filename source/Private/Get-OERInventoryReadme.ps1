@@ -30,7 +30,10 @@ function Get-OERInventoryReadme {
     does not mean it has none, that the roleName of such a role is written null there, and that the
     entries 'lighthouseDelegations at <all Azure scopes: scope enumeration failed>' and
     'lighthouseDelegations at <subscriptions: the listing failed>' name no single scope but a walk, or
-    a subscription listing, that failed, so no subscription's delegations were read. An IncompleteReads
+    a subscription listing, that failed, so no subscription's delegations were read, and that
+    'lighthouseDelegations at <all Azure scopes: the read stopped>' names no single scope either but a
+    read of the delegations that stopped as a whole (Sprint 11 step 10, BL-123), so no subscription's
+    delegations are in lighthouseDelegations.json, which is then written as []. An IncompleteReads
     entry that starts with 'subscriptionHomeTenant ' (compared ordinally) names a subscription the Azure
     walk did not enter since whether it belongs to this tenant could not be read, as
     'subscriptionHomeTenant at <scope>' (BL-150, A19), and is listed under the label 'Azure subscription
@@ -140,8 +143,9 @@ function Get-OERInventoryReadme {
     creates or removes it, that lighthouseDelegations.json holds every delegation the export read as
     read-only context (the eligible, just-in-time authorizations apart), that a scope whose delegations
     could not be read is named under "What this export could not read" and its delegations are absent
-    from the file, which does not mean it has none, and that listing a delegation changes nothing in
-    the tenant. A second paragraph says that the Azure walk reads only this tenant's own subscriptions,
+    from the file, which does not mean it has none, that a read that stopped as a whole is named there
+    too and leaves the file written as [], and that listing a delegation changes nothing in the
+    tenant. A second paragraph says that the Azure walk reads only this tenant's own subscriptions,
     and that Azure Lighthouse refuses a delegation whose managing tenant is the subscription's own
     tenant, so every delegation listed is access another tenant holds over a subscription or resource
     group of this tenant (BL-150, A19); no bullet is marked. Then it gives the count and one bullet per
@@ -470,7 +474,9 @@ management policies kept without being judged", "Role assignment principal that 
 "Azure Lighthouse read that failed" and "Azure subscription whose tenant could not be read", each
 entry below names collections or objects that could not be read, could not be written without an
 empty name, or were left out because two or more live objects share a name; none of them is stated
-as a fact in this bundle. An entry labelled "Role
+as a fact in this bundle. An entry labelled "Entra ID" can name several of them at once, separated
+by a comma and a space, since the collections one read could not read are reported as one entry.
+An entry labelled "Role
 assignment principal that could not be read" names a row of `roleAssignments.json` as
 `roleAssignments/<role> -> <principal id> @ <scope>`, followed by `/principal` or `/principalStatus`.
 With `/principal`, the lookup of the principal failed: the row is written by the principal's object
@@ -491,10 +497,13 @@ other unused, unchanged policies there are still left out. An entry labelled "Az
 that failed" names either a scope, as `lighthouseDelegations at <scope>`, whose Azure Lighthouse
 delegations could not be read, so they are absent from `lighthouseDelegations.json`, which does not
 mean the scope has none, or a role, as `lighthouseDelegations role <id>`, whose name could not be
-read, so its `roleName` is written `null` there. Two such entries name no single scope:
+read, so its `roleName` is written `null` there. Three such entries name no single scope:
 `lighthouseDelegations at <all Azure scopes: scope enumeration failed>` names a walk that could not
-start, and `lighthouseDelegations at <subscriptions: the listing failed>` a subscription listing
-that failed, so the delegations of no subscription were read. An entry labelled "Azure subscription
+start, `lighthouseDelegations at <subscriptions: the listing failed>` a subscription listing that
+failed, so the delegations of no subscription were read, and
+`lighthouseDelegations at <all Azure scopes: the read stopped>` a read of the delegations that
+stopped as a whole, so no subscription's delegations are in `lighthouseDelegations.json`, which is
+then written `[]` and does not mean there are none. An entry labelled "Azure subscription
 whose tenant could not be read" names a subscription, as `subscriptionHomeTenant at <scope>`, that
 the Azure walk did not enter since whether it belongs to this tenant could not be read: none of its
 role assignments, role management policies, PIM eligibilities or Azure Lighthouse delegations is in
@@ -763,8 +772,9 @@ removes it. `lighthouseDelegations.json` holds every delegation this export read
 context: the delegated scope, the managing tenant, the offer and each authorization, with the
 eligible (just-in-time) ones apart. Review each delegation below as a finding. A scope whose
 delegations could not be read is named under "What this export could not read", and its delegations
-are absent from the file, which does not mean it has none. Listing a delegation changes nothing in
-the tenant.
+are absent from the file, which does not mean it has none. A read of the delegations that stopped as
+a whole is named there too, and the file is then written `[]`, which does not mean it has none
+either. Listing a delegation changes nothing in the tenant.
 
 The Azure walk reads only this tenant's own subscriptions (see "Subscriptions delegated from
 another tenant (not read)" below), and Azure Lighthouse refuses a delegation whose managing tenant
@@ -774,7 +784,7 @@ subscription or resource group of this tenant.
     $LighthouseSection = if ($LighthouseBullets.Count -gt 0) {
         $LighthouseIntro + "`n`n" + "This export read $($LighthouseBullets.Count) delegation(s):" + "`n`n" + ($LighthouseBullets -join "`n")
     } else {
-        $LighthouseIntro + "`n`n" + "None. This export read no Azure Lighthouse delegation. Delegations are read only when the export`nincludes ``RoleAssignments`` or ``RoleManagementPolicies``, at the subscriptions its Azure walk visits;`na ``-Scope`` at a management group or the root scope visits no subscription, so it reads no delegation.`nA scope whose delegations could not be read is named under `"What this export could not read`"."
+        $LighthouseIntro + "`n`n" + "None. This export read no Azure Lighthouse delegation. Delegations are read only when the export`nincludes ``RoleAssignments`` or ``RoleManagementPolicies``, at the subscriptions its Azure walk visits;`na ``-Scope`` at a management group or the root scope visits no subscription, so it reads no delegation.`nA scope whose delegations could not be read, or a read that stopped as a whole, is named under `"What this export could not read`"."
     }
 
     # BL-150 (A19): the subscriptions the Azure walk did not read since their home tenant is another tenant,
@@ -901,7 +911,10 @@ includes a predefined prompt that turns it into appliable improvement proposals.
   security group with `-AllGroupsDetailed`), and `null` otherwise -- not known, which is not zero:
   a count would cost a request per group. A group left out of `inventory.json` and `groups.json`
   because another group shares its name has a `null` count too. So has a security group outside the
-  export's `-GroupFilter`, which was not read.
+  export's `-GroupFilter`, which was not read. The `members` of a dynamic group
+  are written `null` in `inventory.json` and `groups.json` (see "Unread collections"), but a dynamic
+  group the export read in full has its count; when the read of its members failed, its count is
+  `null`.
 - `scopeHierarchy.json` -- the management group / subscription tree of this tenant; a subscription
   of another tenant is not listed (see "Subscriptions delegated from another tenant (not read)").
   Read-only context, not an apply document.
@@ -996,7 +1009,10 @@ written as `null`, which `Invoke-OERStructure` reads as "leave untouched". Do no
 written with an empty name. A group or application binding whose name cannot be read is written
 under its object id, and a catalog resource with a blank name under its origin id; an entry the
 export could name by nothing the apply engine accepts (a SharePoint binding with no name, for
-example) makes its whole collection `null`, named in `InventoryPartial`, exactly like an unread one.
+example) makes its whole collection `null`, named in `InventoryPartial`, exactly like an unread one. The
+`members` of a dynamic group are also written `null`, though no read failed: its membership rule
+owns its members, so that `null` is not an unread collection, no entry under "What this export could
+not read" names it, and `Invoke-OERStructure` leaves the members alone. Keep it `null` in a proposal.
 `Export-OERInventory` ends with an `InventoryPartial` error naming each collection it reports as
 unread, these four and any other; the others are left out or written only as far as they were read,
 so their absence is not evidence the tenant has none. A section that could not be read at all (the

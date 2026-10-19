@@ -106,8 +106,13 @@ function Export-OERInventory {
     not. When anything was skipped the bundle summary is still emitted first and is then followed by
     a non-terminating InventoryPartial error, so a caller using -ErrorAction Stop or a try/catch
     finds out that roleAssignments.json and roleManagementPolicies.json are incomplete instead of
-    treating a truncated bundle as a full tenant snapshot. A level of the tree that could not be
-    LISTED is skipped the same way: a refused or failed management-group listing is named in
+    treating a truncated bundle as a full tenant snapshot. The Entra ID sections other than Groups are
+    read by an inner Get-OERInventory call that pins -ErrorAction Continue, so that a partial read
+    never stops the bundle, and its own InventoryPartial error therefore reaches the caller's error
+    stream before the summary is emitted, also under -ErrorAction SilentlyContinue and Ignore on the
+    export, which silence only the export's own InventoryPartial error that follows. A level of the
+    tree that could not be LISTED is skipped the same way: a refused or failed management-group
+    listing is named in
     SkippedScopes and SkippedEligibilityScopes as '<management groups: the listing failed>' (a failed
     subscription listing as '<subscriptions: the listing failed>'), never read as "no management
     groups". A management group created in the last few minutes can be missing from the
