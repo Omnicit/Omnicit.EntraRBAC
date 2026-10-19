@@ -571,8 +571,8 @@ Result: not run yet.
 ```powershell
 Connect-OerLive -Arm
 Start-S1110NoPrompt
-$Sub = Invoke-OerLiveArm -Uri "subscriptions/$($Cfg.SubscriptionId)?api-version=2022-12-01"
-$SubName = [string]$Sub.Body['displayName']
+$Sub = Invoke-OerLiveArm -Path "/subscriptions/$($Cfg.SubscriptionId)?api-version=2022-12-01"
+$SubName = [string]$Sub.Body.displayName
 Write-OerLiveStep "The test subscription's display name was read (not printed): $(-not [string]::IsNullOrWhiteSpace($SubName))"
 Start-S1110Count
 $Out = @(Get-OERInventory -Include RoleAssignments, RoleManagementPolicies -AllRolesAtScope -Subscription $SubName 2>&1)
