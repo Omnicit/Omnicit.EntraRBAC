@@ -218,9 +218,11 @@ Describe 'Get-OERScopeSpellingProblem is the one rule the validator and the expo
     It 'has Get-OERInventory leave a role assignment out exactly when the owner returns a problem for its scope' {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         # A20 (BL-152): the section reads -Subscription only in the session tenant's own subscription, which
-        # this one is; the decision is Get-OERSubscriptionHomeTenant's, tested in its own suite.
+        # this one is; the decision is Get-OERSubscriptionHomeTenant's, tested in its own suite. The id is the
+        # one the call is made with: Get-OERInventory reads a -Subscription by the id its check returned and
+        # treats a Home verdict without one as Undecided (Sprint 11 step 10, BL-155, R-4).
         Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant {
-            [PSCustomObject]@{ Scope = $Scope; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null }
+            [PSCustomObject]@{ Scope = $Scope; SubscriptionId = '11111111-1111-1111-1111-111111111111'; DisplayName = $null; Verdict = 'Home'; HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null }
         }
         Mock -ModuleName $script:moduleName Get-OERGroupNameIndex {
             $Index = [PSCustomObject]@{

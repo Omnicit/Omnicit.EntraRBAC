@@ -651,9 +651,11 @@ function Export-OERInventory {
         # scope tree as a scope. Declared ABOVE [ValidateNotNullOrEmpty()] on purpose: validation attributes
         # run in reverse declaration order (measured), so an empty or null value still reads the
         # NotNullOrEmpty message and white space reads this one. Neither parameter moves: positional binding
-        # follows declaration order. No call inside the module passes either parameter an empty or blank value:
-        # the per-scope Get-OERInventory calls below pass -Scope only with a scope the tree listed, which is
-        # added to the tree only when it is not empty.
+        # follows declaration order. A blank value would not read as "no scope" in this export's own walk: its
+        # two tests (`if ($ManagementGroup)` and `if ($Scope)`, at the Azure walk) are true for it, so the value
+        # would be handed to the scope tree as the management group to list under or as the one scope to walk,
+        # and the walk would run against a name nobody gave. Nothing in the module calls this export, so no
+        # internal call can pass either parameter a blank value.
         [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The ManagementGroup consists only of white space. Pass a management group name or ID, or leave the parameter out.')]
         [ValidateNotNullOrEmpty()]
         [string]$ManagementGroup,

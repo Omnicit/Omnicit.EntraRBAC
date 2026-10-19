@@ -188,10 +188,10 @@ function Get-OERInventory {
     per call, before either section reads anything, with one read of it (a subscription named by its
     display name also costs one read of the subscription list, which only the check makes: both sections
     then read with the subscription ID the check found, never with the name); with both -Scope and
-    -Subscription, each is checked. The Azure Resource Manager token that read needs is acquired in the command's
-    sign-in, as -IncludeARM does, whenever RoleAssignments, or RoleManagementPolicies with exactly one
-    of -Role, -CommonRoles and -AllRolesAtScope, is included with a -Scope or a -Subscription. A -Scope
-    at a management group or the root scope '/', and a -ManagementGroup, lie
+    -Subscription, each is checked. The Azure Resource Manager token that read needs is acquired in the
+    command's sign-in, as -IncludeARM does, whenever RoleAssignments, or RoleManagementPolicies with
+    exactly one of -Role, -CommonRoles and -AllRolesAtScope, is included with a -Scope or a
+    -Subscription. A -Scope at a management group or the root scope '/', and a -ManagementGroup, lie
     in no subscription and are read as before. A subscription of another tenant -- a customer
     subscription another tenant delegated to this one through Azure Lighthouse, for example -- is not
     read: each included section is written empty, and one non-terminating SubscriptionTenantMismatch
@@ -214,9 +214,15 @@ function Get-OERInventory {
     with the reader's message as its cause, and the section is written empty, which does not mean the
     scope has none. The section is read whole or not at all: with -Role A,B, where the read for B fails,
     the policy of A is not written either. The reader's own error is not written to the caller's error
-    stream beside it, and no warning is written for it. With -CommonRoles the reader still skips a
-    curated role that does not exist in the subscription, with its own warning; that skip is not a
-    failed read and is not reported through InventoryPartial.
+    stream beside it (a caller's -ErrorVariable still collects it), and no warning is written for it.
+    -CommonRoles is the exception: the reader reads each curated role on its own and skips any role whose
+    definition or policy it cannot read -- a refused or failed read as much as a role that is missing at
+    the scope -- with a warning of its own (Skipping role, the role's name and the reason), and carries
+    on. That skip is not reported through InventoryPartial, so the section holds the policies of the
+    roles that were read, which may be fewer than the curated set; only a scope that cannot be resolved
+    is reported unread. Under a Stop warning preference (-WarningAction Stop, or $WarningPreference set
+    to 'Stop') the stop at that warning is caught here as well: the section is reported unread, with the
+    warning's text in its cause, and the command carries on.
     A role assignment at the Azure root scope '/', above every management group and subscription in
     the tenant, is left out of the RoleAssignments section: it is elevated
     access, a finding to review rather than part of the RBAC model a document describes, and
@@ -473,11 +479,11 @@ function Get-OERInventory {
         # -GroupFilter and New-OERConfiguration's -TenantId). Before this, '   ' passed the sections' own
         # `if ($Scope)` tests (a string of spaces is true) and reached the Azure readers, while the
         # subscription check and the sign-in's ARM term treat it as no scope at all, so one parameter was
-        # given and not given at once. The module supports PowerShell 7.2, which has no [ValidateNotNullOrWhiteSpace()] (7.4+), so the
-        # same test runs as a script. Declared ABOVE [ValidateNotNullOrEmpty()] on purpose: validation
-        # attributes run in reverse declaration order (measured), so an empty or null value still reads the
-        # NotNullOrEmpty message and white space reads this one. Neither parameter moves: positional binding
-        # follows declaration order.
+        # given and not given at once. The module supports PowerShell 7.2, which has no
+        # [ValidateNotNullOrWhiteSpace()] (7.4+), so the same test runs as a script. Declared ABOVE
+        # [ValidateNotNullOrEmpty()] on purpose: validation attributes run in reverse declaration order
+        # (measured), so an empty or null value still reads the NotNullOrEmpty message and white space reads
+        # this one. No parameter moves: positional binding follows declaration order.
         [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The Scope consists only of white space. Pass an Azure Resource Manager scope, or leave the parameter out.')]
         [ValidateNotNullOrEmpty()]
         [string]$Scope,
@@ -763,8 +769,9 @@ function Get-OERInventory {
         # row: for a Foreign verdict the refusal is recorded once, and the section is not unread (it is a
         # refusal, not a failed read); for an Undecided one, with no Foreign verdict, the section is named
         # unread under its own name, with the verdict's reason as its cause, so InventoryPartial names it.
-        # A Home verdict for -Subscription that carries no SubscriptionId is Undecided here too (R-4): the
-        # readers would otherwise have to be handed the name, which is exactly what this decision replaces.
+        # A -Subscription verdict that leaves the holder without an id -- a Home verdict that carries none, or
+        # a NoSubscription one whatever it carries -- is Undecided here too (R-4): the readers would otherwise
+        # have to be handed the name, which is exactly what this decision replaces.
         function Test-SubscriptionInSessionTenant {
             param([string]$Section)
             if (-not $SubscriptionCheck.Decided) {
@@ -789,13 +796,16 @@ function Get-OERInventory {
                 Write-Verbose "Get-OERInventory: $Section was not read: $(@($SubscriptionCheck.Foreign | ForEach-Object { [string]$_.Reason }) -join '; ')."
                 return $false
             }
-            # An id-less answer for -Subscription is Undecided whether it says Home or NoSubscription (the
-            # owner never answers NoSubscription for 'sub:<value>', so the second is a stand-in's answer):
-            # neither leaves an id the readers can be handed.
+            # One rule for -Subscription, decided on the holder and not on the verdict's own id: the readers are
+            # handed $SubscriptionCheck.SubscriptionId, which is set for a Home verdict that carries an id and
+            # for nothing else, so a -Subscription verdict is Undecided unless the holder has one. A
+            # NoSubscription answer is therefore Undecided whether or not it carries an id (the owner never
+            # answers NoSubscription for 'sub:<value>', so that is a stand-in's answer), and so is a Home
+            # answer without one. A -Scope verdict needs no id and is never made Undecided by this term.
             $Undecided = @($SubscriptionCheck.Verdicts | Where-Object {
                     $Kind = [string]$_.Verdict.Verdict
                     $Kind -notin @('Home', 'NoSubscription') -or
-                    ($_.IsSubscription -and [string]::IsNullOrWhiteSpace([string]$_.Verdict.SubscriptionId))
+                    ($_.IsSubscription -and [string]::IsNullOrWhiteSpace([string]$SubscriptionCheck.SubscriptionId))
                 })
             if ($Undecided.Count -gt 0) {
                 foreach ($One in $Undecided) {
@@ -1630,7 +1640,10 @@ function Get-OERInventory {
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
                     $RaItems = @()
-                    Add-UnreadSection -Key 'roleAssignments' -Cause "Could not read role assignments: $($PSItem.Exception.Message)"
+                    # The reader's message is trimmed of trailing white space and then of trailing full stops: the
+                    # causes clause adds its own, and a message that ends in one (the role and policy lookups'
+                    # do) would show '..'. The same trim as the Undecided cause above (R-18).
+                    Add-UnreadSection -Key 'roleAssignments' -Cause "Could not read role assignments: $(([string]$PSItem.Exception.Message).TrimEnd().TrimEnd('.'))"
                 }
 
                 # Sprint 11 step 6 (BL-133, A18): the principals are looked up with
@@ -2510,9 +2523,16 @@ function Get-OERInventory {
                 # read before it: under -Role A,B where B fails, A's policy is not written either. The section is
                 # read whole or not at all, and an unread section is never a half-read one that states a subset as
                 # if it were the whole. The record is scrubbed and folded into the cause, not republished, and no
-                # warning is written. -CommonRoles is deliberately left as it is: the reader SKIPS a curated role
-                # that does not exist in the subscription with a warning of its own and carries on (it is not an
-                # error), so that skip is neither a failure here nor named unread.
+                # warning is written. -CommonRoles is the exception, and the reader is left as it is: its per-role
+                # catch (Get-OERRoleManagementPolicy.ps1) turns ANY failure to read a curated role's definition or
+                # policy -- a refused or failed ARM read or an ambiguous name as much as a role missing at the
+                # scope -- into a 'Skipping role' warning of its own and carries on, so none of those is a failure
+                # here or named unread, and the section holds the policies of the roles that were read. Only a
+                # scope the reader cannot resolve (InvalidScope) is a record, and reaches the catch below. Under
+                # a Stop warning preference the stop at that warning leaves the reader and is caught below too:
+                # the section is named unread with the warning's text, and the command carries on (measured with
+                # the real reader, in the Describe 'Get-OERInventory -CommonRoles through the real
+                # Get-OERRoleManagementPolicy').
                 $Policies = @()
                 try {
                     $Policies = @(
@@ -2523,7 +2543,8 @@ function Get-OERInventory {
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
                     $Policies = @()
-                    Add-UnreadSection -Key 'roleManagementPolicies' -Cause "Could not read role management policies: $($PSItem.Exception.Message)"
+                    # Trimmed as the role assignment read's cause is (R-18).
+                    Add-UnreadSection -Key 'roleManagementPolicies' -Cause "Could not read role management policies: $(([string]$PSItem.Exception.Message).TrimEnd().TrimEnd('.'))"
                 }
                 $RmpSeen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 foreach ($Rmp in $Policies) {

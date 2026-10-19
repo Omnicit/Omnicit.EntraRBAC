@@ -2205,11 +2205,14 @@ resolutions could have been read unchecked (theoretical; not measured).
 **The decision (R-4).** With `-Subscription` given and the check's verdict `Home`, both readers get
 `-Subscription` with the `SubscriptionId` of that verdict, a GUID that `Resolve-OERScope` takes as it is
 with no list read, instead of the name. The check keeps the id in its holder the first time it decides.
-A `Home` verdict for `-Subscription` that carries no `SubscriptionId` is treated as `Undecided`: both
-sections are named unread by their own names, the cause says the subscription check gave no subscription
-id for the scope as given, and nothing is read by name. The owner never answers `sub:` that way (its
-`Home` always carries the id of the path it resolved), so the rule is a backstop; it holds for a
-`NoSubscription` answer without an id for `sub:` too, which the owner cannot produce either. A `-Scope`
+A `-Subscription` verdict is `Undecided` unless the holder has an id: both sections are named unread by
+their own names, the cause says the subscription check gave no subscription id for the scope as given, and
+nothing is read by name. The rule is decided on the holder, which is set for a `Home` verdict that carries
+an id and for nothing else, and not on the verdict's own id (fix round 1: the first commit tested the
+verdict's id, so a `NoSubscription` answer WITH an id for `sub:` passed the filter and handed both readers
+`-Subscription $null`). So a `Home` answer without an id, and a `NoSubscription` answer with or without
+one, are all `Undecided`. The owner never answers `sub:` that way (its `Home` always carries the id of the
+path it resolved, and it never answers `NoSubscription` for `sub:`), so the rule is a backstop. A `-Scope`
 is unchanged: it goes to the readers as given and its `Home` verdict needs no id. No public parameter,
 ErrorId or output property was added (A9). Cost if wrong: the two assignments go back to `$Subscription`
 and the id-less rule goes, one line each.
@@ -10187,8 +10190,13 @@ section empty, or with the part that was read, left the record on the caller's s
 `InventoryPartial`, a failed read stated as an empty fact (G3). Now each read runs with `-ErrorAction Stop`
 inside a `try`. The `catch` scrubs the record first (`Remove-OERErrorRecord`) and calls `Add-UnreadSection`
 with the key `roleAssignments` or `roleManagementPolicies` and the cause `Could not read role assignments:`
-or `Could not read role management policies:` followed by the reader's own message (not trimmed: a message
-that ends in a period shows two in the clause, as the catalog list's cause does). The section is written
+or `Could not read role management policies:` followed by the reader's own message, trimmed of trailing white
+space and then of trailing full stops (the controller's ruling R-18, in fix round 1; the first commit left
+the message as it was, and a message that ends in a period showed two in the clause). The clause adds its
+own full stop, and the lookups the readers call (`Resolve-OERRoleDefinitionId`,
+`Get-OERRoleManagementPolicyId`) throw messages that end in one, so the common `-Role` failure
+(`RoleDefinitionNotFound`, `PolicyNotFound`) would otherwise end `..`. The Undecided cause of the same
+function is trimmed the same way. The section is written
 empty, and the code after the read finds nothing to do for it: no principal lookup, and no root scope or
 undeclarable scope notice for the call. The section is read whole or not at all. An assignment inside the
 `try` gets none of what the reader wrote before it failed, and the policy section stands in ONE `try`
@@ -10196,8 +10204,23 @@ around every `Get-OERRoleManagementPolicy` call, so with `-Role A,B` where B fai
 written either: a section is never a subset presented as the whole. The first failure ends the read, so
 the roles after B are not read. The record is folded into the cause and not republished, and no warning
 is written: `InventoryPartial`, after the inventory object, is the report (the catalog list's form).
-`-CommonRoles` is left as it was: the reader skips a curated role that does not exist in the subscription
-with a warning of its own and carries on, which is neither a failure nor an unread section.
+`-CommonRoles` is the exception, and the reader is not changed in this step (R-19, fix round 1; the first
+commit's text said the reader skips "a curated role that does not exist in the subscription", which is
+less than it does). `Get-OERRoleManagementPolicy -CommonRoles` reads each curated role on its own and, in
+its per-role `catch`, skips ANY role whose definition or policy it cannot read -- a refused or failed ARM
+read, an ambiguous name or no policy as much as a role missing at the scope -- with its own warning
+(`Skipping role '<name>': <message>`), and carries on. The section then holds the policies of the roles
+that were read, which may be fewer than the curated set, and it is not reported partial: a refused read
+stated as an absent role is the failed-read-as-a-fact gap this section closes everywhere else, left open
+here because the reader is outside this step, and raised as a finding. Only a scope the reader cannot resolve (`InvalidScope`) is a record,
+so only that reaches `Get-OERInventory`'s `catch` under `-CommonRoles`; the test fixtures write
+`InvalidScope` for that call, and the `-CommonRoles` per-role failures are driven through the REAL reader
+with its helpers mocked (a mock of the reader cannot show them). Under a Stop warning preference
+(`-WarningAction Stop`, or `$WarningPreference` set to `Stop`) the stop at that `Skipping role` warning
+leaves the reader as a terminating error, which the policy section's `try` catches: the section is
+named unread, with the warning's text as its cause, and the command carries on (measured, both forms; the
+command used to stop at that warning). That is the safe direction, the section named and not a subset
+presented as the whole, and it is stated in the help.
 
 Under `Export-OERInventory`, whose per-scope call passes `-ErrorAction Stop`, the new `InventoryPartial`
 is what makes the export skip the scope, as the reader's own record did before: the scope is named in
@@ -10210,7 +10233,13 @@ instant the reader writes it, before any `catch` runs ([#writeerror-deposit](#wr
 standalone call with `-ErrorVariable` on a failed `roleAssignments` read collected that record twice,
 beside `InventoryPartial`, and `$global:Error` held only `InventoryPartial`, since `Remove-OERErrorRecord`
 had removed the reader's. The error STREAM carries only `InventoryPartial`, which is what the tests read
-(`2>&1`). The record's bearer token is scrubbed in every copy. A Pester mock runs under the test's own
+(`2>&1`). The record's bearer token is scrubbed in every copy. Fix round 1 pinned both halves in the
+no-`try` runspace test of a failed `roleAssignments` read (R-17): the runspace's `$Error` holds only
+`InventoryPartial` after the call, and with the error stream merged into the output the inventory object
+comes first and `InventoryPartial` after it. A throw the REAL `-CommonRoles` reader catches for itself
+reaches a caller's `-ErrorVariable` as well (13 records for one skipped role, measured with the reader's
+helpers mocked, which may count each mock frame), so that path's tests read the error stream and not the
+variable. A Pester mock runs under the test's own
 `Stop` preference, so it cannot tell a call with `-ErrorAction Stop` from one without: the proof that each
 of the four reads (the assignments and the three policy branches) carries the parameter is a script with no
 `try` above it, in a runspace whose preference is `Continue`, where each dropped parameter turns exactly
@@ -10229,6 +10258,19 @@ its own test red.
 | M2f | one `try` around the whole read, `:2521` | one `try` per role | 3 red |
 | E1 | the export's per-scope `-ErrorAction Stop`, `Export-OERInventory.ps1:1137` | dropped | 2 red, one per section |
 | S1, S2 | the scrub first in each `catch`, `Get-OERInventory.ps1:1630`, `:2523` | scrub removed | 1 red each, the bearer-token hygiene gate of `tests/QA/sourcehygiene.tests.ps1` |
+
+**Mutation proofs (fix round 1).** Made in the source and tests of the fix round's commit; lines are those of
+the files before this paragraph was written.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| F1 | the stand-in's id in `tests/Unit/Private/Get-OERScopeSpellingProblem.Tests.ps1:225` | `SubscriptionId = $null` | 1 red, the test that has `Get-OERInventory` leave a role assignment out exactly when the owner returns a problem |
+| F2a, F2b | the trim of the assignment cause, `Get-OERInventory.ps1:1646`, and of the policy cause, `:2547` | no trim | 3 and 9 red, the R-18 tests (three endings, and three policy branches) |
+| F2c, F2d | the white space trim of each cause, same lines | full stops only | 1 and 3 red, the ending with white space after the period |
+| F4 | a `-Subscription` verdict decided on the holder, `:808` | the verdict's own id | 1 red, the `NoSubscription` answer with an id |
+| F5 | the scrub in the assignment `catch`, `:1641` | removed | 1 red, the R-17 runspace test, besides the static gate (S1) |
+| F3 | the policy read's `try`, `:2537` | the original unguarded block | 2 red, the Stop warning preference tests of the real `-CommonRoles` reader |
+| F6 | the assignment read's `try`, `:1637` | the original unguarded call | 1 red, the first assignment test (it stops at the call: the reader's record is terminating under the test's `Stop`) |
 
 **R-4 (the apply engine; A18).** `Sync-OERStructureRoleAssignment` takes the `principal` of an entry
 that declares `principalStatus` as the object id it names, with no principal lookup at all, for the
