@@ -4995,8 +4995,11 @@ Describe 'Export-OERInventory (one group name index per export, Sprint 11 step 6
         # The owner, the group name index and the three members of the principal reads (Sprint 11 step 6,
         # BL-133): the deleted items answers, and the unread principal entries and their causes, each empty
         # and of the type Get-OERInventory fills; and (Sprint 11 step 8, A20, BL-152) the subscription home
-        # tenant answers, which the stand-in tree here leaves empty.
-        @($Contexts[0].PSObject.Properties.Name) | Should -Be @('Owner', 'GroupNameIndex', 'PrincipalStatus', 'UnreadPrincipal', 'UnreadPrincipalCause', 'SubscriptionTenant')
+        # tenant answers, which the stand-in tree here leaves empty; and (Sprint 11 step 10, BL-122, R-12) the
+        # hashtable of principal names the group read was handed, empty here since the stand-in reader learns none.
+        @($Contexts[0].PSObject.Properties.Name) | Should -Be @('Owner', 'GroupNameIndex', 'PrincipalNameCache', 'PrincipalStatus', 'UnreadPrincipal', 'UnreadPrincipalCause', 'SubscriptionTenant')
+        , $Contexts[0].PrincipalNameCache | Should -BeOfType ([hashtable])
+        $Contexts[0].PrincipalNameCache.Count | Should -Be 0
         $Contexts[0].SubscriptionTenant | Should -BeOfType ([System.Collections.Generic.Dictionary[string, object]])
         $Contexts[0].SubscriptionTenant.Comparer.Equals('ABC', 'abc') | Should -BeTrue
         $Contexts[0].SubscriptionTenant.Count | Should -Be 0
@@ -8797,5 +8800,446 @@ Describe 'Export-OERInventory (the roster count of a dynamic group, through the 
         (@($Bundle.IncompleteReads) -join ' | ') | Should -Not -BeLike '*groups/dyn_x/members*'
         # Reach proof: the failed read was reached, and the group's own cause is in the bundle's partial signal.
         Should -Invoke -ModuleName $script:moduleName Read-OERGroupCollection -Exactly -Times 1 -ParameterFilter { $GroupId -eq 'g-dyn' -and $Collection -eq 'Members' }
+    }
+}
+
+Describe 'Export-OERInventory (a refused sign-in reads nothing, writes no folder and returns no object, Sprint 11 step 10, BL-101, R-8)' {
+    # BL-101 (first point, R-8). A terminating refusal of Initialize-OERAuth ends only that function, and outside
+    # any try the export carried on and wrote a bundle folder of empty files. The export now calls it in a try, with
+    # -ErrorVariable, directly in its begin block: a terminating refusal is caught, scrubbed and published as the
+    # sign-in's own record, and so is ArmTokenAcquisitionFailed, the one refusal that is only WRITTEN, which the
+    # variable holds. Either marks the export refused, and a refused export reads nothing more, never asks for the
+    # tenant ID, writes no folder and returns no object. The errors are counted on the error STREAM (2>&1), what the
+    # caller is shown: -ErrorVariable also keeps the errors a command caught, so its count says less. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        # The refusals as Initialize-OERAuth makes them. [CmdletBinding()] gives each mock the common parameters
+        # the export's -ErrorVariable needs, as the real function has them. ThrowTerminatingError is how the real
+        # function raises every refusal but one; ArmTokenAcquisitionFailed it only WRITES, and returns normally after it.
+        # A mock cannot write it with $PSCmdlet.WriteError: Pester runs a mock under the Stop preference, so that call
+        # would terminate, and the export's catch would see a refusal the variable is meant to carry. Write-Error
+        # with its own -ErrorAction Continue is non-terminating whatever the preference, and -ErrorVariable collects it.
+        $script:RsTerminating = {
+            [CmdletBinding()]
+            param([string]$TenantId, [switch]$IncludeARM)
+            $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('The sign-in was refused (fixture).'), 'TenantResolutionFailed',
+                    [System.Management.Automation.ErrorCategory]::AuthenticationError, 'fixture-tenant'))
+        }
+        $script:RsArmFailed = {
+            [CmdletBinding()]
+            param([string]$TenantId, [switch]$IncludeARM)
+            Write-Error -Exception ([System.Exception]::new('Failed to acquire an Azure Resource Manager token (fixture).')) -ErrorId 'ArmTokenAcquisitionFailed' `
+                -Category AuthenticationError -TargetObject 'fixture-tenant' -ErrorAction Continue
+        }
+        # What the inner calls of a SUCCESSFUL sign-in can leave in -ErrorVariable: records of other ids, among them
+        # three that only LOOK like the one refusal -- the id inside a longer one, the id with a suffix, and the id
+        # after a comma, where it is no longer the first segment.
+        $script:RsStrays = {
+            [CmdletBinding()]
+            param([string]$TenantId, [switch]$IncludeARM)
+            foreach ($StrayId in 'TenantLookupRetried', 'NotArmTokenAcquisitionFailed', 'ArmTokenAcquisitionFailedLater', 'Inner,ArmTokenAcquisitionFailed') {
+                Write-Error -Exception ([System.Exception]::new("A stray record of a successful sign-in ($StrayId).")) -ErrorId $StrayId `
+                    -Category NotSpecified -TargetObject 'fixture-tenant' -ErrorAction Continue
+            }
+        }
+        function script:Get-RsMockBody {
+            param([string]$Kind)
+            switch ($Kind) {
+                'terminating' { $script:RsTerminating }
+                'armfailed' { $script:RsArmFailed }
+                'strays' { $script:RsStrays }
+                default { {} }
+            }
+        }
+        # One export, its result, the records that reached the caller's streams (warnings and errors, as 3>&1 2>&1
+        # delivers them) and what it wrote. A root of its own per call, so a folder that was written cannot be
+        # another call's.
+        function script:Invoke-RsExport {
+            param([hashtable]$Splat)
+            $Root = Join-Path $TestDrive ('rs-' + [guid]::NewGuid().ToString('N'))
+            $All = @(Export-OERInventory -OutputPath $Root @Splat -ErrorAction Continue -WarningAction Continue 3>&1 2>&1)
+            [PSCustomObject]@{
+                Root     = $Root
+                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+                Errors   = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+            }
+        }
+        # The ErrorId of a record: the first segment of its FullyQualifiedErrorId, before the ',<command>' suffix.
+        function script:Get-RsErrorId {
+            param($Record)
+            ([string]$Record.FullyQualifiedErrorId).Split(',')[0]
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryTenantId {}
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{ Scopes = @(); Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() } }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+    }
+
+    It 'stops before it reads or writes anything when <Case>, and publishes the sign-in''s own record once' -ForEach @(
+        @{ Case = 'the sign-in is refused (an Entra ID export)'; Kind = 'terminating'; Id = 'TenantResolutionFailed'; Include = @('Groups', 'AdministrativeUnits') }
+        @{ Case = 'the sign-in is refused (an Azure export)'; Kind = 'terminating'; Id = 'TenantResolutionFailed'; Include = @('RoleAssignments') }
+        @{ Case = 'the ARM token could not be acquired (an Azure export)'; Kind = 'armfailed'; Id = 'ArmTokenAcquisitionFailed'; Include = @('RoleAssignments', 'RoleManagementPolicies') }
+        @{ Case = 'the ARM token could not be acquired (an Entra ID export)'; Kind = 'armfailed'; Id = 'ArmTokenAcquisitionFailed'; Include = @('Groups', 'DirectoryRoleAssignments') }
+    ) {
+        Mock -ModuleName $script:moduleName Initialize-OERAuth -MockWith (Get-RsMockBody -Kind $Kind)
+        # -AllRolePolicies names a section these -Include values mostly leave out: a refused export says nothing
+        # of it either (the switch warnings stand after the refusal's return).
+        $Run = Invoke-RsExport -Splat @{ Include = $Include; TenantId = 'fixture-tenant'; AllRolePolicies = $true }
+        # Reach proof: the sign-in was attempted, with the tenant named.
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $TenantId -ceq 'fixture-tenant' }
+        # The record: the sign-in's own, once, and nothing else on either stream.
+        @($Run.Errors).Count | Should -Be 1
+        Get-RsErrorId -Record $Run.Errors[0] | Should -BeExactly $Id
+        @($Run.Warnings).Count | Should -Be 0
+        # No object, no folder, no read of any kind, no tenant ID asked for.
+        @($Run.Result).Count | Should -Be 0
+        Test-Path -LiteralPath $Run.Root | Should -BeFalse
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryTenantId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERConfiguration -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERInventoryScopeTree -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Times 0
+    }
+
+    It 'does not refuse a sign-in that succeeded, whose inner calls left records of other ids in -ErrorVariable' {
+        Mock -ModuleName $script:moduleName Initialize-OERAuth -MockWith (Get-RsMockBody -Kind 'strays')
+        $Run = Invoke-RsExport -Splat @{ Include = @('Groups') }
+        # Reach proof: the bundle was written and the tenant ID was asked for, once.
+        @($Run.Result).Count | Should -Be 1
+        $Run.Result[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.InventoryBundle'
+        Test-Path -LiteralPath (Join-Path $Run.Result[0].BundlePath 'inventory.json') | Should -BeTrue
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryTenantId -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 1 -Exactly
+        # The stray records are the sign-in's own to publish, and reached the caller's error stream as they were
+        # written (four of them), with no refusal beside them.
+        @($Run.Errors | ForEach-Object { Get-RsErrorId -Record $_ } | Where-Object { $_ -in @('TenantLookupRetried', 'NotArmTokenAcquisitionFailed', 'ArmTokenAcquisitionFailedLater', 'Inner') }).Count | Should -Be 4
+        @($Run.Errors | ForEach-Object { Get-RsErrorId -Record $_ } | Where-Object { $_ -eq 'ArmTokenAcquisitionFailed' }).Count | Should -Be 0
+    }
+
+    It 'ends the export with the sign-in''s own record under -ErrorAction Stop when the sign-in is refused, and writes no folder' {
+        Mock -ModuleName $script:moduleName Initialize-OERAuth -MockWith (Get-RsMockBody -Kind 'terminating')
+        $Root = Join-Path $TestDrive ('rs-stop-' + [guid]::NewGuid().ToString('N'))
+        $Caught = $null
+        try {
+            Export-OERInventory -OutputPath $Root -Include Groups -ErrorAction Stop | Out-Null
+        } catch {
+            $Caught = $PSItem
+        }
+        $Caught | Should -Not -BeNullOrEmpty
+        Get-RsErrorId -Record $Caught | Should -BeExactly 'TenantResolutionFailed'
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        Test-Path -LiteralPath $Root | Should -BeFalse
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryTenantId -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 0
+    }
+
+    It 'scrubs the refused sign-in''s record first, once, before it publishes it' {
+        # The record can reach a token call, so Remove-OERErrorRecord is the catch's first statement: the order the
+        # two reach the module's own commands is the proof, the scrub as a mock that notes it and the record
+        # published through the error stream after it.
+        Mock -ModuleName $script:moduleName Initialize-OERAuth -MockWith (Get-RsMockBody -Kind 'terminating')
+        $script:RsSeq = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord { param($Record) $script:RsSeq.Add("scrub: $(([string]$Record.FullyQualifiedErrorId).Split(',')[0])") }
+        $Root = Join-Path $TestDrive ('rs-scrub-' + [guid]::NewGuid().ToString('N'))
+        $Caught = $null
+        try {
+            Export-OERInventory -OutputPath $Root -Include Groups -ErrorAction Stop | Out-Null
+        } catch {
+            $script:RsSeq.Add('published')
+            $Caught = $PSItem
+        }
+        $Caught | Should -Not -BeNullOrEmpty
+        @($script:RsSeq) | Should -Be @('scrub: TenantResolutionFailed', 'published')
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
+    }
+
+    It 'stops in a script with no try above it, under the real sign-in refused at the session-uncertain marker, and the script reaches its end having written nothing and asked for no token' {
+        # An error nothing catches ends the export only where no try stands up the call stack, and Pester stands in
+        # one, so the export runs in a runspace and a script with no try (the pattern of the run context test above).
+        # The sign-in is the REAL Initialize-OERAuth: the marker is set in the runspace's own copy of the module, and
+        # a call that names no tenant is refused with SignInRefused before any token call, so the transport tripwire
+        # installed in that runspace records nothing.
+        $Root = Join-Path $TestDrive 'rs-no-try'
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) { $null = Set-OERSessionUncertain -Value $true }
+$Items = @(Export-OERInventory -OutputPath '#ROOT#' -Include Groups -Confirm:$false 2>&1)
+foreach ($Item in $Items) {
+    if ($Item -is [System.Management.Automation.ErrorRecord]) { "ERR:$(([string]$Item.FullyQualifiedErrorId).Split(',')[0])" }
+    elseif ($Item.PSObject.TypeNames[0] -eq 'Omnicit.EntraRBAC.InventoryBundle') { 'BUNDLE' }
+    else { "OTHER:$Item" }
+}
+'END'
+'@).Replace('#ROOT#', $Root.Replace("'", "''")))
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        # The script reached its end; the one error is the sign-in's own; no bundle object came back.
+        ($Run.Output -join '|') | Should -Be 'ERR:SignInRefused|END'
+        @($Run.Warnings).Count | Should -Be 0
+        # Nothing was written, and the tripwire recorded no transport call (no token request, no connection).
+        Test-Path -LiteralPath $Root | Should -BeFalse
+        @($global:OERTransportTripwireHits).Count | Should -Be $HitsBefore
+    }
+
+    It 'stops when a plain sign-in function only WRITES ArmTokenAcquisitionFailed, under -ErrorAction <Preference>, with the record once and nothing read or written' -ForEach @(
+        @{ Preference = 'Continue'; Call = '$Items = @(Export-OERInventory -OutputPath ''#ROOT#'' -Include Groups -ErrorAction Continue -Confirm:$false 2>&1)' }
+        @{ Preference = 'Stop'; Call = 'try { $Items = @(Export-OERInventory -OutputPath ''#ROOT#'' -Include Groups -ErrorAction Stop -Confirm:$false 2>&1) } catch { $Items = @($PSItem) }' }
+    ) {
+        # A Pester mock runs under the Stop preference, so it cannot show the non-terminating shape of this refusal:
+        # the real function writes the record with the calling command's own preference, through the caller's error
+        # stream under Continue and as a terminating error under Stop. A runspace has no Pester above it, and a plain
+        # function stands in for the sign-in there. The reads below it are stubs that log a call, so an export that
+        # was NOT refused would show in the log and as a folder.
+        $Root = Join-Path $TestDrive "rs-arm-$Preference"
+        $Log = Join-Path $TestDrive "rs-arm-$Preference.log"
+        $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value {
+        [CmdletBinding()]
+        param([string]$TenantId, [switch]$IncludeARM)
+        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Failed to acquire an Azure Resource Manager token (fixture).'), 'ArmTokenAcquisitionFailed',
+                [System.Management.Automation.ErrorCategory]::AuthenticationError, 'fixture-tenant'))
+    }
+    Set-Item -Path function:script:Get-OERInventoryTenantId -Value { Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value 'TENANT' }
+    Set-Item -Path function:script:Get-OERConfiguration -Value { Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value 'CONFIG' }
+    Set-Item -Path function:script:Get-OERGroup -Value { Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value 'ROSTER' }
+    Set-Item -Path function:script:Get-OERInventoryGroup -Value {
+        Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value 'READER'
+        [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() }
+    }
+    Set-Item -Path function:script:Test-OERStructureSchema -Value { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+}
+$Items = @()
+#CALL#
+foreach ($Item in $Items) {
+    if ($Item -is [System.Management.Automation.ErrorRecord]) { "ERR:$(([string]$Item.FullyQualifiedErrorId).Split(',')[0])" }
+    elseif ($Item.PSObject.TypeNames[0] -eq 'Omnicit.EntraRBAC.InventoryBundle') { 'BUNDLE' }
+    else { "OTHER:$Item" }
+}
+'END'
+'@).Replace('#CALL#', $Call).Replace('#ROOT#', $Root.Replace("'", "''")).Replace('#LOG#', $Log.Replace("'", "''")))
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'ERR:ArmTokenAcquisitionFailed|END'
+        @($Run.Warnings).Count | Should -Be 0
+        Test-Path -LiteralPath $Root | Should -BeFalse
+        Test-Path -LiteralPath $Log | Should -BeFalse
+    }
+
+    It 'says in the help that a refused sign-in ends the export before it reads or writes anything' {
+        $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('When that sign-in is refused, or the Azure Resource Manager token it was asked for cannot be acquired, the export stops before it reads or writes anything: the sign-in''s own error is published with its own ErrorId, no bundle folder is written and no object is returned.'))
+    }
+}
+
+Describe 'Export-OERInventory (the folder is named by the granted tenant when the session names none, Sprint 11 step 10, BL-101, R-9)' {
+    # BL-101 (second point, R-9). A session signed in with no -TenantId carries the name 'organizations', which
+    # names no tenant, so the folder used to be called oer-inventory-organizations-<stamp> for every tenant an
+    # operator exports. The label is now the tenant the session names when that is not blank and not
+    # 'organizations' (letter case ignored), else the granted tenant ID the export captured, else -TenantId as
+    # given, else 'tenant'. The summary's TenantId is the same label. The mocked sign-in sets the state the way the
+    # real one does (the tenant as named, and the tenant the token was issued for). No id below is version-4 shaped.
+    BeforeAll {
+        $script:LbGranted = '55555555-5555-5555-5555-555555555555'
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        $script:LbState = $null
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            & (Get-Module Omnicit.EntraRBAC) { param($State) $script:_OERAuthState = $State } $script:LbState
+        }
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+    }
+
+    AfterAll {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+    }
+
+    It 'names the folder and the summary after <Label> when the session names <Named>, the token was issued for <Issued> and -TenantId is <Given>' -ForEach @(
+        @{ Named = 'organizations'; Issued = 'a GUID'; Given = 'not given'; Name = 'organizations'; Granted = '55555555-5555-5555-5555-555555555555'; Param = $null; Label = '55555555-5555-5555-5555-555555555555' }
+        @{ Named = 'Organizations'; Issued = 'a GUID'; Given = 'not given'; Name = 'Organizations'; Granted = '55555555-5555-5555-5555-555555555555'; Param = $null; Label = '55555555-5555-5555-5555-555555555555' }
+        @{ Named = 'ORGANIZATIONS'; Issued = 'a GUID'; Given = 'not given'; Name = 'ORGANIZATIONS'; Granted = '55555555-5555-5555-5555-555555555555'; Param = $null; Label = '55555555-5555-5555-5555-555555555555' }
+        @{ Named = 'organizations'; Issued = 'a GUID'; Given = 'a domain'; Name = 'organizations'; Granted = '55555555-5555-5555-5555-555555555555'; Param = 'fabrikam.onmicrosoft.com'; Label = '55555555-5555-5555-5555-555555555555' }
+        @{ Named = 'nothing (empty)'; Issued = 'a GUID'; Given = 'not given'; Name = ''; Granted = '55555555-5555-5555-5555-555555555555'; Param = $null; Label = '55555555-5555-5555-5555-555555555555' }
+        @{ Named = 'nothing (white space)'; Issued = 'a GUID'; Given = 'not given'; Name = '   '; Granted = '55555555-5555-5555-5555-555555555555'; Param = $null; Label = '55555555-5555-5555-5555-555555555555' }
+        @{ Named = 'nothing ($null)'; Issued = 'a GUID'; Given = 'not given'; Name = $null; Granted = '55555555-5555-5555-5555-555555555555'; Param = $null; Label = '55555555-5555-5555-5555-555555555555' }
+        @{ Named = 'a domain'; Issued = 'a GUID'; Given = 'the same domain'; Name = 'contoso.onmicrosoft.com'; Granted = '55555555-5555-5555-5555-555555555555'; Param = 'contoso.onmicrosoft.com'; Label = 'contoso.onmicrosoft.com' }
+        @{ Named = 'a domain'; Issued = 'a GUID'; Given = 'not given'; Name = 'Contoso.OnMicrosoft.com'; Granted = '55555555-5555-5555-5555-555555555555'; Param = $null; Label = 'Contoso.OnMicrosoft.com' }
+        @{ Named = 'a GUID'; Issued = 'another GUID'; Given = 'not given'; Name = '66666666-6666-6666-6666-666666666666'; Granted = '55555555-5555-5555-5555-555555555555'; Param = $null; Label = '66666666-6666-6666-6666-666666666666' }
+        @{ Named = 'organizations'; Issued = 'no tenant ID'; Given = 'a domain'; Name = 'organizations'; Granted = $null; Param = 'fabrikam.onmicrosoft.com'; Label = 'fabrikam.onmicrosoft.com' }
+        @{ Named = 'organizations'; Issued = 'a value that is no GUID'; Given = 'a domain'; Name = 'organizations'; Granted = 'not-a-guid'; Param = 'fabrikam.onmicrosoft.com'; Label = 'fabrikam.onmicrosoft.com' }
+        @{ Named = 'nothing (empty)'; Issued = 'no tenant ID'; Given = 'a domain'; Name = ''; Granted = $null; Param = 'fabrikam.onmicrosoft.com'; Label = 'fabrikam.onmicrosoft.com' }
+        @{ Named = 'organizations'; Issued = 'no tenant ID'; Given = 'not given'; Name = 'organizations'; Granted = $null; Param = $null; Label = 'tenant' }
+        @{ Named = 'nothing (empty)'; Issued = 'no tenant ID'; Given = 'not given'; Name = ''; Granted = $null; Param = $null; Label = 'tenant' }
+    ) {
+        $script:LbState = @{ TenantId = $Name; TokenTenantId = $Granted }
+        $Splat = @{ OutputPath = (Join-Path $TestDrive ('lb-' + [guid]::NewGuid().ToString('N'))); Include = @('Groups') }
+        if ($Param) { $Splat.TenantId = $Param }
+        $Result = Export-OERInventory @Splat -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        # Reach proof: the sign-in ran with the state above, and the bundle was written where the label says.
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        Test-Path -LiteralPath (Join-Path $Result.BundlePath 'inventory.json') | Should -BeTrue
+        (Split-Path $Result.BundlePath -Leaf) | Should -Match ('^oer-inventory-' + [regex]::Escape($Label) + '-\d{8}-\d{6}$')
+        $Result.TenantId | Should -BeExactly $Label
+    }
+
+    It 'labels the folder with the tenant as named when the session holds no state at all, as before' {
+        $script:LbState = $null
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'lb-nostate') -Include Groups -TenantId 'fabrikam.onmicrosoft.com' -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        (Split-Path $Result.BundlePath -Leaf) | Should -Match '^oer-inventory-fabrikam\.onmicrosoft\.com-\d{8}-\d{6}$'
+        $Result.TenantId | Should -BeExactly 'fabrikam.onmicrosoft.com'
+    }
+
+    It 'says in the help which tenant the folder is named by' {
+        $Description = ((@((Get-Help Export-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape('A session that names no tenant -- one signed in with no -TenantId, whose name is blank or ''organizations'' -- gives the tenant ID the session''s Microsoft Graph token was issued for instead (the tenantId inventory.json carries), else the -TenantId as it was given, else the word tenant; the TenantId property of the returned object is that same label.'))
+    }
+}
+
+Describe 'Export-OERInventory (the group read and the Entra ID call share one cache of principal names, Sprint 11 step 10, BL-122, R-12)' {
+    # BL-122 (second point, R-12). The principals of a group's PIM eligibility are named by the group reader, and
+    # the reviewers of an access review and the principals of a directory role section are named by the Entra ID
+    # Get-OERInventory call; the two used to keep a cache each, so a principal that stands in both was looked up
+    # twice. The export now creates ONE hashtable before its group read, hands it to the reader as
+    # -PrincipalNameCache, and puts the same object in the run context as its PrincipalNameCache member, which
+    # Get-OERInventory uses as its own. The reader is a stand-in that writes what the real one writes into the
+    # cache it is handed (the id of a principal and its name); the call is the REAL Get-OERInventory, with the
+    # readers below it mocked. No id below is version-4 shaped.
+    BeforeAll {
+        $script:PnUser = 'dddd3333-0000-0000-0000-000000000011'
+        $script:PnRole = '11111111-1111-1111-1111-111111111111'
+        # A direct, tenant-scope, permanent eligible directory role row, the shape ConvertTo-OERDirectoryRoleAssignment emits.
+        $script:PnDirRow = {
+            $Out = [PSCustomObject][ordered]@{
+                ScheduleId = 's-pn-1'; RoleDefinitionId = $script:PnRole; RoleName = 'Fixture Role A'
+                PrincipalId = $script:PnUser; PrincipalDisplayName = 'fixture'; PrincipalType = 'User'
+                DirectoryScopeId = '/'; MemberType = 'Direct'; Status = 'Provisioned'
+                StartDateTime = '2026-01-01T00:00:00Z'; EndDateTime = $null; ExpirationType = 'noExpiration'; DurationDays = $null
+            }
+            $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.EligibleDirectoryRoleAssignment')
+            $Out
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        $script:PnReaderCache = $null
+        $script:PnReaderLearns = $true
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        # The group reader: keeps the cache it was handed, and learns the principal of a PIM eligibility into it, as
+        # Get-OERInventoryGroup does for the principals it names.
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            param([hashtable]$PrincipalNameCache)
+            $script:PnReaderCache = $PrincipalNameCache
+            if ($script:PnReaderLearns) { $PrincipalNameCache[$script:PnUser] = 'person1@contoso.com' }
+            [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() }
+        }
+        Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment { & $script:PnDirRow }
+        Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { @() }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+            $Map = @{}
+            foreach ($One in @($Id)) { if ($One -eq $script:PnUser) { $Map[$One] = 'person1@contoso.com' } }
+            $Map
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'hands the very same hashtable to the group reader and to the run context, before the group read' {
+        $script:PnContextCache = $null
+        $script:PnContextMemberFound = $false
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $Context = & (Get-Module Omnicit.EntraRBAC) { $script:_OERInventoryRunContext }
+            $Member = $Context.PSObject.Properties['PrincipalNameCache']
+            $script:PnContextMemberFound = ($null -ne $Member)
+            if ($null -ne $Member) { $script:PnContextCache = $Member.Value }
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+        $null = Export-OERInventory -OutputPath (Join-Path $TestDrive 'pn-same') -Include Groups, AdministrativeUnits -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        # Reach proofs: the reader and the call both ran, and the member is on the context.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        $script:PnContextMemberFound | Should -BeTrue
+        $script:PnReaderCache | Should -BeOfType ([hashtable])
+        $script:PnContextCache | Should -BeOfType ([hashtable])
+        [object]::ReferenceEquals($script:PnReaderCache, $script:PnContextCache) | Should -BeTrue
+        # What the reader learned stands in the hashtable the call holds.
+        $script:PnContextCache[$script:PnUser] | Should -BeExactly 'person1@contoso.com'
+    }
+
+    It 'makes the hashtable even when no Groups section is read, empty, for the call to fill' {
+        $script:PnContextCache = $null
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $Context = & (Get-Module Omnicit.EntraRBAC) { $script:_OERInventoryRunContext }
+            $script:PnContextCache = $Context.PSObject.Properties['PrincipalNameCache'].Value
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+        $null = Export-OERInventory -OutputPath (Join-Path $TestDrive 'pn-nogroups') -Include AdministrativeUnits -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        $script:PnContextCache | Should -BeOfType ([hashtable])
+        $script:PnContextCache.Count | Should -Be 0
+    }
+
+    It 'does not look a principal the group read named up again in the directory role section, and writes its name' {
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'pn-shared') -Include Groups, DirectoryRoleAssignments -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        # Reach proof: the real section read the row, and wrote its principal by the name the reader learned.
+        Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+        $Inv = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.directoryRoleAssignments | ForEach-Object { $_.principal }) | Should -Be @('person1@contoso.com')
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 0
+    }
+
+    It 'looks the principal up once, in the directory role section, when the group read named nothing (the control)' {
+        $script:PnReaderLearns = $false
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'pn-control') -Include Groups, DirectoryRoleAssignments -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $Inv = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.directoryRoleAssignments | ForEach-Object { $_.principal }) | Should -Be @('person1@contoso.com')
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly
+        # What the call learned stays in the hashtable the reader was handed.
+        $script:PnReaderCache[$script:PnUser] | Should -BeExactly 'person1@contoso.com'
     }
 }

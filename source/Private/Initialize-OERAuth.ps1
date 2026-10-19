@@ -564,15 +564,16 @@ function Initialize-OERAuth {
     # PowerShell 7: a terminating error a nested advanced function raises with ThrowTerminatingError
     # stops that function, and its caller carries on with its next statement unless a try or trap is
     # active somewhere up the call stack -- with the default error preference, not only under
-    # -ErrorAction SilentlyContinue. No public cmdlet wraps its Initialize-OERAuth call, so the cmdlet
-    # still reaches Invoke-OERGraphRequest, which is why that wrapper checks the session again before
-    # every Graph call. This refusal, like every other one in this function, also leaves the sign-in
-    # latch set for the calling command (SEC (A19), at the top of this function), so that command
-    # sends nothing: the Graph wrapper's session gate, which comes before its latch gate, refuses the
-    # command's Graph calls with GraphSessionChanged while the session stays changed, and the ARM
-    # wrapper's latch gate refuses its ARM calls with SignInRefused. Unit tests cannot see the carrying
-    # on from inside Pester, whose try makes the refusal propagate; the wrappers' tests prove it in a
-    # runspace with no try.
+    # -ErrorAction SilentlyContinue. One public cmdlet wraps its Initialize-OERAuth call in a try since
+    # Sprint 11 step 10 (BL-101): Export-OERInventory, which catches the refusal, publishes the record
+    # and writes nothing. Every other public cmdlet does not, so it still reaches Invoke-OERGraphRequest,
+    # which is why that wrapper checks the session again before every Graph call. This refusal, like
+    # every other one in this function, also leaves the sign-in latch set for the calling command (SEC
+    # (A19), at the top of this function), so that command sends nothing: the Graph wrapper's session
+    # gate, which comes before its latch gate, refuses the command's Graph calls with
+    # GraphSessionChanged while the session stays changed, and the ARM wrapper's latch gate refuses its
+    # ARM calls with SignInRefused. Unit tests cannot see the carrying on from inside Pester, whose try
+    # makes the refusal propagate; the wrappers' tests prove it in a runspace with no try.
     #
     # A refused request that names another tenant, identity or cloud first drops the cached ARM token.
     # The cmdlet carries on past the refusal, as above, but since A19 the latch refuses its Azure

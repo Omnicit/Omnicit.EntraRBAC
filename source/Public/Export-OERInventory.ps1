@@ -23,7 +23,10 @@ function Export-OERInventory {
     Graph merely lists is not kept in full detail on that account. -AllGroupsDetailed keeps every
     group inventory.json covers. The cmdlet reads only -- no tenant state changes -- and
     authenticates at entry; an ARM token is acquired only when -Include names RoleAssignments or
-    RoleManagementPolicies, the two Azure sections.
+    RoleManagementPolicies, the two Azure sections. When that sign-in is refused, or the Azure Resource
+    Manager token it was asked for cannot be acquired, the export stops before it reads or writes
+    anything: the sign-in's own error is published with its own ErrorId, no bundle folder is written and
+    no object is returned.
 
     HOW THE GROUPS ARE READ. Without -AllGroupsDetailed the export decides which groups are relevant
     BEFORE it reads any group in full, so in a tenant with very many groups a group that is not
@@ -497,11 +500,14 @@ function Export-OERInventory {
     oer-inventory-<tenant>-<yyyyMMdd-HHmmss>, so inventory.json is at
     <OutputPath>/oer-inventory-<tenant>-<stamp>/inventory.json and NOT at <OutputPath>/inventory.json.
     <tenant> is the tenant as the session names it (an ID, or the domain given to -TenantId), which can
-    differ from the tenantId inside inventory.json. Because the stamp is generated per run, the only
-    reliable way to address the bundle afterwards is the BundlePath property of the returned
-    Omnicit.EntraRBAC.InventoryBundle object -- an absolute path, populated under -WhatIf too (as the
-    planned location). Capture the returned object and join onto its BundlePath rather than guessing
-    the folder name; see the Test-OERStructure example below.
+    differ from the tenantId inside inventory.json. A session that names no tenant -- one signed in with
+    no -TenantId, whose name is blank or 'organizations' -- gives the tenant ID the session's Microsoft
+    Graph token was issued for instead (the tenantId inventory.json carries), else the -TenantId as it was
+    given, else the word tenant; the TenantId property of the returned object is that same label. Because
+    the stamp is generated per run, the only reliable way to address the bundle afterwards is the
+    BundlePath property of the returned Omnicit.EntraRBAC.InventoryBundle object -- an absolute path,
+    populated under -WhatIf too (as the planned location). Capture the returned object and join onto its
+    BundlePath rather than guessing the folder name; see the Test-OERStructure example below.
 
     The full export to LLM to Test-OERStructure to Invoke-OERStructure walkthrough is documented in
     the repository at docs/inventory-to-llm/README.md, and a worked apply document is kept in the
@@ -714,13 +720,55 @@ function Export-OERInventory {
         if (@($Include | Where-Object { $_ -in @('RoleAssignments', 'RoleManagementPolicies') }).Count -gt 0) {
             $AuthParams.IncludeARM = $true
         }
-        Initialize-OERAuth @AuthParams
-        # BL-88 (A14): the tenant inventory.json names, captured here under the session this command
-        # signed in under. It is this cmdlet's own capture, never the tenantId of the inventory
-        # Get-OERInventory returns, so the document is assembled with the one value in both calls.
-        $DocumentTenantId = Get-OERInventoryTenantId
+        # Sprint 11 step 10 (BL-101, R-8): a refused sign-in writes nothing. A terminating refusal of
+        # Initialize-OERAuth ends only that function: outside any try the export carried on past the
+        # refusal, every request it then made refused by the sign-in latch, and still wrote a bundle
+        # folder of empty files with a README that named every section unread. So the call stands in a
+        # try, directly in this command's own block (a try is no script block and no nested function, so
+        # the sign-in latch is still keyed on this frame, and gate 10 of tests/QA/sourcehygiene.tests.ps1
+        # allows it), and a refusal is caught: the record is scrubbed FIRST (it can reach a token call),
+        # then published as it is -- the sign-in's own record with its own ErrorId, no new one (A9) --
+        # and the export is marked refused. Under a Stop preference WriteError ends the command here,
+        # which is the preference's meaning.
+        #
+        # ArmTokenAcquisitionFailed is the one refusal Initialize-OERAuth WRITES without terminating
+        # (it writes the error and returns, with the Graph half connected), so the catch never sees it.
+        # -ErrorVariable collects it, and the first comma segment of a record's FullyQualifiedErrorId
+        # (the ErrorId, before the ',<command>' suffix PowerShell appends) says whether it is that one:
+        # the variable also holds whatever records the inner calls of a SUCCESSFUL sign-in wrote, which are
+        # not a refusal and never mark the export, so the segment is compared whole and never searched for.
+        # That record already reached the error stream when it was written, so it is not written again. A
+        # refused export reads nothing more, never asks for the tenant ID, writes no folder and emits no
+        # object (process returns at once). Get-OERSignInRefusal is not asked for here: the latch is the
+        # transports' to read, and this decision is made on the sign-in's own outcome.
+        $SignInRefused = $false
+        $SignInErrors = $null
+        try {
+            Initialize-OERAuth @AuthParams -ErrorVariable SignInErrors
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            $SignInRefused = $true
+            $PSCmdlet.WriteError($PSItem)
+        }
+        foreach ($SignInError in @($SignInErrors)) {
+            if ($null -eq $SignInError) { continue }
+            if ([string]::Equals(([string]$SignInError.FullyQualifiedErrorId).Split(',')[0], 'ArmTokenAcquisitionFailed', [System.StringComparison]::Ordinal)) {
+                $SignInRefused = $true
+            }
+        }
+        if (-not $SignInRefused) {
+            # BL-88 (A14): the tenant inventory.json names, captured here under the session this command
+            # signed in under. It is this cmdlet's own capture, never the tenantId of the inventory
+            # Get-OERInventory returns, so the document is assembled with the one value in both calls.
+            $DocumentTenantId = Get-OERInventoryTenantId
+        }
     }
     process {
+        # Sprint 11 step 10 (BL-101, R-8): a refused sign-in (begin, above) reads nothing, writes no folder
+        # and emits no object, and says nothing else: not even the switch warnings below, which describe a
+        # read that never starts.
+        if ($SignInRefused) { return }
+
         # Sprint 11 step 10 (BL-123, R-6): a switch that has no effect is said so, once, before any read. Both
         # switches steer one section only (-AllRolePolicies the Azure role management policies,
         # -AllDirectoryRolePolicies the directory role policies), so without that section in -Include the
@@ -759,6 +807,15 @@ function Export-OERInventory {
         # lists every group the second operand matches). The guard is -SecurityEnabledOnly, which
         # keeps only the groups the read itself shows as securityEnabled, whatever the filter listed.
         $GroupRead = $null
+        # Sprint 11 step 10 (BL-122, R-12): the id to display name cache of the principals the group reader
+        # looks up (the principals of a group's PIM eligibility). It is created HERE, before the group read,
+        # handed to the reader as its -PrincipalNameCache, and put in the run context below as its
+        # PrincipalNameCache member, so the Entra ID Get-OERInventory call -- the reviewers of an access
+        # review and the principals of a directory role section -- finds a principal the reader already
+        # named in it and does not look it up again. The same hashtable object in all three places, since
+        # the reader and the call both write what they learn into it; an export that includes no Groups
+        # leaves it empty, which is what the call used to start from.
+        $PrincipalNameCache = @{}
         # The group roster is read FIRST (BL-131), before the group reader, since it is the one list of
         # every group in the tenant, of every type, and the reader counts the names groups share over
         # it: Get-OERGroupNameIndex builds the index from it with no request of its own, so a security
@@ -804,6 +861,7 @@ function Export-OERInventory {
                 ExcludeSharedName   = $true
                 SecurityEnabledOnly = $true
                 ProgressActivity    = 'Export-OERInventory'
+                PrincipalNameCache  = $PrincipalNameCache
             }
             if (-not $AllGroupsDetailed) {
                 $GroupReadParams.RelevantOnly = $true
@@ -873,9 +931,14 @@ function Export-OERInventory {
         # subscription list gave, or its one read of the subscription of a -Scope -- and every per-scope
         # Get-OERInventory call checks the subscription of its scope against it before it reads there, so
         # that check, which a standalone Get-OERInventory makes with a request, costs the export none.
+        #
+        # Sprint 11 step 10 (BL-122, R-12): one more member, PrincipalNameCache, the id to display name
+        # hashtable the group read above was handed (see where it is created). Get-OERInventory uses it as its
+        # own cache of principal names when the context is its own and the member is a dictionary.
         $RunContext = [PSCustomObject]@{
             Owner                = $MyInvocation
             GroupNameIndex       = $GroupNameIndex
+            PrincipalNameCache   = $PrincipalNameCache
             PrincipalStatus      = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             UnreadPrincipal      = [System.Collections.Generic.List[string]]::new()
             UnreadPrincipalCause = [System.Collections.Generic.List[object]]::new()
@@ -1787,7 +1850,24 @@ function Export-OERInventory {
 
         # --- Create the bundle folder ---
         $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-        $TenantLabel = if ($script:_OERAuthState -and $script:_OERAuthState.TenantId) { $script:_OERAuthState.TenantId } elseif ($TenantId) { $TenantId } else { 'tenant' }
+        # Sprint 11 step 10 (BL-101, R-9): the folder's tenant label is the tenant the session names -- an ID,
+        # or the domain given to -TenantId -- unless it names none: a blank one, or 'organizations' (letter case
+        # ignored), which Initialize-OERAuth stamps on a session that was signed in with no -TenantId and which
+        # names no tenant. A folder called oer-inventory-organizations-<stamp> tells an operator who exports
+        # tenant after tenant nothing, so the label is then the granted tenant ID this command captured in
+        # begin ($DocumentTenantId, the tenant inventory.json names), else -TenantId as it was given, else
+        # 'tenant'. The summary's TenantId is the same label.
+        $SessionTenantLabel = if ($script:_OERAuthState) { [string]$script:_OERAuthState.TenantId } else { '' }
+        $TenantLabel = if (-not [string]::IsNullOrWhiteSpace($SessionTenantLabel) -and
+            -not [string]::Equals($SessionTenantLabel, 'organizations', [System.StringComparison]::OrdinalIgnoreCase)) {
+            $SessionTenantLabel
+        } elseif ($DocumentTenantId) {
+            $DocumentTenantId
+        } elseif ($TenantId) {
+            $TenantId
+        } else {
+            'tenant'
+        }
         $FolderName = "oer-inventory-$TenantLabel-$Stamp"
         $BundlePath = Join-Path $OutputPath $FolderName
 

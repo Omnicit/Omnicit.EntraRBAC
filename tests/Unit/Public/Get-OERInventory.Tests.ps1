@@ -11257,3 +11257,147 @@ Describe 'Get-OERInventory and Invoke-OERStructure, a dynamic group round trip (
         Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0
     }
 }
+
+Describe 'Get-OERInventory uses the principal name cache of its run context (Sprint 11 step 10, BL-122, R-12)' {
+    # BL-122 (second point, R-12). Under Export-OERInventory the cache of principal names is the run context's
+    # PrincipalNameCache, the very hashtable the export handed to its group read, so a principal the reader named
+    # through a PIM eligibility is not looked up again by the reviewers of an access review or the principals of a
+    # directory role section. The context is used only while its Owner is on the call stack (as the other members
+    # are), and its member only when it is a dictionary; without either, the invocation keeps a cache of its own.
+    # The directory role section stands for the consumers, since it names a user through the cache with one mocked
+    # lookup. No id below is version-4 shaped.
+    BeforeAll {
+        $script:PnUser = 'dddd3333-0000-0000-0000-000000000021'
+        $script:PnRole = '11111111-1111-1111-1111-111111111111'
+        # A direct, tenant-scope, permanent eligible row, the shape ConvertTo-OERDirectoryRoleAssignment emits.
+        function script:New-PnDirRow {
+            $Out = [PSCustomObject][ordered]@{
+                ScheduleId = 's-pn-1'; RoleDefinitionId = $script:PnRole; RoleName = 'Fixture Role A'
+                PrincipalId = $script:PnUser; PrincipalDisplayName = 'fixture'; PrincipalType = 'User'
+                DirectoryScopeId = '/'; MemberType = 'Direct'; Status = 'Provisioned'
+                StartDateTime = '2026-01-01T00:00:00Z'; EndDateTime = $null; ExpirationType = 'noExpiration'; DurationDays = $null
+            }
+            $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.EligibleDirectoryRoleAssignment')
+            $Out
+        }
+        # Stands in for Export-OERInventory: makes the run context owned by its OWN invocation, the way the export
+        # does, adds the members given on top of the ones every context carries, calls Get-OERInventory -Times
+        # times from inside itself, and hands back the context and what the calls returned. Get-OERInventory runs
+        # one frame below this function, so the Owner is a frame of its call stack. -Include is passed through.
+        function script:Invoke-PnAsExport {
+            [CmdletBinding()]
+            param([hashtable]$Member = @{}, [int]$Times = 1, [string[]]$Include = @('DirectoryRoleAssignments'))
+            $Context = [PSCustomObject]@{
+                Owner                = $MyInvocation
+                GroupNameIndex       = $null
+                PrincipalStatus      = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                UnreadPrincipal      = [System.Collections.Generic.List[string]]::new()
+                UnreadPrincipalCause = [System.Collections.Generic.List[object]]::new()
+            }
+            foreach ($Name in $Member.Keys) { $Context | Add-Member -NotePropertyName $Name -NotePropertyValue $Member[$Name] }
+            & (Get-Module $script:moduleName) { param($Context) $script:_OERInventoryRunContext = $Context } $Context
+            $Inventory = foreach ($Call in 1..$Times) { Get-OERInventory -Include $Include -ErrorAction Stop -WarningAction SilentlyContinue }
+            [PSCustomObject]@{ Context = $Context; Inventory = @($Inventory) }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        $script:PnGroupReaderCache = $null
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment { New-PnDirRow }
+        Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { @() }
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup {
+            param([hashtable]$PrincipalNameCache)
+            $script:PnGroupReaderCache = $PrincipalNameCache
+            [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+            $Map = @{}
+            foreach ($One in @($Id)) { if ($One -eq $script:PnUser) { $Map[$One] = 'person1@contoso.com' } }
+            $Map
+        }
+        # Nothing here may reach the transport.
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected transport call: $Uri" }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'reads a principal the context''s cache already names from it, looks nothing up, and writes the name' {
+        $Cache = @{ $script:PnUser = 'person1@contoso.com' }
+        $Run = Invoke-PnAsExport -Member @{ PrincipalNameCache = $Cache }
+        # Reach proof: the section read the row and wrote its principal.
+        Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+        @($Run.Inventory[0].directoryRoleAssignments | ForEach-Object { $_.principal }) | Should -Be @('person1@contoso.com')
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 0
+    }
+
+    It 'looks a principal the cache does not hold up once, leaves its name in the context''s own hashtable, and does not look it up again in the next call' {
+        $Cache = @{}
+        $Run = Invoke-PnAsExport -Member @{ PrincipalNameCache = $Cache } -Times 2
+        # Reach proof: both calls wrote the principal by its name.
+        @($Run.Inventory).Count | Should -Be 2
+        @($Run.Inventory[0].directoryRoleAssignments | ForEach-Object { $_.principal }) | Should -Be @('person1@contoso.com')
+        @($Run.Inventory[1].directoryRoleAssignments | ForEach-Object { $_.principal }) | Should -Be @('person1@contoso.com')
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly
+        $Cache[$script:PnUser] | Should -BeExactly 'person1@contoso.com'
+        [object]::ReferenceEquals($Run.Context.PrincipalNameCache, $Cache) | Should -BeTrue
+    }
+
+    It 'hands the context''s hashtable to the group reader of the Groups section' {
+        $Cache = @{}
+        $null = Invoke-PnAsExport -Member @{ PrincipalNameCache = $Cache } -Include @('Groups')
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryGroup -Times 1 -Exactly
+        [object]::ReferenceEquals($script:PnGroupReaderCache, $Cache) | Should -BeTrue
+    }
+
+    It 'keeps a cache of its own when the context''s PrincipalNameCache is <Case>, and the context is left as it was' -ForEach @(
+        @{ Case = 'missing'; Member = @{ } }
+        @{ Case = 'null'; Member = @{ PrincipalNameCache = $null } }
+        @{ Case = 'a string'; Member = @{ PrincipalNameCache = 'not a dictionary' } }
+        @{ Case = 'an array'; Member = @{ PrincipalNameCache = @('a', 'b') } }
+    ) {
+        $Run = Invoke-PnAsExport -Member $Member -Times 2
+        # Reach proof: both calls wrote the principal by its name, so each looked it up through a cache of its own.
+        @($Run.Inventory[0].directoryRoleAssignments | ForEach-Object { $_.principal }) | Should -Be @('person1@contoso.com')
+        @($Run.Inventory[1].directoryRoleAssignments | ForEach-Object { $_.principal }) | Should -Be @('person1@contoso.com')
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 2 -Exactly
+        # What the context carried is what it still carries.
+        if ($Member.ContainsKey('PrincipalNameCache')) {
+            [object]::ReferenceEquals($Run.Context.PrincipalNameCache, $Member['PrincipalNameCache']) | Should -BeTrue
+        } else {
+            $Run.Context.PSObject.Properties.Name | Should -Not -Contain 'PrincipalNameCache'
+        }
+    }
+
+    It 'ignores the cache of a run context whose <Case>, looks the principal up for itself, and writes nothing into it' -ForEach @(
+        @{ Case = 'Owner is a command that has finished'; Owned = $true }
+        @{ Case = 'Owner is missing'; Owned = $false }
+    ) {
+        # What an export that was stopped leaves behind: a context no call stack carries the owner of.
+        $Stale = @{}
+        & (Get-Module $script:moduleName) {
+            param($Stale, $Owned)
+            function Get-FinishedInvocation { $MyInvocation }
+            $Context = [PSCustomObject]@{ PrincipalNameCache = $Stale }
+            if ($Owned) { $Context | Add-Member -NotePropertyName Owner -NotePropertyValue (Get-FinishedInvocation) }
+            $script:_OERInventoryRunContext = $Context
+        } $Stale $Owned
+        $Inv = Get-OERInventory -Include DirectoryRoleAssignments -ErrorAction Stop
+        @($Inv.directoryRoleAssignments | ForEach-Object { $_.principal }) | Should -Be @('person1@contoso.com')
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly
+        $Stale.Count | Should -Be 0
+    }
+
+    It 'shares nothing between two standalone calls, and leaves no run context behind' {
+        $First = Get-OERInventory -Include DirectoryRoleAssignments -ErrorAction Stop
+        $Second = Get-OERInventory -Include DirectoryRoleAssignments -ErrorAction Stop
+        @($First.directoryRoleAssignments).Count | Should -Be 1
+        @($Second.directoryRoleAssignments).Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 2 -Exactly
+        $null -eq (& (Get-Module $script:moduleName) { $script:_OERInventoryRunContext }) | Should -BeTrue
+    }
+}

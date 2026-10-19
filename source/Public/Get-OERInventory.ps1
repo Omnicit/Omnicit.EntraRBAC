@@ -551,7 +551,10 @@ function Get-OERInventory {
         $DocumentTenantId = Get-OERInventoryTenantId
     }
     process {
-        $PrincipalNameCache = @{}   # per-invocation id -> name cache (Groups eligibility + AccessReviews reviewers)
+        # Per-invocation id -> name cache (Groups eligibility + AccessReviews reviewers + directory role principals).
+        # Under Export-OERInventory it is replaced, once the run context is read below, by the context's own
+        # PrincipalNameCache (Sprint 11 step 10, BL-122, R-12).
+        $PrincipalNameCache = @{}
         $Groups                 = [System.Collections.Generic.List[object]]::new()
         $AdministrativeUnits    = [System.Collections.Generic.List[object]]::new()
         $Catalogs               = [System.Collections.Generic.List[object]]::new()
@@ -720,6 +723,21 @@ function Get-OERInventory {
                     $RunContext = $RunContextFound
                     break
                 }
+            }
+        }
+        # Sprint 11 step 10 (BL-122, R-12): under Export-OERInventory the cache of principal names is the run
+        # context's PrincipalNameCache, the very hashtable the export handed to its group read, so a principal
+        # the group reader named through a PIM eligibility is not looked up again by the reviewers of an access
+        # review or by the principals of a directory role section; what this call learns stays there for the
+        # calls after it. Read through PSObject.Properties, as SubscriptionTenant is below, so a context
+        # without the member -- an older shape, a test fixture's -- reads as none, and the member is used only
+        # when it is a dictionary. Without a context of its own the invocation keeps the hashtable it made at
+        # the top of this block, as it always did, and nothing outlives the call. It stands before the first
+        # reader of the cache (the Groups section's call of Get-OERInventoryGroup, below).
+        if ($null -ne $RunContext) {
+            $PrincipalNameCacheMember = $RunContext.PSObject.Properties['PrincipalNameCache']
+            if ($null -ne $PrincipalNameCacheMember -and $PrincipalNameCacheMember.Value -is [System.Collections.IDictionary]) {
+                $PrincipalNameCache = $PrincipalNameCacheMember.Value
             }
         }
         # Sprint 11 step 6 (BL-133, A18): where the RoleAssignments section keeps what it learns about a
