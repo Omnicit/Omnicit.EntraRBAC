@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 1.3.0. A preview published from this point differs from 1.3.0 only
-in documentation, tests or the build.
+More failed inventory reads are now reported. `Get-OERInventory` names a failed role assignment or
+role management policy read as unread through `InventoryPartial` (a `-CommonRoles` role it cannot
+read is still skipped with a warning), and refuses a `-Scope`, `-Subscription` or `-ManagementGroup`
+of white space. `Export-OERInventory` reports a stopped Azure eligibility, Lighthouse or policy
+selection read, warns when `-AllRolePolicies` or `-AllDirectoryRolePolicies` has no section to act
+on, writes no bundle when its own sign-in is refused, and writes members, owners and eligibility in
+one fixed order. A dynamic group's members are written as null and left to its rule, so a `-Prune`
+plan of the export shows no member row for it.
 
 ## [1.3.0] - 2026-10-19
 
