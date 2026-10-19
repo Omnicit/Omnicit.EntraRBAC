@@ -186,8 +186,9 @@ function Get-OERInventory {
     for, by the tenantId Azure Resource Manager returns for the subscription: the rule
     Export-OERInventory's Azure walk and Invoke-OERStructure apply too. The subscription is checked once
     per call, before either section reads anything, with one read of it (a subscription named by its
-    display name also costs one read of the subscription list); with both -Scope and -Subscription,
-    each is checked. The Azure Resource Manager token that read needs is acquired in the command's
+    display name also costs one read of the subscription list, which only the check makes: both sections
+    then read with the subscription ID the check found, never with the name); with both -Scope and
+    -Subscription, each is checked. The Azure Resource Manager token that read needs is acquired in the command's
     sign-in, as -IncludeARM does, whenever RoleAssignments, or RoleManagementPolicies with exactly one
     of -Role, -CommonRoles and -AllRolesAtScope, is included with a -Scope or a -Subscription. A -Scope
     at a management group or the root scope '/', and a -ManagementGroup, lie
@@ -207,6 +208,15 @@ function Get-OERInventory {
     tenant with SubscriptionTenantMismatch. A role assignment row that an inventory of a subscription
     carries at a management group above it, read at the subscription as inherited, lies in no
     subscription and is not checked: Invoke-OERStructure applies it like any management group row.
+    A RoleAssignments or RoleManagementPolicies read that fails -- the scope is invalid, a role does not
+    resolve or has no policy, or Azure Resource Manager refuses or fails the read -- is reported through
+    the same InventoryPartial error by the section's own name (roleAssignments, roleManagementPolicies)
+    with the reader's message as its cause, and the section is written empty, which does not mean the
+    scope has none. The section is read whole or not at all: with -Role A,B, where the read for B fails,
+    the policy of A is not written either. The reader's own error is not written to the caller's error
+    stream beside it, and no warning is written for it. With -CommonRoles the reader still skips a
+    curated role that does not exist in the subscription, with its own warning; that skip is not a
+    failed read and is not reported through InventoryPartial.
     A role assignment at the Azure root scope '/', above every management group and subscription in
     the tenant, is left out of the RoleAssignments section: it is elevated
     access, a finding to review rather than part of the RBAC model a document describes, and
@@ -378,15 +388,19 @@ function Get-OERInventory {
 
     .PARAMETER Scope
     A raw ARM scope for the Azure sections (e.g. '/subscriptions/{id}'). A scope in a subscription of
-    another tenant, or in one whose tenant could not be told, is not read (see above).
+    another tenant, or in one whose tenant could not be told, is not read (see above). An empty or white
+    space value is refused at parameter binding.
 
     .PARAMETER Subscription
     A subscription GUID or display name for the Azure sections. A subscription of another tenant, or
-    one whose tenant could not be told, is not read (see above).
+    one whose tenant could not be told, is not read (see above). A display name is resolved once, by the
+    subscription check, and the sections read with the subscription ID it found. An empty or white space
+    value is refused at parameter binding.
 
     .PARAMETER ManagementGroup
     A management group name or display name for the Azure sections. A management group lies in no
-    subscription, so it is read without that check.
+    subscription, so it is read without that check. An empty or white space value is refused at
+    parameter binding.
 
     .PARAMETER Role
     One or more roles (display name, GUID, or full ARM id) whose role management policy to read.
@@ -454,8 +468,26 @@ function Get-OERInventory {
         [string]$GroupFilter,
         [string]$Catalog,
         [string]$AccessReviewFilter,
+        # Sprint 11 step 10 (BL-155): a -Scope, -Subscription or -ManagementGroup of white space only is
+        # refused here, at binding, as an empty one is (the same BL-96 pattern as Export-OERInventory's
+        # -GroupFilter and New-OERConfiguration's -TenantId). Before this, '   ' passed the sections' own
+        # `if ($Scope)` tests (a string of spaces is true) and reached the Azure readers, while the
+        # subscription check and the sign-in's ARM term treat it as no scope at all, so one parameter was
+        # given and not given at once. The module supports PowerShell 7.2, which has no [ValidateNotNullOrWhiteSpace()] (7.4+), so the
+        # same test runs as a script. Declared ABOVE [ValidateNotNullOrEmpty()] on purpose: validation
+        # attributes run in reverse declaration order (measured), so an empty or null value still reads the
+        # NotNullOrEmpty message and white space reads this one. Neither parameter moves: positional binding
+        # follows declaration order.
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The Scope consists only of white space. Pass an Azure Resource Manager scope, or leave the parameter out.')]
+        [ValidateNotNullOrEmpty()]
         [string]$Scope,
+        # BL-155: as -Scope.
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The Subscription consists only of white space. Pass a subscription ID or display name, or leave the parameter out.')]
+        [ValidateNotNullOrEmpty()]
         [string]$Subscription,
+        # BL-155: as -Scope.
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The ManagementGroup consists only of white space. Pass a management group name or ID, or leave the parameter out.')]
+        [ValidateNotNullOrEmpty()]
         [string]$ManagementGroup,
         [string[]]$Role,
         [switch]$CommonRoles,
@@ -717,38 +749,65 @@ function Get-OERInventory {
         # Kept in a holder, since a local function cannot assign a variable of this block. Foreign holds the
         # verdicts whose subscription is another tenant's: their SubscriptionTenantMismatch records are
         # written once, after the inventory object, however many sections were refused.
-        $SubscriptionCheck = @{ Decided = $false; Verdicts = @(); Foreign = @() }
+        #
+        # Sprint 11 step 10 (BL-155, R-4): SubscriptionId is the id the check itself resolved for -Subscription,
+        # when that verdict is Home. A -Subscription given by its display name costs the check one read of the
+        # subscription list; the two readers resolve a display name through the same list, once each, and
+        # that resolution is a second decision about WHICH subscription the name means, made after the check
+        # had shown one subscription to be the session tenant's own. So the readers are handed the id the
+        # check decided on (Resolve-OERScope takes a GUID as it is, with no list read), never the name
+        # (docs/development/rationale.md#home-tenant-subscriptions, "Sprint 11 step 10").
+        $SubscriptionCheck = @{ Decided = $false; Verdicts = @(); Foreign = @(); SubscriptionId = $null }
         # Returns $true when the section may read as it always has (every checked scope is Home or
         # NoSubscription, or none was checked), and $false otherwise, when it reads nothing and writes no
         # row: for a Foreign verdict the refusal is recorded once, and the section is not unread (it is a
         # refusal, not a failed read); for an Undecided one, with no Foreign verdict, the section is named
         # unread under its own name, with the verdict's reason as its cause, so InventoryPartial names it.
+        # A Home verdict for -Subscription that carries no SubscriptionId is Undecided here too (R-4): the
+        # readers would otherwise have to be handed the name, which is exactly what this decision replaces.
         function Test-SubscriptionInSessionTenant {
             param([string]$Section)
             if (-not $SubscriptionCheck.Decided) {
                 $SubscriptionCheck.Decided = $true
                 $SubscriptionCheck.Verdicts = @(
                     if (-not [string]::IsNullOrWhiteSpace($Scope)) {
-                        [PSCustomObject]@{ Given = $Scope; Verdict = (Get-OERSubscriptionHomeTenant -Scope $Scope -Cache $SubscriptionTenantCache) }
+                        [PSCustomObject]@{ Given = $Scope; IsSubscription = $false; Verdict = (Get-OERSubscriptionHomeTenant -Scope $Scope -Cache $SubscriptionTenantCache) }
                     }
                     if (-not [string]::IsNullOrWhiteSpace($Subscription)) {
                         $SubscriptionScope = "sub:$Subscription"
-                        [PSCustomObject]@{ Given = $SubscriptionScope; Verdict = (Get-OERSubscriptionHomeTenant -Scope $SubscriptionScope -Cache $SubscriptionTenantCache) }
+                        [PSCustomObject]@{ Given = $SubscriptionScope; IsSubscription = $true; Verdict = (Get-OERSubscriptionHomeTenant -Scope $SubscriptionScope -Cache $SubscriptionTenantCache) }
                     }
                 )
                 $SubscriptionCheck.Foreign = @($SubscriptionCheck.Verdicts | Where-Object { [string]$_.Verdict.Verdict -eq 'Foreign' } | ForEach-Object { $_.Verdict })
+                $SubscriptionVerdict = @($SubscriptionCheck.Verdicts | Where-Object { $_.IsSubscription })[0]
+                if ($null -ne $SubscriptionVerdict -and [string]$SubscriptionVerdict.Verdict.Verdict -eq 'Home' -and
+                    -not [string]::IsNullOrWhiteSpace([string]$SubscriptionVerdict.Verdict.SubscriptionId)) {
+                    $SubscriptionCheck.SubscriptionId = [string]$SubscriptionVerdict.Verdict.SubscriptionId
+                }
             }
             if ($SubscriptionCheck.Foreign.Count -gt 0) {
                 Write-Verbose "Get-OERInventory: $Section was not read: $(@($SubscriptionCheck.Foreign | ForEach-Object { [string]$_.Reason }) -join '; ')."
                 return $false
             }
-            $Undecided = @($SubscriptionCheck.Verdicts | Where-Object { [string]$_.Verdict.Verdict -notin @('Home', 'NoSubscription') })
+            # An id-less answer for -Subscription is Undecided whether it says Home or NoSubscription (the
+            # owner never answers NoSubscription for 'sub:<value>', so the second is a stand-in's answer):
+            # neither leaves an id the readers can be handed.
+            $Undecided = @($SubscriptionCheck.Verdicts | Where-Object {
+                    $Kind = [string]$_.Verdict.Verdict
+                    $Kind -notin @('Home', 'NoSubscription') -or
+                    ($_.IsSubscription -and [string]::IsNullOrWhiteSpace([string]$_.Verdict.SubscriptionId))
+                })
             if ($Undecided.Count -gt 0) {
                 foreach ($One in $Undecided) {
                     # The reason of a failed read ends in that read's own message, which may end with a period,
                     # and the causes clause and the verbose line add their own: trimmed here, so neither ends in
-                    # '..'. The owner's Reason itself is left as it is.
-                    $UndecidedCause = ([string]$One.Verdict.Reason).TrimEnd().TrimEnd('.')
+                    # '..'. The owner's Reason itself is left as it is. A Home verdict has no Reason, so the
+                    # id-less case says what is missing instead.
+                    $UndecidedCause = if ([string]$One.Verdict.Verdict -in @('Home', 'NoSubscription')) {
+                        "the subscription check gave no subscription id for '$($One.Given)', so the subscription cannot be read by its id"
+                    } else {
+                        ([string]$One.Verdict.Reason).TrimEnd().TrimEnd('.')
+                    }
                     Write-Verbose "Get-OERInventory: $Section was not read: $UndecidedCause."
                     Add-UnreadCause -Cause $UndecidedCause -Target ([string]$One.Given)
                 }
@@ -1545,9 +1604,34 @@ function Get-OERInventory {
             else {
                 $RaParams = @{ ResolveNames = $true }
                 if ($Scope) { $RaParams.Scope = $Scope }
-                if ($Subscription) { $RaParams.Subscription = $Subscription }
+                # Sprint 11 step 10 (BL-155, R-4): the id the subscription check decided on, never the name as
+                # given (Test-SubscriptionInSessionTenant has just made sure it is there).
+                if ($Subscription) { $RaParams.Subscription = $SubscriptionCheck.SubscriptionId }
                 if ($ManagementGroup) { $RaParams.ManagementGroup = $ManagementGroup }
-                $RaItems = @(Get-OERRoleAssignment @RaParams)
+                # Sprint 11 step 10 (BL-34, BL-155, R-3): a role assignment read that FAILED is an unread
+                # section, never a fact. Before this the read ran under the caller's own preference, so a
+                # failure either left its record on the caller's stream beside a RoleAssignments section that
+                # was written empty with nothing to say it could not be read, or ended the whole call under a
+                # caller's Stop. -ErrorAction Stop turns the reader's non-terminating records (InvalidScope,
+                # AmbiguousFilter, the ARM read's own) into the one exception caught here, and the assignment
+                # inside the try gets none of what the reader wrote before it failed: the section is read
+                # whole or not at all. The record is scrubbed first, then folded into the cause and not
+                # republished -- the catalog list's form -- and the section is named unread by its own name, so
+                # InventoryPartial carries it with the reason. No warning is written (R-3): the partial error
+                # is the report, after the inventory object. A section read nothing from is written empty, and
+                # the code below reads nothing more for it: no principal lookup, and no root-scope or
+                # undeclarable-scope notice for this call, since there is no row to name in one. Export's
+                # per-scope call passes -ErrorAction Stop, so the InventoryPartial this writes still makes the
+                # export skip the scope, as a failed read always did
+                # (docs/development/rationale.md#unresolved-principals, "A failed Azure read is an unread section").
+                $RaItems = @()
+                try {
+                    $RaItems = @(Get-OERRoleAssignment @RaParams -ErrorAction Stop)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $RaItems = @()
+                    Add-UnreadSection -Key 'roleAssignments' -Cause "Could not read role assignments: $($PSItem.Exception.Message)"
+                }
 
                 # Sprint 11 step 6 (BL-133, A18): the principals are looked up with
                 # Resolve-OERPrincipalName -Detailed, one batched lookup per call, into this section's
@@ -2413,14 +2497,34 @@ function Get-OERInventory {
             else {
                 $ScopeParams = @{}
                 if ($Scope) { $ScopeParams.Scope = $Scope }
-                if ($Subscription) { $ScopeParams.Subscription = $Subscription }
+                # Sprint 11 step 10 (BL-155, R-4): the id the subscription check decided on, never the name as
+                # given, as for RoleAssignments above.
+                if ($Subscription) { $ScopeParams.Subscription = $SubscriptionCheck.SubscriptionId }
                 if ($ManagementGroup) { $ScopeParams.ManagementGroup = $ManagementGroup }
 
-                $Policies = @(
-                    if ($CommonRoles) { Get-OERRoleManagementPolicy -CommonRoles @ScopeParams }
-                    elseif ($AllRolesAtScope) { Get-OERRoleManagementPolicy -AllRolesAtScope @ScopeParams }
-                    else { foreach ($R in $Role) { Get-OERRoleManagementPolicy -Role $R @ScopeParams } }
-                )
+                # Sprint 11 step 10 (BL-34, BL-155, R-3): as for RoleAssignments above, a failed policy read is an
+                # unread section. Every Get-OERRoleManagementPolicy call carries -ErrorAction Stop and the whole
+                # read stands in ONE try, so the first failure -- a role that does not resolve
+                # (RoleDefinitionNotFound), no policy for it (PolicyNotFound), an invalid scope, a failed role
+                # enumeration, the ARM read's own record -- ends it, and the assignment gets none of the policies
+                # read before it: under -Role A,B where B fails, A's policy is not written either. The section is
+                # read whole or not at all, and an unread section is never a half-read one that states a subset as
+                # if it were the whole. The record is scrubbed and folded into the cause, not republished, and no
+                # warning is written. -CommonRoles is deliberately left as it is: the reader SKIPS a curated role
+                # that does not exist in the subscription with a warning of its own and carries on (it is not an
+                # error), so that skip is neither a failure here nor named unread.
+                $Policies = @()
+                try {
+                    $Policies = @(
+                        if ($CommonRoles) { Get-OERRoleManagementPolicy -CommonRoles @ScopeParams -ErrorAction Stop }
+                        elseif ($AllRolesAtScope) { Get-OERRoleManagementPolicy -AllRolesAtScope @ScopeParams -ErrorAction Stop }
+                        else { foreach ($R in $Role) { Get-OERRoleManagementPolicy -Role $R @ScopeParams -ErrorAction Stop } }
+                    )
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $Policies = @()
+                    Add-UnreadSection -Key 'roleManagementPolicies' -Cause "Could not read role management policies: $($PSItem.Exception.Message)"
+                }
                 $RmpSeen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 foreach ($Rmp in $Policies) {
                     # ConvertTo-OERInventoryRoleManagementPolicy owns the entry shape, shared with the

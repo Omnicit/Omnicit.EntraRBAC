@@ -70,10 +70,22 @@ BeforeAll {
     # lies in the session tenant's own subscription, so every such fixture reads as it did before the check
     # existed. The Describe 'Get-OERInventory stays out of another tenant''s subscriptions (BL-152, A20)'
     # does not, and drives the real owner through the transport.
+    #
+    # Sprint 11 step 10 (BL-155, R-4): the readers are handed the subscription ID the check returned for a
+    # -Subscription, never the name, and a Home verdict without a SubscriptionId is Undecided. So a given
+    # 'sub:<value>' is answered with an id like the real owner's: the value itself when it is a GUID, and
+    # $script:NewHomeSubscriptionId (the id the Describes below use) for a name such as 'Prod'. A -Scope is
+    # answered as before, with none.
+    $script:NewHomeSubscriptionId = 'aaaa1111-0000-0000-0000-000000000001'
     $script:NewHomeVerdict = {
         param([string]$GivenScope)
+        $HomeSubscriptionId = $null
+        if ($GivenScope -match '^sub:(.+)$') {
+            $Parsed = [guid]::Empty
+            $HomeSubscriptionId = if ([guid]::TryParse($Matches[1], [ref]$Parsed)) { $Matches[1] } else { $script:NewHomeSubscriptionId }
+        }
         [PSCustomObject]@{
-            Scope = $GivenScope; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'
+            Scope = $GivenScope; SubscriptionId = $HomeSubscriptionId; DisplayName = $null; Verdict = 'Home'
             HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null
         }
     }
@@ -3091,9 +3103,12 @@ Describe 'Get-OERInventory' {
             @($ra.PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType')
         }
 
-        It 'requests resolved names from Get-OERRoleAssignment' {
+        It 'requests resolved names from Get-OERRoleAssignment, for the subscription ID the check returned and not the name given (BL-155, R-4)' {
             Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM | Out-Null
-            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -ParameterFilter { $ResolveNames -eq $true -and $Subscription -eq 'Prod' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                $ResolveNames -eq $true -and $Subscription -ceq 'aaaa1111-0000-0000-0000-000000000001'
+            }
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0 -ParameterFilter { $Subscription -ceq 'Prod' }
         }
 
         It 'emits principalType for a service principal (D7)' {
@@ -9448,7 +9463,8 @@ Describe 'Get-OERInventory help documents the subscriptions of another tenant (B
         # The A19 text that said it read any scope is gone.
         $Description | Should -Not -Match ([regex]::Escape("it does not check a subscription's home tenant"))
         $Description | Should -Match ([regex]::Escape("The RoleAssignments and RoleManagementPolicies sections read a -Scope or a -Subscription only when the subscription it lies in belongs to the tenant the session's Microsoft Graph token was issued for, by the tenantId Azure Resource Manager returns for the subscription: the rule Export-OERInventory's Azure walk and Invoke-OERStructure apply too."))
-        $Description | Should -Match ([regex]::Escape('The subscription is checked once per call, before either section reads anything, with one read of it (a subscription named by its display name also costs one read of the subscription list); with both -Scope and -Subscription, each is checked.'))
+        # BL-155 (R-4): the list is read once, by the check; the sections read with the id it found.
+        $Description | Should -Match ([regex]::Escape('The subscription is checked once per call, before either section reads anything, with one read of it (a subscription named by its display name also costs one read of the subscription list, which only the check makes: both sections then read with the subscription ID the check found, never with the name); with both -Scope and -Subscription, each is checked.'))
         $Description | Should -Match ([regex]::Escape("A -Scope at a management group or the root scope '/', and a -ManagementGroup, lie in no subscription and are read as before."))
         $Description | Should -Match ([regex]::Escape('is not read: each included section is written empty, and one non-terminating SubscriptionTenantMismatch error, written after the inventory object, names the scope and the tenant, however many of the two sections were included; with both -Scope and -Subscription in subscriptions of another tenant, that one error names the -Scope. The inventory is not reported partial for it.'))
         # R-9: the ARM token the check's read needs is acquired in the sign-in.
@@ -9468,6 +9484,19 @@ Describe 'Get-OERInventory help documents the subscriptions of another tenant (B
         $ParamText.Scope | Should -Match ([regex]::Escape('A scope in a subscription of another tenant, or in one whose tenant could not be told, is not read (see above).'))
         $ParamText.Subscription | Should -Match ([regex]::Escape('A subscription of another tenant, or one whose tenant could not be told, is not read (see above).'))
         $ParamText.ManagementGroup | Should -Match ([regex]::Escape('A management group lies in no subscription, so it is read without that check.'))
+        # BL-155: each of the three says an empty or white space value is refused at binding, and -Subscription
+        # says its display name is resolved once, by the check.
+        foreach ($Name in 'Scope', 'Subscription', 'ManagementGroup') {
+            $ParamText[$Name] | Should -Match ([regex]::Escape('An empty or white space value is refused at parameter binding.'))
+        }
+        $ParamText.Subscription | Should -Match ([regex]::Escape('A display name is resolved once, by the subscription check, and the sections read with the subscription ID it found.'))
+    }
+
+    It 'says that a failed Azure section read is reported through InventoryPartial by the section''s name, with the section written empty, read whole or not at all (BL-34, BL-155)' {
+        $Description = ((@((Get-Help Get-OERInventory -Full).Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape("A RoleAssignments or RoleManagementPolicies read that fails -- the scope is invalid, a role does not resolve or has no policy, or Azure Resource Manager refuses or fails the read -- is reported through the same InventoryPartial error by the section's own name (roleAssignments, roleManagementPolicies) with the reader's message as its cause, and the section is written empty, which does not mean the scope has none."))
+        $Description | Should -Match ([regex]::Escape('The section is read whole or not at all: with -Role A,B, where the read for B fails, the policy of A is not written either.'))
+        $Description | Should -Match ([regex]::Escape("The reader's own error is not written to the caller's error stream beside it, and no warning is written for it. With -CommonRoles the reader still skips a curated role that does not exist in the subscription, with its own warning; that skip is not a failed read and is not reported through InventoryPartial."))
     }
 
     It 'says when the ARM token is acquired in the sign-in without -IncludeARM, and when the Azure sections still acquire it on first use (R-9)' {
@@ -9877,7 +9906,9 @@ Describe 'Get-OERInventory asks for the ARM token in its sign-in when it checks 
     # ArmTokenAcquisitionFailed, as the real one does, while the state holds none. The rows pinned below are the
     # rows the same calls returned before the check, and the requests are the ones they sent then with the
     # check's subscription GET (and, for a display name, its subscription list) before them -- measured with
-    # these calls on a dev-mode import of the code before the check. No id below is version-4 shaped.
+    # these calls on a dev-mode import of the code before the check; since Sprint 11 step 10 (BL-155, R-4) a
+    # display name costs that one list read and no more, since the readers are handed the id the check found.
+    # No id below is version-4 shaped.
     BeforeAll {
         $script:AtSub = 'aaaa1111-0000-0000-0000-000000000001'
         $script:AtGet = '/subscriptions/aaaa1111-0000-0000-0000-000000000001?api-version=2022-12-01'
@@ -9977,15 +10008,16 @@ Describe 'Get-OERInventory asks for the ARM token in its sign-in when it checks 
                 '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/bbbb8888-0000-0000-0000-000000000001?api-version=2022-04-01'
                 '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleManagementPolicyAssignments?api-version=2020-10-01'
             ) }
+        # BL-155 (R-4): the subscription list is read ONCE, by the check. Before Sprint 11 step 10 each of the two
+        # readers resolved the display name through the list again (three list reads, '/subscriptions?...', in
+        # all); they are now handed the subscription ID the check found, which Resolve-OERScope takes as it is.
         @{ Name = 'a -Subscription given by its display name'; Splat = @{ Subscription = 'Customer' }
             ReadScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
             Paths = @(
                 '/subscriptions?api-version=2022-12-01'
                 '/subscriptions/aaaa1111-0000-0000-0000-000000000001?api-version=2022-12-01'
-                '/subscriptions?api-version=2022-12-01'
                 '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01'
                 '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/bbbb8888-0000-0000-0000-000000000001?api-version=2022-04-01'
-                '/subscriptions?api-version=2022-12-01'
                 '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleManagementPolicyAssignments?api-version=2020-10-01'
             ) }
     ) {
@@ -10027,8 +10059,10 @@ Describe 'Get-OERInventory asks for the ARM token in its sign-in when it checks 
 
     It 'does not ask for the token in the sign-in when <Name>' -ForEach @(
         @{ Name = 'no section that reads a subscription is included'; Splat = @{ Include = @('Groups'); Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'; Subscription = 'Customer' } }
-        @{ Name = 'the -Scope is blank'; Splat = @{ Include = @('RoleAssignments'); Scope = '   ' } }
-        @{ Name = 'the -Subscription is blank'; Splat = @{ Include = @('RoleManagementPolicies'); Subscription = '   ' } }
+        # The two cases this list held for a blank -Scope and a blank -Subscription are gone (Sprint 11 step 10,
+        # BL-155): a value of white space only is refused at parameter binding now, so neither can reach begin.
+        # The Describe 'Get-OERInventory refuses an empty or white space -Scope, -Subscription and
+        # -ManagementGroup at parameter binding (BL-155)' holds the refusal, and that nothing signs in.
     ) {
         $null = Invoke-AtInventory -Splat $Splat
         # Reach proof: the command signed in, and its own sign-in, the first, asked for no ARM token.
@@ -10089,5 +10123,429 @@ Describe 'Get-OERInventory asks for the ARM token in its sign-in when it checks 
         @($InvWarn | ForEach-Object { [string]$_.Message }) | Should -Be @('RoleManagementPolicies requires -Role, -CommonRoles, or -AllRolesAtScope; section skipped.')
         @($InvErr).Count | Should -Be 0
         Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Path -ceq $script:AtGet }
+    }
+}
+
+Describe 'Get-OERInventory reports a failed Azure section read as an unread section (BL-34, BL-155, R-3)' {
+    # Sprint 11 step 10. A RoleAssignments or RoleManagementPolicies read that FAILS is an unread section: the
+    # section is written empty, read whole or not at all, and named by its own name in InventoryPartial with the
+    # reader's message as its cause. The reader's own record is scrubbed and folded into the cause, not
+    # republished, and no warning is written. The two readers are mocked, and each mock writes its failure as
+    # the real readers do: a non-terminating record through $PSCmdlet.WriteError. The caller's error stream is
+    # read with 2>&1 (-ErrorAction Continue pinned), so a record that reached it shows. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        $script:FrScope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
+        $script:FrUser = 'dddd8888-0000-0000-0000-000000000001'
+        # One role management policy as Get-OERRoleManagementPolicy returns it.
+        $script:FrPolicy = {
+            param([string]$RoleName)
+            [PSCustomObject]@{
+                PolicyId = "/p/$RoleName"; Scope = $script:FrScope; RoleName = $RoleName; RoleDefinitionId = "/rd/$RoleName"
+                ActivationMaxHours = 8; AllowPermanentEligibility = $false; Approvers = @()
+            }
+        }
+        # One call: every record and object it wrote in the order written, the inventory, and its error records.
+        function script:Invoke-FrInventory {
+            param([hashtable]$Splat)
+            $All = @(Get-OERInventory @Splat -ErrorAction Continue -WarningAction SilentlyContinue 2>&1)
+            $Records = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            [PSCustomObject]@{
+                All       = $All
+                Inventory = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })[0]
+                Records   = $Records
+                Partial   = @($Records | Where-Object { [string]$_.FullyQualifiedErrorId -ceq 'InventoryPartial,Get-OERInventory' })
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
+        Mock -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus { throw "unexpected deleted items read: $Id" }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+            & $script:AnswerPrincipalLookup -Id $Id -Detailed $Detailed -Names @{ 'dddd8888-0000-0000-0000-000000000001' = 'person1@example.com' }
+        }
+        # The role assignment read fails AFTER it wrote one row: the row must not be written.
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
+            [CmdletBinding()]
+            param($Scope, $Subscription, $ManagementGroup, [switch]$ResolveNames)
+            [PSCustomObject]@{
+                Scope = $script:FrScope; RoleName = 'Reader'; RoleDefinitionId = '/rd/Reader'
+                PrincipalId = $script:FrUser; PrincipalType = 'User'; PrincipalDisplayName = 'Person One'
+                RoleAssignmentId = '/ra/1'
+            }
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Insufficient privileges to complete the operation (403)'), 'AuthorizationFailed',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, $Scope))
+        }
+        # Reader answers the policy of Reader and refuses any other role; -CommonRoles and -AllRolesAtScope
+        # answer one policy and then fail.
+        Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {
+            [CmdletBinding()]
+            param($Role, [switch]$CommonRoles, [switch]$AllRolesAtScope, $Scope, $Subscription, $ManagementGroup)
+            if ($CommonRoles -or $AllRolesAtScope) {
+                & $script:FrPolicy 'Reader'
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('The role enumeration failed (503)'), 'RoleEnumerationFailed',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Scope))
+                return
+            }
+            if ($Role -ceq 'Reader') { & $script:FrPolicy 'Reader'; return }
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Role definition '$Role' was not found"), 'RoleDefinitionNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Role))
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+    }
+
+    Context 'RoleAssignments' {
+        It 'writes the section empty and names it unread with the reader''s message, and the reader''s own record never reaches the error stream' {
+            $Run = Invoke-FrInventory -Splat @{ Include = @('RoleAssignments'); Scope = $script:FrScope; IncludeARM = $true }
+            # Reach proof: the reader ran, with names, for the scope.
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $ResolveNames -eq $true -and $Scope -ceq $script:FrScope }
+            $Run.Inventory.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.Inventory'
+            # Read whole or not at all: the row the reader wrote before it failed is not written.
+            @($Run.Inventory.RoleAssignments).Count | Should -Be 0
+            # Only InventoryPartial reached the error stream.
+            @($Run.Records | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('InventoryPartial,Get-OERInventory')
+            $Run.Partial[0].TargetObject | Should -BeExactly 'roleAssignments'
+            $Run.Partial[0].Exception.Message | Should -Match ([regex]::Escape('Unread: roleAssignments. A section reported here by its name alone could not be read at all and is written as an empty array'))
+            $Run.Partial[0].Exception.Message | Should -Match ([regex]::Escape('Causes: Could not read role assignments: Insufficient privileges to complete the operation (403).'))
+            # The section reads nothing more: no principal lookup, no deleted items read.
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERDeletedPrincipalStatus -Times 0
+        }
+
+        It 'reads the section exactly as before when the read succeeds, and reports nothing (the control for the test above)' {
+            Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
+                [PSCustomObject]@{
+                    Scope = $script:FrScope; RoleName = 'Reader'; RoleDefinitionId = '/rd/Reader'
+                    PrincipalId = $script:FrUser; PrincipalType = 'User'; PrincipalDisplayName = 'Person One'
+                    RoleAssignmentId = '/ra/1'
+                }
+            }
+            $Run = Invoke-FrInventory -Splat @{ Include = @('RoleAssignments'); Scope = $script:FrScope; IncludeARM = $true }
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly
+            @($Run.Inventory.RoleAssignments).Count | Should -Be 1
+            $Run.Inventory.RoleAssignments[0].principal | Should -BeExactly 'person1@example.com'
+            $Run.Records.Count | Should -Be 0
+        }
+
+        It 'writes no warning for the failed read, and the verbose stream says why the section is unread' {
+            $All = @(Get-OERInventory -Include RoleAssignments -Scope $script:FrScope -IncludeARM -ErrorAction SilentlyContinue -WarningAction Continue -Verbose 3>&1 4>&1)
+            @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 0
+            $Verbose = @($All | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -like 'Get-OERInventory: Could not read role assignments:*' })
+            $Verbose.Count | Should -Be 1
+            $Verbose[0].Message | Should -BeExactly 'Get-OERInventory: Could not read role assignments: Insufficient privileges to complete the operation (403)'
+        }
+    }
+
+    Context 'RoleManagementPolicies' {
+        It 'writes no policy and names the section unread when the read of <Name> fails, and the reader''s own record never reaches the error stream' -ForEach @(
+            @{ Name = 'the second of -Role Reader,Missing'; Splat = @{ Role = @('Reader', 'Missing') }
+                Cause = "Could not read role management policies: Role definition 'Missing' was not found"; RecordId = 'RoleDefinitionNotFound' }
+            @{ Name = '-CommonRoles'; Splat = @{ CommonRoles = $true }
+                Cause = 'Could not read role management policies: The role enumeration failed (503)'; RecordId = 'RoleEnumerationFailed' }
+            @{ Name = '-AllRolesAtScope'; Splat = @{ AllRolesAtScope = $true }
+                Cause = 'Could not read role management policies: The role enumeration failed (503)'; RecordId = 'RoleEnumerationFailed' }
+        ) {
+            $Call = @{ Include = @('RoleManagementPolicies'); Scope = $script:FrScope; IncludeARM = $true }
+            foreach ($Key in $Splat.Keys) { $Call[$Key] = $Splat[$Key] }
+            $Run = Invoke-FrInventory -Splat $Call
+            # Reach proof: the reader ran and answered the policy of Reader before it failed, so the policy
+            # missing from the section is the one the guard left out.
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
+                ($Role -ceq 'Reader') -or $CommonRoles -or $AllRolesAtScope
+            }
+            $Run.Inventory.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.Inventory'
+            @($Run.Inventory.RoleManagementPolicies).Count | Should -Be 0
+            @($Run.Records | ForEach-Object { [string]$_.FullyQualifiedErrorId }) | Should -Be @('InventoryPartial,Get-OERInventory')
+            @($Run.Records | Where-Object { [string]$_.FullyQualifiedErrorId -like "$RecordId*" }).Count | Should -Be 0
+            $Run.Partial[0].TargetObject | Should -BeExactly 'roleManagementPolicies'
+            $Run.Partial[0].Exception.Message | Should -Match ([regex]::Escape("Causes: $Cause."))
+        }
+
+        It 'reads the second role too before it fails, so no policy of the first is written (one try around the whole read)' {
+            $Run = Invoke-FrInventory -Splat @{ Include = @('RoleManagementPolicies'); Scope = $script:FrScope; IncludeARM = $true; Role = @('Reader', 'Missing') }
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter { $Role -ceq 'Reader' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter { $Role -ceq 'Missing' }
+            @($Run.Inventory.RoleManagementPolicies).Count | Should -Be 0
+        }
+
+        It 'reads the section exactly as before when every read succeeds (the control for the tests above)' {
+            $Run = Invoke-FrInventory -Splat @{ Include = @('RoleManagementPolicies'); Scope = $script:FrScope; IncludeARM = $true; Role = @('Reader') }
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter { $Role -ceq 'Reader' }
+            @($Run.Inventory.RoleManagementPolicies).Count | Should -Be 1
+            $Run.Inventory.RoleManagementPolicies[0].role | Should -BeExactly 'Reader'
+            $Run.Records.Count | Should -Be 0
+        }
+
+        It 'leaves the -CommonRoles skip of a missing curated role as it was: the reader''s warning, the policies it read written, and nothing unread' {
+            Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {
+                [CmdletBinding()]
+                param($Role, [switch]$CommonRoles, [switch]$AllRolesAtScope, $Scope, $Subscription, $ManagementGroup)
+                Write-Warning "Skipping common role 'Role Based Access Control Administrator': it was not found in this scope."
+                & $script:FrPolicy 'Reader'
+            }
+            $Inv = Get-OERInventory -Include RoleManagementPolicies -Scope $script:FrScope -CommonRoles -IncludeARM `
+                -ErrorAction Continue -ErrorVariable InvErr -WarningVariable InvWarn -WarningAction SilentlyContinue
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter { $CommonRoles }
+            @($Inv.RoleManagementPolicies).Count | Should -Be 1
+            @($InvWarn | ForEach-Object { [string]$_.Message }) | Should -Be @("Skipping common role 'Role Based Access Control Administrator': it was not found in this scope.")
+            @($InvErr).Count | Should -Be 0
+        }
+    }
+
+    Context 'both sections of one call' {
+        It 'names each unread section once, in one InventoryPartial, with its own cause' {
+            $Run = Invoke-FrInventory -Splat @{ Include = @('RoleAssignments', 'RoleManagementPolicies'); Scope = $script:FrScope; IncludeARM = $true; Role = @('Missing') }
+            $Run.Records.Count | Should -Be 1
+            $Run.Partial[0].TargetObject | Should -BeExactly 'roleAssignments, roleManagementPolicies'
+            $Run.Partial[0].Exception.Message | Should -Match ([regex]::Escape("Causes: Could not read role assignments: Insufficient privileges to complete the operation (403); Could not read role management policies: Role definition 'Missing' was not found."))
+            @($Run.Inventory.RoleAssignments).Count | Should -Be 0
+            @($Run.Inventory.RoleManagementPolicies).Count | Should -Be 0
+        }
+    }
+
+    Context 'in a script with no try above it' {
+        BeforeAll {
+            . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+            # The public cmdlet in a runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere
+            # above it, as at a prompt. The script installs its own fakes in ITS copy of the module scope and
+            # logs every read and every sign-in with AppendAllText, whose path is substituted into the text.
+            function script:New-FrNoTryScenario {
+                param([string]$Log, [string]$Call)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = [pscustomobject]@{ TenantId = 'contoso.onmicrosoft.com'; TokenTenantId = 'eeee0000-0000-0000-0000-000000000001' }
+    Set-Item -Path function:script:Initialize-OERAuth -Value { [System.IO.File]::AppendAllText('#LOG#', "AUTH`n") }
+    Set-Item -Path function:script:Get-OERRoleAssignment -Value {
+        [CmdletBinding()]
+        param($Scope, $Subscription, $ManagementGroup, [switch]$ResolveNames)
+        [System.IO.File]::AppendAllText('#LOG#', "READ roleAssignments`n")
+        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Insufficient privileges to complete the operation (403)'), 'AuthorizationFailed',
+                [System.Management.Automation.ErrorCategory]::PermissionDenied, $ManagementGroup))
+    }
+    # The policy reader answers the policy of Reader and refuses any other role; -CommonRoles and
+    # -AllRolesAtScope answer that policy and then fail. Each failure is a non-terminating record, which only
+    # an -ErrorAction Stop on the call makes terminating: this runspace's own preference is Continue (a Pester
+    # mock runs under the test's Stop and so cannot tell the two apart).
+    Set-Item -Path function:script:Get-OERRoleManagementPolicy -Value {
+        [CmdletBinding()]
+        param($Role, [switch]$CommonRoles, [switch]$AllRolesAtScope, $Scope, $Subscription, $ManagementGroup)
+        [System.IO.File]::AppendAllText('#LOG#', "READ roleManagementPolicies $Role`n")
+        if ($CommonRoles -or $AllRolesAtScope -or $Role -ceq 'Reader') {
+            [pscustomobject]@{
+                PolicyId = '/p/Reader'; Scope = '/providers/Microsoft.Management/managementGroups/mg1'; RoleName = 'Reader'
+                RoleDefinitionId = '/rd/Reader'; ActivationMaxHours = 8; AllowPermanentEligibility = $false; Approvers = @()
+            }
+        }
+        if ($CommonRoles -or $AllRolesAtScope -or $Role -cne 'Reader') {
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('The role enumeration failed (503)'), 'RoleEnumerationFailed',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $ManagementGroup))
+        }
+    }
+}
+$Inv = #CALL#
+"INV:$($null -ne $Inv)"
+if ($null -ne $Inv) { "TYPE:$($Inv.PSObject.TypeNames[0])"; "RA:$(@($Inv.RoleAssignments).Count)"; "RMP:$(@($Inv.RoleManagementPolicies).Count)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#CALL#', $Call))
+            }
+        }
+
+        It 'a standalone RoleAssignments read that fails emits the inventory, then InventoryPartial alone, and the script reaches its end' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-FrNoTryScenario -Log $Log -Call 'Get-OERInventory -Include RoleAssignments -ManagementGroup mg1')
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'INV:*' -or $_ -like 'TYPE:*' -or $_ -like 'RA:*' }) | Should -Be @('INV:True', 'TYPE:Omnicit.EntraRBAC.Inventory', 'RA:0')
+            # The reader ran once (the reach proof), and the one record the caller was shown is InventoryPartial.
+            @(Get-Content -LiteralPath $Log | Where-Object { $_ -like 'READ*' }) | Should -Be @('READ roleAssignments')
+            @($Run.Errors).Count | Should -Be 1
+            $Run.Errors[0] | Should -BeLike 'This inventory is PARTIAL:*Unread: roleAssignments.*Causes: Could not read role assignments: Insufficient privileges to complete the operation (403).'
+        }
+
+        It 'a standalone RoleManagementPolicies read that fails (<Name>) writes no policy, emits the inventory, then InventoryPartial alone, and the script reaches its end' -ForEach @(
+            @{ Name = 'the second of -Role Reader,Missing'; Extra = '-Role Reader,Missing'
+                Reads = @('READ roleManagementPolicies Reader', 'READ roleManagementPolicies Missing') }
+            @{ Name = '-CommonRoles'; Extra = '-CommonRoles'; Reads = @('READ roleManagementPolicies ') }
+            @{ Name = '-AllRolesAtScope'; Extra = '-AllRolesAtScope'; Reads = @('READ roleManagementPolicies ') }
+        ) {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-FrNoTryScenario -Log $Log -Call "Get-OERInventory -Include RoleManagementPolicies -ManagementGroup mg1 $Extra")
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'INV:*' -or $_ -like 'TYPE:*' -or $_ -like 'RMP:*' }) | Should -Be @('INV:True', 'TYPE:Omnicit.EntraRBAC.Inventory', 'RMP:0')
+            # Reach proof: the reader answered the policy of Reader before it failed, so the policy missing from
+            # the section is the one the guard left out.
+            @(Get-Content -LiteralPath $Log | Where-Object { $_ -like 'READ*' }) | Should -Be $Reads
+            @($Run.Errors).Count | Should -Be 1
+            $Run.Errors[0] | Should -BeLike 'This inventory is PARTIAL:*Unread: roleManagementPolicies.*Causes: Could not read role management policies: The role enumeration failed (503).'
+        }
+
+        It 'a -Scope of white space fails at binding, signs in and reads nothing, and the script reaches its end' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (New-FrNoTryScenario -Log $Log -Call "Get-OERInventory -Include RoleAssignments -Scope '   '")
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'INV:*' }) | Should -Be @('INV:False')
+            @($Run.Errors).Count | Should -Be 1
+            $Run.Errors[0] | Should -BeLike '*The Scope consists only of white space. Pass an Azure Resource Manager scope, or leave the parameter out.*'
+            Test-Path -LiteralPath $Log | Should -BeFalse
+        }
+    }
+}
+
+Describe 'Get-OERInventory hands its Azure readers the subscription ID the check returned (BL-155, R-4)' {
+    # The subscription check resolves a -Subscription given by its display name through the subscription list
+    # once. The two readers used to resolve the name again, each through the list, a second decision about which
+    # subscription the name means. They are now handed the ID the check returned, and a Home verdict that carries
+    # no ID is Undecided, never read by name. The owner is mocked here (a verdict is what is under test); the
+    # Describe 'Get-OERInventory asks for the ARM token ...' pins the requests through the real owner and readers.
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment {}
+        Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {}
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'reads both sections with the subscription ID of the verdict for a -Subscription given by its display name, and never with the name' {
+        $null = Get-OERInventory -Include RoleAssignments, RoleManagementPolicies -Subscription 'Prod' -Role 'Reader' -IncludeARM -ErrorAction Continue
+        # The check was asked once, for the name as given.
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 1 -Exactly -ParameterFilter { $Scope -ceq 'sub:Prod' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Subscription -ceq 'aaaa1111-0000-0000-0000-000000000001' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter { $Subscription -ceq 'aaaa1111-0000-0000-0000-000000000001' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0 -ParameterFilter { $Subscription -ceq 'Prod' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0 -ParameterFilter { $Subscription -ceq 'Prod' }
+    }
+
+    It 'hands each reader the verdict''s ID in the letter case the verdict carries, not the text given' {
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant {
+            [PSCustomObject]@{
+                Scope = $Scope; SubscriptionId = 'AAAA1111-0000-0000-0000-000000000009'; DisplayName = 'Prod'; Verdict = 'Home'
+                HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null
+            }
+        }
+        $null = Get-OERInventory -Include RoleAssignments, RoleManagementPolicies -Subscription 'aaaa1111-0000-0000-0000-000000000001' -CommonRoles -IncludeARM -ErrorAction Continue
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Subscription -ceq 'AAAA1111-0000-0000-0000-000000000009' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter { $Subscription -ceq 'AAAA1111-0000-0000-0000-000000000009' -and $CommonRoles }
+    }
+
+    It 'treats a Home verdict for <Label> as Undecided: both sections unread by their own names, the cause says the check gave no ID, and no reader is called' -ForEach @(
+        @{ Label = 'a -Subscription with no SubscriptionId'; Kind = 'Home'; Id = $null }
+        @{ Label = 'a -Subscription with an empty SubscriptionId'; Kind = 'Home'; Id = '' }
+        @{ Label = 'a -Subscription with a blank SubscriptionId'; Kind = 'Home'; Id = '   ' }
+        @{ Label = 'a -Subscription answered NoSubscription with no SubscriptionId'; Kind = 'NoSubscription'; Id = $null }
+    ) {
+        $script:ChVerdictKind = $Kind
+        $script:ChVerdictId = $Id
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant {
+            [PSCustomObject]@{
+                Scope = $Scope; SubscriptionId = $script:ChVerdictId; DisplayName = $null; Verdict = $script:ChVerdictKind
+                HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null
+            }
+        }
+        $All = @(Get-OERInventory -Include RoleAssignments, RoleManagementPolicies -Subscription 'Prod' -Role 'Reader' -IncludeARM `
+                -ErrorAction Continue -WarningAction SilentlyContinue 2>&1)
+        $Records = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+        $Inv = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })[0]
+        # Reach proof: the check ran for the name given, and decided on the verdict above.
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 1 -Exactly -ParameterFilter { $Scope -ceq 'sub:Prod' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0
+        $Inv.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.Inventory'
+        @($Inv.RoleAssignments).Count | Should -Be 0
+        @($Inv.RoleManagementPolicies).Count | Should -Be 0
+        $Records.Count | Should -Be 1
+        [string]$Records[0].FullyQualifiedErrorId | Should -BeExactly 'InventoryPartial,Get-OERInventory'
+        $Records[0].TargetObject | Should -BeExactly 'roleAssignments, roleManagementPolicies'
+        # Named once although both sections gave it.
+        $Records[0].Exception.Message | Should -Match ([regex]::Escape(" Causes: the subscription check gave no subscription id for 'sub:Prod', so the subscription cannot be read by its id."))
+    }
+
+    It 'still reads a -Scope whose Home verdict carries no SubscriptionId, since only -Subscription needs one' {
+        $Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
+        $script:ChScope = $Scope
+        $All = @(Get-OERInventory -Include RoleAssignments, RoleManagementPolicies -Scope $Scope -Role 'Reader' -IncludeARM -ErrorAction Continue 2>&1)
+        @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq $script:ChScope }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter { $Scope -ceq $script:ChScope }
+    }
+}
+
+Describe 'Get-OERInventory refuses an empty or white space -Scope, -Subscription and -ManagementGroup at parameter binding (BL-155)' {
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment {}
+        Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {}
+    }
+
+    It 'refuses -<Parameter> <Label> with <Expected>, and signs in to and reads nothing' -ForEach @(
+        foreach ($Parameter in 'Scope', 'Subscription', 'ManagementGroup') {
+            $Hint = switch ($Parameter) {
+                'Scope' { 'Pass an Azure Resource Manager scope, or leave the parameter out.' }
+                'Subscription' { 'Pass a subscription ID or display name, or leave the parameter out.' }
+                'ManagementGroup' { 'Pass a management group name or ID, or leave the parameter out.' }
+            }
+            $White = "The $Parameter consists only of white space. $Hint"
+            @{ Parameter = $Parameter; Label = 'empty'; Value = ''; Expected = 'the null or empty message'; Message = 'The argument is null or empty' }
+            @{ Parameter = $Parameter; Label = '$null'; Value = $null; Expected = 'the null or empty message'; Message = 'The argument is null or empty' }
+            @{ Parameter = $Parameter; Label = 'one space'; Value = ' '; Expected = 'the white space message'; Message = $White }
+            @{ Parameter = $Parameter; Label = 'three spaces'; Value = '   '; Expected = 'the white space message'; Message = $White }
+            @{ Parameter = $Parameter; Label = 'a tab'; Value = "`t"; Expected = 'the white space message'; Message = $White }
+            @{ Parameter = $Parameter; Label = 'a carriage return and a line feed'; Value = "`r`n"; Expected = 'the white space message'; Message = $White }
+        }
+    ) {
+        $Splat = @{ Include = 'RoleAssignments'; IncludeARM = $true; ErrorAction = 'Stop' }
+        $Splat[$Parameter] = $Value
+        $Caught = $null
+        try {
+            Get-OERInventory @Splat | Out-Null
+        } catch {
+            $Caught = $PSItem
+        }
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Get-OERInventory'
+        $Caught.Exception | Should -BeOfType [System.Management.Automation.ParameterBindingException]
+        $Caught.Exception.GetType().Name | Should -BeExactly 'ParameterBindingValidationException'
+        $Caught.Exception.Message | Should -BeLike "*$Message*"
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0
+    }
+
+    It 'still accepts a value that is not white space, and reads with it' -ForEach @(
+        @{ Parameter = 'Scope'; Value = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        @{ Parameter = 'Subscription'; Value = 'Prod' }
+        @{ Parameter = 'ManagementGroup'; Value = 'mg1' }
+    ) {
+        $Splat = @{ Include = 'RoleAssignments'; IncludeARM = $true; ErrorAction = 'Stop' }
+        $Splat[$Parameter] = $Value
+        { Get-OERInventory @Splat | Out-Null } | Should -Not -Throw
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly
+    }
+
+    It 'keeps every parameter where it was declared, so no positional argument binds to another parameter' {
+        # Positional binding follows declaration order, and no parameter here is declared with a Position of
+        # its own, so the order of the parameters is what an existing positional call depends on. The three
+        # validated parameters sit after -AccessReviewFilter and before -Role, as they always did.
+        $Declared = @((Get-Command Get-OERInventory).Parameters.Keys | Where-Object { $_ -in @('Include', 'GroupFilter', 'Catalog', 'AccessReviewFilter', 'Scope', 'Subscription', 'ManagementGroup', 'Role') })
+        $Declared | Should -Be @('Include', 'GroupFilter', 'Catalog', 'AccessReviewFilter', 'Scope', 'Subscription', 'ManagementGroup', 'Role')
     }
 }

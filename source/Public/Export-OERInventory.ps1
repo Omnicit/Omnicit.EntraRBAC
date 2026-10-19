@@ -549,7 +549,8 @@ function Export-OERInventory {
     of its own. Without this switch none of it is read and no such file is written.
 
     .PARAMETER ManagementGroup
-    Narrow the Azure scope walk to a single management group branch identified by name or id.
+    Narrow the Azure scope walk to a single management group branch identified by name or id. An empty
+    or white space value is refused at parameter binding.
 
     .PARAMETER Scope
     Narrow the Azure scope walk to a single raw ARM scope string (e.g. a subscription id path). A
@@ -563,7 +564,8 @@ function Export-OERInventory {
     it as written, a management group path included: one that breaks a scope spelling rule a structure
     document must keep, such as a '.' or '..' segment or a trailing '/' (about_Omnicit.EntraRBAC lists
     every rule); nothing is resolved or read for it. Any other scope at a management group or the root
-    scope lies in no subscription and is read as before.
+    scope lies in no subscription and is read as before. An empty or white space value is refused at
+    parameter binding.
 
     .PARAMETER Force
     Overwrite an existing bundle folder of the same name. Without this switch an existing folder of the
@@ -643,7 +645,20 @@ function Export-OERInventory {
         [switch]$AllRolePolicies,
         # Sprint 11 step 8. A switch, so it takes no position either.
         [switch]$IncludeServicePrincipalAccess,
+        # Sprint 11 step 10 (BL-155): a -ManagementGroup or -Scope of white space only is refused here, at
+        # binding, as an empty one is -- the BL-96 pattern of -GroupFilter below, for the same reasons. Before
+        # this, '   ' passed the tests of the Azure walk (`if ($Scope)` is true for it) and was handed to the
+        # scope tree as a scope. Declared ABOVE [ValidateNotNullOrEmpty()] on purpose: validation attributes
+        # run in reverse declaration order (measured), so an empty or null value still reads the
+        # NotNullOrEmpty message and white space reads this one. Neither parameter moves: positional binding
+        # follows declaration order. No call inside the module passes either parameter an empty or blank value:
+        # the per-scope Get-OERInventory calls below pass -Scope only with a scope the tree listed, which is
+        # added to the tree only when it is not empty.
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The ManagementGroup consists only of white space. Pass a management group name or ID, or leave the parameter out.')]
+        [ValidateNotNullOrEmpty()]
         [string]$ManagementGroup,
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The Scope consists only of white space. Pass an Azure Resource Manager scope, or leave the parameter out.')]
+        [ValidateNotNullOrEmpty()]
         [string]$Scope,
         [switch]$Force,
         [ValidateNotNullOrEmpty()]
@@ -1086,6 +1101,11 @@ function Export-OERInventory {
                                 # -ErrorAction Stop is load-bearing: without it a NON-terminating failure
                                 # inside Get-OERInventory never reaches this catch under the default
                                 # preference, so the scope contributed nothing and did not even warn.
+                                # Sprint 11 step 10 (BL-34): a failed role assignment or role management
+                                # policy read is now that kind of failure -- Get-OERInventory names the
+                                # section unread and ends in a non-terminating InventoryPartial -- and this
+                                # -ErrorAction Stop is what turns it into the skip below, as the reader's own
+                                # record did before.
                                 #
                                 # BL-126 (R3): every read below the root scope returns a root assignment as
                                 # inherited, so each call would warn about the same rows. Its warnings are

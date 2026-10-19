@@ -2164,7 +2164,8 @@ call is unread. (c) The other public cmdlets still use the scope they are given 
 (d) A `-Subscription` given by its display name is resolved by the owner for the check and again by
 each reader for its read, so a name that moved to another subscription between the two resolutions
 could be read unchecked (theoretical; not measured). A follow-up would pass the owner's resolved
-scope to the readers; the step's final review left it as it is.
+scope to the readers; the step's final review left it as it is. Sprint 11 step 10 did exactly that
+for `-Subscription` (BL-155, R-4), in the subsection below.
 
 **Mutation proofs.** Each mutation was made in a copy of `source/` (a dev-mode module in scratch for
 the fix round) and run against the named tests; every mutant turned at least one test red, and the
@@ -2190,6 +2191,60 @@ round, before the step's later help changes moved them.
 
 The fallback to a cache of its own, for a run context without the member, is an equivalent mutant:
 the decision is made once per invocation, so no cache and a cache of its own send the same one GET.
+
+### Sprint 11 step 10: the readers are handed the subscription id the check resolved (BL-155, R-4)
+
+**The problem (BL-155, fifth point).** Known limit (d) above. A `-Subscription` given by its display
+name was resolved by the check (`Get-OERSubscriptionHomeTenant` through `Resolve-OERScope`, one read of
+the subscription list) and then resolved again by `Get-OERRoleAssignment` and
+`Get-OERRoleManagementPolicy`, each through the same list: two more list reads per call, and a second
+decision about which subscription the name means, made after the check had shown one subscription to
+be the session tenant's own. Display names are not unique, so a name that moved between the two
+resolutions could have been read unchecked (theoretical; not measured).
+
+**The decision (R-4).** With `-Subscription` given and the check's verdict `Home`, both readers get
+`-Subscription` with the `SubscriptionId` of that verdict, a GUID that `Resolve-OERScope` takes as it is
+with no list read, instead of the name. The check keeps the id in its holder the first time it decides.
+A `Home` verdict for `-Subscription` that carries no `SubscriptionId` is treated as `Undecided`: both
+sections are named unread by their own names, the cause says the subscription check gave no subscription
+id for the scope as given, and nothing is read by name. The owner never answers `sub:` that way (its
+`Home` always carries the id of the path it resolved), so the rule is a backstop; it holds for a
+`NoSubscription` answer without an id for `sub:` too, which the owner cannot produce either. A `-Scope`
+is unchanged: it goes to the readers as given and its `Home` verdict needs no id. No public parameter,
+ErrorId or output property was added (A9). Cost if wrong: the two assignments go back to `$Subscription`
+and the id-less rule goes, one line each.
+
+**What changed for a caller.** A standalone `-Subscription` given by display name costs one read of the
+subscription list, the check's, where it cost three (the check's and one in each reader); the requests
+after the check name the subscription by id. The test that pins the requests through the real owner and
+readers, 'asks for the token in the sign-in and reads a -Subscription given by its display name ...', lost
+its two later list reads.
+
+**The binding refusal (BL-155, second point).** `-Scope`, `-Subscription` and `-ManagementGroup` of
+`Get-OERInventory`, and `-Scope` and `-ManagementGroup` of `Export-OERInventory`, refuse a value of white
+space at binding, the BL-96 pattern of `-GroupFilter` (a `[ValidateScript()]` declared above
+`[ValidateNotNullOrEmpty()]`, since validation attributes run in reverse declaration order). Before it, a
+value of spaces passed the sections' own truthiness tests and reached the readers, while the check and
+the sign-in's ARM term (`IsNullOrWhiteSpace`) took it for no scope at all. No call inside the module
+passes one a blank value: the export's per-scope calls hand `Get-OERInventory` a scope the tree listed,
+which the tree adds only when it is not empty, and its Entra ID call passes no Azure parameter. No
+parameter moved, so positional binding is unchanged.
+
+**Mutation proofs.** Each mutation was made in the source of the step's Task 1 commit and run against the
+named tests; every mutant turned at least one test red, and the restored source was green. Lines are the
+commit's.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| M3a, M3b | the readers are handed the check's id, `Get-OERInventory.ps1:1609`, `:2502` | `$Subscription` | 3 and 2 red |
+| M4 | the id kept from the verdict, `:785` | never assigned | 3 red |
+| M5a | an id-less `Home` for `-Subscription` is undecided, `:798` | the term made `$false` | 4 red |
+| M5b | the term is for `-Subscription` only, `:798` | `IsSubscription` dropped | 12 red |
+| M5c | the cause of an id-less answer, `:806` | `NoSubscription` left out of the list | 1 red |
+| V1, V2, V3 | the three white space refusals, `:481`, `:485`, `:489` | each `[ValidateScript()]` removed | 5, 4 and 4 red |
+| V3b, V3c | the null or empty refusal and the order of the two attributes, `:482`, `:481` | `[ValidateNotNullOrEmpty()]` removed; the two swapped | 2 red each |
+| V4, V5, V5b | the same for the export, `Export-OERInventory.ps1:660`, `:657`, `:661` | each removed | 5, 4 and 2 red |
+| O1, O2 | no parameter moved, `Get-OERInventory.ps1:491`, `Export-OERInventory.ps1:657` | `-Role` above `-ManagementGroup`; `-Scope` above `-ManagementGroup` | 7 and 1 red |
 
 ## sovereign-clouds
 
@@ -10121,6 +10176,59 @@ the rows on the role assignment id (on scope, role and principal for a row with 
 to letter case, warns once before its `ShouldProcess`, and hands the rows to the README section "Role
 assignments whose principal the directory did not return". Cost if wrong: a finding the operator
 reviews; the assignment stays in the document either way.
+
+**A failed Azure read is an unread section (Sprint 11 step 10, BL-34, BL-155 first point, R-3).** No
+single anchor explains the inventory's unread sections, and this one already says how a failed
+`roleAssignments` read reaches `InventoryPartial`, so the rule for the two Azure sections is written here.
+`Get-OERRoleAssignment` and `Get-OERRoleManagementPolicy` publish a failure as a non-terminating record
+(`InvalidScope`, `AmbiguousFilter`, `RoleDefinitionNotFound`, `PolicyNotFound`, `RoleEnumerationFailed` or
+the ARM read's own), and `Get-OERInventory` used to read them as they came: a standalone call wrote the
+section empty, or with the part that was read, left the record on the caller's stream and named nothing in
+`InventoryPartial`, a failed read stated as an empty fact (G3). Now each read runs with `-ErrorAction Stop`
+inside a `try`. The `catch` scrubs the record first (`Remove-OERErrorRecord`) and calls `Add-UnreadSection`
+with the key `roleAssignments` or `roleManagementPolicies` and the cause `Could not read role assignments:`
+or `Could not read role management policies:` followed by the reader's own message (not trimmed: a message
+that ends in a period shows two in the clause, as the catalog list's cause does). The section is written
+empty, and the code after the read finds nothing to do for it: no principal lookup, and no root scope or
+undeclarable scope notice for the call. The section is read whole or not at all. An assignment inside the
+`try` gets none of what the reader wrote before it failed, and the policy section stands in ONE `try`
+around every `Get-OERRoleManagementPolicy` call, so with `-Role A,B` where B fails the policy of A is not
+written either: a section is never a subset presented as the whole. The first failure ends the read, so
+the roles after B are not read. The record is folded into the cause and not republished, and no warning
+is written: `InventoryPartial`, after the inventory object, is the report (the catalog list's form).
+`-CommonRoles` is left as it was: the reader skips a curated role that does not exist in the subscription
+with a warning of its own and carries on, which is neither a failure nor an unread section.
+
+Under `Export-OERInventory`, whose per-scope call passes `-ErrorAction Stop`, the new `InventoryPartial`
+is what makes the export skip the scope, as the reader's own record did before: the scope is named in
+`SkippedScopes`, its rows are not written, and the skip's warning carries the cause. Cost if wrong: an
+operator who wants the reader's own record rather than the cause sees it only inside `InventoryPartial`;
+the `catch` can republish it after the bookkeeping, and a warning can be added there too.
+
+**Measured, with the tests.** The engine puts the reader's record into a caller's `-ErrorVariable` the
+instant the reader writes it, before any `catch` runs ([#writeerror-deposit](#writeerror-deposit)). A
+standalone call with `-ErrorVariable` on a failed `roleAssignments` read collected that record twice,
+beside `InventoryPartial`, and `$global:Error` held only `InventoryPartial`, since `Remove-OERErrorRecord`
+had removed the reader's. The error STREAM carries only `InventoryPartial`, which is what the tests read
+(`2>&1`). The record's bearer token is scrubbed in every copy. A Pester mock runs under the test's own
+`Stop` preference, so it cannot tell a call with `-ErrorAction Stop` from one without: the proof that each
+of the four reads (the assignments and the three policy branches) carries the parameter is a script with no
+`try` above it, in a runspace whose preference is `Continue`, where each dropped parameter turns exactly
+its own test red.
+
+**Mutation proofs (R-3).** Made in the source of the step's Task 1 commit; lines are the commit's.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| M1 | the assignment read's `try`, `Get-OERInventory.ps1:1628` | the original unguarded call | 4 red |
+| M1b | its `-ErrorAction Stop`, `:1629` | dropped | 1 red, the no-`try` runspace test |
+| M1c, M1d, M1e | the unread entry, its cause and its key, `:1633` | entry dropped; message dropped from the cause; key `roleAssignment` | 4, 4 and 3 red; the export skip test red for the first |
+| M2a, M2b, M2c | `-ErrorAction Stop` on each policy branch, `:2519`, `:2520`, `:2521` | each dropped | 1 red each, the no-`try` runspace test of its branch |
+| M2d | the policy read's single `try`, `:2517` | the original unguarded block | 5 red |
+| M2e, M2g | the unread entry and its key, `:2526` | entry dropped; key `roleManagementPolicy` | 4 red each |
+| M2f | one `try` around the whole read, `:2521` | one `try` per role | 2 red |
+| E1 | the export's per-scope `-ErrorAction Stop`, `Export-OERInventory.ps1:1137` | dropped | 2 red, one per section |
+| S1, S2 | the scrub first in each `catch`, `Get-OERInventory.ps1:1630`, `:2523` | scrub removed | 1 red each, the bearer-token hygiene gate of `tests/QA/sourcehygiene.tests.ps1` |
 
 **R-4 (the apply engine; A18).** `Sync-OERStructureRoleAssignment` takes the `principal` of an entry
 that declares `principalStatus` as the object id it names, with no principal lookup at all, for the

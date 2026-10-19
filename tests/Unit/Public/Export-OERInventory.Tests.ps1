@@ -51,10 +51,19 @@ BeforeAll {
     # such answers and answers the owner with this instead: the scope lies in the session tenant's own
     # subscription, so its fixtures read as they did before the check existed. The Describes about the home
     # tenant (BL-150, BL-152) do not, and run the real owner.
+    #
+    # Sprint 11 step 10 (BL-155, R-4): Get-OERInventory hands its readers the subscription ID the check
+    # returned for a -Subscription, and treats a Home verdict without one as Undecided, so a given
+    # 'sub:<value>' is answered with an id; the export itself passes only -Scope, which is answered with none.
     $script:NewHomeVerdict = {
         param([string]$GivenScope)
+        $HomeSubscriptionId = $null
+        if ($GivenScope -match '^sub:(.+)$') {
+            $Parsed = [guid]::Empty
+            $HomeSubscriptionId = if ([guid]::TryParse($Matches[1], [ref]$Parsed)) { $Matches[1] } else { 'aaaa1111-0000-0000-0000-000000000001' }
+        }
         [PSCustomObject]@{
-            Scope = $GivenScope; SubscriptionId = $null; DisplayName = $null; Verdict = 'Home'
+            Scope = $GivenScope; SubscriptionId = $HomeSubscriptionId; DisplayName = $null; Verdict = 'Home'
             HomeTenantId = $null; SessionTenantId = $null; Reason = $null; ErrorRecord = $null
         }
     }
@@ -7741,5 +7750,205 @@ Describe 'Export-OERInventory (service principal access, Sprint 11 step 8)' {
             # The read is Microsoft Graph only: the export signs in once, with no ARM token, as without it.
             Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { -not $IncludeARM }
         }
+    }
+}
+
+Describe 'Export-OERInventory skips the scope of a failed Azure section read, through the real Get-OERInventory (BL-34, BL-155)' {
+    # Sprint 11 step 10. Get-OERInventory now reports a failed role assignment or role management policy read as
+    # an unread section and ends in a non-terminating InventoryPartial, where the reader's own record used to
+    # reach the export's per-scope call. That call passes -ErrorAction Stop, so the InventoryPartial still makes
+    # the export skip the scope: it is named in SkippedScopes and its rows are not written, as a failed read always
+    # did. Get-OERInventory runs for REAL here; the scope walk, the two readers, the principal names and the
+    # eligibility read are mocked, and a reader's failure is a non-terminating record, as the real readers write
+    # it. No id below is version-4 shaped.
+    BeforeAll {
+        $script:FxBad = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        $script:FxGood = '/subscriptions/aaaa1111-0000-0000-0000-000000000002'
+        $script:FxUser = 'dddd5555-0000-0000-0000-000000000001'
+        # One export: its result, the text of every warning that reached the caller's stream, and its errors.
+        function script:Invoke-FxExport {
+            param([hashtable]$Splat)
+            $ExErr = $null
+            $All = @(Export-OERInventory @Splat -WarningAction Continue -ErrorAction SilentlyContinue -ErrorVariable ExErr 3>&1)
+            [PSCustomObject]@{
+                Result   = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+                Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                Partial  = @($ExErr | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { [PSCustomObject]@{ Groups = @(); Unread = @(); Causes = @() } }
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility { [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() } }
+        Mock -ModuleName $script:moduleName Get-OERSubscriptionHomeTenant { & $script:NewHomeVerdict $Scope }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected request: $Uri" }
+        # Which reader fails at the first scope: the role assignment read, unless a test turns it off.
+        $script:FxFailRa = $true
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @($script:FxBad, $script:FxGood)
+                Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+            }
+        }
+        # The role assignment read fails at the first scope and answers one row at the second.
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
+            [CmdletBinding()]
+            param($Scope, [switch]$AtScope, [switch]$ResolveNames)
+            if ($AtScope) { return }
+            if ($Scope -eq $script:FxBad -and $script:FxFailRa) {
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation (403)'), 'AuthorizationFailed',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $Scope))
+                return
+            }
+            if ($Scope -eq $script:FxBad) { return }
+            [PSCustomObject]@{
+                Scope = $script:FxGood; RoleName = 'Reader'; RoleDefinitionId = "$($script:FxGood)/providers/Microsoft.Authorization/roleDefinitions/rd-reader"
+                PrincipalId = $script:FxUser; PrincipalType = 'User'; PrincipalDisplayName = 'Person One'
+                RoleAssignmentId = "$($script:FxGood)/providers/Microsoft.Authorization/roleAssignments/cccc5555-0000-0000-0000-000000000001"
+            }
+        }
+        # The policy read of the per-scope call (-AllRolesAtScope, under -AllRolePolicies) fails at the first scope.
+        Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {
+            [CmdletBinding()]
+            param($Role, [switch]$CommonRoles, [switch]$AllRolesAtScope, $Scope, $Subscription, $ManagementGroup)
+            if ($Scope -eq $script:FxBad) {
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('The role enumeration failed (503)'), 'RoleEnumerationFailed',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Scope))
+                return
+            }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+            param([string[]]$Id, [switch]$PreferDisplayName, [switch]$Detailed)
+            & $script:AnswerPrincipalLookup $Id $Detailed.IsPresent @{ 'dddd5555-0000-0000-0000-000000000001' = 'person1@example.com' }
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERInventoryRunContext = $null }
+    }
+
+    It 'skips the scope whose <Section> read failed, names it in SkippedScopes with the cause in the warning, and keeps what the other scope read' -ForEach @(
+        @{ Section = 'role assignment'; Include = @('RoleAssignments'); Extra = @{}; FailRa = $true
+            Cause = 'Could not read role assignments: Insufficient privileges to complete the operation (403)' }
+        @{ Section = 'role management policy'; Include = @('RoleAssignments', 'RoleManagementPolicies'); Extra = @{ AllRolePolicies = $true }; FailRa = $false
+            Cause = 'Could not read role management policies: The role enumeration failed (503)' }
+    ) {
+        $script:FxFailRa = $FailRa
+        $Splat = @{ OutputPath = (Join-Path $TestDrive ('fx-' + ($Section -replace ' ', '-'))); Include = $Include }
+        foreach ($Key in $Extra.Keys) { $Splat[$Key] = $Extra[$Key] }
+        $Run = Invoke-FxExport -Splat $Splat
+        # Reach proofs: both scopes were read by the real Get-OERInventory, and the failing reader ran at the first.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -eq $script:FxBad -and $ResolveNames }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -eq $script:FxGood -and $ResolveNames }
+        # The scope is skipped, and only it.
+        @($Run.Result.SkippedScopes) | Should -Be @($script:FxBad)
+        $Run.Result.ScopeCount | Should -Be 1
+        @($Run.Warnings | Where-Object { $_ -like "Skipping scope '$($script:FxBad)': This inventory is PARTIAL:*" }).Count | Should -Be 1
+        @($Run.Warnings | Where-Object { $_ -like "*Causes: $Cause.*" }).Count | Should -Be 1
+        # Its rows are not written, and the other scope's row is.
+        $Inv = Get-Content (Join-Path $Run.Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        @($Inv.roleAssignments | ForEach-Object { "$($_.scope)|$($_.role)|$($_.principal)" }) | Should -Be @("$($script:FxGood)|Reader|person1@example.com")
+        # The export itself is partial, and says which scope it skipped.
+        $Run.Partial.Count | Should -Be 1
+        $Run.Partial[0].Exception.Message | Should -BeLike "*Skipped: $($script:FxBad)*"
+    }
+
+    It 'reads both scopes and skips none when every read succeeds (the control for the test above)' {
+        Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
+            [CmdletBinding()]
+            param($Scope, [switch]$AtScope, [switch]$ResolveNames)
+            if ($AtScope) { return }
+            [PSCustomObject]@{
+                Scope = $Scope; RoleName = 'Reader'; RoleDefinitionId = "$Scope/providers/Microsoft.Authorization/roleDefinitions/rd-reader"
+                PrincipalId = $script:FxUser; PrincipalType = 'User'; PrincipalDisplayName = 'Person One'
+                RoleAssignmentId = "$Scope/providers/Microsoft.Authorization/roleAssignments/cccc5555-0000-0000-0000-000000000001"
+            }
+        }
+        $Run = Invoke-FxExport -Splat @{ OutputPath = (Join-Path $TestDrive 'fx-ok'); Include = @('RoleAssignments') }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 2 -Exactly -ParameterFilter { $ResolveNames }
+        @($Run.Result.SkippedScopes).Count | Should -Be 0
+        $Run.Result.ScopeCount | Should -Be 2
+        @($Run.Warnings | Where-Object { $_ -like 'Skipping scope*' }).Count | Should -Be 0
+    }
+}
+
+Describe 'Export-OERInventory refuses an empty or white space -Scope and -ManagementGroup at parameter binding (BL-155)' {
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null; $script:_OERInventoryRunContext = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree { throw 'unexpected scope walk' }
+        Mock -ModuleName $script:moduleName Get-OERInventory { throw 'unexpected inventory read' }
+        Mock -ModuleName $script:moduleName Get-OERInventoryGroup { throw 'unexpected group read' }
+    }
+
+    It 'refuses -<Parameter> <Label> with <Expected>, and signs in to, reads and writes nothing' -ForEach @(
+        foreach ($Parameter in 'Scope', 'ManagementGroup') {
+            $Hint = switch ($Parameter) {
+                'Scope' { 'Pass an Azure Resource Manager scope, or leave the parameter out.' }
+                'ManagementGroup' { 'Pass a management group name or ID, or leave the parameter out.' }
+            }
+            $White = "The $Parameter consists only of white space. $Hint"
+            @{ Parameter = $Parameter; Label = 'empty'; Value = ''; Expected = 'the null or empty message'; Message = 'The argument is null or empty' }
+            @{ Parameter = $Parameter; Label = '$null'; Value = $null; Expected = 'the null or empty message'; Message = 'The argument is null or empty' }
+            @{ Parameter = $Parameter; Label = 'one space'; Value = ' '; Expected = 'the white space message'; Message = $White }
+            @{ Parameter = $Parameter; Label = 'three spaces'; Value = '   '; Expected = 'the white space message'; Message = $White }
+            @{ Parameter = $Parameter; Label = 'a tab'; Value = "`t"; Expected = 'the white space message'; Message = $White }
+            @{ Parameter = $Parameter; Label = 'a carriage return and a line feed'; Value = "`r`n"; Expected = 'the white space message'; Message = $White }
+        }
+    ) {
+        # A root of its own per case, so a refusal that failed to happen in one case cannot show in the next.
+        $Root = Join-Path $TestDrive ('bind-blank-' + [guid]::NewGuid().ToString('N'))
+        $Splat = @{ OutputPath = $Root; Include = 'RoleAssignments'; ErrorAction = 'Stop' }
+        $Splat[$Parameter] = $Value
+        $Caught = $null
+        try {
+            Export-OERInventory @Splat | Out-Null
+        } catch {
+            $Caught = $PSItem
+        }
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Export-OERInventory'
+        $Caught.Exception | Should -BeOfType [System.Management.Automation.ParameterBindingException]
+        $Caught.Exception.GetType().Name | Should -BeExactly 'ParameterBindingValidationException'
+        $Caught.Exception.Message | Should -BeLike "*$Message*"
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERInventoryScopeTree -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 0
+        Test-Path $Root | Should -BeFalse
+    }
+
+    It 'keeps -ManagementGroup, -Scope, -Force, -TenantId and -GroupFilter in the order they were declared, so no positional argument binds elsewhere' {
+        $Declared = @((Get-Command Export-OERInventory).Parameters.Keys | Where-Object { $_ -in @('OutputPath', 'Include', 'ManagementGroup', 'Scope', 'Force', 'TenantId', 'GroupFilter') })
+        $Declared | Should -Be @('OutputPath', 'Include', 'ManagementGroup', 'Scope', 'Force', 'TenantId', 'GroupFilter')
+    }
+
+    It 'fails binding in a script with no try above it, and the script reaches its end having signed in to and written nothing' {
+        . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Root = Join-Path $TestDrive 'bind-no-try'
+        $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+& (Get-Module Omnicit.EntraRBAC) {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value 'AUTH' }
+}
+$Bundle = Export-OERInventory -OutputPath '#ROOT#' -Include RoleAssignments -Scope '   ' -Confirm:$false
+"BUNDLE:$($null -ne $Bundle)"
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#ROOT#', $Root.Replace("'", "''")))
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'BUNDLE:False|END'
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeLike '*The Scope consists only of white space. Pass an Azure Resource Manager scope, or leave the parameter out.*'
+        Test-Path -LiteralPath $Log | Should -BeFalse
+        Test-Path -LiteralPath $Root | Should -BeFalse
     }
 }
