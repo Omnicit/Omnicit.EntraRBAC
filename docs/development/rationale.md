@@ -10224,9 +10224,9 @@ its own test red.
 | M1b | its `-ErrorAction Stop`, `:1629` | dropped | 1 red, the no-`try` runspace test |
 | M1c, M1d, M1e | the unread entry, its cause and its key, `:1633` | entry dropped; message dropped from the cause; key `roleAssignment` | 4, 4 and 3 red; the export skip test red for the first |
 | M2a, M2b, M2c | `-ErrorAction Stop` on each policy branch, `:2519`, `:2520`, `:2521` | each dropped | 1 red each, the no-`try` runspace test of its branch |
-| M2d | the policy read's single `try`, `:2517` | the original unguarded block | 5 red |
-| M2e, M2g | the unread entry and its key, `:2526` | entry dropped; key `roleManagementPolicy` | 4 red each |
-| M2f | one `try` around the whole read, `:2521` | one `try` per role | 2 red |
+| M2d | the policy read's single `try`, `:2517` | the original unguarded block | 8 red |
+| M2e, M2g | the unread entry and its key, `:2526` | entry dropped; key `roleManagementPolicy` | 7 red each |
+| M2f | one `try` around the whole read, `:2521` | one `try` per role | 3 red |
 | E1 | the export's per-scope `-ErrorAction Stop`, `Export-OERInventory.ps1:1137` | dropped | 2 red, one per section |
 | S1, S2 | the scrub first in each `catch`, `Get-OERInventory.ps1:1630`, `:2523` | scrub removed | 1 red each, the bearer-token hygiene gate of `tests/QA/sourcehygiene.tests.ps1` |
 
