@@ -821,10 +821,11 @@ function Invoke-OERGraphRequest {
             # SEC (A18): never a Graph call under a Microsoft Graph PowerShell SDK session this module
             # did not connect. Initialize-OERAuth refuses one at a cmdlet's entry, but that refusal does
             # not stop the CMDLET: measured 2026-10-05, a caller carries on past a nested function's
-            # terminating error unless a try or trap is active up the call stack, and no public cmdlet
-            # wraps its Initialize-OERAuth call. So the check is repeated here, before every attempt --
-            # the first, each throttled retry -- and outside the try below, whose catch would turn the
-            # refusal into a Graph failure.
+            # terminating error unless a try or trap is active up the call stack, and every public cmdlet
+            # but one leaves its Initialize-OERAuth call unwrapped (Export-OERInventory wraps its call in
+            # a try since Sprint 11 step 10, BL-101, catches the refusal and writes nothing). So the
+            # check is repeated here, before every attempt -- the first, each throttled retry -- and
+            # outside the try below, whose catch would turn the refusal into a Graph failure.
             #
             # The return is load-bearing, not tidiness. Measured 2026-10-05: under -ErrorAction
             # SilentlyContinue or Ignore, with no try up the call stack, a function carries on past its

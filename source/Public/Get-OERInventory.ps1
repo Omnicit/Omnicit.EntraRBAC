@@ -57,6 +57,23 @@ function Get-OERInventory {
     each group that left any out, how many members and owners it left out and on which basis. The
     read needs the Microsoft Graph permission PrivilegedAssignmentSchedule.Read.AzureADGroup
     (Get-OERRequiredScope lists it).
+    A dynamic group's members is written as an explicit null, and is not reported as unread: its
+    membership is owned by its membership rule, so a list would be only what the rule derived at the
+    time of the read, which Invoke-OERStructure never reconciles or removes. The members are not part
+    of the document, so a failed read of them is no gap either: it names nothing unread and adds no
+    cause to the InventoryPartial error, and only the verbose stream shows it. The null is the schema's
+    "leave the membership untouched" signal, and not an omitted key, since an omitted key still
+    reconciles and, under -Prune, removes the live members of a group that is no longer dynamic by the
+    time the document is applied. The group's members are not looked at for the PIM for Groups read
+    above (a dynamic group with members and no owners sends none), and its owners and eligibility are
+    written as for any group.
+    The lists a projection writes stand in one fixed order, so two reads of one unchanged tenant write
+    these lists in the same order whatever order Graph answered in: a group's members and owners, and
+    an administrative unit's members, are ordered as text without regard to letter case and, for two
+    texts that differ only in it, by ordinal comparison (Alice, alice, Bob); a group's eligibility is
+    ordered by principal, then accessType, then durationDays (a permanent eligibility, which has none,
+    first), then id. The groups and units themselves, and the entries of every other section, stay in
+    the order they were listed in.
     The Groups pimPolicy projection is emitted only for a group found to use
     PIM for Groups: one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it
     carries a lastModifiedDateTime or a lastModifiedBy). Microsoft Graph lists those policies for
@@ -79,7 +96,12 @@ function Get-OERInventory {
     from an omitted key, so an unread one is simply left out. Either way the gap is reported:
     after the inventory object is emitted, a non-terminating InventoryPartial error names every
     affected section/displayName/key, so a caller using -ErrorAction Stop or a try/catch finds out
-    instead of treating a document with holes in it as a full tenant snapshot. Do not hand-edit
+    instead of treating a document with holes in it as a full tenant snapshot. (A dynamic group's
+    members and a dynamic administrative unit's members are the two collections that are no gap when
+    their read fails, since neither is part of the document, a group's written as an explicit null
+    and a unit's omitted: the failed read names nothing unread and adds no cause either, and only the
+    verbose stream shows it. A static unit's failed members read is a gap, named unread with its
+    cause.) Do not hand-edit
     such a null to an empty array -- that turns "unknown" into "declared empty", which
     Invoke-OERStructure -Prune acts on by deleting every live member (a group's service principals,
     the members of a group synchronized from on-premises and the members PIM for Groups holds or
@@ -89,7 +111,9 @@ function Get-OERInventory {
     InventoryPartial error when their read fails, and are written as far as they were read: a
     failed catalog list leaves the catalogs and accessPackages sections empty, a failed package
     list leaves a catalog with no access packages, a failed policy read leaves a package with no
-    assignment policies, and when the names cannot be read a group's or an application's binding is
+    assignment policies, the resource names are read only for a catalog whose package list was read
+    and holds a package (a catalog with none, or whose list failed, has no binding to name and sends
+    no such read), and when the names cannot be read a group's or an application's binding is
     written under its object id and any other binding under the name the access package reader
     could join (the name the catalog recorded; a binding with no name at all makes the package's
     resourceRoles null, as described below). Invoke-OERStructure never removes a catalog, access
@@ -186,11 +210,12 @@ function Get-OERInventory {
     for, by the tenantId Azure Resource Manager returns for the subscription: the rule
     Export-OERInventory's Azure walk and Invoke-OERStructure apply too. The subscription is checked once
     per call, before either section reads anything, with one read of it (a subscription named by its
-    display name also costs one read of the subscription list); with both -Scope and -Subscription,
-    each is checked. The Azure Resource Manager token that read needs is acquired in the command's
-    sign-in, as -IncludeARM does, whenever RoleAssignments, or RoleManagementPolicies with exactly one
-    of -Role, -CommonRoles and -AllRolesAtScope, is included with a -Scope or a -Subscription. A -Scope
-    at a management group or the root scope '/', and a -ManagementGroup, lie
+    display name also costs one read of the subscription list, which only the check makes: both sections
+    then read with the subscription ID the check found, never with the name); with both -Scope and
+    -Subscription, each is checked. The Azure Resource Manager token that read needs is acquired in the
+    command's sign-in, as -IncludeARM does, whenever RoleAssignments, or RoleManagementPolicies with
+    exactly one of -Role, -CommonRoles and -AllRolesAtScope, is included with a -Scope or a
+    -Subscription. A -Scope at a management group or the root scope '/', and a -ManagementGroup, lie
     in no subscription and are read as before. A subscription of another tenant -- a customer
     subscription another tenant delegated to this one through Azure Lighthouse, for example -- is not
     read: each included section is written empty, and one non-terminating SubscriptionTenantMismatch
@@ -207,6 +232,22 @@ function Get-OERInventory {
     tenant with SubscriptionTenantMismatch. A role assignment row that an inventory of a subscription
     carries at a management group above it, read at the subscription as inherited, lies in no
     subscription and is not checked: Invoke-OERStructure applies it like any management group row.
+    A RoleAssignments or RoleManagementPolicies read that fails -- the scope is invalid, a role does not
+    resolve or has no policy, or Azure Resource Manager refuses or fails the read -- is reported through
+    the same InventoryPartial error by the section's own name (roleAssignments, roleManagementPolicies)
+    with the reader's message as its cause, and the section is written empty, which does not mean the
+    scope has none. The section is read whole or not at all: with -Role A,B, where the read for B fails,
+    the policy of A is not written either. The reader's own error is not written to the caller's error
+    stream beside it (a caller's -ErrorVariable still collects it), and no warning is written for it.
+    -CommonRoles is the exception: the reader reads each curated role on its own and skips any role whose
+    definition or policy it cannot read -- a refused or failed read as much as a role that is missing at
+    the scope -- with a warning of its own (Skipping role, the role's name and the reason), and carries
+    on. That skip is not reported through InventoryPartial, so the section holds the policies of the
+    roles that were read, which may be fewer than the curated set; only a scope that cannot be resolved,
+    or a sign-in or Azure Resource Manager token the reader cannot get, is reported unread. Under a Stop
+    warning preference (-WarningAction Stop, or $WarningPreference set
+    to 'Stop') the stop at that warning is caught here as well: the section is reported unread, with the
+    warning's text in its cause, and the command carries on.
     A role assignment at the Azure root scope '/', above every management group and subscription in
     the tenant, is left out of the RoleAssignments section: it is elevated
     access, a finding to review rather than part of the RBAC model a document describes, and
@@ -378,15 +419,19 @@ function Get-OERInventory {
 
     .PARAMETER Scope
     A raw ARM scope for the Azure sections (e.g. '/subscriptions/{id}'). A scope in a subscription of
-    another tenant, or in one whose tenant could not be told, is not read (see above).
+    another tenant, or in one whose tenant could not be told, is not read (see above). An empty or white
+    space value is refused at parameter binding.
 
     .PARAMETER Subscription
     A subscription GUID or display name for the Azure sections. A subscription of another tenant, or
-    one whose tenant could not be told, is not read (see above).
+    one whose tenant could not be told, is not read (see above). A display name is resolved once, by the
+    subscription check, and the sections read with the subscription ID it found. An empty or white space
+    value is refused at parameter binding.
 
     .PARAMETER ManagementGroup
     A management group name or display name for the Azure sections. A management group lies in no
-    subscription, so it is read without that check.
+    subscription, so it is read without that check. An empty or white space value is refused at
+    parameter binding.
 
     .PARAMETER Role
     One or more roles (display name, GUID, or full ARM id) whose role management policy to read.
@@ -454,8 +499,26 @@ function Get-OERInventory {
         [string]$GroupFilter,
         [string]$Catalog,
         [string]$AccessReviewFilter,
+        # Sprint 11 step 10 (BL-155): a -Scope, -Subscription or -ManagementGroup of white space only is
+        # refused here, at binding, as an empty one is (the same BL-96 pattern as Export-OERInventory's
+        # -GroupFilter and New-OERConfiguration's -TenantId). Before this, '   ' passed the sections' own
+        # `if ($Scope)` tests (a string of spaces is true) and reached the Azure readers, while the
+        # subscription check and the sign-in's ARM term treat it as no scope at all, so one parameter was
+        # given and not given at once. The module supports PowerShell 7.2, which has no
+        # [ValidateNotNullOrWhiteSpace()] (7.4+), so the same test runs as a script. Declared ABOVE
+        # [ValidateNotNullOrEmpty()] on purpose: validation attributes run in reverse declaration order
+        # (measured), so an empty or null value still reads the NotNullOrEmpty message and white space reads
+        # this one. No parameter moves: positional binding follows declaration order.
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The Scope consists only of white space. Pass an Azure Resource Manager scope, or leave the parameter out.')]
+        [ValidateNotNullOrEmpty()]
         [string]$Scope,
+        # BL-155: as -Scope.
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The Subscription consists only of white space. Pass a subscription ID or display name, or leave the parameter out.')]
+        [ValidateNotNullOrEmpty()]
         [string]$Subscription,
+        # BL-155: as -Scope.
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The ManagementGroup consists only of white space. Pass a management group name or ID, or leave the parameter out.')]
+        [ValidateNotNullOrEmpty()]
         [string]$ManagementGroup,
         [string[]]$Role,
         [switch]$CommonRoles,
@@ -496,7 +559,10 @@ function Get-OERInventory {
         $DocumentTenantId = Get-OERInventoryTenantId
     }
     process {
-        $PrincipalNameCache = @{}   # per-invocation id -> name cache (Groups eligibility + AccessReviews reviewers)
+        # Per-invocation id -> name cache (Groups eligibility + AccessReviews reviewers + directory role principals).
+        # Under Export-OERInventory it is replaced, once the run context is read below, by the context's own
+        # PrincipalNameCache (Sprint 11 step 10, BL-122, R-12).
+        $PrincipalNameCache = @{}
         $Groups                 = [System.Collections.Generic.List[object]]::new()
         $AdministrativeUnits    = [System.Collections.Generic.List[object]]::new()
         $Catalogs               = [System.Collections.Generic.List[object]]::new()
@@ -614,7 +680,13 @@ function Get-OERInventory {
                         # first, while the assignment policies' call adds its causes as each access package
                         # is read, ahead of the causes of the sections read after it.
                         Write-Verbose "Get-OERInventory: $NameCause"
-                        Add-UnreadCause -Cause $NameCause -Target $Unread
+                        # BL-156: registered with a BLANK Target. A cause is deduplicated on its text with its
+                        # Target replaced by <id> (Format-OERUnreadCauseClause), and this text carries the name
+                        # in the very Target it was given, so two names that two objects each share would
+                        # read alike once the name was gone, and the second would be dropped from the clause
+                        # although it is a name of its own. A blank Target keys it on its full text instead:
+                        # each name is a cause of its own, and the same name is still stated once.
+                        Add-UnreadCause -Cause $NameCause -Target ''
                         $SharedNameList.Add([PSCustomObject]@{ Section = $Section; Name = $ReportedName; Count = $Count[$K] })
                     }
                     continue
@@ -659,6 +731,25 @@ function Get-OERInventory {
                     $RunContext = $RunContextFound
                     break
                 }
+            }
+        }
+        # Sprint 11 step 10 (BL-122, R-12): under Export-OERInventory the cache of principal names is the run
+        # context's PrincipalNameCache, the very hashtable the export handed to its group read, so a principal
+        # the group reader named through a PIM eligibility is not looked up again by the reviewers of an access
+        # review or by the principals of a directory role section; what this call learns stays there for the
+        # calls after it. Read through PSObject.Properties, as SubscriptionTenant is below, so a context
+        # without the member -- an older shape, a test fixture's -- reads as none, and the member is used only
+        # when it is a [hashtable] (R-27): its consumers need one, since Get-OERInventoryGroup takes the cache
+        # as a [hashtable] parameter (any other dictionary binds as a COPY, so what the reader learns would be
+        # lost to this call without an error) and the sections below call ContainsKey, which an [ordered]
+        # dictionary has not. Anything else reads as none. Without a context of its own the invocation keeps
+        # the hashtable it made at the top of this block, as it always did, and nothing outlives the call. It
+        # stands before the first reader of the cache (the Groups section's call of Get-OERInventoryGroup,
+        # below).
+        if ($null -ne $RunContext) {
+            $PrincipalNameCacheMember = $RunContext.PSObject.Properties['PrincipalNameCache']
+            if ($null -ne $PrincipalNameCacheMember -and $PrincipalNameCacheMember.Value -is [hashtable]) {
+                $PrincipalNameCache = $PrincipalNameCacheMember.Value
             }
         }
         # Sprint 11 step 6 (BL-133, A18): where the RoleAssignments section keeps what it learns about a
@@ -717,38 +808,69 @@ function Get-OERInventory {
         # Kept in a holder, since a local function cannot assign a variable of this block. Foreign holds the
         # verdicts whose subscription is another tenant's: their SubscriptionTenantMismatch records are
         # written once, after the inventory object, however many sections were refused.
-        $SubscriptionCheck = @{ Decided = $false; Verdicts = @(); Foreign = @() }
+        #
+        # Sprint 11 step 10 (BL-155, R-4): SubscriptionId is the id the check itself resolved for -Subscription,
+        # when that verdict is Home. A -Subscription given by its display name costs the check one read of the
+        # subscription list; the two readers resolve a display name through the same list, once each, and
+        # that resolution is a second decision about WHICH subscription the name means, made after the check
+        # had shown one subscription to be the session tenant's own. So the readers are handed the id the
+        # check decided on (Resolve-OERScope takes a GUID as it is, with no list read), never the name
+        # (docs/development/rationale.md#home-tenant-subscriptions, "Sprint 11 step 10").
+        $SubscriptionCheck = @{ Decided = $false; Verdicts = @(); Foreign = @(); SubscriptionId = $null }
         # Returns $true when the section may read as it always has (every checked scope is Home or
         # NoSubscription, or none was checked), and $false otherwise, when it reads nothing and writes no
         # row: for a Foreign verdict the refusal is recorded once, and the section is not unread (it is a
         # refusal, not a failed read); for an Undecided one, with no Foreign verdict, the section is named
         # unread under its own name, with the verdict's reason as its cause, so InventoryPartial names it.
+        # A -Subscription verdict that leaves the holder without an id -- a Home verdict that carries none, or
+        # a NoSubscription one whatever it carries -- is Undecided here too (R-4): the readers would otherwise
+        # have to be handed the name, which is exactly what this decision replaces.
         function Test-SubscriptionInSessionTenant {
             param([string]$Section)
             if (-not $SubscriptionCheck.Decided) {
                 $SubscriptionCheck.Decided = $true
                 $SubscriptionCheck.Verdicts = @(
                     if (-not [string]::IsNullOrWhiteSpace($Scope)) {
-                        [PSCustomObject]@{ Given = $Scope; Verdict = (Get-OERSubscriptionHomeTenant -Scope $Scope -Cache $SubscriptionTenantCache) }
+                        [PSCustomObject]@{ Given = $Scope; IsSubscription = $false; Verdict = (Get-OERSubscriptionHomeTenant -Scope $Scope -Cache $SubscriptionTenantCache) }
                     }
                     if (-not [string]::IsNullOrWhiteSpace($Subscription)) {
                         $SubscriptionScope = "sub:$Subscription"
-                        [PSCustomObject]@{ Given = $SubscriptionScope; Verdict = (Get-OERSubscriptionHomeTenant -Scope $SubscriptionScope -Cache $SubscriptionTenantCache) }
+                        [PSCustomObject]@{ Given = $SubscriptionScope; IsSubscription = $true; Verdict = (Get-OERSubscriptionHomeTenant -Scope $SubscriptionScope -Cache $SubscriptionTenantCache) }
                     }
                 )
                 $SubscriptionCheck.Foreign = @($SubscriptionCheck.Verdicts | Where-Object { [string]$_.Verdict.Verdict -eq 'Foreign' } | ForEach-Object { $_.Verdict })
+                $SubscriptionVerdict = @($SubscriptionCheck.Verdicts | Where-Object { $_.IsSubscription })[0]
+                if ($null -ne $SubscriptionVerdict -and [string]$SubscriptionVerdict.Verdict.Verdict -eq 'Home' -and
+                    -not [string]::IsNullOrWhiteSpace([string]$SubscriptionVerdict.Verdict.SubscriptionId)) {
+                    $SubscriptionCheck.SubscriptionId = [string]$SubscriptionVerdict.Verdict.SubscriptionId
+                }
             }
             if ($SubscriptionCheck.Foreign.Count -gt 0) {
                 Write-Verbose "Get-OERInventory: $Section was not read: $(@($SubscriptionCheck.Foreign | ForEach-Object { [string]$_.Reason }) -join '; ')."
                 return $false
             }
-            $Undecided = @($SubscriptionCheck.Verdicts | Where-Object { [string]$_.Verdict.Verdict -notin @('Home', 'NoSubscription') })
+            # One rule for -Subscription, decided on the holder and not on the verdict's own id: the readers are
+            # handed $SubscriptionCheck.SubscriptionId, which is set for a Home verdict that carries an id and
+            # for nothing else, so a -Subscription verdict is Undecided unless the holder has one. A
+            # NoSubscription answer is therefore Undecided whether or not it carries an id (the owner never
+            # answers NoSubscription for 'sub:<value>', so that is a stand-in's answer), and so is a Home
+            # answer without one. A -Scope verdict needs no id and is never made Undecided by this term.
+            $Undecided = @($SubscriptionCheck.Verdicts | Where-Object {
+                    $Kind = [string]$_.Verdict.Verdict
+                    $Kind -notin @('Home', 'NoSubscription') -or
+                    ($_.IsSubscription -and [string]::IsNullOrWhiteSpace([string]$SubscriptionCheck.SubscriptionId))
+                })
             if ($Undecided.Count -gt 0) {
                 foreach ($One in $Undecided) {
                     # The reason of a failed read ends in that read's own message, which may end with a period,
                     # and the causes clause and the verbose line add their own: trimmed here, so neither ends in
-                    # '..'. The owner's Reason itself is left as it is.
-                    $UndecidedCause = ([string]$One.Verdict.Reason).TrimEnd().TrimEnd('.')
+                    # '..'. The owner's Reason itself is left as it is. A Home verdict has no Reason, so the
+                    # id-less case says what is missing instead.
+                    $UndecidedCause = if ([string]$One.Verdict.Verdict -in @('Home', 'NoSubscription')) {
+                        "the subscription check gave no subscription id for '$($One.Given)', so the subscription cannot be read by its id"
+                    } else {
+                        ([string]$One.Verdict.Reason).TrimEnd().TrimEnd('.')
+                    }
                     Write-Verbose "Get-OERInventory: $Section was not read: $UndecidedCause."
                     Add-UnreadCause -Cause $UndecidedCause -Target ([string]$One.Given)
                 }
@@ -917,8 +1039,14 @@ function Get-OERInventory {
                 $GroupRead = Get-OERInventoryGroup -Filter $GroupReadFilter -IncludeId:$IncludeId -PrincipalNameCache $PrincipalNameCache
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
+                # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning, as at every site
+                # BL-44 names, so no warning stands between a failed read and its record. Under a Stop
+                # warning preference the warning is a terminating error and ends the command in either
+                # order (InventoryPartial is never reached), so no caller sees a difference; only the
+                # verbose stream does. Held by the verbose line Add-UnreadSection writes first, in the
+                # tests of this cmdlet.
                 Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($PSItem.Exception.Message)"
+                Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
             }
             # Groups is the first section read, so replaying in order leaves the cause list and the unread
             # list exactly as the section used to leave them.
@@ -952,9 +1080,30 @@ function Get-OERInventory {
             # now writes a non-terminating error per unit whose members or scoped-role read failed,
             # and -ErrorAction Stop would abort the whole enumeration on the first one. The records
             # are inspected below rather than discarded.
+            # The pipe into Where-Object is load-bearing, not tidying (BL-58), exactly as in the access review
+            # read below ("The pipe into Where-Object is load-bearing", which carries the measured numbers;
+            # docs/development/rationale.md#writeerror-deposit): a bare call inside @( ) leaks one record per
+            # record written to the caller's -ErrorVariable, since the array subexpression runs the call as
+            # its own nested pipeline and deposits the record again on the way out; only piping the call onward
+            # before the @( ) closes leaks none. This call was that bare form, so every per-collection record
+            # Get-OERAdministrativeUnit writes (AdministrativeUnitMemberReadFailed and its sibling) reached the
+            # caller's -ErrorVariable although this read counts and words each of them itself. Do not
+            # "simplify" the filter away.
             $AuReadErrors = $null
             try {
-                $AuItems = @(Get-OERAdministrativeUnit -IncludeMembers -IncludeScopedRoles -ErrorAction SilentlyContinue -ErrorVariable AuReadErrors)
+                $AuItems = @(Get-OERAdministrativeUnit -IncludeMembers -IncludeScopedRoles -ErrorAction SilentlyContinue -ErrorVariable AuReadErrors |
+                        Where-Object { $null -ne $_ })
+                # Sprint 11 step 10 (BL-43, R-28): the dynamic units among those just listed, by id and without
+                # regard to letter case, built ONCE and only when a record was written, for the record loop
+                # below (the same set as the group reader's, so no listed unit is scanned per failed record).
+                $DynamicUnitIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                if (@($AuReadErrors | Where-Object { $null -ne $_ }).Count -gt 0) {
+                    foreach ($ListedUnit in $AuItems) {
+                        if ([string]$ListedUnit.MembershipType -eq 'Dynamic' -and -not [string]::IsNullOrEmpty([string]$ListedUnit.Id)) {
+                            $null = $DynamicUnitIds.Add([string]$ListedUnit.Id)
+                        }
+                    }
+                }
                 foreach ($AErr in @($AuReadErrors)) {
                     if ($null -eq $AErr) { continue }
                     if ($AErr.FullyQualifiedErrorId -like 'AdministrativeUnitNotFound*') { continue }
@@ -965,7 +1114,20 @@ function Get-OERInventory {
                         # Keep the CAUSE, same reasoning as the group record loop in Get-OERInventoryGroup.ps1.
                         $AuCause = [string]$AErr.Exception.Message
                         Write-Verbose "Get-OERInventory: $AuCause"
-                        Add-UnreadCause -Cause $AuCause -Target ([string]$AErr.TargetObject)
+                        # Sprint 11 step 10 (BL-43, R-28): as for a dynamic GROUP's members (R-24, in
+                        # Get-OERInventoryGroup.ps1), the members read of a DYNAMIC unit is no gap, since a
+                        # dynamic unit's members are omitted from the document below whether the read worked or
+                        # not and no unread entry names them, so its cause is not recorded: a cause clause must
+                        # never name a read that no unread entry names (the verbose line above is all that
+                        # remains of it). The unit is found by the record's Target, its id, in the set of
+                        # dynamic units just listed; a record with no Target matches none and keeps its cause,
+                        # and so does every scoped-role record and every record of a static unit.
+                        $DynamicUnitMembersFailure = $AErr.FullyQualifiedErrorId -like 'AdministrativeUnitMemberReadFailed*' -and
+                            -not [string]::IsNullOrEmpty([string]$AErr.TargetObject) -and
+                            $DynamicUnitIds.Contains([string]$AErr.TargetObject)
+                        if (-not $DynamicUnitMembersFailure) {
+                            Add-UnreadCause -Cause $AuCause -Target ([string]$AErr.TargetObject)
+                        }
                         continue
                     }
                     # Same publisher test as the group record loop in Get-OERInventoryGroup.ps1, and for
@@ -974,10 +1136,11 @@ function Get-OERInventory {
                     # matching comment there for why the PUBLISHER named in the FullyQualifiedErrorId,
                     # not the error id, is the discriminator.
                     if (@(([string]$AErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERAdministrativeUnit') {
-                        Write-Warning "Could not read administrative units: $($AErr.Exception.Message)"
                         # Counted unread as well as warned, for the same reason as the group list read in
-                        # Get-OERInventoryGroup.ps1.
+                        # Get-OERInventoryGroup.ps1. Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE
+                        # the warning, as at the group read above.
                         Add-UnreadSection -Key 'administrativeUnits' -Cause "Could not read administrative units: $($AErr.Exception.Message)"
+                        Write-Warning "Could not read administrative units: $($AErr.Exception.Message)"
                     } else {
                         Write-Verbose ("Get-OERInventory: ignoring a foreign error record seen while reading " +
                             "administrative units ($($AErr.FullyQualifiedErrorId)): $($AErr.Exception.Message)")
@@ -986,8 +1149,10 @@ function Get-OERInventory {
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId -notlike 'AdministrativeUnitNotFound*') {
-                    Write-Warning "Could not read administrative units: $($PSItem.Exception.Message)"
+                    # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning, as above. This
+                    # catch also catches the stop the warning of the record loop raises.
                     Add-UnreadSection -Key 'administrativeUnits' -Cause "Could not read administrative units: $($PSItem.Exception.Message)"
+                    Write-Warning "Could not read administrative units: $($PSItem.Exception.Message)"
                 }
             }
             foreach ($Au in $AuItems) {
@@ -1015,13 +1180,17 @@ function Get-OERInventory {
                     if ($Au.PSObject.Properties.Name -contains 'Members') {
                         # Same rule as group members (Get-OERInventoryGroup.ps1): a user as its UPN (resolvable + friendly), every other
                         # member type as its object id (which the apply resolves verbatim); display name is
-                        # not resolvable so it is only a last-resort fallback.
-                        $Proj.members = @(foreach ($M in @($Au.Members)) {
+                        # not resolvable so it is only a last-resort fallback. Written in the fixed order of
+                        # Get-OEROrderedInventoryEntry, as a group's members are (Sprint 11 step 10, BL-121, R-16):
+                        # Graph lists a unit's members in no fixed order, and the one owner of the order keeps
+                        # two reads of one unchanged unit writing one list.
+                        $AuMemberRefs = @(foreach ($M in @($Au.Members)) {
                             if (-not $M) { continue }
                             if ($M.UserPrincipalName) { [string]$M.UserPrincipalName }
                             elseif ($M.Id)            { [string]$M.Id }
                             else                      { [string]$M.DisplayName }
                         })
+                        $Proj.members = @(Get-OEROrderedInventoryEntry -InputObject $AuMemberRefs)
                     } else {
                         # Explicit null, not an omitted key: an omitted administrativeUnits[].members
                         # key still reconciles and still prunes.
@@ -1160,23 +1329,28 @@ function Get-OERInventory {
             # the export (spec G3: only a null from a name search, or a 404 on an id, is NotFound):
             # a missing catalog id is answered by Graph with CatalogNotFound (measured live,
             # 2026-10-02), which Get-OERCatalog republishes by id, so that arm is the one that fires
-            # in production. It, AmbiguousCatalogName and the module's generic not-found codes on a
-            # by-id read are all facts about the caller's filter; by name a non-match returns
+            # in production. It and AmbiguousCatalogName (the module's own id for a name that more than
+            # one catalog carries) are facts about the caller's filter; by name a non-match returns
             # nothing at all. Such a record is republished as itself and counted as nothing. A 404
             # on a NAME or on the unfiltered list is not a missing object, so it stays unread.
+            # Sprint 11 step 10 (BL-21, R-13): the by-id arm is the one code MEASURED, and the module's
+            # generic not-found codes (ResourceNotFound, Request_ResourceNotFound, ItemNotFound, NotFound)
+            # are gone from it. They stood beside CatalogNotFound as a copy of the list
+            # Get-OERAccessReviewInstance used, declared while the real code was unknown. A live read on
+            # 2026-10-19 (read-only, the test tenant) asked for a catalog by a missing id: Graph answered
+            # 404 with the code CatalogNotFound, and Get-OERCatalog -Id republished CatalogNotFound, so
+            # that arm is the one that fires and none of the four was observed on this endpoint. A by-id
+            # failure that carries one of them is therefore a catalog list that could not be read, named
+            # unread with its cause: the safe direction to be wrong in, since a gap that is reported is
+            # never a silent empty answer.
+            # Why: docs/development/rationale.md#measured-not-found-codes
             try {
                 $ResolvedCatalogList = if ($Catalog) {
                     if ($Catalog -as [guid]) { @(Get-OERCatalog -Id $Catalog -ErrorAction Stop) } else { @(Get-OERCatalog -DisplayName $Catalog -ErrorAction Stop) }
                 } else { @(Get-OERCatalog -ErrorAction Stop) }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                # The module's own not-found vocabulary (Get-OERAccessReviewInstance). Every comma
-                # separated segment of the id is compared WHOLE, never as a prefix, since a composed
-                # id ('ResourceNotFound,Get-OERCatalog') can carry the code outside the first slot.
-                $CatListIdSegment = @(([string]$PSItem.FullyQualifiedErrorId) -split ',' | ForEach-Object { $_.Trim() })
-                $CatListByIdNotFound = $Catalog -and ($null -ne ($Catalog -as [guid])) -and
-                    (@($CatListIdSegment | Where-Object { $_ -in @('ResourceNotFound', 'Request_ResourceNotFound', 'ItemNotFound', 'NotFound') }).Count -gt 0)
-                if ($PSItem.FullyQualifiedErrorId -like 'CatalogNotFound*' -or $PSItem.FullyQualifiedErrorId -like 'AmbiguousCatalogName*' -or $CatListByIdNotFound) {
+                if ($PSItem.FullyQualifiedErrorId -like 'CatalogNotFound*' -or $PSItem.FullyQualifiedErrorId -like 'AmbiguousCatalogName*') {
                     $PSCmdlet.WriteError($PSItem)
                 } else {
                     $CatListCause = "Could not read the catalogs: $($PSItem.Exception.Message)"
@@ -1302,52 +1476,14 @@ function Get-OERInventory {
                 # object id when another listed catalog carries the name (see above). The unread paths of
                 # this catalog below name it the same way, so two catalogs of one name never read alike.
                 $ApCatalogRef = if ($ApCatalogNameCount[[string]$ApCat.DisplayName] -gt 1) { [string]$ApCat.Id } else { $ApCat.DisplayName }
-                # Build an OriginId -> resource display-name map ONCE per catalog. A resource role
-                # binding's scope carries the resource OriginId plus a scope LABEL (commonly 'Root'
-                # for the whole-resource scope) -- not the resource name. The apply engine resolves
-                # the binding's resource against Get-OERCatalogResource display names, so project that
-                # same name here (joined on OriginId) instead of the scope label, or the binding will
-                # not round-trip.
-                # A Group or Application resource is named by its CURRENT name, exactly as the Catalogs
-                # section names it, so a binding resolves to the same object id on apply.
-                $ApCatResMap = @{}
-                # This read only NAMES the bindings below, and the failure is reported through
-                # InventoryPartial like any other unread collection. When it cannot be read the map
-                # stays empty and $ApCatResRead is $false, which changes what a binding falls back to
-                # (see the projection below): the name a binding carries then is the one the catalog
-                # RECORDED when the resource was added, Graph keeps that after a rename, and the apply
-                # engine resolves a declared name FIRST as a group name -- so after a rename that name
-                # can resolve to ANOTHER group that now carries it, binding the wrong group and, under
-                # -Prune, removing the real binding. A group's object id cannot name another group.
-                # It used to be -ErrorAction SilentlyContinue, which hid the failure from every caller.
-                $ApCatResRead = $true
-                $ApCatRes = @()
-                try {
-                    $ApCatRes = @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction Stop)
-                } catch {
-                    Remove-OERErrorRecord -Record $PSItem
-                    $ApCatResRead = $false
-                    $ApCatResCause = "Could not read a catalog's resources to name its access packages' bindings: $($PSItem.Exception.Message)"
-                    Write-Verbose "Get-OERInventory: $ApCatResCause"
-                    Add-UnreadCause -Cause $ApCatResCause -Target ([string]$ApCat.Id)
-                    $UnreadCollections.Add("accessPackages/$ApCatalogRef/catalogResourceNames")
-                    $ApCatRes = @()
-                }
-                $ApCurrentNames = & $GetCatalogResourceNames ([string]$ApCat.Id) $ApCatRes
-                foreach ($Cr in $ApCatRes) {
-                    if (-not $Cr.OriginId) { continue }
-                    $ApCatResMap[[string]$Cr.OriginId] = if ([string]$Cr.OriginSystem -in @('AadGroup', 'AadApplication') -and $ApCurrentNames.ContainsKey([string]$Cr.OriginId)) {
-                        [string]$ApCurrentNames[[string]$Cr.OriginId]
-                    } else {
-                        [string]$Cr.DisplayName
-                    }
-                }
                 # A package list that could not be read projects the catalog with no packages, as it
                 # always has: no handler removes an access package that is absent from the document
                 # ("Prune is child-scope only", Invoke-OERStructure). An absent package is not a fact
                 # though, so the failure is reported through InventoryPartial against the catalog.
                 # It used to have no error handling: under a caller's Stop it ended the whole call
                 # with no document at all, and under Continue it left one stray record and no partial.
+                # BL-24: the list is read FIRST, ahead of the catalog's resources below, which only name
+                # the bindings of a package that was listed.
                 $ApList = @()
                 try {
                     $ApList = @(Get-OERAccessPackage -Catalog $ApCat.Id -ErrorAction Stop)
@@ -1358,6 +1494,54 @@ function Get-OERInventory {
                     Add-UnreadCause -Cause $ApListCause -Target ([string]$ApCat.Id)
                     $UnreadCollections.Add("accessPackages/$ApCatalogRef/packages")
                     $ApList = @()
+                }
+                # Build an OriginId -> resource display-name map ONCE per catalog. A resource role
+                # binding's scope carries the resource OriginId plus a scope LABEL (commonly 'Root'
+                # for the whole-resource scope) -- not the resource name. The apply engine resolves
+                # the binding's resource against Get-OERCatalogResource display names, so project that
+                # same name here (joined on OriginId) instead of the scope label, or the binding will
+                # not round-trip.
+                # A Group or Application resource is named by its CURRENT name, exactly as the Catalogs
+                # section names it, so a binding resolves to the same object id on apply.
+                $ApCatResMap = @{}
+                # BL-24: this read only NAMES the bindings below, so it is made for a catalog whose package
+                # list was read and holds at least one package. A catalog with no package has no binding to
+                # name, and a package list that failed is left as [] above and leaves none to name either:
+                # the read is not sent, and its failure is not reported, since nothing was left unread by
+                # it. (The Catalogs section reads the catalog's resources for its own entry, separately,
+                # and is not changed.)
+                # The failure of this read is reported through InventoryPartial like any other unread
+                # collection. When it cannot be read the map stays empty and $ApCatResRead is $false, which
+                # changes what a binding falls back to (see the projection below): the name a binding
+                # carries then is the one the catalog RECORDED when the resource was added, Graph keeps that
+                # after a rename, and the apply engine resolves a declared name FIRST as a group name -- so
+                # after a rename that name can resolve to ANOTHER group that now carries it, binding the
+                # wrong group and, under -Prune, removing the real binding. A group's object id cannot name
+                # another group.
+                # It used to be -ErrorAction SilentlyContinue, which hid the failure from every caller.
+                $ApCatResRead = $true
+                $ApCatRes = @()
+                if (@($ApList | Where-Object { $null -ne $_ }).Count -gt 0) {
+                    try {
+                        $ApCatRes = @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction Stop)
+                    } catch {
+                        Remove-OERErrorRecord -Record $PSItem
+                        $ApCatResRead = $false
+                        $ApCatResCause = "Could not read a catalog's resources to name its access packages' bindings: $($PSItem.Exception.Message)"
+                        Write-Verbose "Get-OERInventory: $ApCatResCause"
+                        Add-UnreadCause -Cause $ApCatResCause -Target ([string]$ApCat.Id)
+                        $UnreadCollections.Add("accessPackages/$ApCatalogRef/catalogResourceNames")
+                        $ApCatRes = @()
+                    }
+                    $ApCurrentNames = & $GetCatalogResourceNames ([string]$ApCat.Id) $ApCatRes
+                    foreach ($Cr in $ApCatRes) {
+                        if (-not $Cr.OriginId) { continue }
+                        $ApCatResMap[[string]$Cr.OriginId] = if ([string]$Cr.OriginSystem -in @('AadGroup', 'AadApplication') -and $ApCurrentNames.ContainsKey([string]$Cr.OriginId)) {
+                            [string]$ApCurrentNames[[string]$Cr.OriginId]
+                        } else {
+                            [string]$Cr.DisplayName
+                        }
+                    }
                 }
                 foreach ($Ap in $ApList) {
                     $Proj = [ordered]@{
@@ -1545,9 +1729,37 @@ function Get-OERInventory {
             else {
                 $RaParams = @{ ResolveNames = $true }
                 if ($Scope) { $RaParams.Scope = $Scope }
-                if ($Subscription) { $RaParams.Subscription = $Subscription }
+                # Sprint 11 step 10 (BL-155, R-4): the id the subscription check decided on, never the name as
+                # given (Test-SubscriptionInSessionTenant has just made sure it is there).
+                if ($Subscription) { $RaParams.Subscription = $SubscriptionCheck.SubscriptionId }
                 if ($ManagementGroup) { $RaParams.ManagementGroup = $ManagementGroup }
-                $RaItems = @(Get-OERRoleAssignment @RaParams)
+                # Sprint 11 step 10 (BL-34, BL-155, R-3): a role assignment read that FAILED is an unread
+                # section, never a fact. Before this the read ran under the caller's own preference, so a
+                # failure either left its record on the caller's stream beside a RoleAssignments section that
+                # was written empty with nothing to say it could not be read, or ended the whole call under a
+                # caller's Stop. -ErrorAction Stop turns the reader's non-terminating records (InvalidScope,
+                # AmbiguousFilter, the ARM read's own) into the one exception caught here, and the assignment
+                # inside the try gets none of what the reader wrote before it failed: the section is read
+                # whole or not at all. The record is scrubbed first, then folded into the cause and not
+                # republished -- the catalog list's form -- and the section is named unread by its own name, so
+                # InventoryPartial carries it with the reason. No warning is written (R-3): the partial error
+                # is the report, after the inventory object. A section read nothing from is written empty, and
+                # the code below reads nothing more for it: no principal lookup, and no root-scope or
+                # undeclarable-scope notice for this call, since there is no row to name in one. Export's
+                # per-scope call passes -ErrorAction Stop, so the InventoryPartial this writes still makes the
+                # export skip the scope, as a failed read always did
+                # (docs/development/rationale.md#unresolved-principals, "A failed Azure read is an unread section").
+                $RaItems = @()
+                try {
+                    $RaItems = @(Get-OERRoleAssignment @RaParams -ErrorAction Stop)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $RaItems = @()
+                    # The reader's message is trimmed of trailing white space and then of trailing full stops: the
+                    # causes clause adds its own, and a message that ends in one (the role and policy lookups'
+                    # do) would show '..'. The same trim as the Undecided cause above (R-18).
+                    Add-UnreadSection -Key 'roleAssignments' -Cause "Could not read role assignments: $(([string]$PSItem.Exception.Message).TrimEnd().TrimEnd('.'))"
+                }
 
                 # Sprint 11 step 6 (BL-133, A18): the principals are looked up with
                 # Resolve-OERPrincipalName -Detailed, one batched lookup per call, into this section's
@@ -1630,9 +1842,14 @@ function Get-OERInventory {
                     if ($PrincipalType -eq 'Group' -and $RaPrincipalId) {
                         $PrincipalName = Get-GroupPrincipalReference -Id $RaPrincipalId -Name ([string]$PrincipalName)
                     }
+                    # BL-45: the role is written by its name, and by the role definition id the row already
+                    # carries when the name is missing -- and a name that is only white space is missing too:
+                    # the validator refuses an empty name, and a name of spaces cannot be told from one, so
+                    # the same rule as the administrative unit's scoped role line above. The directory role
+                    # row below follows it.
                     $Proj = [ordered]@{
                         scope     = $Ra.Scope
-                        role      = $(if ($Ra.RoleName) { $Ra.RoleName } else { $Ra.RoleDefinitionId })
+                        role      = $(if (-not [string]::IsNullOrWhiteSpace([string]$Ra.RoleName)) { $Ra.RoleName } else { $Ra.RoleDefinitionId })
                         principal = $PrincipalName
                     }
                     if ($SchemaType) {
@@ -1915,10 +2132,11 @@ function Get-OERInventory {
                     # plus a bare, message-less RuntimeException. Membership, not a suffix match:
                     # Write-Error appends a further name when a record is republished.
                     if (@(([string]$ArErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERAccessReviewDefinition') {
-                        Write-Warning "Could not read access reviews: $($ArErr.Exception.Message)"
                         # Counted unread as well as warned, for the same reason as the group list read in
-                        # Get-OERInventoryGroup.ps1.
+                        # Get-OERInventoryGroup.ps1. Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE
+                        # the warning, as at the group read above.
                         Add-UnreadSection -Key 'accessReviews' -Cause "Could not read access reviews: $($ArErr.Exception.Message)"
+                        Write-Warning "Could not read access reviews: $($ArErr.Exception.Message)"
                     } else {
                         # Routed to verbose rather than dropped: a stray is still evidence when a read
                         # misbehaves, it just is not a section-level finding the operator must act on.
@@ -1929,8 +2147,10 @@ function Get-OERInventory {
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId -notlike 'AccessReviewDefinitionNotFound*') {
-                    Write-Warning "Could not read access reviews: $($PSItem.Exception.Message)"
+                    # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning, as above. This
+                    # catch also catches the stop the warning of the record loop raises.
                     Add-UnreadSection -Key 'accessReviews' -Cause "Could not read access reviews: $($PSItem.Exception.Message)"
+                    Write-Warning "Could not read access reviews: $($PSItem.Exception.Message)"
                 }
             }
             # BL-142: the engine's two name lookups, cached for the invocation (Get-AccessReviewUniqueReference):
@@ -2237,7 +2457,8 @@ function Get-OERInventory {
                     # schedule ITS filtered read returns, and Microsoft Graph does not promise the two
                     # reads the same order, so the warning says the entry may then report a change.
                     if (-not $DirectorySeen.Add("$($DirectoryRow.RoleDefinitionId)|$($DirectoryRow.PrincipalId)")) {
-                        $DuplicateRole = if ($DirectoryRow.RoleName) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId }
+                        # BL-45: the role is named here as the entry below writes it.
+                        $DuplicateRole = if (-not [string]::IsNullOrWhiteSpace([string]$DirectoryRow.RoleName)) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId }
                         Write-Warning ("Get-OERInventory: directory role '$DuplicateRole' has more than one $($DirectoryKind.ToLowerInvariant()) " +
                             "schedule for principal '$($DirectoryRow.PrincipalId)'; exporting the first. Invoke-OERStructure compares against " +
                             'the first schedule Microsoft Graph returns for that role and principal, so if the two differ it may report a change for this entry.')
@@ -2312,8 +2533,10 @@ function Get-OERInventory {
                 $Kept = $DirectoryKept[$Index]
                 $DirectoryRow = $Kept.Row
                 $DirectoryPrincipalType = [string]$DirectoryRow.PrincipalType
+                # BL-45: the role definition id stands in for a role name that is missing or only white
+                # space, the rule of the role assignment and scoped role lines above.
                 $Proj = [ordered]@{
-                    role      = $(if ($DirectoryRow.RoleName) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId })
+                    role      = $(if (-not [string]::IsNullOrWhiteSpace([string]$DirectoryRow.RoleName)) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId })
                     principal = $DirectoryPrincipals[$Index]
                 }
                 if ($DirectoryPrincipalType) { $Proj.principalType = $DirectoryPrincipalType }
@@ -2413,14 +2636,45 @@ function Get-OERInventory {
             else {
                 $ScopeParams = @{}
                 if ($Scope) { $ScopeParams.Scope = $Scope }
-                if ($Subscription) { $ScopeParams.Subscription = $Subscription }
+                # Sprint 11 step 10 (BL-155, R-4): the id the subscription check decided on, never the name as
+                # given, as for RoleAssignments above.
+                if ($Subscription) { $ScopeParams.Subscription = $SubscriptionCheck.SubscriptionId }
                 if ($ManagementGroup) { $ScopeParams.ManagementGroup = $ManagementGroup }
 
-                $Policies = @(
-                    if ($CommonRoles) { Get-OERRoleManagementPolicy -CommonRoles @ScopeParams }
-                    elseif ($AllRolesAtScope) { Get-OERRoleManagementPolicy -AllRolesAtScope @ScopeParams }
-                    else { foreach ($R in $Role) { Get-OERRoleManagementPolicy -Role $R @ScopeParams } }
-                )
+                # Sprint 11 step 10 (BL-34, BL-155, R-3): as for RoleAssignments above, a failed policy read is an
+                # unread section. Every Get-OERRoleManagementPolicy call carries -ErrorAction Stop and the whole
+                # read stands in ONE try, so the first failure -- a role that does not resolve
+                # (RoleDefinitionNotFound), no policy for it (PolicyNotFound), an invalid scope, a failed role
+                # enumeration, the ARM read's own record -- ends it, and the assignment gets none of the policies
+                # read before it: under -Role A,B where B fails, A's policy is not written either. The section is
+                # read whole or not at all, and an unread section is never a half-read one that states a subset as
+                # if it were the whole. The record is scrubbed and folded into the cause, not republished, and no
+                # warning is written. -CommonRoles is the exception, and the reader is left as it is: its per-role
+                # catch (Get-OERRoleManagementPolicy.ps1) turns ANY failure to read a curated role's definition or
+                # policy -- a refused or failed ARM read or an ambiguous name as much as a role missing at the
+                # scope -- into a 'Skipping role' warning of its own and carries on, so none of those is a failure
+                # here or named unread, and the section holds the policies of the roles that were read. Only a
+                # scope the reader cannot resolve (InvalidScope), or a sign-in or Azure Resource Manager token
+                # its own begin cannot get (ArmTokenAcquisitionFailed, which the inherited Stop makes
+                # terminating, or the terminating SignInRefused when this command's own sign-in left it
+                # latched), is a record or a stop that reaches the catch below. Under a Stop warning
+                # preference the stop at that warning leaves the reader and is caught below too: the section is
+                # named unread with the warning's text, and the command carries on (measured with the real
+                # reader, in the Describe 'Get-OERInventory -CommonRoles through the real
+                # Get-OERRoleManagementPolicy').
+                $Policies = @()
+                try {
+                    $Policies = @(
+                        if ($CommonRoles) { Get-OERRoleManagementPolicy -CommonRoles @ScopeParams -ErrorAction Stop }
+                        elseif ($AllRolesAtScope) { Get-OERRoleManagementPolicy -AllRolesAtScope @ScopeParams -ErrorAction Stop }
+                        else { foreach ($R in $Role) { Get-OERRoleManagementPolicy -Role $R @ScopeParams -ErrorAction Stop } }
+                    )
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $Policies = @()
+                    # Trimmed as the role assignment read's cause is (R-18).
+                    Add-UnreadSection -Key 'roleManagementPolicies' -Cause "Could not read role management policies: $(([string]$PSItem.Exception.Message).TrimEnd().TrimEnd('.'))"
+                }
                 $RmpSeen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 foreach ($Rmp in $Policies) {
                     # ConvertTo-OERInventoryRoleManagementPolicy owns the entry shape, shared with the

@@ -434,18 +434,24 @@ the quoted text and not by line number.
    call piped onward: the pipe is the only measured shape that leaks 0 to the caller, so the call is
    never a bare call inside `@( )` and never a bare assignment, which leak 1 each.
    `SilentlyContinue` means "captured", not "ignored": the records are inspected afterwards, so a
-   failed read is still a failed read. Both sites pipe onward. The existence probe of
+   failed read is still a failed read. All four sites pipe onward. The existence probe of
    `Sync-OERStructureAccessReview` reads `... -ErrorVariable ProbeErrors | Where-Object { ... }`
    and wraps only the filtered variable in `@( )`. The access review read of `Get-OERInventory`
    reads `@(call ... | Where-Object { ... })`, and its comment says the pipe is load-bearing and
-   the filter is not to be simplified away. The group and administrative-unit reads of
-   `Get-OERInventory` share the capture but not the pipe, as the probe's comment says: each is a
-   bare call inside `@( )`, the shape measured above to leak 1. The local collection also holds
-   records raised inside nested calls even when an inner catch swallowed them, so only a record the
-   cmdlet itself published counts. The probe's comment measured a throttled attempt that was
-   retried and then succeeded with zero matches: it left three `TooManyRequests` records and one
-   bare, message-less exception beside the genuine not-found record. A published record carries the
-   calling cmdlet's name as a comma-separated segment of its `FullyQualifiedErrorId`.
+   the filter is not to be simplified away. The administrative-unit read of `Get-OERInventory` and
+   the group list read, which lives in `Get-OERInventoryGroup` since the group section moved there,
+   take the same form since Sprint 11 step 10 (BL-58). Until then each was a bare call inside
+   `@( )`, the shape measured above to leak 1, so a per-collection record that `Get-OERGroup` or
+   `Get-OERAdministrativeUnit` wrote (`GroupMemberReadFailed`, `AdministrativeUnitMemberReadFailed`
+   and their siblings) reached the operator's own `-ErrorVariable` although the read had already
+   counted and worded it. That was measured offline, with a faked reader that writes one such
+   record: one record in the caller's `-ErrorVariable` from the bare call, none from the piped one.
+   The local collection also holds records raised inside nested calls even when an inner catch
+   swallowed them, so only a record the cmdlet itself published counts. The probe's comment
+   measured a throttled attempt that was retried and then succeeded with zero matches: it left
+   three `TooManyRequests` records and one bare, message-less exception beside the genuine
+   not-found record. A published record carries the calling cmdlet's name as a comma-separated
+   segment of its `FullyQualifiedErrorId`.
 2. *Declare the expected codes at the request.* `Invoke-OERGraphRequest -ExpectedErrorCode` makes
    the wrapper answer with a marker instead of raising, so nothing is deposited anywhere. A throw
    caught afterwards cannot do that, since the engine fills `-ErrorVariable` as the record is
@@ -476,6 +482,84 @@ None of the three retracts a deposit that an inner call has already made into th
 it, and the third publishes one on purpose. A test that asserts on a `-ErrorVariable` therefore
 narrows to the record the cmdlet published, as [#bearer-scrub-tests](#bearer-scrub-tests)
 describes.
+
+### Sprint 11 step 10: the group and administrative unit reads (BL-58, BL-44)
+
+**The pipe (BL-58).** The group list read of `Get-OERInventoryGroup` and the administrative unit list read of
+`Get-OERInventory` were the one shape [#writeerror-deposit](#writeerror-deposit) measures to leak: a bare call
+inside `@( )`, with `-ErrorAction SilentlyContinue` and a local `-ErrorVariable`. Each now pipes the call onward
+inside the `@( )` (`| Where-Object { $null -ne $_ }`), the form of the access review read, and carries a comment
+that says the pipe is load-bearing and points at the section. What it fixes: a per-collection record that
+`Get-OERGroup` or `Get-OERAdministrativeUnit` wrote (`GroupMemberReadFailed`, `AdministrativeUnitMemberReadFailed`
+and their siblings) used to reach the operator's own `-ErrorVariable` beside the read's own report of it, an
+unread collection with its cause, so one failure reached the operator twice. It never reached the error stream
+in either form, and `$global:Error` holds it in both (`SilentlyContinue` appends it there). The test of each read
+drives a faked reader that writes one such record, called with `-ErrorVariable`, and counts the records of that
+id in it (the reach proof first: the read named the collection
+unread). Measured offline on the bare form: one record leaked for each record written, for a collection read and
+for a published list failure alike; none once the call is piped. The filter is held by a test of its own, since
+the pipe alone is enough to stop the leak: a `$null` item in the list is left out.
+
+**Bookkeeping before the warning (BL-44, at the two reads).** The same rule as at the export
+([#export-role-policy-selection](#export-role-policy-selection)): the bookkeeping stands before the warning at
+every site BL-44 names, so no warning stands between a failed read and its record. At these sites, as at the
+export, nothing resumes after the warning: a `Write-Warning` under a Stop warning preference is a terminating
+error, and it ends the read or the command in either order (`InventoryPartial` is never reached), so the order
+is the rule and not a change a caller can see; only the verbose stream shows it. Seven sites wrote the warning
+first and counted the section unread second, and stand the other way round now: the group read's record loop
+and its `catch` in `Get-OERInventoryGroup`, the `catch` around the reader in `Get-OERInventory` (the group
+section), and the record loop and `catch` of each of the administrative unit and access review sections.
+`Add-UnreadSection` writes a verbose line first, so the proof is behavioural (R-7): each
+test provokes the failure under `-WarningAction Stop -Verbose`, in a `try`, and asserts the section's verbose
+line was written. The line is asserted WHOLE, and that is what tells the two sites of a section apart: the record
+loop writes the reader's own message, while the `catch` -- which also catches the stop the record loop's warning
+raises, and so runs second in that case -- writes `Could not read <section>: ` followed by that stop's own
+message. A site put
+back in the old order therefore turns exactly its own test red, and the other site's line cannot stand in for
+it. The eighth site is the removal of a left-out group's causes in `Get-OERInventoryGroup` (`-SecurityEnabledOnly`),
+which now stands before the `-GroupFilter returned ...` warning. It holds a list, which a verbose line cannot show,
+so an AST test reads the source (R-7): the removal loop stands in the warning's own statement block and starts
+before it, with a known-answer test of the checker (a warning first, a missing statement, a warning that is not
+unique, no such warning). The checker is the one `Export-OERInventory.Tests.ps1` carries, copied, not shared: a
+test file imports nothing from another.
+
+No guard that stops a command is added, so no no-`try` runspace test: the only stop a Stop preference raises is
+the operator's own, and the commands end at the warning exactly where they did.
+
+**Mutation proofs.** Each mutation was made in a copy of the step's tree (never the working tree) and run against
+the tests whose names carry the id of the item (BL-58, BL-44) or, for P3, the words 'empty item'; every mutant
+turned the named tests red and the restored copy was green. Lines are the source's at this commit.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| P1 | the group list read pipes onward, `Get-OERInventoryGroup.ps1:288` | the bare call inside `@( )` | 3 red in the reader's tests, 1 red in `Get-OERInventory.Tests.ps1` |
+| P2 | the unit list read pipes onward, `Get-OERInventory.ps1:1040` | the bare call inside `@( )` | 2 red |
+| P3 | the filter after the pipe, `:288` and `:1040` | `ForEach-Object { $_ }` in its place | 1 red each |
+| Q1, Q2 | the group reader's two sites, `Get-OERInventoryGroup.ps1:327`, `:341` | the warning before the bookkeeping | 1 red each |
+| Q3 | the cause removal before the `-GroupFilter` warning, `:381` | the removal after the warning | 1 red, the AST test |
+| Q4 | the group section's `catch`, `Get-OERInventory.ps1:994` | the warning before the bookkeeping | 1 red |
+| Q5, Q6 | the unit section's two sites, `:1064`, `:1076` | the warning before the bookkeeping | 1 red each |
+| Q7, Q8 | the access review section's two sites, `:2036`, `:2050` | the warning before the bookkeeping | 1 red each |
+
+**Also touched.** The comment of the existence probe in `Sync-OERStructureAccessReview` said the group and unit
+reads were the bare form; it now says they pipe onward. `Get-OERInventory` is unchanged for a caller: the
+section warnings, the unread names, the causes and `InventoryPartial` are what they were.
+
+### Sprint 11 step 10: the inner call's error under the export's own preference (BL-46)
+
+**What the export's `-ErrorAction` does not reach.** `Export-OERInventory` reads the Entra ID sections other
+than Groups with an inner `Get-OERInventory` call that pins `-ErrorAction Continue`: unpinned, the call
+inherits the caller's preference, and under the `-ErrorAction Stop` the help tells operators to adopt, its
+`InventoryPartial` would terminate at the call site, outside any `try` and before a file is written. The
+export's own `InventoryPartial`, written after the summary, is the one that honours `Stop`. A pinned
+`Continue` is not governed by the export's own preference either, so the inner `InventoryPartial` reaches
+the caller's error stream, ahead of the summary,
+also under `-ErrorAction SilentlyContinue` and `Ignore` on the export, which silence only the export's own
+`InventoryPartial` that follows. Measured offline in Pester with a stand-in for `Get-OERInventory` that honours
+the call's `-ErrorAction` as the real cmdlet does: under each of the two preferences `2>&1` carried exactly one
+error record, the inner one, and under `SilentlyContinue` the export's `-ErrorVariable` held both records. The
+help says it, next to the `-ErrorAction Stop` sentence, and a test holds both the behaviour (without the pin the
+stand-in's record terminates and the test is red) and the sentence. Cost if wrong: one sentence in the help.
 
 ## static-source-gates
 
@@ -2164,7 +2248,8 @@ call is unread. (c) The other public cmdlets still use the scope they are given 
 (d) A `-Subscription` given by its display name is resolved by the owner for the check and again by
 each reader for its read, so a name that moved to another subscription between the two resolutions
 could be read unchecked (theoretical; not measured). A follow-up would pass the owner's resolved
-scope to the readers; the step's final review left it as it is.
+scope to the readers; the step's final review left it as it is. Sprint 11 step 10 did exactly that
+for `-Subscription` (BL-155, R-4), in the subsection below.
 
 **Mutation proofs.** Each mutation was made in a copy of `source/` (a dev-mode module in scratch for
 the fix round) and run against the named tests; every mutant turned at least one test red, and the
@@ -2190,6 +2275,63 @@ round, before the step's later help changes moved them.
 
 The fallback to a cache of its own, for a run context without the member, is an equivalent mutant:
 the decision is made once per invocation, so no cache and a cache of its own send the same one GET.
+
+### Sprint 11 step 10: the readers are handed the subscription id the check resolved (BL-155, R-4)
+
+**The problem (BL-155, fifth point).** Known limit (d) above. A `-Subscription` given by its display
+name was resolved by the check (`Get-OERSubscriptionHomeTenant` through `Resolve-OERScope`, one read of
+the subscription list) and then resolved again by `Get-OERRoleAssignment` and
+`Get-OERRoleManagementPolicy`, each through the same list: two more list reads per call, and a second
+decision about which subscription the name means, made after the check had shown one subscription to
+be the session tenant's own. Display names are not unique, so a name that moved between the two
+resolutions could have been read unchecked (theoretical; not measured).
+
+**The decision (R-4).** With `-Subscription` given and the check's verdict `Home`, both readers get
+`-Subscription` with the `SubscriptionId` of that verdict, a GUID that `Resolve-OERScope` takes as it is
+with no list read, instead of the name. The check keeps the id in its holder the first time it decides.
+A `-Subscription` verdict is `Undecided` unless the holder has an id: both sections are named unread by
+their own names, the cause says the subscription check gave no subscription id for the scope as given, and
+nothing is read by name. The rule is decided on the holder, which is set for a `Home` verdict that carries
+an id and for nothing else, and not on the verdict's own id (fix round 1: the first commit tested the
+verdict's id, so a `NoSubscription` answer WITH an id for `sub:` passed the filter and handed both readers
+`-Subscription $null`). So a `Home` answer without an id, and a `NoSubscription` answer with or without
+one, are all `Undecided`. The owner never answers `sub:` that way (its `Home` always carries the id of the
+path it resolved, and it never answers `NoSubscription` for `sub:`), so the rule is a backstop. A `-Scope`
+is unchanged: it goes to the readers as given and its `Home` verdict needs no id. No public parameter,
+ErrorId or output property was added (A9). Cost if wrong: the two assignments go back to `$Subscription`
+and the id-less rule goes, one line each.
+
+**What changed for a caller.** A standalone `-Subscription` given by display name costs one read of the
+subscription list, the check's, where it cost three (the check's and one in each reader); the requests
+after the check name the subscription by id. The test that pins the requests through the real owner and
+readers, 'asks for the token in the sign-in and reads a -Subscription given by its display name ...', lost
+its two later list reads.
+
+**The binding refusal (BL-155, second point).** `-Scope`, `-Subscription` and `-ManagementGroup` of
+`Get-OERInventory`, and `-Scope` and `-ManagementGroup` of `Export-OERInventory`, refuse a value of white
+space at binding, the BL-96 pattern of `-GroupFilter` (a `[ValidateScript()]` declared above
+`[ValidateNotNullOrEmpty()]`, since validation attributes run in reverse declaration order). Before it, a
+value of spaces passed the sections' own truthiness tests and reached the readers, while the check and
+the sign-in's ARM term (`IsNullOrWhiteSpace`) took it for no scope at all. No call inside the module
+passes one a blank value: the export's per-scope calls hand `Get-OERInventory` a scope the tree listed,
+which the tree adds only when it is not empty, and its Entra ID call passes no Azure parameter. No
+parameter moved, so positional binding is unchanged.
+
+**Mutation proofs.** Each mutation was made in the source of the step's Task 1 commit and run against the
+named tests; every mutant turned at least one test red, and the restored source was green. Lines are the
+commit's.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| M3a, M3b | the readers are handed the check's id, `Get-OERInventory.ps1:1609`, `:2502` | `$Subscription` | 3 and 2 red |
+| M4 | the id kept from the verdict, `:785` | never assigned | 3 red |
+| M5a | an id-less `Home` for `-Subscription` is undecided, `:798` | the term made `$false` | 4 red |
+| M5b | the term is for `-Subscription` only, `:798` | `IsSubscription` dropped | 12 red |
+| M5c | the cause of an id-less answer, `:806` | `NoSubscription` left out of the list | 1 red |
+| V1, V2, V3 | the three white space refusals, `:481`, `:485`, `:489` | each `[ValidateScript()]` removed | 5, 4 and 4 red |
+| V3b, V3c | the null or empty refusal and the order of the two attributes, `:482`, `:481` | `[ValidateNotNullOrEmpty()]` removed; the two swapped | 2 red each |
+| V4, V5, V5b | the same for the export, `Export-OERInventory.ps1:660`, `:657`, `:661` | each removed | 5, 4 and 2 red |
+| O1, O2 | no parameter moved, `Get-OERInventory.ps1:491`, `Export-OERInventory.ps1:657` | `-Role` above `-ManagementGroup`; `-Scope` above `-ManagementGroup` | 7 and 1 red |
 
 ## sovereign-clouds
 
@@ -3802,7 +3944,9 @@ PowerShell 7, with plain functions and no module code:
 3. Under the same preference with no `try` up the stack, a `throw` inside a `catch` block resumes
    after the whole `try` statement, not at the `catch` block's next statement.
 
-No public cmdlet wraps its `Initialize-OERAuth` call, so at a prompt or in a script a cmdlet carries
+No public cmdlet but `Export-OERInventory` wraps its `Initialize-OERAuth` call (that one since Sprint 11
+step 10, see [A command whose sign-in is refused sends nothing](#a-command-whose-sign-in-is-refused-sends-nothing)),
+so at a prompt or in a script a cmdlet carries
 on past the refusal at its entry (fact 1) and reaches its Graph calls. `Invoke-OERGraphRequest`
 therefore asks `Get-OERGraphSessionState` before every request it sends: at the head of each attempt
 -- the first, each throttled retry, each page under `-All` -- outside the attempt's `try`, whose
@@ -3949,7 +4093,8 @@ does.
 `GraphConnectFailed`, `TenantMismatch`, `AppOnlySessionCredentialUnavailable`, `MissingClientSecret`,
 `MissingClientCertificate` and `GraphSessionChanged`, and since Sprint 9 step 3 `TenantResolutionFailed`
 -- ends `Initialize-OERAuth` and not the cmdlet
-that called it, and no public cmdlet wraps its call. Finding F1 of the step 4b review (PR #24) was
+that called it, and until Sprint 11 step 10 no public cmdlet wrapped its call; one does now,
+`Export-OERInventory` (see **The export wraps its sign-in** below). Finding F1 of the step 4b review (PR #24) was
 therefore that a cmdlet run with `-TenantId B`, whose sign-in for B failed or was refused, carried on
 and sent its Graph calls under the Graph SDK session tenant A left, and its ARM calls with whatever
 ARM token the state held. For `Invoke-OERStructure -TenantId B -Prune` that is B's document applied
@@ -4067,6 +4212,74 @@ request that has no token to send; that refusal neither latches nor marks, since
 `Initialize-OERAuth` does either (see the bullet on a request never sent without an ARM token under
 [#arm-transport](#arm-transport)).
 
+**The export wraps its sign-in (Sprint 11 step 10, BL-101, R-8, R-25, R-26).** The one public cmdlet that writes files
+used to carry on past a refusal like every other: every request it then made was refused by the latch, and
+it still wrote a bundle folder of empty files with a README that named every section unread, a folder that
+looks like the export of a tenant that holds nothing. `Export-OERInventory`'s `begin` block now calls
+`Initialize-OERAuth` directly in a `try`, with `-ErrorVariable SignInErrors`. A `try` is neither a script
+block nor a nested function, so the call still stands in the command's own frame, the latch is still keyed on
+the export's invocation, and gate 10 of [#static-source-gates](#static-source-gates) allows it. A terminating
+refusal is caught, and the catch scrubs the record first (it can reach a token call), marks the export
+refused and raises the record again with `$PSCmdlet.ThrowTerminatingError($PSItem)` (R-26): the sign-in's own
+record with its own ErrorId, so no ErrorId and no parameter was added (A9), and the kind it always had. The
+first version published it with `WriteError`, which was measured to change what a caller sees: a caller's
+`try { Export-OERInventory ... } catch { }` no longer caught the refusal unless the export ran under
+`-ErrorAction Stop`, and a `-WarningAction Stop` on the sign-in's pre-call warning (the one it writes before a
+client secret switch it predicts will not take effect) reached the caller as a non-terminating record. A
+refusal at the export's entry used to propagate as a terminating error wherever a try stood up the stack, and
+it still does. `ThrowTerminatingError` ends the command whatever the error preference, with a try above it or
+none (measured with plain functions under every `-ErrorAction` value and as `$ErrorActionPreference`), so a
+caller's try catches the refusal under every preference, and outside any try only the export's statement ends
+and the script carries on, with the error in `$Error` and not in what `2>&1` carries. The mark the catch sets is
+therefore a second line of defence: were the record only written, `process` would still return on it. The
+tests hold the caller's try without `-ErrorAction Stop`, the pre-call warning under `-WarningAction Stop` in a
+runspace, and the no-`try` runspace.
+
+`ArmTokenAcquisitionFailed`, the one refusal that is only written, is not terminating, so the catch
+never sees it: `-ErrorVariable` collects it, and the first comma segment of a record's
+`FullyQualifiedErrorId` (the ErrorId, before the `,<command>` suffix) says whether it is that one. The
+variable also holds whatever the inner calls of a SUCCESSFUL sign-in wrote, which is no refusal, so the
+segment is compared whole and ordinally and never searched for: the tests write five other records into it,
+four of which only look like the one id (it inside a longer id, with a suffix, after a comma, and in another
+letter case, which an ordinal comparison does not read as the same id), and the export is not refused. That
+record reached the error stream when it was written, and is not written again (the test counts the stream); it
+stays the non-terminating record `Initialize-OERAuth` wrote, and the export raises nothing for it. Under a Stop
+preference PowerShell turns that write into a terminating error, which the catch sees like any other. A Pester
+mock cannot write it non-terminating -- Pester runs a mock under the Stop preference -- so the unit tests write
+it with `Write-Error -ErrorAction Continue`, and a runspace with a plain function as the sign-in shows the
+preferences.
+
+One preference needed a pin of its own (R-25). Under `-ErrorAction Ignore`, and under
+`$ErrorActionPreference = 'Ignore'`, PowerShell adds a written record to NO `-ErrorVariable` (measured with
+plain functions, both spellings), so the variable was empty and the export did not see
+`ArmTokenAcquisitionFailed`: it asked for the tenant ID, read, and wrote the very bundle folder this change
+exists to prevent. With the real module every request after the refusal is refused by the latch, so the folder
+held empty files and a README that named every section unread. `begin` therefore builds `$SignInSplat`, and
+only when `$ErrorActionPreference` is `Ignore` sets `ErrorAction` to `SilentlyContinue` on the sign-in call
+(`Initialize-OERAuth @AuthParams @SignInSplat -ErrorVariable SignInErrors`, still directly in the try, in the
+command's own block). SilentlyContinue collects the record and shows nothing, as Ignore shows nothing; every
+other preference reaches the call as it was, and a terminating refusal is not governed by either. The cost
+is that under Ignore the record lands in `$Error`, as it does under SilentlyContinue; nothing is shown. The
+runspace tests hold both spellings of Ignore, with SilentlyContinue, Continue and Stop beside them: the
+export reads and writes nothing and the script reaches its
+end, and without the pin the Ignore rows write the folder and return the bundle.
+
+A refused export reads nothing more: `process` returns before everything else, the two switch warnings
+(`-AllRolePolicies`, `-AllDirectoryRolePolicies` without their section) included, so it asks for no tenant
+ID (`Get-OERInventoryTenantId` is skipped in `begin`), reads no group, section or scope, writes no folder
+and returns no object, under every error preference. `Get-OERSignInRefusal` is not asked for: the latch is the
+transports' to read, and this decision is made on the sign-in's own outcome. `Get-OERInventory` keeps its
+behaviour, since it has no folder to leave behind, and its refused reads are findings in its own report. The
+no-`try` proof runs the REAL `Initialize-OERAuth` in a runspace with the session-uncertain marker set, which
+refuses a call that names no tenant before any token call, so the transport tripwire installed in the runspace
+records nothing; the script reaches its end, the one error, in `$Error`, is `SignInRefused`, and no folder
+exists. The sentence "no public cmdlet wraps its `Initialize-OERAuth` call" stood in
+[The Graph SDK session](#the-graph-sdk-session), in the comment of `Initialize-OERAuth` and in the comments of
+the two transports, and names `Export-OERInventory` as the one exception in all four now. Cost if wrong: a
+refusal that is not one -- a record of another id read as `ArmTokenAcquisitionFailed` -- would stop an export
+that could have run, and the comparison is exact for that reason; to go back, remove the `try`, the variable and
+the pin.
+
 **Where the key is not the public cmdlet.** The latch keys on the IMMEDIATE caller of
 `Initialize-OERAuth`, which for the `begin`-block call of a public cmdlet is that cmdlet. Elsewhere:
 
@@ -4086,7 +4299,9 @@ request that has no token to send; that refusal neither latches nor marks, since
   own sign-in too, before its token call: the latched cmdlet is a frame outside the helper, so an
   `Export-OERInventory -TenantId B` whose own sign-in to B was refused no longer has
   `Resolve-OERInventoryScopeTree` try B's sign-in again. The helper is not latched by that refusal;
-  the cmdlet's latch covers its requests. Read in the code, not measured.
+  the cmdlet's latch covers its requests. Read in the code, not measured. Since Sprint 11 step 10 an
+  export whose own sign-in was refused stops before it reaches the helper at all (see
+  **The export wraps its sign-in** above).
 - A transport's refresh is not reached by BL-74 in practice (read in the code): it follows a
   request that went out, and the latch gate in front of that request found no latched frame on the
   call stack the refresh shares.
@@ -4721,7 +4936,8 @@ so that the converter, the single owner of the inventory shape, stays pure). The
 cmdlet or a pipeline neighbour switched to by the time the document is assembled.
 `Export-OERInventory` takes its own capture rather than reading the `tenantId` of the inventory
 `Get-OERInventory` returns, and passes it to both of its converter calls. The bundle folder's name
-and the summary's `TenantId` keep the tenant as named, as before; only `inventory.json` carries the
+and the summary's `TenantId` keep the tenant as named, as before, unless the session names none (the
+folder's label, below), when they carry the granted tenant too; otherwise only `inventory.json` carries the
 granted tenant. The validator (`Test-OERStructureSchema`, Rule 1b) and the schema
 (`Get-OERStructureSchemaJson`) know the key: a present `tenantId` must be a string holding a
 canonical GUID, and an explicit `null`, an empty string, a value that is not a string or any other
@@ -4737,6 +4953,24 @@ too). Both are now refused, the first by the predicate's `\z` and the second by 
 that the value is a string, as the schema's `type: string` does. A document without the key is valid
 as before. The prompt template tells an LLM to keep `tenantId` exactly as exported and never to
 invent, change or remove one.
+
+**The folder's tenant label (Sprint 11 step 10, BL-101, R-9).** `Initialize-OERAuth` names a session
+`organizations` when the sign-in has no `-TenantId` and there is no session whose tenant it can inherit, or
+when the sign-in passes `-TenantId organizations`. That name names no tenant, and the export used it for its
+folder: every export signed in that way landed in a folder called
+`oer-inventory-organizations-<stamp>`, and nothing in the name said which tenant it held. The label is now,
+in this order: the tenant the session names (`$script:_OERAuthState.TenantId`) when it is not blank and not
+`organizations` (letter case ignored, compared ordinally); else the granted tenant ID the export captured in
+`begin` (`$DocumentTenantId`, from `Get-OERInventoryTenantId`, the tenant `inventory.json` names); else
+`-TenantId` as it was given; else `tenant`. A tenant named by a domain or a GUID keeps its folder name
+exactly as before, and so does a session that holds no state. The summary object's `TenantId` is the same
+label. When the session names a tenant and the granted tenant is another one, the label is still the one
+named, as before: only a name that names nothing is replaced. A token that reports no tenant ID (the
+documented limit of `TenantMismatch`) leaves nothing to replace it with, so `-TenantId`, then `tenant`,
+stand in. Nothing reads the folder name back, and `BundlePath` stays the supported way to address the
+bundle (the help says so). Cost if wrong: a script that globbed for the old
+`oer-inventory-organizations-*` name finds nothing for these exports; the rule is one expression, at the
+`$TenantLabel` assignment.
 
 **The two comparisons, and their order.** `Get-OERDocumentTenantMismatch` is the single owner of
 the comparison and of the `DocumentTenantMismatch` id and message. It returns nothing for a document
@@ -7293,6 +7527,126 @@ reader marks the whole Groups section unread, never empty. The cost: `Get-OERInv
 catch on a path no known input reaches (its known output is unchanged), and the causes and unread
 names the reader had gathered before it stopped are lost; only `groups` survives.
 
+### Sprint 11 step 10: what the group section writes (BL-43, BL-121; R-1, R-2, R-15, R-16, R-24, R-28)
+
+**The problem (BL-43).** A dynamic group's membership is owned by its membership rule: Microsoft Learn
+states that a member of a dynamic membership group cannot be added or removed manually, and the apply engine
+accordingly adds none and removes none (`Sync-OERStructureGroup`, step 2). The export still wrote every member
+the read found, as a list. That list is a snapshot of what the rule derived at the time of the read, which a
+document can do nothing with: every declared member was reported `Skipped` on the next apply, and a dynamic
+group that had members and declared none got one `Skipped` row ("the N current member(s) were not
+reconciled ...") on every run, `-Prune` or not. Each of those rows is a finding about the export's own output.
+
+**R-1 (the form: an explicit null, and no unread entry).** `Get-OERInventoryGroup` writes a dynamic group's
+`members` as an EXPLICIT null, and does not name it unread. It is a null and not an omitted key for the reason
+a dynamic administrative unit is not the model: the engine converts a unit's membership type back to the
+declared one, but `Set-OERGroup` cannot convert a group's membership type. A group that was made static
+(assigned) after the export would meet an omitted `members` key on the static path, which reconciles the
+members and, under `-Prune`, removes every live one; an explicit null is the schema's "leave it untouched" on
+both paths. It is no gap, so nothing names `groups/<name>/members` unread, and a failed members read of a
+dynamic group adds no such entry either. **R-24 (the cause of that failed read).** The reader records no
+cause for a dynamic group's failed members read, as `-SecurityEnabledOnly` removes the causes of a group it
+leaves out ("that failed read is no gap"): the document's `members` is the explicit null either way, so
+nothing in it is missing, and a cause clause must never name a read that no unread entry names. The first
+version of this step kept the cause "where every counted read leaves it", and a measured run showed what that
+leaves the operator: with the failed read alone there was no `InventoryPartial`, no `IncompleteReads` entry and
+nothing in the bundle README, only the verbose line; and beside another group's failed read, the
+`InventoryPartial` cause clause listed the dynamic group's members cause while the unread list named only the
+other entry, and the message counted "1 collection(s)" with two causes. Now the verbose line is all that
+remains of it, in both cases (`Get-OERInventoryGroup` skips the record in the full read's record loop, and the
+members read of a relevant-only read, for a group whose `GroupType` is `Dynamic`; a record without a target
+matches no group and keeps its cause), and the roster count of that group is not known, so its `memberCount`
+stays null and not 0 (R-15). Cost if wrong: one condition in each of the two places, and a dynamic group's
+failed members read is a cause again with nothing unread to belong to. A dynamic group's
+members are also not looked at for the PIM decision (`$NeedPimRead` counts a non-dynamic group's members, and
+owners as before), so a dynamic group with members and no owners sends no
+`Read-OERGroupPimAssignment`. That read answered `ResourceTypeNotSupported` for a dynamic group when it was
+measured (Rule 10 of [#pim-activation-is-not-membership](#pim-activation-is-not-membership)), so nothing was
+left out by it; the request is saved. The owners and the eligibility of a dynamic group are unchanged. Cost if
+wrong: one line in `Get-OERInventoryGroup` (the null to an omitted key), and R-2's condition goes with it.
+
+**R-28 (a dynamic administrative unit is the same).** A dynamic unit's members are not written either
+(`Get-OERInventory` omits them, and omits rather than nulls them, since the engine converts a unit's
+membership type back to the declared one), so a failed read of them is no gap in the document and no unread
+entry names it. The re-review of the group round measured that its cause still reached the `InventoryPartial`
+clause, beside another collection's (`Unread: groups/role_sec_sta/owners` with the cause
+`Could not read members for administrative unit au-dyn: Too many requests (429).` and the rest of the
+reader's message in the causes), which is the defect R-24 removed for groups. The record loop of the
+administrative unit section now skips the cause of an `AdministrativeUnitMemberReadFailed` record whose
+target is the id of a listed unit whose `MembershipType` is `Dynamic`, ids compared without regard to
+letter case, and the verbose line stays. A static unit's failed members read, every scoped-role record and
+a record with no target keep their cause and, where the projection names one, their unread entry. So a
+dynamic group's members and a
+dynamic unit's members are the two collections whose failed read is no gap, and the help of
+`Get-OERInventory` and of the reader says so (an earlier sentence called a dynamic group's members "the one
+collection", which was untrue of the unit). Both loops find the dynamic ids in a set built once, only when a
+record was written, so neither scans the listed groups or units per failed record (the group loop once did:
+the scan cost failures times listed groups, measured in plain PowerShell at 2.0 s for 500 groups, 4.8 s for
+1000 and 15.5 s for 2000 with every members read failing, none of it for a healthy tenant). Cost if wrong:
+one condition in the unit record loop, and a dynamic unit's failed members read is a cause again with
+nothing unread to belong to.
+
+**R-2 (the engine).** `Sync-OERStructureGroup` writes its one aggregate `Skipped` row for a dynamic group
+only when the document's `members` is not an explicit null (`$MembersDeclaredNull`, decided by
+`Test-OERDeclaredNull` above it). Null says "leave it untouched", so there is nothing to report, and a
+`-Prune` plan of the module's own export must report nothing for a collection the export declared
+untouched. A declared list keeps its row for each
+declared member, and `[]` and an omitted key keep the aggregate row. `-Prune` never touched a dynamic group's
+members and still does not. Cost if wrong: drop the condition, and one `Skipped` row per dynamic group that has
+members returns.
+
+**R-15 (the roster count).** The reader still READS a dynamic group's members when it reads the group in full
+(one request, the request pattern unchanged) and counts them, per group, in a new result list
+`DynamicMembers` (`GroupId`, `Group`, `Members`; an empty array when none). `Export-OERInventory` puts that
+count in the roster's `memberCount` before the `PimLeftOut` addition, which cannot apply to a dynamic group
+(PIM for Groups cannot manage one), so `-AllGroupsDetailed` keeps the count it documents, and a dynamic
+group read in full only because its relevance was unknown is counted too. A group left out for a shared name
+drops its entry, as its `PimLeftOut` entry goes, and a group whose members read failed has none, so its count
+stays null, which is "not known" and not zero. Cost if wrong: the roster's `memberCount` of a dynamic group
+is null, which loses a count and nothing else.
+
+**BL-121 and R-16 (the order of the lists).** Graph answers a group's members, owners and eligibility, and an
+administrative unit's members, in no fixed order, so two exports of one unchanged tenant wrote one set in two
+orders (the live comparison above had to sort them before comparing, for that reason). They are now written in one
+order, and `Get-OEROrderedInventoryEntry` is its single owner: text is ordered by
+`[System.StringComparer]::OrdinalIgnoreCase` and, where two texts differ only in letter case, by
+`[System.StringComparer]::Ordinal`, so the order is total and `Alice` stands before `alice`; both comparers
+are culture independent, so the order is the same on every machine. Eligibility is ordered by principal, then
+`accessType`, then `durationDays` (a permanent eligibility, which has none, first, then ascending), then the
+id, which only an `-IncludeId` read writes and which keeps two principals that share a display name in one
+order. `Get-OERInventoryGroup` orders the three group lists, `Get-OERInventory` the unit members; the groups,
+the units and every other section stay in the order they were listed in. Apply is not affected: the engine
+reconciles by identity, never by position, so no engine change is needed for it.
+
+The helper is a private function and not one comparison per file for two reasons: the rule is a
+single-owner rule like the others of this module (a second copy in the unit reader would be one more place
+for the two orders to drift apart), and the form matters for a large group. The lists are ordered with LINQ's
+`OrderBy` and `ThenBy`, which take .NET's own comparers and are stable, one pass per key (the least
+significant first), so the script block that reads a key runs twice per entry in a text pass (`OrderBy`, then
+`ThenBy`) and once in a number pass, never once per comparison; a `List.Sort` with a comparison script block
+calls it for every comparison. The generic arguments of those calls are inferred from the typed arguments and
+never written out: an explicit type argument on a generic method call (`::OrderBy[object, string](...)`) is
+syntax PowerShell has only since 7.3, which fails to parse under the module's 7.2 floor and with it the whole
+merged module, and no gate runs 7.2 (CI runs a current PowerShell, and PSScriptAnalyzer's compatible syntax
+rule reports nothing for it), so the helper's test file parses the helper's own source and refuses any call
+that carries generic type arguments. Measured offline with plain PowerShell on the development
+machine, 50,000 texts: about 0.4 s through LINQ and about 7 s through `List.Sort`, and 5,000 texts about 0.8 s
+through `List.Sort` with the comparison inline, and about 1.9 s when it calls a function. Cost if wrong: put the
+comparison inline per file, which costs a second copy and the time above for a group with thousands of
+members.
+
+**The texts (BL-48, Sprint 11 step 10, the text task).** A dynamic group's null `members` is told to the reader
+of a bundle in every text that explains a null, each saying that it is no unread collection: the schema
+description of `groups[].members`, the bundle README (the roster bullet and "Unread collections"), the prompt
+(its `null` bullet, and a `groups[]` bullet of its own that says what the engine does with such a group), the
+README of the repository, the about topic and `docs/inventory-to-llm/README.md`. The prompt's sentence that a
+null in `inventory.json` means unknown, not empty, stood without exception before, and a model that read a
+dynamic group's null as unknown would have looked for the group under "What this export could not read" and
+found nothing. The bundle README also says, since BL-48, that an Entra ID entry of "What this export could not
+read" can name several collections, separated by a comma and a space: one entry is the report of one read (the
+`InventoryPartial` target of `Get-OERInventory` and the group read's unread names are each joined with a comma
+and a space). Cost if wrong: sentences in those texts.
+
 ## export-role-policy-selection
 
 Sprint 10 step 9 (BL-107, decisions A8 and A14) made `Export-OERInventory` keep only the Azure role
@@ -7391,12 +7745,15 @@ left on the token ([How a long run renews its token](#how-a-long-run-renews-its-
 near expiry is renewed there, just before the policy list -- as the per-scope
 `Get-OERRoleManagementPolicy` call inside `Get-OERInventory` does on the `-AllRolePolicies` path.
 `Get-OERInventoryRolePolicy` never signs in. A failure of the role assignment read costs the
-selection, not the scope: its `catch` scrubs the record first, writes one warning ("Could not read
-the role assignments at scope '...', so a role management policy there not kept by a use or a change
-is kept without being judged: ..." with the cause) and marks the scope unread for the selection, and
-the policy list is still read. A failed
-policy list reaches the per-scope `catch` and skips the scope exactly as a failed policy read always
-has. Cost if wrong: an interactive long export prompts at a 401 instead of five minutes before.
+selection, not the scope: its `catch` scrubs the record first, marks the scope unread for the selection
+and holds one warning ("Could not read the role assignments at scope '...', so a role management
+policy there not kept by a use or a change is kept without being judged: ..." with the cause), and the
+policy list is still read. Since Sprint 11 step 10 (BL-123, third point) the held warning is written
+only after the policy list of the scope has been read, so a scope whose policy list fails too has ONE
+warning, the skip's ([Sprint 11 step 10: the three reads after the walk report a
+stop](#sprint-11-step-10-the-three-reads-after-the-walk-report-a-stop-bl-123-r-5-r-6-bl-44)). A failed
+policy list reaches the per-scope `catch` and skips the scope exactly as a failed policy read
+always has. Cost if wrong: an interactive long export prompts at a 401 instead of five minutes before.
 
 **R5 (a policy that cannot be judged is kept).** A policy not kept by an assignment, an eligibility
 or a change is kept anyway, and its scope named once, when its `Modified` is `$null` (the row carried
@@ -7513,6 +7870,172 @@ wrong: one such test in a follow-up.
   exported document applied twice gave only `Unchanged`. A management-group scope and a failed read
   are offline-only there (the checklist says why).
 
+### Sprint 11 step 10: the three reads after the walk report a stop (BL-123, R-5, R-6, BL-44)
+
+**The problem (BL-123, first point).** The per-scope calls of the Azure walk and the scope tree each stand
+in a `try`, but the three calls after the walk did not: the PIM eligibility read
+(`Get-OERInventoryAzureEligibility`), the Azure Lighthouse read (`Get-OERInventoryLighthouseDelegation`) and
+the role policy selection (`Select-OERInventoryRolePolicy`). Each helper catches what it expects -- a scope
+whose eligibility read failed, a subscription whose delegations could not be read -- and names it, but an
+error nothing in it catches ended the call, and where no `try` stands up the call stack it ended the EXPORT,
+after the whole read and before a file was written: no bundle, where every other unread read ends in the
+bundle summary followed by `InventoryPartial`.
+
+**The decision (R-5).** Each of the three calls has a `catch` of its own. It scrubs the record first
+(`Remove-OERErrorRecord`, the bearer rule), completes its bookkeeping, writes ONE warning that names the cause
+-- before the bundle's `ShouldProcess`, so `-WhatIf` shows it and a Stop warning preference ends the export
+there -- and the export carries on. What each one records:
+
+- **Eligibility.** No scope was read. Every scope of the tree not already in `SkippedEligibilityScopes` goes
+  there, as the real canonical scope strings: an entry in the `<...>` form would be counted by the clause that
+  counts tree levels, as a level that could not be listed, and not as a scope. The selection below reads every
+  scope as one whose eligibility was not read (`$EligStopScopes`, joined with the scopes whose role assignment
+  read failed and the scopes the helper itself skipped), so a policy there not kept on other grounds is kept
+  and its scope named. `azurePimEligibility.json` is written as `[]` and `AzurePimEligibility` is 0. The
+  stand-in result is empty, so the code after the call needs no branch. Warning, with the record's message as
+  the cause: `Export-OERInventory: could not read the Azure PIM eligibilities, so no scope is read for
+  azurePimEligibility.json: ...`.
+- **Lighthouse.** One entry, `lighthouseDelegations at <all Azure scopes: the read stopped>`, in
+  `$LighthouseUnread`, and the record's message as a cause with no target (the stop belongs to no one scope)
+  in `$LighthouseCauses`, as the reader names its own causes; `$LighthouseRead` stays `$null`, which the lines
+  after the call already read as no delegation. `lighthouseDelegations.json` is written as `[]`. Warning:
+  `Export-OERInventory: could not read the Azure Lighthouse delegations, so lighthouseDelegations.json holds
+  none: ...`.
+- **Selection.** The selection decided nothing, so every candidate is kept -- merged on `scope|role` with the
+  same set as the kept ones are, so a scope the walk lists twice, or in another letter case, writes a policy
+  once -- and each distinct canonical scope among the candidates (`ConvertTo-OERCanonicalScope`, compared
+  without regard to letter case, in the order first seen, as `Select-OERInventoryRolePolicy`'s own unjudged
+  scopes are) is named `roleManagementPolicies/role selection at <scope>`. A candidate with no entry adds no
+  policy (a `$null` would be written to `roleManagementPolicies.json`), and one with no scope names no scope
+  (an entry with an empty scope would be added). Warning: `Export-OERInventory: could
+  not select the Azure role management policies, so every policy read is kept and each scope is named as not
+  judged: ...`. The direction is the safe one, as for every unjudged policy: more is kept than the selection
+  would keep, nothing is dropped on a guess.
+
+The bookkeeping is complete in each `catch` BEFORE its warning (BL-44, below); the merge and the naming of the
+selection are done in the `catch` itself, and a few lines repeat the merge the success path makes, so the proof
+could name statements of one block.
+
+**What the bundle prints for these entries (read in `Get-OERInventoryReadme` and the export's clauses, and
+held by the tests).** An eligibility stop is a list of real scopes in `SkippedEligibilityScopes`: the
+`InventoryPartial` message counts them ("N of N Azure scopes could not be read for azurePimEligibility.json,
+and their eligible assignments are absent from it. Skipped: ...") and the README lists each under "Azure
+scope, absent from `azurePimEligibility.json`". The cause is in the warning only, as the cause of a scope
+the helper itself skipped is. A Lighthouse stop is the one `IncompleteReads` entry; the message gives it in
+the Lighthouse clause with its cause ("1 Azure Lighthouse read(s) failed, so lighthouseDelegations.json
+holds no delegation of a scope named here and writes the name of a role named here as null: ENTRY. Causes of
+the unread Azure Lighthouse reads: ...", where ENTRY is
+`lighthouseDelegations at <all Azure scopes: the read stopped>`), and the README lists it under the label
+"Azure Lighthouse read that failed", as a code span, so the angle brackets are shown. The README's
+explanatory prose (`Get-OERInventoryReadme`, written by the step's text task) names this entry as the third
+of that label that names no single scope, beside `<all Azure scopes: scope enumeration failed>` and
+`<subscriptions: the listing failed>`, and says that no subscription's delegations are in
+`lighthouseDelegations.json` then, which is written `[]` and does not mean there are none; the Lighthouse
+section of the README and the prompt's bullet for the label say the same. A selection stop gives the
+unjudged scope entries and the clause "at N Azure scope(s) every role management policy that could not be
+judged was kept, none of them left out ...", under the label "Azure role management policies kept without
+being judged"; its cause is in the warning only.
+
+**What changed for a caller.** An export whose eligibility read, Lighthouse read or selection stops ends in
+the bundle and `InventoryPartial`; it used to end in an exception and no bundle. A script with no `try`
+above it sees the bundle object, then `InventoryPartial`, then carries on (the no-`try` runspace test, for
+each of the three). Nothing of the stop reaches the error stream but `InventoryPartial`; a caller's
+`-ErrorVariable` still holds the engine's own copies of a thrown error, which no `catch` can keep out of it
+(the tests count the records the export owns, those whose id ends `,Export-OERInventory`).
+
+**One older test changed.** 'ignores a context an export left behind when its walk stopped: the next
+standalone Get-OERInventory lists for itself' stopped the walk with an eligibility read that threw. That stop
+is now caught, so the test stops the walk with the warning of the catch, which a Stop warning preference
+(`-WarningAction Stop`) makes terminating, and still matches the cause in the message. Its reach proofs are
+unchanged.
+
+**R-6 (the two switches that do nothing).** `-AllRolePolicies` while `-Include` does not name
+`RoleManagementPolicies`, and `-AllDirectoryRolePolicies` while it does not name
+`DirectoryRoleManagementPolicies`, each write one warning at the top of `process`, before any read and before
+the export's own `ShouldProcess`: `Export-OERInventory: -AllRolePolicies has no effect, since -Include does
+not name RoleManagementPolicies.` and `Export-OERInventory: -AllDirectoryRolePolicies has no effect, since
+-Include does not name DirectoryRoleManagementPolicies.` (BL-123, fourth and fifth points). Why in the export
+and not in `Get-OERInventory`: the export forwards `-AllDirectoryRolePolicies` to its `Get-OERInventory` call,
+which has no gate of its own and stays silent for it, so a warning there would be written twice. The help of
+both parameters says the export warns. A caller who passes either switch while the section is left out was
+told nothing before; the bundle simply lacked the effect. Cost if wrong: two `if` statements and their tests.
+
+**One warning for a scope (BL-123, third point).** A failed role assignment read of the selection kept its
+warning in its `catch`, before the policy list of the scope was read, so a scope whose policy list failed too
+was warned about twice: once for a read that only cost the selection of a scope the second read then dropped,
+once for the skip. The `catch` keeps the bookkeeping (`$ScopeAssignmentsUnread`) and holds the text; the
+warning is written only after `Get-OERInventoryRolePolicy` has succeeded for the scope. A scope whose policy
+list fails is skipped with `Skipping scope '...'` as its one warning, and is not named as unjudged, since it
+merges no row. Under a Stop warning preference the held warning, now after the policy list, stops the scope
+through the same outer `catch` as before. Cost if wrong: the text moves back into the `catch`.
+
+**Bookkeeping before the warning (BL-44, at the export).** BL-44 asks that no warning stand between a failure
+and its record: a `Write-Warning` under a Stop warning preference is a terminating error, so a statement after
+it never runs, and bookkeeping written after the warning is lost wherever the error is caught and the command
+resumes. At these export sites nothing resumes after the warning -- the roster, group reader and scope
+enumeration catches stand at the top level of `process`, and the skip catch stands inside the walk's
+`try`/`finally` only -- so under a caller's `-WarningAction Stop` the warning ends the export in EITHER order,
+with no bundle and no `InventoryPartial`. The order is the rule kept at the export, not an outcome a caller
+sees there. The warnings that ARE caught and resumed are the ones written inside the per-scope `try`
+(Get-OERInventory's own warnings, written again per scope, and the held role assignment warning); they feed the
+skip catch, as before the step. Seven sites stand before their warning in the same statement block, and an AST test of
+`Export-OERInventory.Tests.ps1` holds each (R-7: the bookkeeping here is a variable or a list, which a verbose
+line cannot show): the roster read (`$RosterUnread`), the group reader that stops (the stand-in `$GroupRead`),
+the scope enumeration (`$Tree` and three `.Add` calls), the skipped scope (`$SkippedScopes` and the four
+takebacks) and the three catches above. The test finds each warning by the start of its text, requires exactly
+one, and requires each named statement the right number of times in the warning's own block and starting
+before it; a known-answer test of the checker feeds it a warning that stands first, a missing statement and a
+warning that is not unique. The bookkeeping of the three new catches is the stand-in result (eligibility), the
+two list additions (Lighthouse) and the merge loop (selection).
+
+**Mutation proofs.** Each mutation was made in a copy of the step's tree at this commit's source and tests, and
+run against the Describes whose names carry "step 10" in `tests/Unit/Public/Export-OERInventory.Tests.ps1`;
+every mutant turned at least one test red, and the restored source was green. Lines are the source's at the
+commit that added the rows; the rows of the fix round (G1 to H8, below the table) carry the lines of the source
+after it, which the help and comment edits of that round moved.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| E1, L1, S1 | each of the three reads has a `catch`, `Export-OERInventory.ps1:1307`, `:1338`, `:1382` | the `catch` rethrows (the call unguarded) | 4, 4 and 3 red |
+| E2 | the scopes of an eligibility stop are named, `:1310` | the scopes are not added | 5 red |
+| E3 | the selection reads every scope as unread, `:1371` | `$EligStopScopes` left out of the unread list | 1 red |
+| E4 | "not already there", `:1310` | the guard dropped | 1 red |
+| E5, L6, S8 | the three warning texts, `:1312`, `:1340`, `:1392` | the text shortened | 2 red each |
+| E6, L5, S7 | the scrub first in each `catch`, `:1306`, `:1336`, `:1381` | the scrub removed | 1 red each |
+| E7 | the scrub stands before the warning, `:1306` | the scrub moved after the warning | 1 red |
+| L2, L3, L4 | the Lighthouse entry text, its cause and its entry, `:1338`, `:1339`, `:1338` | the text changed; the cause not added; the entry not added | 1, 2 and 4 red |
+| S2, S3 | every candidate kept and each scope named, `:1387`, `:1390` | nothing merged; nothing named | 2 and 4 red |
+| S4, S5, S6 | the canonical scope, the case-insensitive set, the `scope\|role` merge, `:1389`, `:1382`, `:1387` | the scope as read; an ordinal set; no merge set | 1 red each |
+| A1, A2 | the two switch warnings, `:723`, `:726` | each removed | 5 red each |
+| A3, A4 | their conditions, `:722`, `:725` | inverted; the wrong section | 7 and 3 red |
+| A5, A6 | before any read, exact text, `:723` | the warning moved after the group reads; the text changed | 2 and 5 red |
+| W1, W2, W3 | the held assignment warning, `:1221`, `:1227` | back in the `catch`; never written; written before the policy list | 2 red each |
+| W4 | the unread flag of the assignment read, `:1220` | removed | 1 red |
+| B1-B7 | the seven BL-44 sites, `:783`, `:824`, `:1098`, `:1240`, `:1312`, `:1340`, `:1392` | each warning moved before its bookkeeping | 1 red each, the AST test of that site |
+| B8, B9 | one statement of several, `:1097`, `:1239` | one `.Add` of the three, and one takeback of the four, after the warning | 1 red each |
+| H1-H6 | the help of the three stops, the held warning and the two switches, `:134`, `:192`, `:248`, `:244`, `:552`, `:542` | one clause changed | 1 red each |
+
+The fix round that followed the review of those commits added the proofs of three guards in the new catches and
+of two help sentences. The lines are those of the source after the round.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| G1 | the blank-scope filter on the scopes of a stopped eligibility read, `:1316` | the filter dropped; and weakened to an empty-string test (G1b) | 1 red each: a white space scope is named in `SkippedEligibilityScopes` |
+| G2 | a candidate with no entry adds no policy to the selection stop's merge, `:1395` | the guard dropped | 1 red: a `$null` is written among the policies |
+| G3 | a candidate with no scope names no scope, `:1400` | the test on the canonical scope dropped | 1 red: the entry with an empty scope is added |
+| G4 | the test for a candidate that is itself `$null`, `:1394` | dropped | equivalent: green. The walk drops a `$null` candidate as it reads it, so none reaches the `catch`, and without strict mode the two guards above would read it as one with no entry and no scope |
+| H7, H8 | the help names the Lighthouse stop in the IncompleteReads paragraph, and says an eligibility stop names a scope only where a policy is kept without being judged, `:436`, `:252` | one clause changed | 1 red each |
+
+**Known limits.**
+
+- An eligibility stop names every scope, although the helper may have read some before it stopped: it returns
+  its result only on completion, so what it read is lost. Naming too many is the safe direction.
+- A stop is reported with the record's message only; nothing says which scope or request it came from. The
+  three helpers catch their per-scope failures, so a stop is by construction not one of those.
+- The per-scope skip warning now carries the whole `InventoryPartial` text when the inner read fails that way
+  (Get-OERInventory's own message, since the call passes `-ErrorAction Stop`). That is unchanged by this step
+  and parked for a later one.
+
 ## typed-group-member-read
 
 Sprint 9 step 1 (BL-13) made `Get-OERGroupRelation` the single reader of a group's `members` and
@@ -7566,6 +8089,25 @@ casts were accepted but the group held none of them, so their zeros show that th
 that nothing is missing. If wrong: a device or organizational contact the untyped read leaves out
 would still be missing from `Members`. The repair is one more entry in the type list at the top of
 `Get-OERGroupRelation`, made after a measurement with such a member.
+
+**R1, measured again (Sprint 11 step 10, BL-83, R-14).** The first measurement could not say whether the
+other casts miss anything, since its group held no user, device or organizational contact. On 2026-10-19 the
+question was put to the whole test tenant, read-only: every one of its 99 groups (73 security, 9
+role-assignable, 9 dynamic security, 6 Microsoft 365, 1 mail-enabled security and 1 distribution; no
+synchronized group and no dynamic Microsoft 365 group), members and owners, the untyped read against the
+typed `user`, `group`, `device`, `orgContact` and `servicePrincipal` casts, counts only. The members found
+were users (154) and devices (91), and the typed user and device casts found nothing the untyped read had
+missed. The owners were users (24) and 18 service principals that ONLY the typed `servicePrincipal` cast
+lists, which is the known gap and nothing new; the user cast found nothing the untyped read had missed. No
+group, organizational contact or service principal member existed in the tenant, so those member casts found
+nothing to compare, and the owner casts to `group`, `device` and `orgContact` answer 400
+`Request_UnsupportedQuery`. What that settles: across all those groups the untyped read missed no user and no
+device, which the first run could not say. What it leaves open: an organizational contact was never seen, a
+group member was seen once (2026-10-06), a service principal as a member only once, and synchronized groups
+and dynamic Microsoft 365 groups were not measured. So R1 stands as decided, with no code change: only
+`servicePrincipal` is read typed. The comment above `$TypedReadTypes` in `Get-OERGroupRelation` states exactly
+this and no more; it used to say that the user, group, device and organizational contact casts "showed
+nothing missing", which the first run could not say of the user, device and organizational contact casts.
 
 **How the two reads are merged.** On object id, ignoring case, the untyped read's order first and
 then what only the typed read added, so a service principal that Graph one day starts listing in
@@ -8884,7 +9426,10 @@ its owner with no partial signal. Every other group's assignment read answered 2
 onboarded one included, or 403 for a role-assignable group read without the permission (above). A
 failure that arrives thrown, of any kind, is unread. If wrong: a group answering
 `ResourceTypeNotSupported` that PIM for Groups could still hold access in would have that access
-written as standing; Graph's answer is that PIM for Groups does not manage the group at all.
+written as standing; Graph's answer is that PIM for Groups does not manage the group at all. Since
+Sprint 11 step 10 (BL-43) the members of a dynamic group are neither written nor looked at for this read:
+the group's members are an explicit null, and a dynamic group with members and no owners sends no
+assignment read ([#export-group-selection](#export-group-selection)).
 
 **The permission.** Microsoft Learn names `PrivilegedAssignmentSchedule.Read.AzureADGroup` as the
 least privileged application permission for the read and
@@ -9957,6 +10502,87 @@ stamps it ([#unresolved-principals](#unresolved-principals)). A group principal 
 not return, or whose lookup failed, carries its object id as its name, which `Get-OERGroupReference`
 returns as it is, with no index read.
 
+### Sprint 11 step 10: names and the order of reads in Get-OERInventory (BL-156, BL-45, BL-24; R-10, R-11)
+
+**BL-156 and R-10 (a shared name is a cause of its own).** `Format-OERUnreadCauseClause` deduplicates the
+causes of an `InventoryPartial` message on a key: the message with its `Target` -- the failing object's own
+id, taken from its record -- replaced by `<id>`, so that seven units that fail for one reason are one cause.
+A shared-name cause was registered with the name's own unread entry as its `Target` (`groups/Admins`), and
+`Get-OERSharedNameCause` writes that entry into its text, so the replacement turned every name of one count
+into the same key (`2 live objects share the name <id> (compared ...`), and the clause kept the first name
+only. That happened in `Get-OERInventory`'s `Select-UniqueNamedEntry` and in the group clause of
+`Export-OERInventory`, which formats the causes `Get-OERInventoryGroup -ExcludeSharedName` returns. The unread
+entries and the README still named every name; only the causes clause lost one, so an operator reading the
+message saw one name where two were left out. Both sites now register the cause with a BLANK `Target`, which
+the clause reads as "no id to normalise", so the key is the full text: each name is a cause of its own, and one
+name is still stated once however many objects carry it. `Format-OERUnreadCauseClause` and the id
+normalisation of every other cause are unchanged. The cost is length: a tenant with many shared names states
+each, and the cap of 23 distinct causes can drop a shared-name cause like any other, and says how many it
+dropped; the unread keys stay and the verbose stream carries every one. Where a shared-name cause stands in
+that order depends on the call: the group reader and the five calls `Get-OERInventory` makes once every section
+is read add theirs after the other causes, so the cap drops those first, while the assignment policies' call
+adds its causes as each access package is read, ahead of the causes of the sections read after it. Cost if
+wrong: put the
+`Target` back, and a second name of one count disappears from the clause again.
+
+**BL-45 (a role name of white space).** A role assignment's `role` and a directory role entry's `role` fell
+back to the role definition id only when the name was empty or missing, so a name of spaces was written as
+it was, and the validator refuses an empty name and cannot tell white space from one. Both now use
+`[string]::IsNullOrWhiteSpace` on the name and fall back to the id the row already carries, the rule the
+administrative unit's scoped role line already has. The duplicate schedule warning of the directory
+section names the role the same way, so the warning and the entry it is about agree. A name that is not blank
+is written as it is. Cost if wrong: a role whose name is white space is written as that white space again.
+
+**BL-24 and R-11 (the package list is read before the catalog resources).** The AccessPackages section read
+each catalog's resources first, only to name the bindings of the packages it listed next, and sent that read
+for a catalog that holds no package at all, and for one whose package list then failed, naming
+`accessPackages/<catalog>/catalogResourceNames` unread for a read nothing needed. It now reads the package
+list first and reads the catalog's resources, and asks `Resolve-OERPrincipalName` for the group and
+application names through the shared name map, only for a catalog whose list was read and holds a package: a
+catalog with none has no binding to name, and a failed list is already named unread as
+`accessPackages/<catalog>/packages`, with no resource read behind it. A failed resource read of a catalog that
+does hold a package is named as before. The Catalogs section reads a catalog's resources for the catalog's own
+entry, separately, and is not changed; the shared name map is still filled by whichever section needs it
+first. A failed package list now names `packages` alone for its catalog, since a failed list reads no
+resources, so a catalog's `packages` and `catalogResourceNames` entries can no longer both be named, and no
+other entry changes. Cost if wrong: one resource read more per catalog that holds no package, and a
+`catalogResourceNames` entry for a read that was never needed.
+
+## measured-not-found-codes
+
+Sprint 11 step 10 (BL-21, R-13): the not-found codes of two reads are the ones measured. This anchor records
+which code each read declares and why it declares no other.
+
+**The problem (BL-21).** `Get-OERAccessReviewInstance -Instance` sorted a failed single-instance GET as a
+missing instance when the converted error id was one of four codes (`ResourceNotFound`,
+`Request_ResourceNotFound`, `ItemNotFound` and `NotFound`), and the catalog list read of `Get-OERInventory`
+carried a copy of the same four for a by-id `-Catalog` read, beside `CatalogNotFound`. Both lists were declared
+while the real code was unknown, a superset that is a guess (the same shape `Resolve-OERAccessPackageId`
+dropped for the access package probe), and an unobserved code is as likely to mean something else as to mean
+"missing".
+
+**What was measured (2026-10-19, read-only, as the dedicated live-verification identity, through the module's
+transport).** A missing access review definition, the instance list of a missing definition, and a missing
+instance of a missing definition or of an existing one: Microsoft Graph answers 404 with NO error code in the
+body, so the id the module carries is the status-derived `NotFound`. A catalog by a missing id: 404 with the
+code `CatalogNotFound`, which `Get-OERCatalog -Id` republishes as `CatalogNotFound`.
+
+**R-13 (the instance read).** The single-instance GET declares `-ExpectedErrorCode 'NotFound'` and turns the
+`Omnicit.EntraRBAC.GraphExpectedError` marker it gets back into the existing `AccessReviewInstanceNotFound`,
+with the message, category and target it always had and no inner exception, since the marker is an answer and
+nothing was raised. Every other failure is scrubbed and published as itself, and the four-code list is gone, so
+`ResourceNotFound`, `Request_ResourceNotFound` and `ItemNotFound` are no longer read as a missing instance. The
+transport compares whole tokens and reads a failure's message text only when its id is status-derived, so a 403
+that carries a real code is never softened into "not found" by prose such as "the caller does not have access
+to the resource, or it does not exist". **The catalog by-id list** keeps its `CatalogNotFound*` and
+`AmbiguousCatalogName*` arms, which republish the record as itself and count nothing unread, and loses the
+four-code segment test: a by-id failure that carries one of the four is a catalog list that could not be read,
+named unread (`catalogs` and `accessPackages`) with its cause, the safe direction to be wrong in. Cost if
+wrong: a Graph that answers one of those endpoints with a code the module does not declare makes the instance
+read publish that error as itself instead of the friendly id, and the catalog by-id read name the catalogs
+unread instead of republishing the not-found record, each repaired by adding the one measured code to the
+declaration or to the arm.
+
 ## export-run-context
 
 Sprint 11 step 6 (R-2 of step 5, ruling R-1, amended on the review of Task 1) gave one export a
@@ -9998,10 +10624,46 @@ sets it back to `$null` with a plain statement directly after the Azure walk. It
   writes: the export hands it to `Resolve-OERInventoryScopeTree -Cache`, `Get-OERInventory` hands it
   to its own owner calls, and the owner stores there what a read or the list gave. A context without
   it, a test fixture's for one, reads as none, and `Get-OERInventory` then keeps a cache of its own for
-  the invocation.
+  the invocation;
+- `PrincipalNameCache` (added in Sprint 11 step 10, BL-122, R-12; third in the object, after
+  `GroupNameIndex`): the id to display name hashtable the export creates before its group read, hands to
+  `Get-OERInventoryGroup -PrincipalNameCache` and puts here, the very same object in all three places.
+  See the paragraph on it below.
 
 A local reference keeps the two lists after the context is cleared. Cost if wrong: one more member for
 each thing an export shares; the alternative, a parameter, would have been a new public parameter.
+
+**The cache of principal names (Sprint 11 step 10, BL-122, R-12).** The group reader names the principals of
+a group's PIM eligibility through `Resolve-OERPrincipalName` into an id to display name cache, and
+`Get-OERInventory` names the reviewers of an access review and the principals of a directory role section
+through another, so a principal that stands in both -- a user who is eligible for a group and also reviews
+an access review -- was looked up twice per export. The reader has always taken its cache as a parameter
+(`-PrincipalNameCache`), which `Get-OERInventory`'s own Groups section passes, so the export only had to hand
+the reader a hashtable it also keeps: `Export-OERInventory` creates it before its group read (an export that
+reads no Groups section leaves it empty, which is what the call used to start from), passes it to the reader
+and puts it in the context as `PrincipalNameCache`. `Get-OERInventory` takes it as its own
+`$PrincipalNameCache` right after it has decided that the context is its own (the owner check below), and
+before the Groups section reads, so what the reader learned is found by the reviewers and the directory
+role section, and what this call learns stays for the calls after it. The member is read through
+`PSObject.Properties`, as `SubscriptionTenant` is, and used only when it is a `[hashtable]` (R-27): the
+consumers need one. `Get-OERInventoryGroup -PrincipalNameCache` is a `[hashtable]` parameter, which binds any
+other dictionary as a COPY, so what the reader learned would be lost to the call without an error, and the
+sections below call `ContainsKey`, which an `[ordered]` dictionary has not, so the reviewers and the directory
+role sections would throw. R-12 first copied the `IDictionary` test of the `SubscriptionTenant` member, whose
+consumer (`Get-OERSubscriptionHomeTenant -Cache`) is an `IDictionary` parameter; this member's consumers are
+not. A context without the member, or with one that is no `[hashtable]`, reads as none, and the call keeps
+the hashtable it made at the top of its `process` block, which it always did. A call that has no context of
+its own -- a standalone one, or one that finds a stale context -- uses that hashtable and leaves the stale
+one alone. The
+tests hold the same object in the reader and the context (`ReferenceEquals`), the lookups counted
+(`Resolve-OERPrincipalName` is not called for a principal the reader named, and once for one it did not),
+and the six readings of a context that has no usable member (missing, null, a string, an array, an
+`[ordered]` dictionary and a generic dictionary). Known limit: `Resolve-OERPrincipalName`'s map answers an id
+the directory did not return, and every id of a batch whose request failed, with the id itself, and the
+cache keeps that answer like any other, so a lookup that failed in the group read is not retried by the
+Entra ID call, which writes the id it would have written after a second failure. Cost if wrong: one lookup
+more for each principal both name, as before, and a hashtable that lives for one export. A test that builds
+a context by hand needs no new member: without it the call keeps its own cache.
 
 **The owner check.** `Get-OERInventory` reads the context ONCE per invocation and uses it only when its
 `Owner` is the `InvocationInfo` of a frame of the current call stack, compared by reference through
@@ -10121,6 +10783,101 @@ the rows on the role assignment id (on scope, role and principal for a row with 
 to letter case, warns once before its `ShouldProcess`, and hands the rows to the README section "Role
 assignments whose principal the directory did not return". Cost if wrong: a finding the operator
 reviews; the assignment stays in the document either way.
+
+**A failed Azure read is an unread section (Sprint 11 step 10, BL-34, BL-155 first point, R-3).** No
+single anchor explains the inventory's unread sections, and this one already says how a failed
+`roleAssignments` read reaches `InventoryPartial`, so the rule for the two Azure sections is written here.
+`Get-OERRoleAssignment` and `Get-OERRoleManagementPolicy` publish a failure as a non-terminating record
+(`InvalidScope`, `AmbiguousFilter`, `RoleDefinitionNotFound`, `PolicyNotFound`, `RoleEnumerationFailed` or
+the ARM read's own), and `Get-OERInventory` used to read them as they came: a standalone call wrote the
+section empty, or with the part that was read, left the record on the caller's stream and named nothing in
+`InventoryPartial`, a failed read stated as an empty fact (G3). Now each read runs with `-ErrorAction Stop`
+inside a `try`. The `catch` scrubs the record first (`Remove-OERErrorRecord`) and calls `Add-UnreadSection`
+with the key `roleAssignments` or `roleManagementPolicies` and the cause `Could not read role assignments:`
+or `Could not read role management policies:` followed by the reader's own message, trimmed of trailing white
+space and then of trailing full stops (the controller's ruling R-18, in fix round 1; the first commit left
+the message as it was, and a message that ends in a period showed two in the clause). The clause adds its
+own full stop, and the lookups the readers call (`Resolve-OERRoleDefinitionId`,
+`Get-OERRoleManagementPolicyId`) throw messages that end in one, so the common `-Role` failure
+(`RoleDefinitionNotFound`, `PolicyNotFound`) would otherwise end `..`. The Undecided cause of the same
+function is trimmed the same way. The section is written
+empty, and the code after the read finds nothing to do for it: no principal lookup, and no root scope or
+undeclarable scope notice for the call. The section is read whole or not at all. An assignment inside the
+`try` gets none of what the reader wrote before it failed, and the policy section stands in ONE `try`
+around every `Get-OERRoleManagementPolicy` call, so with `-Role A,B` where B fails the policy of A is not
+written either: a section is never a subset presented as the whole. The first failure ends the read, so
+the roles after B are not read. The record is folded into the cause and not republished, and no warning
+is written: `InventoryPartial`, after the inventory object, is the report (the catalog list's form).
+`-CommonRoles` is the exception, and the reader is not changed in this step (R-19, fix round 1; the first
+commit's text said the reader skips "a curated role that does not exist in the subscription", which is
+less than it does). `Get-OERRoleManagementPolicy -CommonRoles` reads each curated role on its own and, in
+its per-role `catch`, skips ANY role whose definition or policy it cannot read -- a refused or failed ARM
+read, an ambiguous name or no policy as much as a role missing at the scope -- with its own warning
+(`Skipping role '<name>': <message>`), and carries on. The section then holds the policies of the roles
+that were read, which may be fewer than the curated set, and it is not reported partial: a refused read
+stated as an absent role is the failed-read-as-a-fact gap this section closes everywhere else, left open
+here because the reader is outside this step, and raised as a finding. Only a scope the reader cannot
+resolve (`InvalidScope`), or a sign-in or Azure Resource Manager token its own `begin` cannot get
+(`ArmTokenAcquisitionFailed`, which the inherited `Stop` makes terminating, or the terminating
+`SignInRefused` when this command's own sign-in left it latched), reaches `Get-OERInventory`'s `catch`
+under `-CommonRoles`; the test fixtures write `InvalidScope` for that call, and the `-CommonRoles` per-role
+failures are driven through the REAL reader
+with its helpers mocked (a mock of the reader cannot show them). Under a Stop warning preference
+(`-WarningAction Stop`, or `$WarningPreference` set to `Stop`) the stop at that `Skipping role` warning
+leaves the reader as a terminating error, which the policy section's `try` catches: the section is
+named unread, with the warning's text as its cause, and the command carries on (measured, both forms; the
+command used to stop at that warning). That is the safe direction, the section named and not a subset
+presented as the whole, and it is stated in the help.
+
+Under `Export-OERInventory`, whose per-scope call passes `-ErrorAction Stop`, the new `InventoryPartial`
+is what makes the export skip the scope, as the reader's own record did before: the scope is named in
+`SkippedScopes`, its rows are not written, and the skip's warning carries the cause. Cost if wrong: an
+operator who wants the reader's own record rather than the cause sees it only inside `InventoryPartial`;
+the `catch` can republish it after the bookkeeping, and a warning can be added there too.
+
+**Measured, with the tests.** The engine puts the reader's record into a caller's `-ErrorVariable` the
+instant the reader writes it, before any `catch` runs ([#writeerror-deposit](#writeerror-deposit)). A
+standalone call with `-ErrorVariable` on a failed `roleAssignments` read collected that record twice,
+beside `InventoryPartial`, and `$global:Error` held only `InventoryPartial`, since `Remove-OERErrorRecord`
+had removed the reader's. The error STREAM carries only `InventoryPartial`, which is what the tests read
+(`2>&1`). The record's bearer token is scrubbed in every copy. Fix round 1 pinned both halves in the
+no-`try` runspace test of a failed `roleAssignments` read (R-17): the runspace's `$Error` holds only
+`InventoryPartial` after the call, and with the error stream merged into the output the inventory object
+comes first and `InventoryPartial` after it. A throw the REAL `-CommonRoles` reader catches for itself
+reaches a caller's `-ErrorVariable` as well (13 records for one skipped role, measured with the reader's
+helpers mocked, which may count each mock frame), so that path's tests read the error stream and not the
+variable. A Pester mock runs under the test's own
+`Stop` preference, so it cannot tell a call with `-ErrorAction Stop` from one without: the proof that each
+of the four reads (the assignments and the three policy branches) carries the parameter is a script with no
+`try` above it, in a runspace whose preference is `Continue`, where each dropped parameter turns exactly
+its own test red.
+
+**Mutation proofs (R-3).** Made in the source of the step's Task 1 commit; lines are the commit's.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| M1 | the assignment read's `try`, `Get-OERInventory.ps1:1628` | the original unguarded call | 4 red |
+| M1b | its `-ErrorAction Stop`, `:1629` | dropped | 1 red, the no-`try` runspace test |
+| M1c, M1d, M1e | the unread entry, its cause and its key, `:1633` | entry dropped; message dropped from the cause; key `roleAssignment` | 4, 4 and 3 red; the export skip test red for the first |
+| M2a, M2b, M2c | `-ErrorAction Stop` on each policy branch, `:2519`, `:2520`, `:2521` | each dropped | 1 red each, the no-`try` runspace test of its branch |
+| M2d | the policy read's single `try`, `:2517` | the original unguarded block | 8 red |
+| M2e, M2g | the unread entry and its key, `:2526` | entry dropped; key `roleManagementPolicy` | 7 red each |
+| M2f | one `try` around the whole read, `:2521` | one `try` per role | 3 red |
+| E1 | the export's per-scope `-ErrorAction Stop`, `Export-OERInventory.ps1:1137` | dropped | 2 red, one per section |
+| S1, S2 | the scrub first in each `catch`, `Get-OERInventory.ps1:1630`, `:2523` | scrub removed | 1 red each, the bearer-token hygiene gate of `tests/QA/sourcehygiene.tests.ps1` |
+
+**Mutation proofs (fix round 1).** Made in the source and tests of the fix round's commit; lines are those of
+the files before this paragraph was written.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| F1 | the stand-in's id in `tests/Unit/Private/Get-OERScopeSpellingProblem.Tests.ps1:225` | `SubscriptionId = $null` | 1 red, the test that has `Get-OERInventory` leave a role assignment out exactly when the owner returns a problem |
+| F2a, F2b | the trim of the assignment cause, `Get-OERInventory.ps1:1646`, and of the policy cause, `:2547` | no trim | 3 and 9 red, the R-18 tests (three endings, and three policy branches) |
+| F2c, F2d | the white space trim of each cause, same lines | full stops only | 1 and 3 red, the ending with white space after the period |
+| F4 | a `-Subscription` verdict decided on the holder, `:808` | the verdict's own id | 1 red, the `NoSubscription` answer with an id |
+| F5 | the scrub in the assignment `catch`, `:1641` | removed | 1 red, the R-17 runspace test, besides the static gate (S1) |
+| F3 | the policy read's `try`, `:2537` | the original unguarded block | 2 red, the Stop warning preference tests of the real `-CommonRoles` reader |
+| F6 | the assignment read's `try`, `:1638` | the original unguarded call | 1 red, the first assignment test (it stops at the call: the reader's record is terminating under the test's `Stop`) |
 
 **R-4 (the apply engine; A18).** `Sync-OERStructureRoleAssignment` takes the `principal` of an entry
 that declares `principalStatus` as the object id it names, with no principal lookup at all, for the

@@ -211,10 +211,14 @@ foreach ($Alias in $Aliases) {
 ```
 
 `Invoke-OERStructure` without `-TenantId` likewise refuses every document piped to it after one whose
-sign-in was refused. A `Connect-OER` whose parameters PowerShell cannot bind never runs, so it leaves
-nothing behind for the module to see. An empty `-TenantAlias`, typed or piped, is refused with
-`InvalidTenantAlias`, and an empty, whitespace or `$null` `-TenantId` with `InvalidTenantId`; both
-count as a refused sign-in. Every other cmdlet refuses an empty or `$null` `-TenantId` while
+sign-in was refused. `Export-OERInventory` ends instead of carrying on: when its own sign-in is
+refused, or the Azure Resource Manager token it asked for cannot be acquired, it reads nothing,
+writes no bundle folder and returns no object, under every error preference. The sign-in's own
+error reaches the caller, as a terminating error when the sign-in terminated, so a `try` around the
+export catches it and, outside a `try`, only that statement ends. A `Connect-OER` whose parameters
+PowerShell cannot bind never runs, so it leaves nothing behind for the module to see. An empty
+`-TenantAlias`, typed or piped, is refused with `InvalidTenantAlias`, and an empty, whitespace or
+`$null` `-TenantId` with `InvalidTenantId`; both count as a refused sign-in. Every other cmdlet refuses an empty or `$null` `-TenantId` while
 PowerShell binds its parameters, so that command never runs and sends nothing: an empty cell in a
 loop over tenants no longer stands for the current session's tenant. `New-OERConfiguration` and
 `Set-OERConfiguration` store the tenant instead of signing in to it, so they also refuse a
@@ -794,6 +798,15 @@ added to or removed from its members and owners; a group the same run creates is
 member or owner declared for it is held back for PIM for Groups. The read needs the permission
 `PrivilegedAssignmentSchedule.Read.AzureADGroup`, which `Get-OERRequiredScope` lists.
 
+A dynamic group's `members` is written `null`, not as the list its rule happened to derive, and is
+not an unread collection: its membership rule owns the membership, so a failed read of those members
+names nothing in `InventoryPartial`. The `null` is the document's "leave it untouched", and
+`Invoke-OERStructure` plans no member row for such a group, with or without `-Prune`, which never
+touched a dynamic group's members. A dynamic group the export reads in full, and whose members it
+can read, still has its `memberCount` in `groupsRoster.json`. A group's `members`, `owners` and
+`eligibility` and an administrative unit's `members` are written in one fixed order, so two reads of
+an unchanged tenant write the same lists whatever order Microsoft Graph answered in.
+
 A role assignment at the Azure root scope `/`, above every management group and subscription in the
 tenant, is elevated access, which the export and the apply engine leave alone. `Get-OERInventory`
 leaves it out of `roleAssignments`, and `Export-OERInventory` out of `inventory.json` and
@@ -1056,8 +1069,12 @@ list per scope; the policies are still read with one list per scope and nothing 
 policy the export cannot judge, because a read it needs failed or the list gives nothing to judge
 by, is kept, and its scope is named in `IncompleteReads` as
 `roleManagementPolicies/role selection at <scope>` and in `InventoryPartial`. `-AllRolePolicies`
-exports every policy at every scope, as earlier versions did. `Invoke-OERStructure` reads and writes
-only the policies a document declares, so a policy the export left out stays as it is.
+exports every policy at every scope, as earlier versions did. It has nothing to act on without
+`RoleManagementPolicies` in `-Include` (the default `-Include` does not name it), and neither has
+`-AllDirectoryRolePolicies` without `DirectoryRoleManagementPolicies`: the export warns once, at the
+start, for each.
+`Invoke-OERStructure` reads and writes only the policies a document declares, so a policy the export
+left out stays as it is.
 
 Azure Lighthouse lets another tenant, a service provider for example, manage subscriptions or
 resource groups of this one, and the role assignments of this tenant do not list the access it
@@ -1076,6 +1093,13 @@ whose delegations could not be read has no row in the file and is named in `Inco
 not be read (`lighthouseDelegations role <id>`, its `roleName` written `null`). The read costs two
 paged lists per subscription and one read per distinct role, plus a listing of the subscription's
 resource groups and one read per group only when a delegation may sit at one; `Reader` covers it.
+When the Azure PIM eligibility read, this Lighthouse read or the role policy selection stops as a
+whole, the export still writes the bundle and ends with `InventoryPartial`, with one warning that
+names the cause: the eligibility read names every scope in `SkippedEligibilityScopes` and writes
+`azurePimEligibility.json` as `[]`, the Lighthouse read is named
+`lighthouseDelegations at <all Azure scopes: the read stopped>` in `IncompleteReads` and writes
+`lighthouseDelegations.json` as `[]`, and the selection keeps every policy it read and names the
+scope of each as not judged.
 
 `Export-OERInventory -IncludeServicePrincipalAccess` also writes `servicePrincipalAccess.json`:
 read-only context on the app roles and delegated permission grants of the tenant's service
@@ -1127,7 +1151,13 @@ exactly one of `-Role`, `-CommonRoles` and `-AllRolesAtScope` (without which it 
 included with a `-Scope` or a `-Subscription`, the call asks for the Azure Resource Manager token in
 its own sign-in, as `-IncludeARM` does, so when that sign-in fails it sends nothing, its Entra ID
 sections included. Inside `Export-OERInventory` the walk's answers are reused, so the check sends no
-request.
+request. A `-Subscription` is read by the ID the check found, never by the name as given. A
+`RoleAssignments` or `RoleManagementPolicies` read that fails is named in `InventoryPartial` too, by
+the section's own name, with the reader's message as its cause, and the section is written empty,
+which does not mean the scope has none; only `-CommonRoles` differs, since it skips a role it cannot
+read with a warning and carries on. A `-Scope`, `-Subscription` or `-ManagementGroup` of white space
+only is refused while PowerShell binds the parameters of `Get-OERInventory`, as are the `-Scope`,
+`-ManagementGroup` and `-GroupFilter` of `Export-OERInventory`.
 
 ---
 

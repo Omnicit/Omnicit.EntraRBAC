@@ -109,7 +109,8 @@ PowerShell module.
   principalStatus) or whose deleted items could not be read (written with principalStatus
   Unresolved), and an entry labelled "Azure Lighthouse read that failed" names a scope whose
   delegations could not be read (absent from lighthouseDelegations.json, which does not mean it has
-  none) or a role whose name could not be read (its roleName is null)
+  none) or a role whose name could not be read (its roleName is null), or a read of the delegations
+  that stopped as a whole (lighthouseDelegations.json is then [], which does not mean it has none)
 - inventory.json -- the current state, within this document's coverage limits (see below), in the
   exact apply schema. Your proposals reshape this.
 - groupsRoster.json -- every group in the tenant, of every type: one row per group with its id,
@@ -192,8 +193,9 @@ to clear or disable something. An empty string "" clears a string field (for exa
 or an ABAC condition -- see roleAssignments below). An empty array [] asserts that the list
 itself IS the value -- for example pimPolicy's activationEnablement: [] declares that no MFA,
 justification or ticket is required on activation. Apart from an unread members, scopedRoles,
-resources or resourceRoles collection (see below), the inventory omits most keys rather than emit
-null, so to assert a list is genuinely empty you must hand-author an explicit [].
+resources or resourceRoles collection and the members of a dynamic group (see below), the
+inventory omits most keys rather than emit null, so to assert a list is genuinely empty you must
+hand-author an explicit [].
 
 A CHILD COLLECTION -- members (groups[] and administrativeUnits[]), scopedRoles
 (administrativeUnits[]), resources (catalogs[]), resourceRoles (accessPackages[]), and
@@ -209,7 +211,9 @@ trap if you apply the scalar rule to one of them:
   collection it could not read, or could not write without an empty name (the export reports it
   as partial, and README.md lists it under "What this export could not read"), so a null in
   inventory.json means unknown, not empty: keep it null in every proposal, and never turn it
-  into [].
+  into []. The members of a dynamic group are written null too, for another reason: its
+  membership rule owns the membership, so that null means leave it to the rule, not unknown, and
+  README.md does not list it as unread. Keep it null all the same.
 - []: ALL of these collections reconcile to empty (every live entry is removed under -Prune, or
   reported Extra without it).
 
@@ -296,6 +300,10 @@ document. Declare each assignment policy once per access package, the same way.
     to make up the count, and do not read a missing activation as a removal. Invoke-OERStructure adds
     no standing member or owner for a principal that PIM for Groups holds or makes eligible for the
     same access, and -Prune removes none.
+  - A dynamic group's membership is owned by its membershipRule: inventory.json writes its members
+    as null, Invoke-OERStructure adds and removes no member of a dynamic group (a declared member is
+    reported Skipped, and -Prune removes none), and with members null it reports no member row for
+    the group at all. Keep members null, and change the membershipRule to change who belongs.
   - displayName is the match key: an existing group is matched and updated by it. To rename a
     group, declare its new name as displayName and its current name as previousDisplayName: the
     group found under previousDisplayName alone is renamed in place. When both names match

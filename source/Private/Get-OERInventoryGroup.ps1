@@ -12,16 +12,25 @@ function Get-OERInventoryGroup {
 
     By default it makes ONE Get-OERGroup call carrying the members, owners and PIM eligibility
     switches and the filter it is given, then projects each group as an apply-document entry: an
-    explicit null for a members read that failed, the PIM-for-Groups pimPolicy only for a group that
-    Test-OERGroupPimInUse finds in use, and onPremisesSynced only for a group synchronized from
-    on-premises. A failed read is never an empty fact: it is named in the Unread list and its cause
-    is kept in the Causes list.
+    explicit null for a members read that failed and for the members of a dynamic group (below), the
+    PIM-for-Groups pimPolicy only for a group that Test-OERGroupPimInUse finds in use, and
+    onPremisesSynced only for a group synchronized from on-premises. A failed read is never an empty
+    fact: it is named in the Unread list and its cause is kept in the Causes list, except the members
+    read of a DYNAMIC group, which is no gap since those members are not part of the document (below;
+    a dynamic administrative unit's members are the same, which Get-OERInventory handles the same way).
+
+    The lists a projection writes stand in one fixed order, Get-OEROrderedInventoryEntry's (Sprint 11 step
+    10, BL-121): members and owners as text, and eligibility by principal, then access type, then
+    duration (a permanent eligibility, which has no durationDays, first), then id. Two reads of one
+    unchanged tenant therefore write these lists in the same order, whatever order Graph answered in.
+    The groups themselves stay in list order.
 
     A PIM activation is never written as a standing membership (BL-125, A3). Members and owners are
     written only when they are standing. For each group whose members or owners were read and hold
-    at least one entry, the group's PIM for Groups assignment schedule instances are read ONCE
-    (Read-OERGroupPimAssignment); no such read is made for a group whose members and owners were both
-    read empty, or both unread. Get-OERGroupPimHeldAccess owns the rule that decides which instances
+    at least one entry (the members of a dynamic group do not count, see below), the group's PIM for
+    Groups assignment schedule instances are read ONCE (Read-OERGroupPimAssignment); no such read is
+    made for a group whose members and owners were both read empty, or both unread.
+    Get-OERGroupPimHeldAccess owns the rule that decides which instances
     hold access through PIM for Groups (docs/development/rationale.md#pim-activation-is-not-membership):
     every instance but a standing one -- an activation, a time-bound active assignment, or any active
     assignment that is not standing. Ids are compared without regard to letter case, and per access
@@ -40,6 +49,24 @@ function Get-OERInventoryGroup {
       an activation.
     Each group that left at least one member or owner out is counted, by name and never by principal,
     in the PimLeftOut list below, with one verbose line.
+
+    A dynamic group's members are never written (Sprint 11 step 10, BL-43). Its membership is owned by
+    its membership rule, so a members list would only be what the rule derived at the time of the
+    read, which Invoke-OERStructure can do nothing with: it adds no member to a dynamic group and
+    removes none. The projection carries members as an EXPLICIT null, the schema's "leave the
+    membership untouched" signal, and not as an omitted key: Set-OERGroup cannot convert a group's
+    membership type, so a group that was made static after the export would meet an omitted key on
+    the static path, which reconciles the members and, under -Prune, removes every live one, while an
+    explicit null is hands-off on both paths. The null is no gap in the document, so a dynamic
+    group's members are never named in the Unread list, and not when their read failed either: that
+    failed read is no gap, so its cause is not recorded in the Causes list (the verbose stream carries
+    it), as -SecurityEnabledOnly below removes the causes of a group it leaves out, and a cause clause
+    never names a read that no unread entry names (R-24). The members are not looked at for the PIM
+    decision above, since PIM for Groups cannot manage a dynamic group: a dynamic group with members
+    and no owners sends no assignment read. They are still READ when the group is read in full, one
+    request as before, and COUNTED, in the DynamicMembers list below, so that Export-OERInventory
+    keeps the roster's memberCount a count. The owners and the eligibility of a dynamic group are
+    unchanged.
 
     With -RelevantOnly the Get-OERGroup call carries the filter alone, and each listed group is first
     asked, in at most two requests, whether it is RBAC-relevant: its PIM eligibility, and, for a
@@ -100,6 +127,11 @@ function Get-OERInventoryGroup {
       many were left out) and Basis -- 'Assignments' when the assignments decided it, 'Eligibility'
       when the assignment read failed and the eligibility decided it. A group left out under
       -ExcludeSharedName has no entry. An empty array when nothing was left out.
+    - DynamicMembers: one object per projected dynamic group whose members were read, in list order:
+      GroupId, Group (the display name) and Members (how many members the read found; none is
+      written, see above). A dynamic group whose members read failed has no entry, so its count is
+      not known (which is not zero), and neither has a group left out under -ExcludeSharedName. An
+      empty array when no dynamic group's members were read.
     - SharedNames: one object per name -ExcludeSharedName reported, in the order reported: Section
       ('groups'), Name (the spelling of the first listed group that carries it, as in the Unread
       list) and Count (the larger count described above). Always an array, empty when no name was
@@ -230,6 +262,8 @@ function Get-OERInventoryGroup {
     $Causes            = [System.Collections.Generic.List[object]]::new()
     # BL-125: one entry per projected group that left a member or owner out as PIM for Groups access.
     $PimLeftOut        = [System.Collections.Generic.List[object]]::new()
+    # BL-43 (R-15): one entry per projected dynamic group whose members were read, with how many (none is written).
+    $DynamicMembers    = [System.Collections.Generic.List[object]]::new()
     # BL-131: one entry per name -ExcludeSharedName reports (Section, Name, Count).
     $SharedNames       = [System.Collections.Generic.List[object]]::new()
     function Add-UnreadCause {
@@ -272,12 +306,35 @@ function Get-OERInventoryGroup {
         # failed, and Stop would abort the whole enumeration on the first one -- losing every
         # remaining group instead of losing one collection. The errors are inspected below, so
         # nothing is suppressed; SilentlyContinue here means "captured", not "ignored".
+        # The pipe into Where-Object is load-bearing, not tidying (BL-58). The measured numbers are in the
+        # access review read of Get-OERInventory ("The pipe into Where-Object is load-bearing") and in
+        # docs/development/rationale.md#writeerror-deposit: a bare call inside @( ) leaks one record per
+        # record written to the caller's -ErrorVariable, since the array subexpression runs the call as its
+        # own nested pipeline and deposits the record again on the way out; only piping the call onward
+        # before the @( ) closes leaks none. This call was that bare form, so every per-collection record
+        # Get-OERGroup writes (GroupMemberReadFailed and its two siblings) reached the caller's -ErrorVariable
+        # although this reader counts and words each of them itself. Do not "simplify" the filter away.
         $GroupReadErrors = $null
         # The try/catch still guards a genuinely TERMINATING failure of the whole read (auth,
         # a dead transport, an -ErrorAction Stop upstream); the inner loop handles the
         # NON-terminating per-group records. Both are needed: neither subsumes the other.
         try {
-            $GroupItems = @(Get-OERGroup @GroupParams -ErrorAction SilentlyContinue -ErrorVariable GroupReadErrors)
+            $GroupItems = @(Get-OERGroup @GroupParams -ErrorAction SilentlyContinue -ErrorVariable GroupReadErrors |
+                    Where-Object { $null -ne $_ })
+            # Sprint 11 step 10 (BL-43, R-24, fix round 2): the dynamic groups among those just listed, by id and
+            # without regard to letter case, built ONCE and only when a record was written, so the record loop
+            # below asks a set instead of scanning every listed group per failed members read (a bad run in
+            # which every group's members read failed cost failures times groups: 15.5 s for 2000 groups, 95 s
+            # extrapolated for 5000, none of it for a healthy tenant). It is complete here: the listing above has
+            # finished, and the -SecurityEnabledOnly removal that reassigns $GroupItems comes after the loop.
+            $DynamicGroupIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            if (@($GroupReadErrors | Where-Object { $null -ne $_ }).Count -gt 0) {
+                foreach ($ListedGroup in $GroupItems) {
+                    if ($ListedGroup.GroupType -eq 'Dynamic' -and -not [string]::IsNullOrEmpty([string]$ListedGroup.Id)) {
+                        $null = $DynamicGroupIds.Add([string]$ListedGroup.Id)
+                    }
+                }
+            }
             foreach ($GErr in @($GroupReadErrors)) {
                 if ($null -eq $GErr) { continue }
                 # No Remove-OERErrorRecord here: these records were WRITTEN deliberately by
@@ -293,7 +350,18 @@ function Get-OERInventoryGroup {
                     # message and it lives nowhere else once the record is dropped here.
                     $GroupCause = [string]$GErr.Exception.Message
                     Write-Verbose "Get-OERInventory: $GroupCause"
-                    Add-UnreadCause -Cause $GroupCause -Target ([string]$GErr.TargetObject)
+                    # Sprint 11 step 10 (BL-43, R-24): the members read of a DYNAMIC group is no gap, since its
+                    # members are the explicit null whether the read worked or not and nothing in the document
+                    # is missing, so its cause is not recorded: a cause clause must never name a read that no
+                    # unread entry names (the verbose line above is all that remains of it). The group is found
+                    # by the record's Target, its id, in the set of dynamic groups just listed; a record with no
+                    # Target matches none and keeps its cause.
+                    $DynamicMembersFailure = $GErr.FullyQualifiedErrorId -like 'GroupMemberReadFailed*' -and
+                        -not [string]::IsNullOrEmpty([string]$GErr.TargetObject) -and
+                        $DynamicGroupIds.Contains([string]$GErr.TargetObject)
+                    if (-not $DynamicMembersFailure) {
+                        Add-UnreadCause -Cause $GroupCause -Target ([string]$GErr.TargetObject)
+                    }
                     continue
                 }
                 # Warn only for a record Get-OERGroup itself PUBLISHED. -ErrorVariable is filled
@@ -308,10 +376,16 @@ function Get-OERInventoryGroup {
                 # Membership, not a suffix match: Write-Error appends a further name when a
                 # record is republished, so the cmdlet's name is not always the last segment.
                 if (@(([string]$GErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERGroup') {
-                    Write-Warning "Could not read groups: $($GErr.Exception.Message)"
                     # The warning stays; the section is ALSO counted unread, since the groups array
-                    # below is [] whether the tenant has none or the list could not be read.
+                    # below is [] whether the tenant has none or the list could not be read. Sprint 11
+                    # step 10 (BL-44): the bookkeeping stands BEFORE the warning, as at every site BL-44
+                    # names, so no warning stands between a failed read and its record. Under a Stop warning
+                    # preference the warning is a terminating error and ends the read in either order (the
+                    # catch below catches it and warns again), so no caller sees a difference here; only the
+                    # verbose stream does. Held by the verbose line Add-UnreadSection writes first, in the
+                    # tests of this reader.
                     Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($GErr.Exception.Message)"
+                    Write-Warning "Could not read groups: $($GErr.Exception.Message)"
                 } else {
                     # Routed to verbose rather than dropped: a stray is still evidence when a read
                     # misbehaves, it just is not a section-level finding the operator must act on.
@@ -322,8 +396,10 @@ function Get-OERInventoryGroup {
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             if ($PSItem.FullyQualifiedErrorId -notlike 'GroupNotFound*') {
-                Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
+                # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning (see the record loop
+                # above). This catch also catches the stop the warning of the record loop raises.
                 Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($PSItem.Exception.Message)"
+                Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
             }
         }
 
@@ -358,10 +434,14 @@ function Get-OERInventoryGroup {
                 if ($Listed.Id) { $null = $LeftOutIds.Add([string]$Listed.Id) }
             }
             if ($LeftOutCount -gt 0) {
-                Write-Warning "-GroupFilter returned $LeftOutCount group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out."
+                # Sprint 11 step 10 (BL-44): the removal of the left-out groups' causes stands BEFORE the
+                # warning, as the bookkeeping of a failed read does above: a Write-Warning under a Stop
+                # warning preference is a terminating error, so a statement after it never runs. Held by the
+                # AST test of this reader, since a list cannot be shown by a verbose line.
                 for ($CauseIndex = $Causes.Count - 1; $CauseIndex -ge 0; $CauseIndex--) {
                     if ($LeftOutIds.Contains([string]$Causes[$CauseIndex].Target)) { $Causes.RemoveAt($CauseIndex) }
                 }
+                Write-Warning "-GroupFilter returned $LeftOutCount group(s) that are not security-enabled; inventory.json keeps security-enabled groups only, so they were left out."
             }
             $GroupItems = $KeptGroupItems.ToArray()
         }
@@ -485,6 +565,9 @@ function Get-OERInventoryGroup {
             if ($ProgressActivity) {
                 Write-Progress -Activity $ProgressActivity -Status "Group $GroupIndex of $GroupTotal" -PercentComplete ([int](($GroupIndex / [Math]::Max($GroupTotal, 1)) * 100))
             }
+            # Decided once, here at the top, since the members read below and the projection both need it: it
+            # sets the dynamic key, the rule keys, and what members is for this group (BL-43).
+            $GroupIsDynamic = ($G.GroupType -eq 'Dynamic')
             if ($RelevantOnly) {
                 $GroupId = [string]$G.Id
                 # THE FIRST REQUEST: the eligibility, which is both a relevance criterion and a collection
@@ -530,7 +613,12 @@ function Get-OERInventoryGroup {
                         $G | Add-Member -NotePropertyName $RelevantCollection -NotePropertyValue $RelevantRead.Value -Force
                     } else {
                         Write-Verbose "Get-OERInventory: $($RelevantRead.Message)"
-                        Add-UnreadCause -Cause $RelevantRead.Message -Target $GroupId
+                        # BL-43 (R-24): the members read of a dynamic group is no gap, so its cause is not
+                        # recorded, exactly as the record loop of a full read does not record it; the verbose
+                        # line above is all that remains of it.
+                        if (-not ($GroupIsDynamic -and $RelevantCollection -eq 'Members')) {
+                            Add-UnreadCause -Cause $RelevantRead.Message -Target $GroupId
+                        }
                     }
                 }
             }
@@ -538,7 +626,7 @@ function Get-OERInventoryGroup {
             $Proj = [ordered]@{
                 displayName    = $G.DisplayName
                 roleAssignable = [bool]$G.IsAssignableToRole
-                dynamic        = ($G.GroupType -eq 'Dynamic')
+                dynamic        = $GroupIsDynamic
                 description    = $G.Description
             }
             # A15: information only. Written as true for a group synchronized from on-premises
@@ -546,7 +634,7 @@ function Get-OERInventoryGroup {
             # group's entry is exactly what earlier versions exported. Invoke-OERStructure never
             # sends this key and decides nothing on it: it reads the group live.
             if (Test-OERGroupOnPremisesSynced -Group $G) { $Proj.onPremisesSynced = $true }
-            if ($G.GroupType -eq 'Dynamic') {
+            if ($GroupIsDynamic) {
                 $Proj.membershipRule = $G.MembershipRule
                 if ($G.MembershipRuleProcessingState) {
                     $Proj.membershipRuleProcessingState = [string]$G.MembershipRuleProcessingState
@@ -572,9 +660,14 @@ function Get-OERInventoryGroup {
             # can be decided for a collection that holds entries, and it is not written: members as an
             # explicit null, owners omitted, each named unread. A collection read EMPTY cannot hold an
             # activation, so it is written as read (members [], owners omitted as ever) and not named.
+            #
+            # Sprint 11 step 10 (BL-43, R-1): the members of a DYNAMIC group are not looked at here. They are
+            # never written (below), so there is nothing for PIM for Groups to hold out of them, and a
+            # dynamic group with members and no owners sends no assignment read. The group's OWNERS decide
+            # the read as for every group.
             $MembersRead = $G.PSObject.Properties.Name -contains 'Members'
             $OwnersRead  = $G.PSObject.Properties.Name -contains 'Owners'
-            $MembersHaveEntries = $MembersRead -and @($G.Members | Where-Object { $null -ne $_ }).Count -gt 0
+            $MembersHaveEntries = (-not $GroupIsDynamic) -and $MembersRead -and @($G.Members | Where-Object { $null -ne $_ }).Count -gt 0
             $OwnersHaveEntries  = $OwnersRead -and @($G.Owners | Where-Object { $null -ne $_ }).Count -gt 0
             $HeldIds = @{ member = @{}; owner = @{} }
             $PimBasis = $null
@@ -613,7 +706,32 @@ function Get-OERInventoryGroup {
             # it here would leave issue #76's chain wide open. An EXPLICIT null is the schema's
             # documented "leave membership untouched" signal, and that is what an unread
             # membership has to be -- and what a membership is whose PIM hold could not be decided.
-            if ($MembersHaveEntries -and $PimUndecided) {
+            #
+            # Sprint 11 step 10 (BL-43, R-1): a DYNAMIC group's members are the same explicit null, for a
+            # different reason, and it is no gap, so it is never named unread, and not when the members read
+            # failed either: that failed read is no gap, so its cause is not recorded either (R-24; the two
+            # places that would record it, the record loop of a full read and the members read of a relevant-only
+            # one, skip a dynamic group, and the verbose line stays), exactly as -SecurityEnabledOnly removes the
+            # causes of a group it leaves out. The membership is owned by the membership rule: what the read
+            # found is a snapshot of what the rule derived, which Invoke-OERStructure can do nothing with (it
+            # adds no member to a dynamic group and removes none). It is a null and not an omitted key, unlike a
+            # dynamic administrative unit, whose members are OMITTED since the engine converts a unit's
+            # membership type back to the declared one, but Set-OERGroup cannot convert a group's membership
+            # type: a group that was made static after the export would meet an omitted key on the static path,
+            # which reconciles and, under -Prune, removes every live member, while an explicit null is hands-off
+            # on both paths. The members read is kept (one request, only for a group read in full) and the COUNT
+            # of what it found goes in $DynamicMembers, so the export's roster keeps a memberCount (R-15); a read
+            # that failed has no count, so the roster's memberCount stays null, which is not zero.
+            if ($GroupIsDynamic) {
+                $Proj.members = $null
+                if ($MembersRead) {
+                    $DynamicMembers.Add([PSCustomObject]@{
+                            GroupId = [string]$G.Id
+                            Group   = [string]$G.DisplayName
+                            Members = @(@($G.Members) | Where-Object { $_ }).Count
+                        })
+                }
+            } elseif ($MembersHaveEntries -and $PimUndecided) {
                 $Proj.members = $null
                 $UnreadCollections.Add("groups/$($G.DisplayName)/members")
             } elseif ($MembersRead) {
@@ -622,14 +740,16 @@ function Get-OERInventoryGroup {
                 # (group, device, service principal, ...) as its object id, which Resolve-OERStructurePrincipal
                 # returns verbatim. A member display name is NOT resolvable (it is not a UPN), so it is only a
                 # last-resort fallback when neither a UPN nor an id is present. A member whose membership
-                # PIM for Groups holds is left out and counted (BL-125, above).
-                $Proj.members = @(foreach ($M in @($G.Members)) {
+                # PIM for Groups holds is left out and counted (BL-125, above). The list is written in the
+                # fixed order of Get-OEROrderedInventoryEntry (BL-121, R-16), since Graph answers in none.
+                $MemberRefs = @(foreach ($M in @($G.Members)) {
                     if (-not $M) { continue }
                     if ($HeldIds.member.ContainsKey(([string]$M.id).ToLowerInvariant())) { $MembersLeftOut++; continue }
                     if ($M.userPrincipalName) { [string]$M.userPrincipalName }
                     elseif ($M.id)            { [string]$M.id }
                     else                      { [string]$M.displayName }
                 })
+                $Proj.members = @(Get-OEROrderedInventoryEntry -InputObject $MemberRefs)
             } else {
                 $Proj.members = $null
                 $UnreadCollections.Add("groups/$($G.DisplayName)/members")
@@ -642,7 +762,8 @@ function Get-OERInventoryGroup {
                 # owner can add members, so an unprojected owner is a privilege path that disappears from
                 # the captured posture. Emitted only when the group has any, so a document for an
                 # owner-less group stays clean and the apply leaves owners untouched. An owner whose
-                # ownership PIM for Groups holds is left out and counted (BL-125, above).
+                # ownership PIM for Groups holds is left out and counted (BL-125, above). Written in the
+                # fixed order of Get-OEROrderedInventoryEntry, as the members are (BL-121, R-16).
                 $OwnerRefs = @(foreach ($O in @($G.Owners)) {
                     if (-not $O) { continue }
                     if ($HeldIds.owner.ContainsKey(([string]$O.id).ToLowerInvariant())) { $OwnersLeftOut++; continue }
@@ -650,7 +771,7 @@ function Get-OERInventoryGroup {
                     elseif ($O.id)            { [string]$O.id }
                     else                      { [string]$O.displayName }
                 })
-                if ($OwnerRefs.Count -gt 0) { $Proj.owners = $OwnerRefs }
+                if ($OwnerRefs.Count -gt 0) { $Proj.owners = @(Get-OEROrderedInventoryEntry -InputObject $OwnerRefs) }
             } else {
                 # An omitted owners key is ALREADY never reconciled or pruned, so omission is the
                 # correct hands-off form here -- no explicit null needed. The read failure is
@@ -685,7 +806,7 @@ function Get-OERInventoryGroup {
                 # Project each eligibility so a re-apply reproduces it faithfully: accessType is always
                 # emitted (member or owner) and durationDays is emitted only for a time-bound window --
                 # its absence is how the apply document expresses a permanent eligibility.
-                $Proj.eligibility = @(foreach ($E in @($G.PimEligibility)) {
+                $EligRefs = @(foreach ($E in @($G.PimEligibility)) {
                     if (-not $E) { continue }
                     $PrincipalId = [string]$E.principalId
                     $Name = if ($PrincipalNameCache.ContainsKey($PrincipalId)) { $PrincipalNameCache[$PrincipalId] } else { $PrincipalId }
@@ -696,6 +817,10 @@ function Get-OERInventoryGroup {
                     if ($IncludeId) { $EligProj.id = $PrincipalId }
                     [PSCustomObject]$EligProj
                 })
+                # BL-121 (R-16): by principal, then access type, then duration (a permanent eligibility, which
+                # has no durationDays, first), then id -- the last present only under -IncludeId, where it keeps
+                # two principals that share a name in one order. Get-OEROrderedInventoryEntry owns the order.
+                $Proj.eligibility = @(Get-OEROrderedInventoryEntry -InputObject $EligRefs -Property principal, accessType, durationDays, id)
             } else {
                 # Same as owners: an omitted OR explicitly null eligibility key is never reconciled
                 # or pruned, so omission is already hands-off. No principal-name lookup is issued
@@ -855,6 +980,14 @@ function Get-OERInventoryGroup {
                 $UniquePimLeftOut.Add($E)
             }
             $PimLeftOut = $UniquePimLeftOut
+            # The same for the count of a dynamic group's members (R-15): the group is not written, so the
+            # roster has no count of it to give.
+            $UniqueDynamicMembers = [System.Collections.Generic.List[object]]::new()
+            foreach ($E in $DynamicMembers) {
+                if ($SharedNameCount[[string]$E.Group] -gt 1) { continue }
+                $UniqueDynamicMembers.Add($E)
+            }
+            $DynamicMembers = $UniqueDynamicMembers
             $ReportedNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($G in $GroupItems) {
                 $SharedName = [string]$G.DisplayName
@@ -863,18 +996,22 @@ function Get-OERInventoryGroup {
                 $UnreadCollections.Add($SharedPath)
                 $SharedCause = Get-OERSharedNameCause -Path $SharedPath -Count $SharedNameCount[$SharedName]
                 Write-Verbose "Get-OERInventory: $SharedCause"
-                Add-UnreadCause -Cause $SharedCause -Target $SharedPath
+                # BL-156: a BLANK Target, as Get-OERInventory's Select-UniqueNamedEntry registers the same
+                # cause, so Format-OERUnreadCauseClause keys it on its full text and two names of one
+                # count are two causes, not one with the name normalised away.
+                Add-UnreadCause -Cause $SharedCause -Target ''
                 # BL-131: the name with its count, for the export's one warning and its README.
                 $SharedNames.Add([PSCustomObject]@{ Section = 'groups'; Name = $SharedName; Count = $SharedNameCount[$SharedName] })
             }
         }
 
         $Result = [PSCustomObject]@{
-            Groups      = $Groups.ToArray()
-            Unread      = $UnreadCollections.ToArray()
-            Causes      = $Causes.ToArray()
-            PimLeftOut  = $PimLeftOut.ToArray()
-            SharedNames = $SharedNames.ToArray()
+            Groups         = $Groups.ToArray()
+            Unread         = $UnreadCollections.ToArray()
+            Causes         = $Causes.ToArray()
+            PimLeftOut     = $PimLeftOut.ToArray()
+            DynamicMembers = $DynamicMembers.ToArray()
+            SharedNames    = $SharedNames.ToArray()
         }
         $Result.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.InventoryGroupRead')
         $Result

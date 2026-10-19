@@ -113,14 +113,16 @@ function Invoke-OERArmRequest {
         # SEC (A19): never an ARM request for a command whose sign-in was refused. Initialize-OERAuth
         # latches the command that called it at entry and releases it only when the sign-in succeeds.
         # Its refusal does not stop that command: measured 2026-10-05, a caller carries on past a
-        # nested function's terminating error unless a try or trap is active up the call stack, and no
-        # public cmdlet wraps its Initialize-OERAuth call -- so the command would send the ARM token an
-        # earlier sign-in left, for another tenant when it named -TenantId. A cmdlet that command
-        # calls, or that runs inside its output, is refused at its own sign-in (BL-74); a downstream
-        # command whose begin block signed in while the refused command was on no call stack -- every
-        # begin block runs before any process block -- is not, and runs inside the refused command's
-        # output with its own latch released. So Get-OERSignInRefusal looks for a latched command
-        # anywhere on the call stack: that pipeline case, and defence in depth for a nested call.
+        # nested function's terminating error unless a try or trap is active up the call stack, and every
+        # public cmdlet but one leaves its Initialize-OERAuth call unwrapped (Export-OERInventory wraps
+        # its call in a try since Sprint 11 step 10, BL-101, catches the refusal and writes nothing) -- so
+        # the command would send the ARM token an earlier sign-in left, for another tenant when it named
+        # -TenantId. A cmdlet that command calls, or that runs inside its output, is refused at its own
+        # sign-in (BL-74); a downstream command whose begin block signed in while the refused command
+        # was on no call stack -- every begin block runs before any process block -- is not, and runs
+        # inside the refused command's output with its own latch released. So Get-OERSignInRefusal
+        # looks for a latched command anywhere on the call stack: that pipeline case, and defence in
+        # depth for a nested call.
         #
         # Here, once, before the bearer token is materialized and before Invoke-WebRequest: every
         # request of this wrapper passes through this function -- the first, each throttled retry, the

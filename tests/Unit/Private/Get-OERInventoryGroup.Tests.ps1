@@ -453,7 +453,8 @@ Describe 'Get-OERInventoryGroup' {
             $Group.dynamic | Should -BeFalse
             $Group.description | Should -Be 'Team'
             $Group.mailNickname | Should -Be 'roleSecTeam'
-            $Group.members | Should -Be @('person1@contoso.com', 'dev-1')
+            # BL-121 (R-16): the members stand in the fixed order, 'dev-1' before 'person1@contoso.com' (the order Graph listed them in was the reverse).
+            $Group.members | Should -Be @('dev-1', 'person1@contoso.com')
             $Group.owners | Should -Be @('person2@contoso.com')
             @($Group.eligibility).Count | Should -Be 1
             $Group.eligibility[0].principal | Should -Be 'Person Eleven'
@@ -720,6 +721,115 @@ Describe 'Get-OERInventoryGroup' {
             @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_first', 'role_sec_second')
             $Read.Result.Groups[1].members | Should -Be @('person3@contoso.com')
         }
+
+        # Sprint 11 step 10 (BL-58). The list read pipes Get-OERGroup onward before its @( ) closes, the one
+        # measured shape that deposits nothing in the caller's -ErrorVariable (docs/development/rationale.md,
+        # #writeerror-deposit). The bare call inside @( ) deposited one record per record Get-OERGroup wrote,
+        # although this reader reports each of them itself, as an unread collection with its cause. The reach
+        # proof stands first in each test (the reader saw the record and named the read unread), so an empty
+        # list of leaked records cannot be a read that wrote nothing.
+        It 'leaves no record of a failed collection read in the caller -ErrorVariable, and still names the collection unread (BL-58)' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not read members for group 'g-1': Too many requests (429)."),
+                        'GroupMemberReadFailed,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, 'g-1')) -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_team'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Owners = @(); PimEligibility = @()
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+            $Read = Invoke-GroupRead
+            @($Read.Result.Unread) | Should -Contain 'groups/role_sec_team/members'
+            @($Read.Result.Causes).Count | Should -Be 1
+            $Leaked = @($Read.Errors | Where-Object { $null -ne $_ -and ([string]$_.FullyQualifiedErrorId) -like 'GroupMemberReadFailed*' })
+            $Leaked.Count | Should -Be 0 -Because ('a record Get-OERGroup wrote is captured by the reader and must not reach the caller; leaked: ' +
+                (@($Leaked | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | '))
+        }
+
+        It 'leaves no record of a failed list read in the caller -ErrorVariable, and still names the groups unread (BL-58)' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction $Ea
+            }
+            $Read = Invoke-GroupRead
+            @($Read.Result.Unread) | Should -Be @('groups')
+            @($Read.Warned) | Should -Be @('Could not read groups: Insufficient privileges to complete the operation.')
+            $Leaked = @($Read.Errors | Where-Object { $null -ne $_ -and ([string]$_.FullyQualifiedErrorId) -like 'Authorization_RequestDenied*' })
+            $Leaked.Count | Should -Be 0 -Because ('a record Get-OERGroup wrote is captured by the reader and must not reach the caller; leaked: ' +
+                (@($Leaked | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | '))
+        }
+
+        It 'leaves an empty item out of the list Get-OERGroup returns, as the filter after the pipe does (BL-58)' {
+            # The filter stands after the pipe for the access review read of Get-OERInventory, and is not to be
+            # simplified away: an empty item would otherwise be projected as a group without a name.
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                $null
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_team'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Members = @(); Owners = @(); PimEligibility = @()
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+            $Read = Invoke-GroupRead
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_team')
+        }
+    }
+
+    Context 'the bookkeeping of a failed list read stands before its warning (Sprint 11 step 10, BL-44)' {
+        # BL-44 asks for the bookkeeping before the warning at every site. A Write-Warning under a Stop warning
+        # preference is a terminating error and ends the read in either order, so the order shows only in the
+        # verbose stream. Add-UnreadSection writes a verbose line first, so the proof is behavioural: under
+        # -WarningAction Stop -Verbose the section's verbose line is written before the warning stops the
+        # command. The line is asserted WHOLE, and the two sites are told apart by it: the site in the record
+        # loop writes the reader's own message, and the catch -- which also catches the stop the warning of the
+        # record loop raises -- writes 'Could not read groups: ' followed by that stop's own message.
+        BeforeAll {
+            function Invoke-GroupReadUnderStop {
+                InModuleScope Omnicit.EntraRBAC {
+                    $Seen = [System.Collections.Generic.List[string]]::new()
+                    $Stopped = $null
+                    try {
+                        Get-OERInventoryGroup -Filter 'securityEnabled eq true' -Verbose -WarningAction Stop -ErrorAction SilentlyContinue 4>&1 |
+                            ForEach-Object { if ($_ -is [System.Management.Automation.VerboseRecord]) { $Seen.Add([string]$_.Message) } }
+                    } catch {
+                        $Stopped = $PSItem
+                    }
+                    [PSCustomObject]@{ Verbose = $Seen.ToArray(); Stopped = $Stopped }
+                }
+            }
+        }
+
+        It 'writes the verbose line of a list failure Get-OERGroup publishes before the warning stops the read' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction $Ea
+            }
+            $Run = Invoke-GroupReadUnderStop
+            # Reach proof: the warning was reached, and it stopped the command.
+            $Run.Stopped | Should -Not -BeNullOrEmpty
+            $Run.Stopped.Exception.Message | Should -BeLike '*Could not read groups: Insufficient privileges to complete the operation.'
+            @($Run.Verbose) | Should -Contain 'Get-OERInventory: Could not read groups: Insufficient privileges to complete the operation.'
+        }
+
+        It 'writes the verbose line of a list failure Get-OERGroup throws before the warning stops the read' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup { throw 'throttled' }
+            $Run = Invoke-GroupReadUnderStop
+            $Run.Stopped | Should -Not -BeNullOrEmpty
+            $Run.Stopped.Exception.Message | Should -BeLike '*Could not read groups: throttled'
+            @($Run.Verbose) | Should -Contain 'Get-OERInventory: Could not read groups: throttled'
+        }
     }
 
     Context 'order' {
@@ -786,6 +896,340 @@ Describe 'Get-OERInventoryGroup' {
             $Read = Invoke-GroupRead
             @($Read.Result.Unread) | Should -Contain 'groups/role_sec_a/members'
             $Read.Result.Causes.Count | Should -Be 0
+        }
+    }
+
+    Context 'the lists a projection writes stand in one fixed order (Sprint 11 step 10, BL-121, R-16)' {
+        # Graph answers a group's members, owners and eligibility in no fixed order, so two reads of one
+        # unchanged tenant used to write one set in two orders. Members and owners are texts (a UPN, else the
+        # object id): ordered without regard to letter case, ties by ordinal comparison, so 'Alice' stands
+        # before 'alice'. Eligibility is ordered by principal, then accessType, then durationDays (a permanent
+        # eligibility, which has none, first), then -- under -IncludeId -- id. The group listing is fed in two
+        # orders (the second the reverse of the first), and each answer is a read in full.
+        BeforeEach {
+            $script:OrderMembers = @(
+                @{ id = 'm-5'; userPrincipalName = 'bob@contoso.com' }
+                @{ id = 'm-4'; userPrincipalName = 'alice@contoso.com' }
+                @{ id = 'dev-9'; displayName = 'DEVICE-0009' }
+                @{ id = 'm-3'; userPrincipalName = 'Alice@contoso.com' }
+                @{ id = 'm-2'; userPrincipalName = 'Carol@contoso.com' }
+                @{ id = 'm-1' }
+            )
+            $script:OrderOwners = @(
+                @{ id = 'o-3'; userPrincipalName = 'zed@contoso.com' }
+                @{ id = 'o-2'; userPrincipalName = 'Zed@contoso.com' }
+                @{ id = 'o-1'; userPrincipalName = 'amy@contoso.com' }
+            )
+            # Scrambled: an owner eligibility first, a time-bound one before a permanent one of the same
+            # principal, two principals that differ only in letter case, and one principal with both access
+            # types. Start and end are fixed, so the durations are 30 and 7 days.
+            $script:OrderEligibility = @(
+                @{ principalId = 'p-1'; accessId = 'owner'; startDateTime = $null; endDateTime = $null }
+                @{ principalId = 'p-2'; accessId = 'member'; startDateTime = '2026-01-01T09:00:00Z'; endDateTime = '2026-01-31T09:00:00Z' }
+                @{ principalId = 'p-3'; accessId = 'member'; startDateTime = $null; endDateTime = $null }
+                @{ principalId = 'p-1'; accessId = 'member'; startDateTime = '2026-01-01T09:00:00Z'; endDateTime = '2026-01-08T09:00:00Z' }
+                @{ principalId = 'p-2'; accessId = 'member'; startDateTime = $null; endDateTime = $null }
+                @{ principalId = 'p-1'; accessId = 'member'; startDateTime = $null; endDateTime = $null }
+            )
+            $script:OrderReverse = $false
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                $Members = $script:OrderMembers; $Owners = $script:OrderOwners; $Eligibility = $script:OrderEligibility
+                if ($script:OrderReverse) { $Members = @($Members[($Members.Count - 1)..0]); $Owners = @($Owners[($Owners.Count - 1)..0]); $Eligibility = @($Eligibility[($Eligibility.Count - 1)..0]) }
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_team'; Description = 'Team'; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; MembershipRule = $null; MailNickname = 'roleSecTeam'
+                    Members = $Members; Owners = $Owners; PimEligibility = $Eligibility
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipalName {
+                @{ 'p-1' = 'bob@contoso.com'; 'p-2' = 'Alice@contoso.com'; 'p-3' = 'alice@contoso.com' }
+            }
+        }
+
+        It 'writes the members in the fixed order, an id standing for a member that has no user principal name' {
+            $Group = (Invoke-GroupRead).Result.Groups[0]
+            (@($Group.members) -join '|') | Should -BeExactly 'Alice@contoso.com|alice@contoso.com|bob@contoso.com|Carol@contoso.com|dev-9|m-1'
+        }
+
+        It 'writes the owners in the fixed order' {
+            $Group = (Invoke-GroupRead).Result.Groups[0]
+            (@($Group.owners) -join '|') | Should -BeExactly 'amy@contoso.com|Zed@contoso.com|zed@contoso.com'
+        }
+
+        It 'writes the eligibility by principal, then access type, then duration with a permanent one first' {
+            $Group = (Invoke-GroupRead).Result.Groups[0]
+            $Written = @($Group.eligibility | ForEach-Object { "$($_.principal)/$($_.accessType)/$(if ($null -eq $_.durationDays) { 'permanent' } else { $_.durationDays })" })
+            $Written -join '|' | Should -BeExactly 'Alice@contoso.com/member/permanent|Alice@contoso.com/member/30|alice@contoso.com/member/permanent|bob@contoso.com/member/permanent|bob@contoso.com/member/7|bob@contoso.com/owner/permanent'
+        }
+
+        It 'writes the same JSON for the same tenant listed in two orders' {
+            $First = Invoke-GroupRead
+            $script:OrderReverse = $true
+            $Second = Invoke-GroupRead
+            # Reach proof: the second read really was fed in the other order.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERGroup -Exactly -Times 2
+            (ConvertTo-Json -InputObject @($First.Result.Groups) -Depth 12) | Should -BeExactly (ConvertTo-Json -InputObject @($Second.Result.Groups) -Depth 12)
+        }
+
+        It 'writes the same JSON under -IncludeId, where two principals that share a name are told apart by their id' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipalName {
+                @{ 'p-1' = 'bob@contoso.com'; 'p-2' = 'bob@contoso.com'; 'p-3' = 'bob@contoso.com' }
+            }
+            $First = Invoke-GroupRead -IncludeId
+            $script:OrderReverse = $true
+            $Second = Invoke-GroupRead -IncludeId
+            $FirstJson = ConvertTo-Json -InputObject @($First.Result.Groups) -Depth 12
+            $FirstJson | Should -BeExactly (ConvertTo-Json -InputObject @($Second.Result.Groups) -Depth 12)
+            # Non-vacuity: the three principals share one name, so the id is what decides the order of the
+            # three permanent member eligibilities.
+            (@($First.Result.Groups[0].eligibility | Where-Object { $_.accessType -eq 'member' -and $null -eq $_.durationDays } | ForEach-Object { $_.id }) -join '|') | Should -BeExactly 'p-1|p-2|p-3'
+        }
+    }
+
+    Context 'a dynamic group writes its members as an explicit null and counts them (Sprint 11 step 10, BL-43, R-1, R-15)' {
+        # A dynamic group's membership is its rule's. Its members are READ (one request, for a group read in
+        # full) and COUNTED in DynamicMembers, never written: members is an explicit null, not an omitted key
+        # and not named unread, and the members take no part in the PIM decision.
+        BeforeEach {
+            $script:DynMembers = @(@{ id = 'u-1'; userPrincipalName = 'person1@contoso.com' }, @{ id = 'u-2'; userPrincipalName = 'person2@contoso.com' })
+            $script:DynOwners = @(@{ id = 'o-1'; userPrincipalName = 'person3@contoso.com' })
+            $script:DynGroupType = 'Dynamic'
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = 'role_sec_dynamic'; Description = $null; GroupType = $script:DynGroupType
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'
+                    MembershipRuleProcessingState = 'On'; Members = $script:DynMembers; Owners = $script:DynOwners; PimEligibility = @()
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'no eligibility' } }
+        }
+
+        It 'writes members as an explicit null, names nothing unread, and counts the members it read' {
+            $Read = Invoke-GroupRead
+            $Group = $Read.Result.Groups[0]
+            $Group.dynamic | Should -BeTrue
+            $Group.PSObject.Properties.Name | Should -Contain 'members' -Because 'an omitted key still reconciles and prunes'
+            $Group.members | Should -BeNullOrEmpty
+            $null -eq $Group.members | Should -BeTrue
+            (ConvertTo-Json -InputObject $Group -Depth 5) | Should -Match '"members": null'
+            $Group.membershipRule | Should -Be 'user.department -eq "IT"'
+            @($Read.Result.Unread).Count | Should -Be 0
+            @($Read.Result.Causes).Count | Should -Be 0
+            @($Read.Result.DynamicMembers).Count | Should -Be 1
+            $Read.Result.DynamicMembers[0].GroupId | Should -Be 'g-d'
+            $Read.Result.DynamicMembers[0].Group | Should -Be 'role_sec_dynamic'
+            $Read.Result.DynamicMembers[0].Members | Should -Be 2
+            # Non-vacuity: the same group, assigned, writes the members and counts none.
+            $script:DynGroupType = 'Assigned'
+            $Control = Invoke-GroupRead
+            (@($Control.Result.Groups[0].members) -join '|') | Should -BeExactly 'person1@contoso.com|person2@contoso.com'
+            @($Control.Result.DynamicMembers).Count | Should -Be 0
+        }
+
+        It 'leaves the owners and the eligibility of a dynamic group as for any group' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = 'role_sec_dynamic'; Description = $null; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'
+                    Members = $script:DynMembers; Owners = $script:DynOwners
+                    PimEligibility = @(@{ principalId = 'p-1'; accessId = 'member'; startDateTime = $null; endDateTime = $null })
+                }
+            }
+            $Group = (Invoke-GroupRead).Result.Groups[0]
+            (@($Group.owners) -join '|') | Should -BeExactly 'person3@contoso.com'
+            @($Group.eligibility).Count | Should -Be 1
+            $Group.eligibility[0].principal | Should -Be 'Person Eleven'
+        }
+
+        It 'sends no assignment read for a dynamic group with members and no owners, and one for the same group assigned' {
+            $script:DynOwners = @()
+            $null = Invoke-GroupRead
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment -Exactly -Times 0
+            # Non-vacuity: the same members decide the read for an assigned group.
+            $script:DynGroupType = 'Assigned'
+            $null = Invoke-GroupRead
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment -Exactly -Times 1
+        }
+
+        It 'lets the owners of a dynamic group decide the assignment read, leaves out a held owner, and counts every member it read' {
+            # u-1 holds an activation, which would be left out of an assigned group's members; here the members
+            # are never written, so nothing is left out of them and the count is the read's own.
+            Mock -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment {
+                [PSCustomObject]@{
+                    Read = $true; Message = $null; Exception = $null
+                    Value = @(
+                        @{ principalId = 'u-1'; accessId = 'member'; memberType = 'direct'; assignmentType = 'activated'; startDateTime = '2026-10-13T08:00:00Z'; endDateTime = '2026-10-13T16:00:00Z' }
+                        @{ principalId = 'o-1'; accessId = 'owner'; memberType = 'direct'; assignmentType = 'activated'; startDateTime = '2026-10-13T08:00:00Z'; endDateTime = '2026-10-13T16:00:00Z' }
+                    )
+                }
+            }
+            $Read = Invoke-GroupRead
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Read-OERGroupPimAssignment -Exactly -Times 1
+            $Read.Result.Groups[0].PSObject.Properties.Name | Should -Not -Contain 'owners'
+            @($Read.Result.PimLeftOut).Count | Should -Be 1
+            $Read.Result.PimLeftOut[0].Members | Should -Be 0
+            $Read.Result.PimLeftOut[0].Owners | Should -Be 1
+            $Read.Result.DynamicMembers[0].Members | Should -Be 2
+        }
+
+        It 'names no members unread when the members read failed, records no cause for it, keeps its verbose line, and has no count for the group (R-24)' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -Message "Could not read members for group 'g-d': Too many requests (429)." `
+                    -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'g-d' -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = 'role_sec_dynamic'; Description = $null; GroupType = $script:DynGroupType
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'
+                    Owners = $script:DynOwners; PimEligibility = @()
+                }
+            }
+            $Read = Invoke-GroupRead
+            $Group = $Read.Result.Groups[0]
+            $Group.PSObject.Properties.Name | Should -Contain 'members'
+            $null -eq $Group.members | Should -BeTrue
+            @($Read.Result.Unread) | Should -Not -Contain 'groups/role_sec_dynamic/members'
+            @($Read.Result.Unread).Count | Should -Be 0
+            # R-24: the failed read is no gap, so no cause is recorded for it (a cause clause must never name a
+            # read that no unread entry names); the verbose line is all that remains of it.
+            @($Read.Result.Causes).Count | Should -Be 0
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: Could not read members for group 'g-d': Too many requests (429)."
+            @($Read.Result.DynamicMembers).Count | Should -Be 0
+            # Non-vacuity: the same failure on an assigned group names the members unread and records its cause.
+            $script:DynGroupType = 'Assigned'
+            $Control = Invoke-GroupRead
+            @($Control.Result.Unread) | Should -Contain 'groups/role_sec_dynamic/members'
+            @($Control.Result.Causes).Count | Should -Be 1
+            $Control.Result.Causes[0].Cause | Should -Be "Could not read members for group 'g-d': Too many requests (429)."
+        }
+
+        It 'records no cause for the dynamic group''s members read and every cause of the other reads that failed beside it, an owners read of the same dynamic group included (R-24)' {
+            # Three groups, four failed reads: g-d is dynamic and its members AND owners reads failed, g-s is
+            # assigned and its owners read failed, g-m is assigned and its members read failed. Only the first read
+            # is no gap. The other three are, and each keeps its cause and its unread entry: the owners of the SAME
+            # dynamic group (so the skip is of the members read, not of the group), another group's owners, and
+            # another group's members (so the skip is of a dynamic group, found by the record's target).
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -Message "Could not read members for group 'g-d': Too many requests (429)." `
+                    -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'g-d' -ErrorAction $Ea
+                Write-Error -Message "Could not read owners for group 'g-d': Too many requests (429)." `
+                    -ErrorId 'GroupOwnerReadFailed' -Category LimitsExceeded -TargetObject 'g-d' -ErrorAction $Ea
+                Write-Error -Message "Could not read owners for group 'g-s': Forbidden (403)." `
+                    -ErrorId 'GroupOwnerReadFailed' -Category PermissionDenied -TargetObject 'g-s' -ErrorAction $Ea
+                Write-Error -Message "Could not read members for group 'g-m': Forbidden (403)." `
+                    -ErrorId 'GroupMemberReadFailed' -Category PermissionDenied -TargetObject 'g-m' -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = 'role_sec_dynamic'; Description = $null; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'; PimEligibility = @()
+                }
+                [PSCustomObject]@{
+                    Id = 'g-s'; DisplayName = 'role_sec_static'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Members = $script:DynMembers; PimEligibility = @()
+                }
+                [PSCustomObject]@{
+                    Id = 'g-m'; DisplayName = 'role_sec_member'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Owners = $script:DynOwners; PimEligibility = @()
+                }
+            }
+            $Read = Invoke-GroupRead
+            @($Read.Result.Groups).Count | Should -Be 3
+            @($Read.Result.Unread) | Should -Be @('groups/role_sec_dynamic/owners', 'groups/role_sec_static/owners', 'groups/role_sec_member/members')
+            @($Read.Result.Causes | ForEach-Object { "$($_.Target)|$($_.Cause)" }) | Should -Be @(
+                "g-d|Could not read owners for group 'g-d': Too many requests (429)."
+                "g-s|Could not read owners for group 'g-s': Forbidden (403)."
+                "g-m|Could not read members for group 'g-m': Forbidden (403)."
+            )
+            # All four failures reached the verbose stream, so the dynamic group's members read is not lost, only not a cause.
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: Could not read members for group 'g-d': Too many requests (429)."
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: Could not read owners for group 'g-d': Too many requests (429)."
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: Could not read owners for group 'g-s': Forbidden (403)."
+            @($Read.Verbose) | Should -Contain "Get-OERInventory: Could not read members for group 'g-m': Forbidden (403)."
+        }
+
+        It 'finds the dynamic group by its id without regard to letter case (R-24, fix round 2)' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                Write-Error -Message "Could not read members for group 'G-D': Too many requests (429)." `
+                    -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject 'G-D' -ErrorAction $Ea
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = 'role_sec_dynamic'; Description = $null; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'
+                    Owners = $script:DynOwners; PimEligibility = @()
+                }
+            }
+            $Read = Invoke-GroupRead
+            @($Read.Result.Groups).Count | Should -Be 1
+            @($Read.Result.Unread).Count | Should -Be 0
+            @($Read.Result.Causes).Count | Should -Be 0 -Because 'a record''s target that differs from the group''s id in letter case only still names that group'
+        }
+
+        It 'looks the dynamic groups up once, so the lookup does not grow with the number of failed members reads (R-24, fix round 2)' {
+            # Each listed group counts how often its GroupType is read. A healthy read reads it once per group
+            # for the projection; the lookup adds one read per group, once, when any record was written, and not
+            # one per record (a scan per failed record cost failures times listed groups: 15.5 s for 2000 groups
+            # with every members read failing).
+            $script:CountedGroups = @(foreach ($GroupId in 'g-1', 'g-2', 'g-3', 'g-4') {
+                $Counted = [PSCustomObject]@{
+                    Id = $GroupId; DisplayName = "role_sec_$GroupId"; Description = $null; IsAssignableToRole = $false
+                    MembershipRule = $null; Members = @(); Owners = @(); PimEligibility = @(); TypeReads = 0
+                }
+                $Counted | Add-Member -MemberType ScriptProperty -Name GroupType -Value { $this.TypeReads++; 'Assigned' }
+                $Counted
+            })
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                param($ErrorAction)
+                $Ea = if ($null -ne $ErrorAction) { $ErrorAction } else { 'Continue' }
+                foreach ($Target in $script:FailedGroupTargets) {
+                    Write-Error -Message "Could not read members for group '${Target}': Too many requests (429)." `
+                        -ErrorId 'GroupMemberReadFailed' -Category LimitsExceeded -TargetObject $Target -ErrorAction $Ea
+                }
+                $script:CountedGroups
+            }
+            $Reads = @{}
+            foreach ($Run in @(@{ Name = 'none'; Targets = @() }, @{ Name = 'one'; Targets = @('g-1') }, @{ Name = 'four'; Targets = @('g-1', 'g-2', 'g-3', 'g-4') })) {
+                foreach ($Counted in $script:CountedGroups) { $Counted.TypeReads = 0 }
+                $script:FailedGroupTargets = $Run.Targets
+                $null = Invoke-GroupRead
+                $Reads[$Run.Name] = [int](($script:CountedGroups | Measure-Object -Property TypeReads -Sum).Sum)
+            }
+            $Reads['none'] | Should -BeGreaterThan 0 -Because 'the projection reads the type of every group, so the counter is live'
+            $Reads['one'] | Should -Be ($Reads['none'] + 4) -Because 'a read with a failed record looks every listed group up once'
+            $Reads['four'] | Should -Be $Reads['one'] -Because 'four failed records look the groups up no more often than one'
+        }
+
+        It 'drops the count of a dynamic group left out for a shared name' {
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-d'; DisplayName = 'role_sec_shared'; Description = $null; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "IT"'
+                    Members = $script:DynMembers; Owners = @(); PimEligibility = @()
+                }
+                [PSCustomObject]@{
+                    Id = 'g-s'; DisplayName = 'ROLE_SEC_SHARED'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; Members = @(); Owners = @(); PimEligibility = @()
+                }
+                [PSCustomObject]@{
+                    Id = 'g-o'; DisplayName = 'role_sec_other'; Description = $null; GroupType = 'Dynamic'
+                    IsAssignableToRole = $false; MembershipRule = 'user.department -eq "HR"'
+                    Members = @(@{ id = 'u-9'; userPrincipalName = 'person9@contoso.com' }); Owners = @(); PimEligibility = @()
+                }
+            }
+            $Read = Invoke-GroupRead -ExcludeSharedName
+            @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('role_sec_other')
+            @($Read.Result.DynamicMembers | ForEach-Object { "$($_.GroupId):$($_.Members)" }) | Should -Be @('g-o:1')
+            # Non-vacuity: without the switch both dynamic groups are counted.
+            $Control = Invoke-GroupRead
+            @($Control.Result.DynamicMembers | ForEach-Object { "$($_.GroupId):$($_.Members)" }) | Should -Be @('g-d:2', 'g-o:1')
+        }
+
+        It 'counts only the members that are there: a null in the list is no member' {
+            $script:DynMembers = @($null, @{ id = 'u-1'; userPrincipalName = 'person1@contoso.com' })
+            $Read = Invoke-GroupRead
+            $Read.Result.DynamicMembers[0].Members | Should -Be 1
         }
     }
 
@@ -1109,7 +1553,7 @@ Describe 'Get-OERInventoryGroup' {
             $script:PimRows['g-pim'] = @((& $script:Standing 'u-std' 'member'), (& $script:Standing 'dev-1' 'member'), (& $script:Standing 'o-std' 'owner'))
             $Read = & $script:ReadIn $Mode
             (ConvertTo-Json -InputObject @($Read.Result.Groups) -Depth 8) | Should -BeExactly (ConvertTo-Json -InputObject @($Baseline.Result.Groups) -Depth 8)
-            (& $script:ProjectionOf $Read 'role_sec_pim').members | Should -Be @('person1@contoso.com', 'dev-1')
+            (& $script:ProjectionOf $Read 'role_sec_pim').members | Should -Be @('dev-1', 'person1@contoso.com')
             @($Read.Result.PimLeftOut).Count | Should -Be 0
             $Read.Result.Unread.Count | Should -Be 0
         }
@@ -1463,6 +1907,57 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 6 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
         }
 
+        It 'reads a dynamic group whose criterion was refused in full, asks its members once, counts them, and writes members as an explicit null (BL-43, R-15)' {
+            $script:Refuse["criterion:$script:IdDyn"] = 'Insufficient privileges to complete the operation.'
+            $script:Refuse["criterion:$script:IdPlain"] = 'Insufficient privileges to complete the operation.'
+            $Read = Invoke-GroupRead -RelevantOnly
+            $Dyn = @($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-DYN' })
+            $Dyn.Count | Should -Be 1 -Because 'a group whose relevance is unknown is read in full, a dynamic one too'
+            $Dyn[0].PSObject.Properties.Name | Should -Contain 'members'
+            $null -eq $Dyn[0].members | Should -BeTrue
+            # The group's criterion is what could not be read; its members are no gap.
+            @($Read.Result.Unread) | Should -Be @('groups/G-PLAIN/pimPolicy', 'groups/G-DYN/pimPolicy')
+            @($Read.Result.DynamicMembers | ForEach-Object { "$($_.GroupId):$($_.Group):$($_.Members)" }) | Should -Be @("$($script:IdDyn):G-DYN:1")
+            # The request pattern is the one it was: the members of a group read in full, once.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/66666666-6666-6666-6666-666666666666/members' }
+            # Non-vacuity: the assigned group read the same way writes its members, and none is counted for it.
+            $Plain = @($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-PLAIN' })
+            @($Plain[0].members) | Should -Be @('person7@contoso.com')
+        }
+
+        It 'records no cause for the refused members read of a dynamic group read in full, and every cause of the other refused reads (BL-43, R-24)' {
+            # G-DYN is read in full since its criterion is refused, and its members read is refused too, and so is
+            # its owners read, which is a gap. G-PLAIN is the same shape, assigned: its members read is refused as
+            # well, and is a gap.
+            $script:Refuse["criterion:$script:IdDyn"] = 'Insufficient privileges to complete the operation.'
+            $script:Refuse["criterion:$script:IdPlain"] = 'Insufficient privileges to complete the operation.'
+            $script:Refuse["members:$script:IdDyn"] = 'Forbidden (403)'
+            $script:Refuse["owners:$script:IdDyn"] = 'Forbidden (403)'
+            $script:Refuse["members:$script:IdPlain"] = 'Forbidden (403)'
+            $Read = Invoke-GroupRead -RelevantOnly
+            $Dyn = @($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-DYN' })
+            $Dyn.Count | Should -Be 1
+            $Dyn[0].PSObject.Properties.Name | Should -Contain 'members'
+            $null -eq $Dyn[0].members | Should -BeTrue
+            @($Read.Result.DynamicMembers).Count | Should -Be 0 -Because 'a members read that failed has no count'
+            # Reach proof: the members read of both groups was sent and refused.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/66666666-6666-6666-6666-666666666666/members' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/44444444-4444-4444-4444-444444444444/members' }
+            # The gaps are the two criteria, the assigned group's members and the dynamic group's owners, and no
+            # members entry of G-DYN.
+            @($Read.Result.Unread) | Should -Be @('groups/G-PLAIN/members', 'groups/G-PLAIN/pimPolicy', 'groups/G-DYN/owners', 'groups/G-DYN/pimPolicy')
+            # The causes of G-DYN: its criterion and its owners read, and none for its members. The assigned group's
+            # failed members read is the only cause of that read.
+            $DynCauses = @($Read.Result.Causes | Where-Object { $_.Target -eq $script:IdDyn } | ForEach-Object { $_.Cause })
+            $DynCauses.Count | Should -Be 2
+            @($DynCauses | Where-Object { $_ -like 'Could not read members*' }).Count | Should -Be 0
+            @($DynCauses | Where-Object { $_ -like 'Could not read owners for group*' }).Count | Should -Be 1
+            @($DynCauses | Where-Object { $_ -like 'Could not determine whether group*uses PIM for Groups*' }).Count | Should -Be 1
+            @($Read.Result.Causes | Where-Object { $_.Cause -like 'Could not read members for group*' } | ForEach-Object { $_.Target }) | Should -Be @($script:IdPlain)
+            # The verbose stream still carries the dynamic group's failed read.
+            @($Read.Verbose | Where-Object { $_ -like "Get-OERInventory: Could not read members for group $script:IdDyn*" }).Count | Should -Be 1
+        }
+
         It 'drops no group when the eligibility of every group could not be read (Review Focus 1)' {
             foreach ($G in $script:Tenant) { $script:Refuse["eligibility:$($G.Id)"] = 'Too many requests (429)' }
             $Read = Invoke-GroupRead -RelevantOnly
@@ -1489,7 +1984,8 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             @($Read.Result.Unread) | Should -Be @('groups/Admins')
             @($Read.Result.Causes).Count | Should -Be 1
             $Read.Result.Causes[0].Cause | Should -BeExactly $Expected
-            $Read.Result.Causes[0].Target | Should -Be 'groups/Admins'
+            # BL-156: registered with a blank Target, so Format-OERUnreadCauseClause keys it on its full text.
+            [string]$Read.Result.Causes[0].Target | Should -BeExactly ''
             @($Read.Verbose) | Should -Contain "Get-OERInventory: $Expected"
             # BL-131: the name with its count, once.
             @($Read.Result.SharedNames).Count | Should -Be 1
@@ -1502,6 +1998,22 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             $Read = Invoke-GroupRead -ExcludeSharedName
             @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-EL', 'G-MOD', 'G-SYNC', 'G-DYN')
             @($Read.Result.Unread) | Should -Be @('groups/Admins')
+        }
+
+        It 'registers each shared name as a cause of its own, so two names of one count both reach the causes clause (BL-156)' {
+            # Two names two groups each share. The cause text carries the name, and a cause is deduplicated
+            # on its text with its Target replaced by <id>: with the name as the Target, both names read
+            # alike and the clause kept the first. With a blank Target the full text is the key.
+            $script:Tenant[1].Name = 'Ops'     # G-EL
+            $script:Tenant[2].Name = 'ops'     # G-MOD
+            $Read = Invoke-GroupRead -ExcludeSharedName
+            @($Read.Result.Unread) | Should -Be @('groups/Admins', 'groups/Ops')
+            @($Read.Result.Causes).Count | Should -Be 2
+            foreach ($Entry in @($Read.Result.Causes)) { [string]$Entry.Target | Should -BeExactly '' }
+            $Clause = InModuleScope Omnicit.EntraRBAC -Parameters @{ C = @($Read.Result.Causes) } { param($C) Format-OERUnreadCauseClause -Cause $C }
+            $Clause | Should -Not -BeNullOrEmpty -Because 'an empty clause would make the counts below vacuous'
+            @([regex]::Matches($Clause, '2 live objects share the name groups/Admins ')).Count | Should -Be 1
+            @([regex]::Matches($Clause, '2 live objects share the name groups/Ops ')).Count | Should -Be 1 -Because 'the second name is not dropped for reading like the first'
         }
 
         It 'keeps both spellings without -ExcludeSharedName, for a caller that applies its own rule' {
@@ -1559,7 +2071,7 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             @($Read.Result.Unread) | Should -Be @('groups/G-RA')
             @($Read.Result.Causes).Count | Should -Be 1
             $Read.Result.Causes[0].Cause | Should -BeExactly $Expected
-            $Read.Result.Causes[0].Target | Should -Be 'groups/G-RA'
+            [string]$Read.Result.Causes[0].Target | Should -BeExactly '' -Because 'a shared-name cause carries a blank Target (BL-156)'
             @($Read.Verbose | Where-Object { $_ -eq "Get-OERInventory: $Expected" }).Count | Should -Be 1
             @($Read.Result.SharedNames).Count | Should -Be 1
             $Read.Result.SharedNames[0].Section | Should -BeExactly 'groups'
@@ -1796,6 +2308,25 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             # The members, the owners, the eligibility and the criterion: what a full read costs G-PLAIN.
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Exactly -Times 6 -ParameterFilter { $Uri -like '*44444444-4444-4444-4444-444444444444*' }
         }
+
+        It 'reads the members of a dynamic group once, writes them as an explicit null, and counts them (BL-43, R-1, R-15)' {
+            $Read = Invoke-GroupRead
+            $Dyn = @($Read.Result.Groups | Where-Object { $_.displayName -eq 'G-DYN' })
+            $Dyn.Count | Should -Be 1
+            $Dyn[0].dynamic | Should -BeTrue
+            $Dyn[0].PSObject.Properties.Name | Should -Contain 'members'
+            $null -eq $Dyn[0].members | Should -BeTrue
+            (@($Dyn[0].owners) -join '|') | Should -BeExactly 'person12@contoso.com'
+            @($Read.Result.Unread).Count | Should -Be 0
+            @($Read.Result.DynamicMembers | ForEach-Object { "$($_.GroupId):$($_.Group):$($_.Members)" }) | Should -Be @("$($script:IdDyn):G-DYN:1")
+            # The requests are the ones a full read has always made for it.
+            Get-GraphCallCount -Like "GET v1.0/groups/$($script:IdDyn)/members" | Should -Be 1
+            Get-GraphCallCount -Like "GET v1.0/groups/$($script:IdDyn)/owners" | Should -Be 1
+            # Non-vacuity: the assigned groups of the same read write their members.
+            $ByName = @{}
+            foreach ($G in $Read.Result.Groups) { $ByName[$G.displayName] = $G }
+            (@($ByName['G-PLAIN'].members) -join '|') | Should -BeExactly 'person7@contoso.com'
+        }
     }
 }
 
@@ -1898,5 +2429,77 @@ Describe 'Get-OERInventoryGroup, the PIM for Groups assignment read driven throu
         $ByName = @{}
         foreach ($G in $Read.Result.Groups) { $ByName[$G.displayName] = $G }
         $ByName['role_sec_a'].members | Should -Be @('person1@contoso.com', 'person2@contoso.com')
+    }
+}
+
+Describe 'Get-OERInventoryGroup (the cause removal of a left-out group stands before its warning, Sprint 11 step 10, BL-44)' {
+    # BL-44. A Write-Warning under a Stop warning preference is a terminating error, so a statement after it never
+    # runs. The cause removal of -SecurityEnabledOnly holds a list, which a verbose line cannot show, so the proof
+    # reads the source with the AST: the warning found by the start of its text, the removal loop stands in the SAME
+    # statement block and starts before it. The checker has a known-answer test of its own, so it cannot pass for
+    # nothing.
+    BeforeAll {
+        $script:BkSourcePath = (Resolve-Path (Join-Path $PSScriptRoot '../../../source/Private/Get-OERInventoryGroup.ps1')).Path
+        $BkErrors = $null
+        $script:BkAst = [System.Management.Automation.Language.Parser]::ParseFile($script:BkSourcePath, [ref]$null, [ref]$BkErrors)
+        if (@($BkErrors).Count -gt 0) { throw "Get-OERInventoryGroup.ps1 does not parse: $(@($BkErrors)[0].Message)" }
+        # The violations of one warning: an empty list when it is found once and each named statement stands in its
+        # block, the right number of times, before it.
+        function script:Get-BkViolation {
+            param([System.Management.Automation.Language.Ast]$Ast, [string]$WarningStart, [object[]]$Bookkeeping)
+            $Violations = [System.Collections.Generic.List[string]]::new()
+            $Warnings = @($Ast.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq 'Write-Warning' }, $true) |
+                    Where-Object {
+                        $Elements = @($_.CommandElements)
+                        $Elements.Count -ge 2 -and $Elements[1].Extent.Text.TrimStart([char[]]@('"', "'")).StartsWith($WarningStart, [System.StringComparison]::Ordinal)
+                    })
+            if ($Warnings.Count -ne 1) {
+                $Violations.Add("expected exactly one Write-Warning starting '$WarningStart', found $($Warnings.Count)")
+                return $Violations.ToArray()
+            }
+            $Statement = $Warnings[0]
+            while ($null -ne $Statement.Parent -and $Statement.Parent -isnot [System.Management.Automation.Language.StatementBlockAst]) { $Statement = $Statement.Parent }
+            $Block = $Statement.Parent
+            foreach ($Item in $Bookkeeping) {
+                $Hits = @($Block.Statements | Where-Object { $_.Extent.Text -match $Item.Pattern })
+                if ($Hits.Count -ne $Item.Count) {
+                    $Violations.Add("expected $($Item.Count) statement(s) matching '$($Item.Pattern)' in the block of the warning, found $($Hits.Count)")
+                    continue
+                }
+                foreach ($Hit in $Hits) {
+                    if ($Hit.Extent.StartOffset -ge $Statement.Extent.StartOffset) {
+                        $Violations.Add("a statement matching '$($Item.Pattern)' starts at $($Hit.Extent.StartOffset), not before the warning at $($Statement.Extent.StartOffset)")
+                    }
+                }
+            }
+            $Violations.ToArray()
+        }
+    }
+
+    It 'holds the known answer: the checker finds a warning that stands before its bookkeeping, a bookkeeping statement that is missing and a warning that is not unique' {
+        $Parse = {
+            param([string]$Text)
+            $E = $null
+            [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$null, [ref]$E)
+        }
+        $Pattern = @(@{ Pattern = '^\$Unread = \$true$'; Count = 1 })
+        $Good = & $Parse 'if ($n -gt 0) { $Unread = $true; Write-Warning "Could not read: $n" }'
+        @(Get-BkViolation -Ast $Good -WarningStart 'Could not read:' -Bookkeeping $Pattern).Count | Should -Be 0
+        $Late = & $Parse 'if ($n -gt 0) { Write-Warning "Could not read: $n"; $Unread = $true }'
+        @(Get-BkViolation -Ast $Late -WarningStart 'Could not read:' -Bookkeeping $Pattern).Count | Should -Be 1
+        @(Get-BkViolation -Ast $Late -WarningStart 'Could not read:' -Bookkeeping $Pattern)[0] | Should -BeLike "a statement matching '*' starts at *, not before the warning at *"
+        $Missing = & $Parse 'if ($n -gt 0) { Write-Warning "Could not read: $n" }'
+        @(Get-BkViolation -Ast $Missing -WarningStart 'Could not read:' -Bookkeeping $Pattern)[0] | Should -BeLike 'expected 1 statement(s) matching*found 0'
+        $Twice = & $Parse 'if ($n -gt 0) { $Unread = $true; Write-Warning "Could not read: a"; Write-Warning "Could not read: b" }'
+        @(Get-BkViolation -Ast $Twice -WarningStart 'Could not read:' -Bookkeeping $Pattern)[0] | Should -BeLike 'expected exactly one Write-Warning starting*found 2'
+        $Absent = & $Parse 'if ($n -gt 0) { $Unread = $true; Write-Warning "Another text" }'
+        @(Get-BkViolation -Ast $Absent -WarningStart 'Could not read:' -Bookkeeping $Pattern)[0] | Should -BeLike 'expected exactly one Write-Warning starting*found 0'
+    }
+
+    It 'stands the cause removal of the left-out groups before the -GroupFilter warning' {
+        $Violations = @(Get-BkViolation -Ast $script:BkAst -WarningStart '-GroupFilter returned' -Bookkeeping @(
+                @{ Pattern = '(?s)^for \(\$CauseIndex = .*\$Causes\.RemoveAt\('; Count = 1 }
+            ))
+        $Violations | Should -Be @()
     }
 }

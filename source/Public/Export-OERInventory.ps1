@@ -23,7 +23,13 @@ function Export-OERInventory {
     Graph merely lists is not kept in full detail on that account. -AllGroupsDetailed keeps every
     group inventory.json covers. The cmdlet reads only -- no tenant state changes -- and
     authenticates at entry; an ARM token is acquired only when -Include names RoleAssignments or
-    RoleManagementPolicies, the two Azure sections.
+    RoleManagementPolicies, the two Azure sections. When that sign-in is refused, or the Azure Resource
+    Manager token it was asked for cannot be acquired, the export stops before it reads or writes
+    anything, under every error preference: no bundle folder is written and no object is returned. The
+    sign-in's own error is published with its own ErrorId, as a terminating error when the sign-in
+    terminated (a try around the call catches it) and as the non-terminating error the sign-in wrote
+    when it only failed to acquire the Azure Resource Manager token (under -ErrorAction Ignore that
+    error is not shown and is kept in $Error).
 
     HOW THE GROUPS ARE READ. Without -AllGroupsDetailed the export decides which groups are relevant
     BEFORE it reads any group in full, so in a tenant with very many groups a group that is not
@@ -53,11 +59,17 @@ function Export-OERInventory {
     true for a group synchronized from on-premises Active Directory and false otherwise, and
     memberCount: the group's member count when the export read the group in full, and null
     otherwise -- for a group the export found not relevant, one outside -GroupFilter, one left out
-    because another group shares its name, one whose members could not be read, one whose members
-    are written as null for the reason given below, and every group that is not security-enabled.
+    because another group shares its name, one whose members could not be read (a dynamic group's
+    members read included: its count stays null and the export names nothing unread for it), one
+    whose members are written as null for the reason given below, and every group that is not
+    security-enabled.
     Null means not known, which is not zero: a count would cost a request per group. The count is
     the group's live member count, so it includes the members left out of inventory.json as PIM for
-    Groups access (see MEMBERS AND OWNERS THAT PIM FOR GROUPS HOLDS). Each row also carries the
+    Groups access (see MEMBERS AND OWNERS THAT PIM FOR GROUPS HOLDS). A dynamic group's members are
+    written as an explicit null in inventory.json and groups.json, since its membership rule owns
+    them and Invoke-OERStructure never reconciles them, and they are not named in IncompleteReads;
+    the export still reads them when it reads the group in full and counts them, so such a group's
+    row carries its count. Each row also carries the
     group's object id, so two groups with one display name, or a group that was renamed, can be
     told apart; its type, as the three values Microsoft Graph gives it (securityEnabled and
     mailEnabled, each true, false or null when Graph gave none, and groupTypes, always an array,
@@ -78,7 +90,9 @@ function Export-OERInventory {
     eligible for the same access is left out instead; when the group's eligibility could not be read
     either, a members collection that holds entries is written as an explicit null and an owners
     collection that holds entries is left out, both named in IncompleteReads, and the roster's
-    memberCount is null for a group whose members are written as null. The generated README.md names
+    memberCount is null for a group whose members are written as null for that reason. A dynamic
+    group is not one: PIM for Groups cannot manage it, so its members are not looked at for that
+    read, and it is counted as described under groupsRoster.json. The generated README.md names
     the groups concerned that inventory.json writes in a section "Members and owners left out as PIM
     for Groups access": for each group, by name and never by principal, how many members and owners
     were left out and on which basis, or the statement that none was. Leaving a member or owner out
@@ -92,8 +106,9 @@ function Export-OERInventory {
     not. When anything was skipped the bundle summary is still emitted first and is then followed by
     a non-terminating InventoryPartial error, so a caller using -ErrorAction Stop or a try/catch
     finds out that roleAssignments.json and roleManagementPolicies.json are incomplete instead of
-    treating a truncated bundle as a full tenant snapshot. A level of the tree that could not be
-    LISTED is skipped the same way: a refused or failed management-group listing is named in
+    treating a truncated bundle as a full tenant snapshot. A level of the
+    tree that could not be LISTED is skipped the same way: a refused or failed management-group
+    listing is named in
     SkippedScopes and SkippedEligibilityScopes as '<management groups: the listing failed>' (a failed
     subscription listing as '<subscriptions: the listing failed>'), never read as "no management
     groups". A management group created in the last few minutes can be missing from the
@@ -101,7 +116,11 @@ function Export-OERInventory {
     skipped -- because it cannot know it exists. Wait until Get-OERManagementGroup lists it before
     relying on an export that should include it. Of the subscriptions, ScopesEnumerated counts only
     those of this tenant: a subscription of another tenant, or one whose home tenant could not be read,
-    is not walked and not counted (see SUBSCRIPTIONS OF ANOTHER TENANT below).
+    is not walked and not counted (see SUBSCRIPTIONS OF ANOTHER TENANT below). The Entra ID sections
+    other than Groups are read by an inner Get-OERInventory call that pins -ErrorAction Continue, so
+    that a partial read never stops the bundle, and its own InventoryPartial error therefore reaches
+    the caller's error stream before the summary is emitted, also under -ErrorAction SilentlyContinue
+    and Ignore on the export, which silence only the export's own InventoryPartial error that follows.
 
     Azure PIM eligibility is read the same walk over, into azurePimEligibility.json, but only when an
     Azure section (RoleAssignments or RoleManagementPolicies) is included -- the file is absent
@@ -128,7 +147,14 @@ function Export-OERInventory {
     groupsRoster.json: it is never an apply-document section and no apply cmdlet reads it back. Every
     per-area file and azurePimEligibility.json alike is always a JSON array on disk, written as [] when
     it carries nothing. A scope whose eligibility read fails is named in SkippedEligibilityScopes and
-    folds into the same trailing InventoryPartial error as a failed role-assignment scope.
+    folds into the same trailing InventoryPartial error as a failed role-assignment scope. An
+    eligibility read that stops as a whole, on an error nothing in it catches, is reported the same way
+    and does not end the export (only a Stop warning preference does, at its warning, as at every
+    warning before the bundle is written): every scope of the walk is named in
+    SkippedEligibilityScopes, azurePimEligibility.json is written as [], and ONE warning names the
+    cause. The Azure Lighthouse
+    read (AZURE LIGHTHOUSE DELEGATIONS below) and the role policy selection (WHICH AZURE ROLE
+    MANAGEMENT POLICIES ARE EXPORTED below) each report a stop of their own in the same way.
 
     AZURE LIGHTHOUSE DELEGATIONS. Azure Lighthouse lets another tenant -- a service provider, for
     example -- manage subscriptions or resource groups of this one: a delegation gives principals of
@@ -181,8 +207,11 @@ function Export-OERInventory {
     name could not be read, other than one that does not exist, is named as 'lighthouseDelegations
     role <id>', and its roleName is null wherever it appears; and a walk that could not start, or a
     subscription listing that failed, is named as 'lighthouseDelegations at <all Azure scopes: scope
-    enumeration failed>' or 'lighthouseDelegations at <subscriptions: the listing failed>'. A
-    management group listing that failed adds nothing here, since no delegation is made at a
+    enumeration failed>' or 'lighthouseDelegations at <subscriptions: the listing failed>'. A read
+    that stopped as a whole, on an error nothing in the reader catches, is named as
+    'lighthouseDelegations at <all Azure scopes: the read stopped>', with the cause in the causes of
+    the InventoryPartial message and ONE warning, and lighthouseDelegations.json is written as [].
+    A management group listing that failed adds nothing here, since no delegation is made at a
     management group. Each such entry makes the bundle partial: the InventoryPartial message names
     them in a clause of its own, with the causes of the reads (see the IncompleteReads paragraph
     below), and README.md lists them under "What this export could not read". A read of a
@@ -232,9 +261,16 @@ function Export-OERInventory {
     azurePimEligibility.json anyway. A policy that cannot be judged is kept, never dropped, and its
     scope is named in IncompleteReads (below): one not kept by a use or a change whose list row
     carries no policy object or no role definition id, or whose scope's role assignment read or
-    eligibility read failed. A failed role assignment read writes one warning ('Could not read the
-    role assignments at scope ...') and costs only the selection: the scope is still read. A failed
-    policy list skips the scope exactly as before. -AllRolePolicies exports every policy at every
+    eligibility read failed. A failed role assignment read costs only the selection: the scope is still
+    read, and its one warning ('Could not read the role assignments at scope ...') is written once the
+    scope's policy list has been read. A failed policy list skips the scope exactly as before, and
+    'Skipping scope ...' is then the one warning for a scope whose role assignment read failed too. A
+    selection that stops as a whole, on an error nothing in it catches, keeps every policy read at
+    every scope, merged as the kept ones are, names the scope of each as above, and writes ONE warning
+    that names the cause. An eligibility read that stops as a whole leaves the eligibility of every
+    scope unread, so a policy there that no role assignment and no change keeps is kept without being
+    judged, as above, and its scope named; a scope where a role assignment or a change keeps every
+    policy has no such policy, and is not named. -AllRolePolicies exports every policy at every
     scope the walk reads, with the call earlier versions made. Invoke-OERStructure reads and writes
     only the policies a document declares, so a policy the export leaves out stays as it is when the
     document, or a proposal built from it, is applied.
@@ -417,9 +453,11 @@ function Export-OERInventory {
     TENANT above), reading 'subscriptionHomeTenant at <scope>'. Then IncompleteReads carries
     the Azure Lighthouse entries (see AZURE LIGHTHOUSE DELEGATIONS above): one 'lighthouseDelegations
     at <scope>' per scope of a subscription whose delegations could not be read, one
-    'lighthouseDelegations role <id>' per role whose name could not be read, and one entry for a walk
-    that could not start or a subscription listing that failed. Last of all, for an export run with
-    -IncludeServicePrincipalAccess, IncompleteReads carries one entry per part of
+    'lighthouseDelegations role <id>' per role whose name could not be read, one entry for a walk
+    that could not start or a subscription listing that failed, and one entry,
+    'lighthouseDelegations at <all Azure scopes: the read stopped>', for a Lighthouse read that
+    stopped as a whole, so that lighthouseDelegations.json holds no delegation. Last of all, for an
+    export run with -IncludeServicePrincipalAccess, IncompleteReads carries one entry per part of
     servicePrincipalAccess.json that could not be read (see SERVICE PRINCIPAL ACCESS above), reading
     'servicePrincipalAccess/' and the part's name, for example 'servicePrincipalAccess/applicationOwners'.
     The Count of IncompleteReads is
@@ -474,11 +512,14 @@ function Export-OERInventory {
     oer-inventory-<tenant>-<yyyyMMdd-HHmmss>, so inventory.json is at
     <OutputPath>/oer-inventory-<tenant>-<stamp>/inventory.json and NOT at <OutputPath>/inventory.json.
     <tenant> is the tenant as the session names it (an ID, or the domain given to -TenantId), which can
-    differ from the tenantId inside inventory.json. Because the stamp is generated per run, the only
-    reliable way to address the bundle afterwards is the BundlePath property of the returned
-    Omnicit.EntraRBAC.InventoryBundle object -- an absolute path, populated under -WhatIf too (as the
-    planned location). Capture the returned object and join onto its BundlePath rather than guessing
-    the folder name; see the Test-OERStructure example below.
+    differ from the tenantId inside inventory.json. A session that names no tenant -- one signed in with
+    no -TenantId, whose name is blank or 'organizations' -- gives the tenant ID the session's Microsoft
+    Graph token was issued for instead (the tenantId inventory.json carries), else the -TenantId as it was
+    given, else the word tenant; the TenantId property of the returned object is that same label. Because
+    the stamp is generated per run, the only reliable way to address the bundle afterwards is the
+    BundlePath property of the returned Omnicit.EntraRBAC.InventoryBundle object -- an absolute path,
+    populated under -WhatIf too (as the planned location). Capture the returned object and join onto its
+    BundlePath rather than guessing the folder name; see the Test-OERStructure example below.
 
     The full export to LLM to Test-OERStructure to Invoke-OERStructure walkthrough is documented in
     the repository at docs/inventory-to-llm/README.md, and a worked apply document is kept in the
@@ -526,7 +567,8 @@ function Export-OERInventory {
     For the DirectoryRoleManagementPolicies section, export the policy of every Microsoft Entra
     directory role, instead of only the roles that have at least one row in the tenant-scope
     eligibility or assignment schedules (the default). Forwarded to the internal Get-OERInventory
-    call; has no effect unless -Include names DirectoryRoleManagementPolicies.
+    call; has no effect unless -Include names DirectoryRoleManagementPolicies, and the export writes one
+    warning before it reads anything when it does not.
 
     .PARAMETER AllRolePolicies
     For the RoleManagementPolicies section, export the policy of every Azure role at every scope the
@@ -535,7 +577,8 @@ function Export-OERInventory {
     default; see WHICH AZURE ROLE MANAGEMENT POLICIES ARE EXPORTED above). The export then reads each
     scope with the call earlier versions made: no role assignment list is read for the selection, and
     no scope is named in IncompleteReads as kept without being judged. Has no effect unless -Include
-    names RoleManagementPolicies; the DirectoryRoleManagementPolicies section has its own switch,
+    names RoleManagementPolicies, and the export writes one warning before it reads anything when it
+    does not; the DirectoryRoleManagementPolicies section has its own switch,
     -AllDirectoryRolePolicies.
 
     .PARAMETER IncludeServicePrincipalAccess
@@ -549,7 +592,8 @@ function Export-OERInventory {
     of its own. Without this switch none of it is read and no such file is written.
 
     .PARAMETER ManagementGroup
-    Narrow the Azure scope walk to a single management group branch identified by name or id.
+    Narrow the Azure scope walk to a single management group branch identified by name or id. An empty
+    or white space value is refused at parameter binding.
 
     .PARAMETER Scope
     Narrow the Azure scope walk to a single raw ARM scope string (e.g. a subscription id path). A
@@ -563,7 +607,8 @@ function Export-OERInventory {
     it as written, a management group path included: one that breaks a scope spelling rule a structure
     document must keep, such as a '.' or '..' segment or a trailing '/' (about_Omnicit.EntraRBAC lists
     every rule); nothing is resolved or read for it. Any other scope at a management group or the root
-    scope lies in no subscription and is read as before.
+    scope lies in no subscription and is read as before. An empty or white space value is refused at
+    parameter binding.
 
     .PARAMETER Force
     Overwrite an existing bundle folder of the same name. Without this switch an existing folder of the
@@ -643,7 +688,22 @@ function Export-OERInventory {
         [switch]$AllRolePolicies,
         # Sprint 11 step 8. A switch, so it takes no position either.
         [switch]$IncludeServicePrincipalAccess,
+        # Sprint 11 step 10 (BL-155): a -ManagementGroup or -Scope of white space only is refused here, at
+        # binding, as an empty one is -- the BL-96 pattern of -GroupFilter below, for the same reasons. Before
+        # this, '   ' passed the tests of the Azure walk (`if ($Scope)` is true for it) and was handed to the
+        # scope tree as a scope. Declared ABOVE [ValidateNotNullOrEmpty()] on purpose: validation attributes
+        # run in reverse declaration order (measured), so an empty or null value still reads the
+        # NotNullOrEmpty message and white space reads this one. Neither parameter moves: positional binding
+        # follows declaration order. A blank value would not read as "no scope" in this export's own walk: its
+        # two tests (`if ($ManagementGroup)` and `if ($Scope)`, at the Azure walk) are true for it, so the value
+        # would be handed to the scope tree as the management group to list under or as the one scope to walk,
+        # and the walk would run against a name nobody gave. Nothing in the module calls this export, so no
+        # internal call can pass either parameter a blank value.
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The ManagementGroup consists only of white space. Pass a management group name or ID, or leave the parameter out.')]
+        [ValidateNotNullOrEmpty()]
         [string]$ManagementGroup,
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The Scope consists only of white space. Pass an Azure Resource Manager scope, or leave the parameter out.')]
+        [ValidateNotNullOrEmpty()]
         [string]$Scope,
         [switch]$Force,
         [ValidateNotNullOrEmpty()]
@@ -672,13 +732,85 @@ function Export-OERInventory {
         if (@($Include | Where-Object { $_ -in @('RoleAssignments', 'RoleManagementPolicies') }).Count -gt 0) {
             $AuthParams.IncludeARM = $true
         }
-        Initialize-OERAuth @AuthParams
-        # BL-88 (A14): the tenant inventory.json names, captured here under the session this command
-        # signed in under. It is this cmdlet's own capture, never the tenantId of the inventory
-        # Get-OERInventory returns, so the document is assembled with the one value in both calls.
-        $DocumentTenantId = Get-OERInventoryTenantId
+        # Sprint 11 step 10 (BL-101, R-8): a refused sign-in writes nothing. A terminating refusal of
+        # Initialize-OERAuth ends only that function: outside any try the export carried on past the
+        # refusal, every request it then made refused by the sign-in latch, and still wrote a bundle
+        # folder of empty files with a README that named every section unread. So the call stands in a
+        # try, directly in this command's own block (a try is no script block and no nested function, so
+        # the sign-in latch is still keyed on this frame, and gate 10 of tests/QA/sourcehygiene.tests.ps1
+        # allows it), and a refusal is caught: the record is scrubbed FIRST (it can reach a token call),
+        # the export is marked refused, and the record is raised again with ThrowTerminatingError -- the
+        # sign-in's own record with its own ErrorId, no new one (A9), and the kind it always had. So a
+        # caller's try { Export-OERInventory ... } catch { } catches it exactly as it did before this
+        # step, a -WarningAction Stop on the sign-in's pre-call warning still reaches the caller as a
+        # terminating error, and outside any try only this statement ends and the script carries on
+        # (R-26). It is raised whatever the error preference, with a try above it or none: measured under
+        # every -ErrorAction value, ThrowTerminatingError ends the command and is not governed by one. The
+        # mark is therefore a second line of defence that costs nothing: were the record only written, as
+        # the first version did, process would still return on it.
+        #
+        # ArmTokenAcquisitionFailed is the one refusal Initialize-OERAuth WRITES without terminating
+        # (it writes the error and returns, with the Graph half connected), so the catch never sees it.
+        # -ErrorVariable collects it, and the first comma segment of a record's FullyQualifiedErrorId
+        # (the ErrorId, before the ',<command>' suffix PowerShell appends) says whether it is that one:
+        # the variable also holds whatever records the inner calls of a SUCCESSFUL sign-in wrote, which are
+        # not a refusal and never mark the export, so the segment is compared whole and never searched for.
+        # That record already reached the error stream when it was written, so it is not written again. A
+        # refused export reads nothing more, never asks for the tenant ID, writes no folder and emits no
+        # object (process returns at once). Get-OERSignInRefusal is not asked for here: the latch is the
+        # transports' to read, and this decision is made on the sign-in's own outcome.
+        #
+        # R-25: under -ErrorAction Ignore (or $ErrorActionPreference = 'Ignore') PowerShell adds a written
+        # record to NO -ErrorVariable (measured), so the variable would be empty and the export, not seeing
+        # the ARM refusal, would carry on and write the bundle folder this block exists to prevent. Only
+        # Ignore is pinned away: the call then runs under SilentlyContinue, which collects the record and
+        # shows nothing, as Ignore shows nothing. The cost is that under Ignore the record lands in
+        # $Error, as it does under SilentlyContinue; every other preference reaches the call unchanged.
+        $SignInRefused = $false
+        $SignInErrors = $null
+        $SignInSplat = @{}
+        if ($ErrorActionPreference -eq 'Ignore') { $SignInSplat.ErrorAction = 'SilentlyContinue' }
+        try {
+            Initialize-OERAuth @AuthParams @SignInSplat -ErrorVariable SignInErrors
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            $SignInRefused = $true
+            $PSCmdlet.ThrowTerminatingError($PSItem)
+        }
+        foreach ($SignInError in @($SignInErrors)) {
+            if ($null -eq $SignInError) { continue }
+            if ([string]::Equals(([string]$SignInError.FullyQualifiedErrorId).Split(',')[0], 'ArmTokenAcquisitionFailed', [System.StringComparison]::Ordinal)) {
+                $SignInRefused = $true
+            }
+        }
+        if (-not $SignInRefused) {
+            # BL-88 (A14): the tenant inventory.json names, captured here under the session this command
+            # signed in under. It is this cmdlet's own capture, never the tenantId of the inventory
+            # Get-OERInventory returns, so the document is assembled with the one value in both calls.
+            $DocumentTenantId = Get-OERInventoryTenantId
+        }
     }
     process {
+        # Sprint 11 step 10 (BL-101, R-8): a refused sign-in (begin, above) reads nothing, writes no folder
+        # and emits no object, and says nothing else: not even the switch warnings below, which describe a
+        # read that never starts.
+        if ($SignInRefused) { return }
+
+        # Sprint 11 step 10 (BL-123, R-6): a switch that has no effect is said so, once, before any read. Both
+        # switches steer one section only (-AllRolePolicies the Azure role management policies,
+        # -AllDirectoryRolePolicies the directory role policies), so without that section in -Include the
+        # operator asked for something that is then never done, and a bundle that lacks it looks like the one
+        # they asked for. Here and not in Get-OERInventory: this export forwards -AllDirectoryRolePolicies to
+        # its Get-OERInventory call, which has no ShouldProcess and stays silent for it, so the warning is
+        # written once, by the command that has the gate. It stands before this cmdlet's own ShouldProcess (and
+        # before any read), so -WhatIf shows it and a Stop warning preference ends the export before it reads.
+        if ($AllRolePolicies -and $Include -notcontains 'RoleManagementPolicies') {
+            Write-Warning 'Export-OERInventory: -AllRolePolicies has no effect, since -Include does not name RoleManagementPolicies.'
+        }
+        if ($AllDirectoryRolePolicies -and $Include -notcontains 'DirectoryRoleManagementPolicies') {
+            Write-Warning 'Export-OERInventory: -AllDirectoryRolePolicies has no effect, since -Include does not name DirectoryRoleManagementPolicies.'
+        }
+
         # --- Gather the Entra ID sections (names only, for portability) ---
         # The Groups section is read by the group reader directly, not through Get-OERInventory, so
         # the export can ask it to decide RBAC relevance FIRST (A13): without -AllGroupsDetailed a
@@ -702,6 +834,15 @@ function Export-OERInventory {
         # lists every group the second operand matches). The guard is -SecurityEnabledOnly, which
         # keeps only the groups the read itself shows as securityEnabled, whatever the filter listed.
         $GroupRead = $null
+        # Sprint 11 step 10 (BL-122, R-12): the id to display name cache of the principals the group reader
+        # looks up (the principals of a group's PIM eligibility). It is created HERE, before the group read,
+        # handed to the reader as its -PrincipalNameCache, and put in the run context below as its
+        # PrincipalNameCache member, so the Entra ID Get-OERInventory call -- the reviewers of an access
+        # review and the principals of a directory role section -- finds a principal the reader already
+        # named in it and does not look it up again. The same hashtable object in all three places, since
+        # the reader and the call both write what they learn into it; an export that includes no Groups
+        # leaves it empty, which is what the call used to start from.
+        $PrincipalNameCache = @{}
         # The group roster is read FIRST (BL-131), before the group reader, since it is the one list of
         # every group in the tenant, of every type, and the reader counts the names groups share over
         # it: Get-OERGroupNameIndex builds the index from it with no request of its own, so a security
@@ -729,8 +870,14 @@ function Export-OERInventory {
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId -notlike 'GroupNotFound*') {
-                    Write-Warning "Could not read the group roster: $($PSItem.Exception.Message)"
+                    # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning, as BL-44 asks at
+                    # every site, so no warning stands between a failure and its record. A Write-Warning
+                    # under a Stop warning preference is a terminating error, and no try of this export
+                    # resumes after this one, so at this site a Stop ends the export in either order: the
+                    # order is kept for the rule's sake and changes nothing a caller sees. Held by the AST
+                    # test of this file.
                     $RosterUnread = $true
+                    Write-Warning "Could not read the group roster: $($PSItem.Exception.Message)"
                 }
             }
             if (-not $RosterUnread) { $GroupNameIndex = Get-OERGroupNameIndex -Group $RosterGroups }
@@ -741,6 +888,7 @@ function Export-OERInventory {
                 ExcludeSharedName   = $true
                 SecurityEnabledOnly = $true
                 ProgressActivity    = 'Export-OERInventory'
+                PrincipalNameCache  = $PrincipalNameCache
             }
             if (-not $AllGroupsDetailed) {
                 $GroupReadParams.RelevantOnly = $true
@@ -761,14 +909,17 @@ function Export-OERInventory {
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 $GroupReadCause = "Could not read groups: $($PSItem.Exception.Message)"
-                Write-Warning $GroupReadCause
+                # Sprint 11 step 10 (BL-44): the stand-in result, the bookkeeping the rest of the export reads,
+                # is assigned BEFORE the warning (see the roster catch above).
                 $GroupRead = [PSCustomObject]@{
-                    Groups      = @()
-                    Unread      = @('groups')
-                    Causes      = @([PSCustomObject]@{ Cause = $GroupReadCause; Target = '' })
-                    PimLeftOut  = @()
-                    SharedNames = @()
+                    Groups         = @()
+                    Unread         = @('groups')
+                    Causes         = @([PSCustomObject]@{ Cause = $GroupReadCause; Target = '' })
+                    PimLeftOut     = @()
+                    DynamicMembers = @()
+                    SharedNames    = @()
                 }
+                Write-Warning $GroupReadCause
             }
         }
         # DirectoryRoleManagementPolicies and DirectoryRoleAssignments are Graph-only, same as the
@@ -807,9 +958,14 @@ function Export-OERInventory {
         # subscription list gave, or its one read of the subscription of a -Scope -- and every per-scope
         # Get-OERInventory call checks the subscription of its scope against it before it reads there, so
         # that check, which a standalone Get-OERInventory makes with a request, costs the export none.
+        #
+        # Sprint 11 step 10 (BL-122, R-12): one more member, PrincipalNameCache, the id to display name
+        # hashtable the group read above was handed (see where it is created). Get-OERInventory uses it as its
+        # own cache of principal names when the context is its own and the member is a [hashtable] (R-27).
         $RunContext = [PSCustomObject]@{
             Owner                = $MyInvocation
             GroupNameIndex       = $GroupNameIndex
+            PrincipalNameCache   = $PrincipalNameCache
             PrincipalStatus      = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
             UnreadPrincipal      = [System.Collections.Generic.List[string]]::new()
             UnreadPrincipalCause = [System.Collections.Generic.List[object]]::new()
@@ -1028,7 +1184,8 @@ function Export-OERInventory {
                 }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-Warning "Could not enumerate Azure scopes: $($PSItem.Exception.Message)"
+                # Sprint 11 step 10 (BL-44): the bookkeeping below stands BEFORE the warning (see the roster
+                # catch above).
                 $Tree = $null
                 # Record the whole Azure walk as skipped so the partial-coverage error below fires.
                 # Without this the bundle is written with ZERO role assignments and zero policies and
@@ -1041,6 +1198,7 @@ function Export-OERInventory {
                 # Sprint 11 step 6b (BL-133): and the delegations of the subscriptions that walk would have
                 # visited were not read either, which is named, not left as an empty lighthouseDelegations.json.
                 $LighthouseUnread.Add('lighthouseDelegations at <all Azure scopes: scope enumeration failed>')
+                Write-Warning "Could not enumerate Azure scopes: $($PSItem.Exception.Message)"
             }
             if ($Tree) {
                 # The merged role assignments' keys, each with the index of its row in $RoleAssignments, so a
@@ -1086,6 +1244,11 @@ function Export-OERInventory {
                                 # -ErrorAction Stop is load-bearing: without it a NON-terminating failure
                                 # inside Get-OERInventory never reaches this catch under the default
                                 # preference, so the scope contributed nothing and did not even warn.
+                                # Sprint 11 step 10 (BL-34): a failed role assignment or role management
+                                # policy read is now that kind of failure -- Get-OERInventory names the
+                                # section unread and ends in a non-terminating InventoryPartial -- and this
+                                # -ErrorAction Stop is what turns it into the skip below, as the reader's own
+                                # record did before.
                                 #
                                 # BL-126 (R3): every read below the root scope returns a root assignment as
                                 # inherited, so each call would warn about the same rows. Its warnings are
@@ -1143,27 +1306,43 @@ function Export-OERInventory {
                                 # A failure here costs the selection, not the scope: a policy at the scope
                                 # not kept by a use or a change is then kept without being judged, and the
                                 # scope is named, never dropped.
+                                #
+                                # Sprint 11 step 10 (BL-123, third point): the warning of a failed role
+                                # assignment read is HELD here and written below, only after the policy list of
+                                # the same scope has been read. The scope is read when the policy list succeeds,
+                                # and the warning then says what the read cost it. When the policy list fails
+                                # too, the scope is skipped and 'Skipping scope' is the one warning for it: a
+                                # scope that fails both reads used to warn twice, once for each, although the
+                                # first read cost the selection of a scope the second one then dropped. The
+                                # bookkeeping ($ScopeAssignmentsUnread) is complete here, before any warning.
+                                $ScopeAssignmentsWarning = $null
                                 try {
                                     $ScopeAssignments = @(Get-OERRoleAssignment -Scope $S -AtScope -ErrorAction Stop)
                                 } catch {
                                     Remove-OERErrorRecord -Record $PSItem
-                                    Write-Warning "Could not read the role assignments at scope '$S', so a role management policy there not kept by a use or a change is kept without being judged: $($PSItem.Exception.Message)"
                                     $ScopeAssignmentsUnread = $true
+                                    $ScopeAssignmentsWarning = "Could not read the role assignments at scope '$S', so a role management policy there not kept by a use or a change is kept without being judged: $($PSItem.Exception.Message)"
                                 }
                                 # A failed policy list reaches the catch below and skips the scope, as a
                                 # failed policy read always has. -ErrorAction Stop for the same reason as
                                 # above.
                                 $ScopeCandidates = @(Get-OERInventoryRolePolicy -Scope $S -ErrorAction Stop)
+                                if ($ScopeAssignmentsWarning) { Write-Warning $ScopeAssignmentsWarning }
                             }
                         } catch {
                             Remove-OERErrorRecord -Record $PSItem
-                            Write-Warning "Skipping scope '$S': $($PSItem.Exception.Message)"
+                            # Sprint 11 step 10 (BL-44): the bookkeeping stands BEFORE the warning (see the
+                            # roster catch above). This catch stands in the walk's try/finally and no try
+                            # resumes after it, so under a Stop warning preference this warning ends the
+                            # export in either order; the order is kept for the rule's sake. The warning is
+                            # the last statement before the continue.
                             $SkippedScopes.Add([string]$S)
                             # The skipped scope merges no row, so what its call handed over is taken back.
                             & $UndoScopeHandover $UnresolvedPrincipalRows $UnresolvedMark
                             & $UndoScopeHandover $UndeclarableScopeRows $UndeclarableMark
                             & $UndoScopeHandover $RunContext.UnreadPrincipal $UnreadPrincipalMark
                             & $UndoScopeHandover $RunContext.UnreadPrincipalCause $UnreadPrincipalCauseMark
+                            Write-Warning "Skipping scope '$S': $($PSItem.Exception.Message)"
                             continue
                         }
                         # $ScopeInv is $null when no call was made, and @($null.X) is a one-element
@@ -1207,7 +1386,36 @@ function Export-OERInventory {
                 # R4: one bounded eligibility read of the SAME scope list, after the role-assignment /
                 # policy walk above rather than interleaved with it, so a throttled or failing scope
                 # is never charged against both files from the same failed request.
-                $EligResult = Get-OERInventoryAzureEligibility -Scope @($Tree.Scopes)
+                #
+                # Sprint 11 step 10 (BL-123, first point): each of the three reads after the walk -- this one, the
+                # Lighthouse read and the role policy selection below -- has a catch of its own. The helpers catch
+                # what they expect (a scope whose read failed) and name it, but an error nothing in them catches
+                # ends the call, and outside a try it ended the EXPORT after its whole read: no bundle at all,
+                # the very failure the summary-then-partial design exists to avoid. So a stop is reported as what
+                # it is, the read unread, in the helper's own wording, and the rest of the export carries on.
+                # Each catch scrubs first, completes its bookkeeping (BL-44, held by the AST test of this file),
+                # and writes ONE warning that names the cause, before the bundle's ShouldProcess.
+                #
+                # A stopped eligibility read has read NO scope: every scope of the tree that is not already
+                # named goes to $SkippedEligibilityScopes, as the real canonical scope strings, so the
+                # InventoryPartial message counts them like any scope the helper skipped and the README lists
+                # each under azurePimEligibility.json. $EligStopScopes also tells the selection below that the
+                # eligibility of every scope was not read, so a policy there not kept on other grounds is kept
+                # and its scope named. The stand-in result is empty and all-read, so the code after the call
+                # needs no branch, and azurePimEligibility.json is written as [] and named, never read as
+                # "no eligibility".
+                $EligStopScopes = @()
+                try {
+                    $EligResult = Get-OERInventoryAzureEligibility -Scope @($Tree.Scopes)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $EligResult = [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @(); RoleScopes = @() }
+                    $EligStopScopes = @($Tree.Scopes | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
+                    foreach ($EligStopScope in $EligStopScopes) {
+                        if ($SkippedEligibilityScopes -notcontains $EligStopScope) { $SkippedEligibilityScopes.Add($EligStopScope) }
+                    }
+                    Write-Warning "Export-OERInventory: could not read the Azure PIM eligibilities, so no scope is read for azurePimEligibility.json: $($PSItem.Exception.Message)"
+                }
                 $AzureEligibilities = @($EligResult.Eligibilities)
                 foreach ($SkEl in @($EligResult.SkippedScopes)) {
                     if ($SkEl) { $SkippedEligibilityScopes.Add([string]$SkEl) }
@@ -1218,7 +1426,26 @@ function Export-OERInventory {
                 # Always on when an Azure section is included, so a delegation of another tenant is never left
                 # out because nobody asked. $LighthouseRead keeps the reader's whole result (Delegations, Unread,
                 # Causes); the delegations are read from it with a null-filter, since @($null) is one element.
-                $LighthouseRead = Get-OERInventoryLighthouseDelegation -Scope @($Tree.Scopes)
+                #
+                # Sprint 11 step 10 (BL-123, first point): a stopped read has read no delegation of any scope, so
+                # it is named in the shape of the entry this export gives a walk that could not start (the
+                # enumeration catch above), an entry of its own and not one the reader ever returns (the reader
+                # names only 'lighthouseDelegations at <scope>' and 'lighthouseDelegations role <id>'), and
+                # gives its cause as the reader gives its own: 'lighthouseDelegations at <all Azure scopes: the
+                # read stopped>' in $LighthouseUnread and the record's message in $LighthouseCauses, with no
+                # target (the stop belongs to no one scope). $LighthouseRead stays $null, which the lines below read as
+                # no delegation and nothing more to add, and lighthouseDelegations.json is written as [] and
+                # named, never read as "no delegation". The catch scrubs first, completes its bookkeeping before
+                # the warning (BL-44) and writes ONE warning that names the cause.
+                try {
+                    $LighthouseRead = Get-OERInventoryLighthouseDelegation -Scope @($Tree.Scopes)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $LighthouseRead = $null
+                    $LighthouseUnread.Add('lighthouseDelegations at <all Azure scopes: the read stopped>')
+                    $LighthouseCauses.Add([PSCustomObject]@{ Cause = [string]$PSItem.Exception.Message; Target = '' })
+                    Write-Warning "Export-OERInventory: could not read the Azure Lighthouse delegations, so lighthouseDelegations.json holds none: $($PSItem.Exception.Message)"
+                }
                 $LighthouseDelegations = @($LighthouseRead.Delegations | Where-Object { $null -ne $_ })
                 # What the reader could not read, appended after the tree's own entries above. A blank entry is
                 # left out: it would add an empty item to IncompleteReads and to the InventoryPartial message,
@@ -1236,14 +1463,41 @@ function Export-OERInventory {
                 # assignment read or eligibility read failed cannot be judged: its policies that are not
                 # kept on other grounds are kept anyway, and the scope is named. The kept entries are
                 # merged with the same scope|role rule as the -AllRolePolicies path above.
+                #
+                # Sprint 11 step 10 (BL-123, first point): a stopped eligibility read leaves $EligStopScopes, every
+                # scope of the tree, which the selection reads as scopes whose eligibility was not read, exactly
+                # like the scopes the helper itself skipped. A stopped SELECTION has judged nothing: every
+                # candidate is kept, merged on scope|role as the kept ones are, and each distinct canonical
+                # scope among the candidates is named 'roleManagementPolicies/role selection at <scope>' once,
+                # in the order first seen, as an unjudged scope always is -- more is kept than the selection
+                # would keep, never less, and nothing is dropped on a guess. The catch scrubs first,
+                # completes its bookkeeping before the warning (BL-44) and writes ONE warning that names the
+                # cause. $Selection stays $null, which the two loops below read as nothing more to merge or
+                # name. ConvertTo-OERCanonicalScope is pure and never throws for a string.
                 if ($SelectRolePolicies) {
-                    $SelectionUnread = @(@($RoleAssignmentUnreadScopes) + @($EligResult.SkippedScopes) |
+                    $SelectionUnread = @(@($RoleAssignmentUnreadScopes) + @($EligResult.SkippedScopes) + @($EligStopScopes) |
                             Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
-                    $Selection = Select-OERInventoryRolePolicy `
-                        -Policy $RolePolicyCandidates.ToArray() `
-                        -Assignment $RoleAssignmentFacts.ToArray() `
-                        -Eligibility @($EligResult.RoleScopes | Where-Object { $null -ne $_ }) `
-                        -UnreadScope $SelectionUnread
+                    $Selection = $null
+                    try {
+                        $Selection = Select-OERInventoryRolePolicy `
+                            -Policy $RolePolicyCandidates.ToArray() `
+                            -Assignment $RoleAssignmentFacts.ToArray() `
+                            -Eligibility @($EligResult.RoleScopes | Where-Object { $null -ne $_ }) `
+                            -UnreadScope $SelectionUnread
+                    } catch {
+                        Remove-OERErrorRecord -Record $PSItem
+                        $StopScopeSeen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                        foreach ($StopCandidate in $RolePolicyCandidates) {
+                            if ($null -eq $StopCandidate) { continue }
+                            if ($null -ne $StopCandidate.Entry) {
+                                $StopKey = '{0}|{1}' -f $StopCandidate.Entry.scope, $StopCandidate.Entry.role
+                                if ($SeenRmp.Add($StopKey)) { $RoleManagementPolicies.Add($StopCandidate.Entry) }
+                            }
+                            $StopScope = ConvertTo-OERCanonicalScope -Scope ([string]$StopCandidate.Scope)
+                            if ($StopScope -and $StopScopeSeen.Add($StopScope)) { $RolePolicySelectionReads.Add("roleManagementPolicies/role selection at $StopScope") }
+                        }
+                        Write-Warning "Export-OERInventory: could not select the Azure role management policies, so every policy read is kept and each scope is named as not judged: $($PSItem.Exception.Message)"
+                    }
                     foreach ($Kept in @($Selection.Kept | Where-Object { $null -ne $_ })) {
                         $Key = '{0}|{1}' -f $Kept.scope, $Kept.role
                         if ($SeenRmp.Add($Key)) { $RoleManagementPolicies.Add($Kept) }
@@ -1442,6 +1696,21 @@ function Export-OERInventory {
                 $CountById[[string]$G.id] = $MemberCount
             }
         }
+        # Sprint 11 step 10 (BL-43, R-15): a DYNAMIC group's members are written as an explicit null, so the
+        # map above holds null for it, which would read as "not known". The reader still reads a dynamic
+        # group's members when it reads the group in full and counts what it found in DynamicMembers, one
+        # entry per such group (none for a group whose members read failed, whose count stays not known,
+        # nor for a group left out for a shared name). The count goes in BEFORE the PimLeftOut addition
+        # below, which cannot apply to a dynamic group: PIM for Groups cannot manage one. A reader result
+        # that carries no DynamicMembers list is filtered, as PimLeftOut's is, so it never becomes one null
+        # entry.
+        $DynamicMembers = @(if ($GroupRead) { @($GroupRead.DynamicMembers) | Where-Object { $null -ne $_ } })
+        foreach ($DynamicEntry in $DynamicMembers) {
+            $DynamicId = [string]$DynamicEntry.GroupId
+            if ($DynamicId -and $CountById.ContainsKey($DynamicId)) {
+                $CountById[$DynamicId] = [int]$DynamicEntry.Members
+            }
+        }
         # BL-125: the reader leaves a member whose membership PIM for Groups holds out of members,
         # and counts it per group in PimLeftOut, so the roster's memberCount keeps meaning the group's
         # live member count: the members read (written to inventory.json, or only read for a group
@@ -1608,7 +1877,24 @@ function Export-OERInventory {
 
         # --- Create the bundle folder ---
         $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-        $TenantLabel = if ($script:_OERAuthState -and $script:_OERAuthState.TenantId) { $script:_OERAuthState.TenantId } elseif ($TenantId) { $TenantId } else { 'tenant' }
+        # Sprint 11 step 10 (BL-101, R-9): the folder's tenant label is the tenant the session names -- an ID,
+        # or the domain given to -TenantId -- unless it names none: a blank one, or 'organizations' (letter case
+        # ignored), which Initialize-OERAuth stamps on a session that was signed in with no -TenantId and which
+        # names no tenant. A folder called oer-inventory-organizations-<stamp> tells an operator who exports
+        # tenant after tenant nothing, so the label is then the granted tenant ID this command captured in
+        # begin ($DocumentTenantId, the tenant inventory.json names), else -TenantId as it was given, else
+        # 'tenant'. The summary's TenantId is the same label.
+        $SessionTenantLabel = if ($script:_OERAuthState) { [string]$script:_OERAuthState.TenantId } else { '' }
+        $TenantLabel = if (-not [string]::IsNullOrWhiteSpace($SessionTenantLabel) -and
+            -not [string]::Equals($SessionTenantLabel, 'organizations', [System.StringComparison]::OrdinalIgnoreCase)) {
+            $SessionTenantLabel
+        } elseif ($DocumentTenantId) {
+            $DocumentTenantId
+        } elseif ($TenantId) {
+            $TenantId
+        } else {
+            'tenant'
+        }
         $FolderName = "oer-inventory-$TenantLabel-$Stamp"
         $BundlePath = Join-Path $OutputPath $FolderName
 

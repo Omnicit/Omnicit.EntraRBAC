@@ -301,8 +301,21 @@ Describe 'Get-OERInventoryPromptTemplate' {
             # The scalar paragraph used to say the inventory omits keys rather than emit null, flatly.
             # That is no longer true of an unread child collection, so it must not be claimed.
             $Collapsed | Should -Not -Match 'The inventory itself omits most keys rather than emit null'
-            $Collapsed | Should -Match ([regex]::Escape('Apart from an unread members, scopedRoles, resources or resourceRoles collection (see below), the inventory omits most keys rather than emit null'))
+            # Sprint 11 step 10 (BL-43): the members of a dynamic group are the second exception, and are named.
+            $Collapsed | Should -Match ([regex]::Escape('Apart from an unread members, scopedRoles, resources or resourceRoles collection and the members of a dynamic group (see below), the inventory omits most keys rather than emit null'))
             $Collapsed | Should -Match 'to assert a list is genuinely empty you must hand-author an explicit \[\]'
+        }
+    }
+
+    It 'tells the model that the members of a dynamic group are written null because its rule owns them, are not unread, and are kept null (Sprint 11 step 10, BL-43, R-1)' {
+        InModuleScope $script:moduleName {
+            $Collapsed = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            # The null bullet: the unknown-null sentence stays whole, and the dynamic group's null follows it.
+            $Collapsed | Should -Match ([regex]::Escape('keep it null in every proposal, and never turn it into []. The members of a dynamic group are written null too, for another reason: its membership rule owns the membership, so that null means leave it to the rule, not unknown, and README.md does not list it as unread. Keep it null all the same.'))
+            # The groups[] bullet: what the engine does with a dynamic group's members, and what the model does.
+            $Collapsed | Should -Match ([regex]::Escape('A dynamic group''s membership is owned by its membershipRule: inventory.json writes its members as null, Invoke-OERStructure adds and removes no member of a dynamic group (a declared member is reported Skipped, and -Prune removes none), and with members null it reports no member row for the group at all. Keep members null, and change the membershipRule to change who belongs.'))
+            $Collapsed.IndexOf('A dynamic group''s membership is owned by its membershipRule') | Should -BeGreaterThan $Collapsed.IndexOf('groups[]: { displayName')
+            $Collapsed.IndexOf('A dynamic group''s membership is owned by its membershipRule') | Should -BeLessThan $Collapsed.IndexOf('displayName is the match key')
         }
     }
 
@@ -692,6 +705,8 @@ Describe 'Get-OERInventoryPromptTemplate Azure Lighthouse delegations (Sprint 11
             $T | Should -Match ([regex]::Escape('Four more of its sections are findings to review, each named in your rationale'))
             $T | Should -Match ([regex]::Escape('and "Azure Lighthouse delegations (access from another tenant)" lists the delegations in lighthouseDelegations.json (see below).'))
             $T | Should -Match ([regex]::Escape('an entry labelled "Azure Lighthouse read that failed" names a scope whose delegations could not be read (absent from lighthouseDelegations.json, which does not mean it has none) or a role whose name could not be read (its roleName is null)'))
+            # Sprint 11 step 10 (BL-123): a read of the delegations that stopped as a whole is the third thing the label names.
+            $T | Should -Match ([regex]::Escape('or a role whose name could not be read (its roleName is null), or a read of the delegations that stopped as a whole (lighthouseDelegations.json is then [], which does not mean it has none) - inventory.json -- the current state'))
             $T.IndexOf('"Azure Lighthouse delegations (access from another tenant)" lists') | Should -BeLessThan $T.IndexOf('- inventory.json -- the current state')
         }
     }
