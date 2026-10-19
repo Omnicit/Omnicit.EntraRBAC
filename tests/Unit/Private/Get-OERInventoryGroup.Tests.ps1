@@ -1850,7 +1850,8 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             @($Read.Result.Unread) | Should -Be @('groups/Admins')
             @($Read.Result.Causes).Count | Should -Be 1
             $Read.Result.Causes[0].Cause | Should -BeExactly $Expected
-            $Read.Result.Causes[0].Target | Should -Be 'groups/Admins'
+            # BL-156: registered with a blank Target, so Format-OERUnreadCauseClause keys it on its full text.
+            [string]$Read.Result.Causes[0].Target | Should -BeExactly ''
             @($Read.Verbose) | Should -Contain "Get-OERInventory: $Expected"
             # BL-131: the name with its count, once.
             @($Read.Result.SharedNames).Count | Should -Be 1
@@ -1863,6 +1864,22 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             $Read = Invoke-GroupRead -ExcludeSharedName
             @($Read.Result.Groups | ForEach-Object { $_.displayName }) | Should -Be @('G-EL', 'G-MOD', 'G-SYNC', 'G-DYN')
             @($Read.Result.Unread) | Should -Be @('groups/Admins')
+        }
+
+        It 'registers each shared name as a cause of its own, so two names of one count both reach the causes clause (BL-156)' {
+            # Two names two groups each share. The cause text carries the name, and a cause is deduplicated
+            # on its text with its Target replaced by <id>: with the name as the Target, both names read
+            # alike and the clause kept the first. With a blank Target the full text is the key.
+            $script:Tenant[1].Name = 'Ops'     # G-EL
+            $script:Tenant[2].Name = 'ops'     # G-MOD
+            $Read = Invoke-GroupRead -ExcludeSharedName
+            @($Read.Result.Unread) | Should -Be @('groups/Admins', 'groups/Ops')
+            @($Read.Result.Causes).Count | Should -Be 2
+            foreach ($Entry in @($Read.Result.Causes)) { [string]$Entry.Target | Should -BeExactly '' }
+            $Clause = InModuleScope Omnicit.EntraRBAC -Parameters @{ C = @($Read.Result.Causes) } { param($C) Format-OERUnreadCauseClause -Cause $C }
+            $Clause | Should -Not -BeNullOrEmpty -Because 'an empty clause would make the counts below vacuous'
+            @([regex]::Matches($Clause, '2 live objects share the name groups/Admins ')).Count | Should -Be 1
+            @([regex]::Matches($Clause, '2 live objects share the name groups/Ops ')).Count | Should -Be 1 -Because 'the second name is not dropped for reading like the first'
         }
 
         It 'keeps both spellings without -ExcludeSharedName, for a caller that applies its own rule' {
@@ -1920,7 +1937,7 @@ Describe 'Get-OERInventoryGroup -RelevantOnly, driven through the transport' {
             @($Read.Result.Unread) | Should -Be @('groups/G-RA')
             @($Read.Result.Causes).Count | Should -Be 1
             $Read.Result.Causes[0].Cause | Should -BeExactly $Expected
-            $Read.Result.Causes[0].Target | Should -Be 'groups/G-RA'
+            [string]$Read.Result.Causes[0].Target | Should -BeExactly '' -Because 'a shared-name cause carries a blank Target (BL-156)'
             @($Read.Verbose | Where-Object { $_ -eq "Get-OERInventory: $Expected" }).Count | Should -Be 1
             @($Read.Result.SharedNames).Count | Should -Be 1
             $Read.Result.SharedNames[0].Section | Should -BeExactly 'groups'

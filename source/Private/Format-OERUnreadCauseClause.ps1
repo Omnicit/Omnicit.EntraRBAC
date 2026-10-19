@@ -17,7 +17,9 @@ function Format-OERUnreadCauseClause {
     message: seven units failing for one identical reason produced seven distinct strings (measured
     on a live tenant) until the id was normalised away. The key needs no id-shaped pattern, since
     the Target is the record's own TargetObject. A throttle that hits every group is then one cause,
-    not one per group.
+    not one per group. A cause given a blank Target is keyed on its full text: the shared-name causes
+    (Get-OERSharedNameCause) are given none, since their text already names the objects, so two
+    names of one count are two causes and the same name is still stated once.
 
     At most 23 distinct causes are shown. When the cap drops some, the clause says how many distinct
     ones were dropped and where to find them (the verbose stream carries every cause as it is seen).

@@ -4330,6 +4330,33 @@ Describe 'Export-OERInventory (the groups are read through the relevance-first g
                 @($Bundle.IncompleteReads) | Should -Be @('groups/G-DUP')
             }
 
+            It 'states the cause of each of two names that carry the same count in the InventoryPartial message (BL-156)' {
+                # Two names two security groups each share. The cause text carries the name, and the clause
+                # deduplicates a cause on its text with its Target replaced by <id>: with the name as the
+                # Target both read alike and the second name was dropped. The reader registers each with a
+                # blank Target, so the full text is the key and each name is stated once.
+                $script:E2ETenant = @($script:E2ETenant) + @(
+                    @{ Id = $script:E2EIdDupRa; Name = 'G-DUP'; RoleAssignable = $true; Synced = $false; Dynamic = $false
+                        Member = 'person15@contoso.com'; Owner = 'person16@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                    @{ Id = $script:E2EIdDupPlain; Name = 'g-dup'; RoleAssignable = $true; Synced = $false; Dynamic = $false
+                        Member = 'person17@contoso.com'; Owner = 'person18@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                    @{ Id = 'cccccccc-cccc-cccc-cccc-cccccccccccc'; Name = 'G-TWIN'; RoleAssignable = $true; Synced = $false; Dynamic = $false
+                        Member = 'person19@contoso.com'; Owner = 'person20@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                    @{ Id = 'dddddddd-dddd-dddd-dddd-dddddddddddd'; Name = 'g-twin'; RoleAssignable = $true; Synced = $false; Dynamic = $false
+                        Member = 'person21@contoso.com'; Owner = 'person22@contoso.com'; Eligibility = @(); Policy = 'Untouched' }
+                )
+                $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'shared-two-names') -Include Groups `
+                    -WarningAction SilentlyContinue -WarningVariable Warn -ErrorAction SilentlyContinue -ErrorVariable ExErr
+                # Reach proof: both names were left out and named, so the clause below has two causes to hold.
+                (@($Bundle.IncompleteReads) -join ', ') | Should -BeExactly 'groups/G-DUP, groups/G-TWIN'
+                Get-E2EGroupFileName -BundlePath $Bundle.BundlePath -File 'inventory.json' | Should -Be @('G-RA', 'G-EL', 'G-MOD')
+                $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+                $Partial.Count | Should -Be 1
+                $Message = $Partial[0].Exception.Message
+                @([regex]::Matches($Message, '2 live objects share the name groups/G-DUP \(compared')).Count | Should -Be 1
+                @([regex]::Matches($Message, '2 live objects share the name groups/G-TWIN \(compared')).Count | Should -Be 1 -Because 'the second name is not dropped for reading like the first'
+            }
+
             It 'leaves out a security group a Microsoft 365 group in the roster shares its name with, and names it with its count' {
                 $script:E2ETenant = @($script:E2ETenant) + @(
                     @{ Id = $script:E2EIdM365; Name = 'g-ra'; RoleAssignable = $false; Synced = $false; Dynamic = $false; NotSecurity = $true

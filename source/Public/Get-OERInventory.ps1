@@ -104,7 +104,9 @@ function Get-OERInventory {
     InventoryPartial error when their read fails, and are written as far as they were read: a
     failed catalog list leaves the catalogs and accessPackages sections empty, a failed package
     list leaves a catalog with no access packages, a failed policy read leaves a package with no
-    assignment policies, and when the names cannot be read a group's or an application's binding is
+    assignment policies, the resource names are read only for a catalog whose package list was read
+    and holds a package (a catalog with none, or whose list failed, has no binding to name and sends
+    no such read), and when the names cannot be read a group's or an application's binding is
     written under its object id and any other binding under the name the access package reader
     could join (the name the catalog recorded; a binding with no name at all makes the package's
     resourceRoles null, as described below). Invoke-OERStructure never removes a catalog, access
@@ -667,7 +669,13 @@ function Get-OERInventory {
                         # first, while the assignment policies' call adds its causes as each access package
                         # is read, ahead of the causes of the sections read after it.
                         Write-Verbose "Get-OERInventory: $NameCause"
-                        Add-UnreadCause -Cause $NameCause -Target $Unread
+                        # BL-156: registered with a BLANK Target. A cause is deduplicated on its text with its
+                        # Target replaced by <id> (Format-OERUnreadCauseClause), and this text carries the name
+                        # in the very Target it was given, so two names that two objects each share would
+                        # read alike once the name was gone, and the second would be dropped from the clause
+                        # although it is a name of its own. A blank Target keys it on its full text instead:
+                        # each name is a cause of its own, and the same name is still stated once.
+                        Add-UnreadCause -Cause $NameCause -Target ''
                         $SharedNameList.Add([PSCustomObject]@{ Section = $Section; Name = $ReportedName; Count = $Count[$K] })
                     }
                     continue
@@ -1409,52 +1417,14 @@ function Get-OERInventory {
                 # object id when another listed catalog carries the name (see above). The unread paths of
                 # this catalog below name it the same way, so two catalogs of one name never read alike.
                 $ApCatalogRef = if ($ApCatalogNameCount[[string]$ApCat.DisplayName] -gt 1) { [string]$ApCat.Id } else { $ApCat.DisplayName }
-                # Build an OriginId -> resource display-name map ONCE per catalog. A resource role
-                # binding's scope carries the resource OriginId plus a scope LABEL (commonly 'Root'
-                # for the whole-resource scope) -- not the resource name. The apply engine resolves
-                # the binding's resource against Get-OERCatalogResource display names, so project that
-                # same name here (joined on OriginId) instead of the scope label, or the binding will
-                # not round-trip.
-                # A Group or Application resource is named by its CURRENT name, exactly as the Catalogs
-                # section names it, so a binding resolves to the same object id on apply.
-                $ApCatResMap = @{}
-                # This read only NAMES the bindings below, and the failure is reported through
-                # InventoryPartial like any other unread collection. When it cannot be read the map
-                # stays empty and $ApCatResRead is $false, which changes what a binding falls back to
-                # (see the projection below): the name a binding carries then is the one the catalog
-                # RECORDED when the resource was added, Graph keeps that after a rename, and the apply
-                # engine resolves a declared name FIRST as a group name -- so after a rename that name
-                # can resolve to ANOTHER group that now carries it, binding the wrong group and, under
-                # -Prune, removing the real binding. A group's object id cannot name another group.
-                # It used to be -ErrorAction SilentlyContinue, which hid the failure from every caller.
-                $ApCatResRead = $true
-                $ApCatRes = @()
-                try {
-                    $ApCatRes = @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction Stop)
-                } catch {
-                    Remove-OERErrorRecord -Record $PSItem
-                    $ApCatResRead = $false
-                    $ApCatResCause = "Could not read a catalog's resources to name its access packages' bindings: $($PSItem.Exception.Message)"
-                    Write-Verbose "Get-OERInventory: $ApCatResCause"
-                    Add-UnreadCause -Cause $ApCatResCause -Target ([string]$ApCat.Id)
-                    $UnreadCollections.Add("accessPackages/$ApCatalogRef/catalogResourceNames")
-                    $ApCatRes = @()
-                }
-                $ApCurrentNames = & $GetCatalogResourceNames ([string]$ApCat.Id) $ApCatRes
-                foreach ($Cr in $ApCatRes) {
-                    if (-not $Cr.OriginId) { continue }
-                    $ApCatResMap[[string]$Cr.OriginId] = if ([string]$Cr.OriginSystem -in @('AadGroup', 'AadApplication') -and $ApCurrentNames.ContainsKey([string]$Cr.OriginId)) {
-                        [string]$ApCurrentNames[[string]$Cr.OriginId]
-                    } else {
-                        [string]$Cr.DisplayName
-                    }
-                }
                 # A package list that could not be read projects the catalog with no packages, as it
                 # always has: no handler removes an access package that is absent from the document
                 # ("Prune is child-scope only", Invoke-OERStructure). An absent package is not a fact
                 # though, so the failure is reported through InventoryPartial against the catalog.
                 # It used to have no error handling: under a caller's Stop it ended the whole call
                 # with no document at all, and under Continue it left one stray record and no partial.
+                # BL-24: the list is read FIRST, ahead of the catalog's resources below, which only name
+                # the bindings of a package that was listed.
                 $ApList = @()
                 try {
                     $ApList = @(Get-OERAccessPackage -Catalog $ApCat.Id -ErrorAction Stop)
@@ -1465,6 +1435,54 @@ function Get-OERInventory {
                     Add-UnreadCause -Cause $ApListCause -Target ([string]$ApCat.Id)
                     $UnreadCollections.Add("accessPackages/$ApCatalogRef/packages")
                     $ApList = @()
+                }
+                # Build an OriginId -> resource display-name map ONCE per catalog. A resource role
+                # binding's scope carries the resource OriginId plus a scope LABEL (commonly 'Root'
+                # for the whole-resource scope) -- not the resource name. The apply engine resolves
+                # the binding's resource against Get-OERCatalogResource display names, so project that
+                # same name here (joined on OriginId) instead of the scope label, or the binding will
+                # not round-trip.
+                # A Group or Application resource is named by its CURRENT name, exactly as the Catalogs
+                # section names it, so a binding resolves to the same object id on apply.
+                $ApCatResMap = @{}
+                # BL-24: this read only NAMES the bindings below, so it is made for a catalog whose package
+                # list was read and holds at least one package. A catalog with no package has no binding to
+                # name, and a package list that failed is left as [] above and leaves none to name either:
+                # the read is not sent, and its failure is not reported, since nothing was left unread by
+                # it. (The Catalogs section reads the catalog's resources for its own entry, separately,
+                # and is not changed.)
+                # The failure of this read is reported through InventoryPartial like any other unread
+                # collection. When it cannot be read the map stays empty and $ApCatResRead is $false, which
+                # changes what a binding falls back to (see the projection below): the name a binding
+                # carries then is the one the catalog RECORDED when the resource was added, Graph keeps that
+                # after a rename, and the apply engine resolves a declared name FIRST as a group name -- so
+                # after a rename that name can resolve to ANOTHER group that now carries it, binding the
+                # wrong group and, under -Prune, removing the real binding. A group's object id cannot name
+                # another group.
+                # It used to be -ErrorAction SilentlyContinue, which hid the failure from every caller.
+                $ApCatResRead = $true
+                $ApCatRes = @()
+                if (@($ApList | Where-Object { $null -ne $_ }).Count -gt 0) {
+                    try {
+                        $ApCatRes = @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction Stop)
+                    } catch {
+                        Remove-OERErrorRecord -Record $PSItem
+                        $ApCatResRead = $false
+                        $ApCatResCause = "Could not read a catalog's resources to name its access packages' bindings: $($PSItem.Exception.Message)"
+                        Write-Verbose "Get-OERInventory: $ApCatResCause"
+                        Add-UnreadCause -Cause $ApCatResCause -Target ([string]$ApCat.Id)
+                        $UnreadCollections.Add("accessPackages/$ApCatalogRef/catalogResourceNames")
+                        $ApCatRes = @()
+                    }
+                    $ApCurrentNames = & $GetCatalogResourceNames ([string]$ApCat.Id) $ApCatRes
+                    foreach ($Cr in $ApCatRes) {
+                        if (-not $Cr.OriginId) { continue }
+                        $ApCatResMap[[string]$Cr.OriginId] = if ([string]$Cr.OriginSystem -in @('AadGroup', 'AadApplication') -and $ApCurrentNames.ContainsKey([string]$Cr.OriginId)) {
+                            [string]$ApCurrentNames[[string]$Cr.OriginId]
+                        } else {
+                            [string]$Cr.DisplayName
+                        }
+                    }
                 }
                 foreach ($Ap in $ApList) {
                     $Proj = [ordered]@{
@@ -1765,9 +1783,14 @@ function Get-OERInventory {
                     if ($PrincipalType -eq 'Group' -and $RaPrincipalId) {
                         $PrincipalName = Get-GroupPrincipalReference -Id $RaPrincipalId -Name ([string]$PrincipalName)
                     }
+                    # BL-45: the role is written by its name, and by the role definition id the row already
+                    # carries when the name is missing -- and a name that is only white space is missing too:
+                    # the validator refuses an empty name, and a name of spaces cannot be told from one, so
+                    # the same rule as the administrative unit's scoped role line above. The directory role
+                    # row below follows it.
                     $Proj = [ordered]@{
                         scope     = $Ra.Scope
-                        role      = $(if ($Ra.RoleName) { $Ra.RoleName } else { $Ra.RoleDefinitionId })
+                        role      = $(if (-not [string]::IsNullOrWhiteSpace([string]$Ra.RoleName)) { $Ra.RoleName } else { $Ra.RoleDefinitionId })
                         principal = $PrincipalName
                     }
                     if ($SchemaType) {
@@ -2375,7 +2398,8 @@ function Get-OERInventory {
                     # schedule ITS filtered read returns, and Microsoft Graph does not promise the two
                     # reads the same order, so the warning says the entry may then report a change.
                     if (-not $DirectorySeen.Add("$($DirectoryRow.RoleDefinitionId)|$($DirectoryRow.PrincipalId)")) {
-                        $DuplicateRole = if ($DirectoryRow.RoleName) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId }
+                        # BL-45: the role is named here as the entry below writes it.
+                        $DuplicateRole = if (-not [string]::IsNullOrWhiteSpace([string]$DirectoryRow.RoleName)) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId }
                         Write-Warning ("Get-OERInventory: directory role '$DuplicateRole' has more than one $($DirectoryKind.ToLowerInvariant()) " +
                             "schedule for principal '$($DirectoryRow.PrincipalId)'; exporting the first. Invoke-OERStructure compares against " +
                             'the first schedule Microsoft Graph returns for that role and principal, so if the two differ it may report a change for this entry.')
@@ -2450,8 +2474,10 @@ function Get-OERInventory {
                 $Kept = $DirectoryKept[$Index]
                 $DirectoryRow = $Kept.Row
                 $DirectoryPrincipalType = [string]$DirectoryRow.PrincipalType
+                # BL-45: the role definition id stands in for a role name that is missing or only white
+                # space, the rule of the role assignment and scoped role lines above.
                 $Proj = [ordered]@{
-                    role      = $(if ($DirectoryRow.RoleName) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId })
+                    role      = $(if (-not [string]::IsNullOrWhiteSpace([string]$DirectoryRow.RoleName)) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId })
                     principal = $DirectoryPrincipals[$Index]
                 }
                 if ($DirectoryPrincipalType) { $Proj.principalType = $DirectoryPrincipalType }

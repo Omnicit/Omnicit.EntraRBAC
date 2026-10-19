@@ -3183,6 +3183,29 @@ Describe 'Get-OERInventory' {
             $ra.principal | Should -Be 'p-1'
         }
 
+        # Sprint 11 step 10 (BL-45): a role name that is only white space is as missing as none, so the
+        # role is written by the role definition id the row carries, the rule the administrative unit's
+        # scoped role line has. A name that is not blank is written as it is (the first test above).
+        It 'falls back to the role definition id for a role name that is <Label> (BL-45)' -ForEach @(
+            @{ Label = 'empty'; Name = '' }
+            @{ Label = 'one space'; Name = ' ' }
+            @{ Label = 'several spaces'; Name = '   ' }
+            @{ Label = 'a tab and a space'; Name = "`t " }
+        ) {
+            $script:BlankRoleName = $Name
+            Mock -ModuleName $script:moduleName Get-OERRoleAssignment {
+                [PSCustomObject]@{
+                    Scope = '/subscriptions/sub-1'; RoleName = $script:BlankRoleName; PrincipalDisplayName = $null
+                    PrincipalType = 'User'; RoleDefinitionId = 'rd-full'; PrincipalId = 'p-1'; RoleAssignmentId = 'ra-1'
+                }
+            }
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            # Reach proof: the one row was read and projected.
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly
+            @($Inv.RoleAssignments).Count | Should -Be 1
+            @($Inv.RoleAssignments)[0].role | Should -BeExactly 'rd-full'
+        }
+
         It 'adds the role assignment id only with -IncludeId' {
             (Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM).RoleAssignments[0].PSObject.Properties.Name | Should -Not -Contain 'id'
             (Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM -IncludeId).RoleAssignments[0].id | Should -Be '/subscriptions/sub-1/.../ra-1'
@@ -4100,13 +4123,16 @@ Describe 'Get-OERInventory' {
                 if ($Catalog -eq 'eeee5555-0000-0000-0000-000000000001') { throw 'resources refused (core one)' }
                 @()
             }
+            # Sprint 11 step 10 (BL-24): a catalog's resources are read to name the bindings of a package that
+            # was listed, so the catalog whose resource read is refused holds one package.
             Mock -ModuleName $script:moduleName Get-OERAccessPackage {
                 param($Catalog)
                 if ($Catalog -in @('eeee5555-0000-0000-0000-000000000002', 'eeee5555-0000-0000-0000-000000000003')) { throw 'packages refused' }
+                if ($Catalog -eq 'eeee5555-0000-0000-0000-000000000001') { return [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'Sales'; Description = $null } }
                 @()
             }
             $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
-            @($Inv.accessPackages).Count | Should -Be 0
+            @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @('eeee5555-0000-0000-0000-000000000001|Sales')
             $Partial = Get-DupPartial -Record @($InvErr)
             $Partial.Count | Should -Be 1
             [string]$Partial[0].TargetObject | Should -BeExactly ('accessPackages/eeee5555-0000-0000-0000-000000000001/catalogResourceNames, ' +
@@ -4572,9 +4598,11 @@ Describe 'Get-OERInventory' {
             (Get-DupPartial -Record @($Err)).Count | Should -Be 1 -Because 'the run reached the partial the verbose line belongs to'
         }
 
-        It 'names a collision in each of two sections but states the one collision cause once' {
-            # The cause key is constant -- the Target is the whole unread entry, which the dedupe key
-            # normalises away -- so it takes one slot of the cap however many sections collide.
+        It 'names a collision in each of two sections and states the cause of each name once (BL-156)' {
+            # Sprint 11 step 10 (BL-156): the cause text carries the name, so a cause whose Target is the
+            # name's own unread entry reads alike for every name of one count once Format-OERUnreadCauseClause
+            # normalises the Target away, and the second name was dropped from the clause. A shared-name
+            # cause is registered with a blank Target, so each name is a cause of its own.
             $script:DupGroups = @(
                 New-DupGroup -Name 'Dup' -Id $script:DupGrp1
                 New-DupGroup -Name 'dup' -Id $script:DupGrp2
@@ -4591,7 +4619,49 @@ Describe 'Get-OERInventory' {
             [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Dup, administrativeUnits/Team'
             $Message = $Partial[0].Exception.Message
             $Message | Should -Match 'Unread: groups/Dup, administrativeUnits/Team\. '
-            @([regex]::Matches($Message, '2 live objects share the name')).Count | Should -Be 1 -Because 'the second collision has the same cause, so it is not stated again'
+            $Causes = ($Message -split 'Causes: ')[1]
+            $Causes | Should -Not -BeNullOrEmpty -Because 'a missing Causes clause would make the counts below vacuous'
+            @([regex]::Matches($Causes, '2 live objects share the name groups/Dup ')).Count | Should -Be 1 -Because 'the groups name is a cause of its own'
+            @([regex]::Matches($Causes, '2 live objects share the name administrativeUnits/Team ')).Count | Should -Be 1 -Because 'the units name is a cause of its own, whatever count another name has'
+        }
+
+        It 'states each of two names of one section that carry the same count, and still states a cause that names an object id once (BL-156)' {
+            $script:DupGroups = @(
+                New-DupGroup -Name 'Dup' -Id $script:DupGrp1
+                New-DupGroup -Name 'dup' -Id $script:DupGrp2
+                New-DupGroup -Name 'Twin' -Id $script:DupGrp3
+                New-DupGroup -Name 'TWIN' -Id 'cccc1111-0000-0000-0000-000000000004'
+                New-DupGroup -Name 'Solo' -Id 'cccc1111-0000-0000-0000-000000000005'
+            )
+            # Two units fail for one reason, each message carrying its own unit's id: the one cause the
+            # clause has always shown once, which a blank Target on the shared-name causes must not touch.
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                Write-Error -Message 'Could not read scoped roles for administrative unit au-1: Insufficient privileges to complete the operation.' `
+                    -ErrorId 'AdministrativeUnitScopedRoleReadFailed' -Category PermissionDenied -TargetObject 'au-1' -ErrorAction Continue
+                Write-Error -Message 'Could not read scoped roles for administrative unit au-2: Insufficient privileges to complete the operation.' `
+                    -ErrorId 'AdministrativeUnitScopedRoleReadFailed' -Category PermissionDenied -TargetObject 'au-2' -ErrorAction Continue
+                [PSCustomObject]@{
+                    Id = 'au-1'; DisplayName = 'AU-One'; Description = $null; IsMemberManagementRestricted = $false
+                    MembershipType = 'Assigned'; Visibility = $null; Members = @()
+                }
+                [PSCustomObject]@{
+                    Id = 'au-2'; DisplayName = 'AU-Two'; Description = $null; IsMemberManagementRestricted = $false
+                    MembershipType = 'Assigned'; Visibility = $null; Members = @()
+                }
+            }
+            $Inv = Get-OERInventory -Include Groups, AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.groups | ForEach-Object { $_.displayName }) | Should -Be @('Solo') -Because 'the four groups of the two shared names are left out'
+            $Partial = Get-DupPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            $Message = $Partial[0].Exception.Message
+            [string]$Partial[0].TargetObject | Should -Match 'groups/Dup'
+            [string]$Partial[0].TargetObject | Should -Match 'groups/Twin'
+            $Causes = ($Message -split 'Causes: ')[1]
+            $Causes | Should -Not -BeNullOrEmpty -Because 'a missing Causes clause would make the counts below vacuous'
+            @([regex]::Matches($Causes, '2 live objects share the name groups/Dup ')).Count | Should -Be 1
+            @([regex]::Matches($Causes, '2 live objects share the name groups/Twin ')).Count | Should -Be 1 -Because 'a second name of the same count is not dropped from the clause'
+            @([regex]::Matches($Causes, 'Could not read scoped roles for administrative unit')).Count |
+                Should -Be 1 -Because 'one reason repeated once per unit is still stated once, the id normalised away'
         }
 
         It 'writes a role policy that was read twice once' {
@@ -7303,6 +7373,111 @@ Describe 'Get-OERInventory' {
         }
     }
 
+    Context 'the catalog resources that name the bindings are read only for a catalog with a package (Sprint 11 step 10, BL-24, R-11)' {
+        # The AccessPackages section reads each catalog's package list FIRST, and the catalog's resources,
+        # which only name the bindings of a package and feed the shared name map, only for a catalog whose
+        # package list was read and holds a package. The Catalogs section reads the resources of a catalog
+        # for the catalog's own entry, separately, and is not changed.
+        BeforeEach {
+            $script:ApCalls = [System.Collections.Generic.List[string]]::new()
+            $script:ApPackagesByCatalog = @{
+                'cat-1' = @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = 'Sales' })
+                'cat-2' = @()
+            }
+            Mock -ModuleName $script:moduleName Get-OERCatalog {
+                [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT-Core'; Description = 'Core' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+                param($Catalog)
+                $script:ApCalls.Add("packages:$Catalog")
+                $script:ApPackagesByCatalog[[string]$Catalog]
+            }
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                param($Catalog)
+                $script:ApCalls.Add("resources:$Catalog")
+                [PSCustomObject]@{ OriginId = 'orig-x'; DisplayName = 'role_sec_x'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { $M = @{}; foreach ($I in $Id) { $M[$I] = 'role_sec_current' }; $M }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = 'Member'; OriginId = 'orig-x'; OriginSystem = 'AadGroup' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { }
+        }
+
+        It 'reads the package list before the catalog resources, and names the binding by the resource it read' {
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($script:ApCalls) | Should -Be @('packages:cat-1', 'resources:cat-1')
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly
+            @($Inv.AccessPackages).Count | Should -Be 1
+            @($Inv.AccessPackages)[0].resourceRoles[0].resource | Should -BeExactly 'role_sec_current'
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+
+        It 'sends no catalog resource read and names no catalogResourceNames for a catalog that holds no package' {
+            $script:ApPackagesByCatalog['cat-1'] = @()
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource { throw 'The resources of a catalog with no package must not be read for the bindings.' }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            # Reach proof: the package list was read, and it held nothing.
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-1' }
+            @($Inv.AccessPackages).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 0
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 0
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count |
+                Should -Be 0 -Because 'a read that is not made leaves nothing unread'
+        }
+
+        It 'reads the resources of the catalog that holds a package and of no other when two catalogs are listed' {
+            Mock -ModuleName $script:moduleName Get-OERCatalog {
+                [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT-Core'; Description = 'Core' }
+                [PSCustomObject]@{ Id = 'cat-2'; DisplayName = 'CAT-IT-Empty'; Description = 'Empty' }
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($script:ApCalls) | Should -Be @('packages:cat-1', 'resources:cat-1', 'packages:cat-2')
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-1' }
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 0 -ParameterFilter { $Catalog -eq 'cat-2' }
+            @($Inv.AccessPackages | ForEach-Object { $_.displayName }) | Should -Be @('AP-Sales')
+        }
+
+        It 'leaves the Catalogs section''s own resource read in place for a catalog that holds no package' {
+            $script:ApPackagesByCatalog['cat-1'] = @()
+            $Inv = Get-OERInventory -Include Catalogs, AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            # The one read there is the catalog entry's own, made by the Catalogs section.
+            @($script:ApCalls) | Should -Be @('resources:cat-1', 'packages:cat-1')
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            @($Inv.Catalogs).Count | Should -Be 1
+            @($Inv.Catalogs)[0].resources[0].name | Should -BeExactly 'role_sec_current'
+            @($Inv.AccessPackages).Count | Should -Be 0
+        }
+
+        It 'still names an unread catalogResourceNames for a catalog with a package whose resource read failed' {
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource { throw 'Too many requests.' }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            @($Inv.AccessPackages).Count | Should -Be 1
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Match 'accessPackages/CAT-IT-Core/catalogResourceNames'
+            $Partial[0].Exception.Message | Should -Match "Could not read a catalog's resources to name its access packages' bindings: Too many requests"
+        }
+
+        It 'names a failed package list, sends no catalog resource read for it, and names no catalogResourceNames' {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage { throw 'Too many requests.' }
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource { throw 'The resources of a catalog whose package list failed must not be read for the bindings.' }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly
+            @($Inv.AccessPackages).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 0
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 0
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/CAT-IT-Core/packages'
+            $Partial[0].Exception.Message | Should -Match "Could not list a catalog's access packages: Too many requests"
+            $Partial[0].Exception.Message | Should -Not -Match 'catalogResourceNames'
+        }
+    }
+
     Context 'a name the export cannot give is never written empty' {
         # BL-06 / decision A10. The validator and schema.json now refuse an empty name (a binding's
         # resource or role, a catalog resource's name, an administrative unit scoped role's role or
@@ -7770,6 +7945,36 @@ Describe 'Get-OERInventory' {
             $script:DirEligible = @(New-DirRow -RoleName '')
             $Inv = Get-OERInventory -Include DirectoryRoleAssignments
             @($Inv.directoryRoleAssignments)[0].role | Should -BeExactly $script:DirRoleA
+        }
+
+        # Sprint 11 step 10 (BL-45): a role name that is only white space is as missing as none, for an
+        # eligible and an active row alike, and the role is written by the role definition id.
+        It 'falls back to the role definition id for a role name that is <Label>, in an eligible and an active row (BL-45)' -ForEach @(
+            @{ Label = 'empty'; Name = '' }
+            @{ Label = 'one space'; Name = ' ' }
+            @{ Label = 'several spaces'; Name = '   ' }
+            @{ Label = 'a tab and a space'; Name = "`t " }
+        ) {
+            $script:DirEligible = @(New-DirRow -RoleName $Name)
+            $script:DirActive = @(New-DirRow -Kind Active -ScheduleId 'schedule-0002' -PrincipalId $script:DirUser2 -RoleName $Name)
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Entries = @($Inv.directoryRoleAssignments)
+            # Reach proof: both rows were read and written, so the two roles below are not an empty section.
+            $Entries.Count | Should -Be 2
+            @($Entries | ForEach-Object { $_.assignmentType }) | Should -Be @('Eligible', 'Active')
+            @($Entries | ForEach-Object { $_.role }) | Should -Be @($script:DirRoleA, $script:DirRoleA)
+        }
+
+        It 'names the role definition id in the warning for two schedules of a role whose name is white space (BL-45)' {
+            $script:DirEligible = @(
+                New-DirRow -RoleName '   '
+                New-DirRow -ScheduleId 'schedule-0002' -RoleName '   ' -End '2026-03-02T00:00:00Z' -DurationDays 60
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments -WarningAction SilentlyContinue -WarningVariable DirWarn
+            @($Inv.directoryRoleAssignments).Count | Should -Be 1
+            @($Inv.directoryRoleAssignments)[0].role | Should -BeExactly $script:DirRoleA
+            @($DirWarn).Count | Should -Be 1
+            [string]@($DirWarn)[0].Message | Should -BeLike "Get-OERInventory: directory role '$($script:DirRoleA)' has more than one eligible schedule for principal *"
         }
 
         It 'does not export an activation (an Active row whose AssignmentType is Activated)' {

@@ -959,7 +959,10 @@ function Get-OERInventoryGroup {
                 $UnreadCollections.Add($SharedPath)
                 $SharedCause = Get-OERSharedNameCause -Path $SharedPath -Count $SharedNameCount[$SharedName]
                 Write-Verbose "Get-OERInventory: $SharedCause"
-                Add-UnreadCause -Cause $SharedCause -Target $SharedPath
+                # BL-156: a BLANK Target, as Get-OERInventory's Select-UniqueNamedEntry registers the same
+                # cause, so Format-OERUnreadCauseClause keys it on its full text and two names of one
+                # count are two causes, not one with the name normalised away.
+                Add-UnreadCause -Cause $SharedCause -Target ''
                 # BL-131: the name with its count, for the export's one warning and its README.
                 $SharedNames.Add([PSCustomObject]@{ Section = 'groups'; Name = $SharedName; Count = $SharedNameCount[$SharedName] })
             }
