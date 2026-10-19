@@ -434,18 +434,24 @@ the quoted text and not by line number.
    call piped onward: the pipe is the only measured shape that leaks 0 to the caller, so the call is
    never a bare call inside `@( )` and never a bare assignment, which leak 1 each.
    `SilentlyContinue` means "captured", not "ignored": the records are inspected afterwards, so a
-   failed read is still a failed read. Both sites pipe onward. The existence probe of
+   failed read is still a failed read. All four sites pipe onward. The existence probe of
    `Sync-OERStructureAccessReview` reads `... -ErrorVariable ProbeErrors | Where-Object { ... }`
    and wraps only the filtered variable in `@( )`. The access review read of `Get-OERInventory`
    reads `@(call ... | Where-Object { ... })`, and its comment says the pipe is load-bearing and
-   the filter is not to be simplified away. The group and administrative-unit reads of
-   `Get-OERInventory` share the capture but not the pipe, as the probe's comment says: each is a
-   bare call inside `@( )`, the shape measured above to leak 1. The local collection also holds
-   records raised inside nested calls even when an inner catch swallowed them, so only a record the
-   cmdlet itself published counts. The probe's comment measured a throttled attempt that was
-   retried and then succeeded with zero matches: it left three `TooManyRequests` records and one
-   bare, message-less exception beside the genuine not-found record. A published record carries the
-   calling cmdlet's name as a comma-separated segment of its `FullyQualifiedErrorId`.
+   the filter is not to be simplified away. The administrative-unit read of `Get-OERInventory` and
+   the group list read, which lives in `Get-OERInventoryGroup` since the group section moved there,
+   take the same form since Sprint 11 step 10 (BL-58). Until then each was a bare call inside
+   `@( )`, the shape measured above to leak 1, so a per-collection record that `Get-OERGroup` or
+   `Get-OERAdministrativeUnit` wrote (`GroupMemberReadFailed`, `AdministrativeUnitMemberReadFailed`
+   and their siblings) reached the operator's own `-ErrorVariable` although the read had already
+   counted and worded it. That was measured offline, with a faked reader that writes one such
+   record: one record in the caller's `-ErrorVariable` from the bare call, none from the piped one.
+   The local collection also holds records raised inside nested calls even when an inner catch
+   swallowed them, so only a record the cmdlet itself published counts. The probe's comment
+   measured a throttled attempt that was retried and then succeeded with zero matches: it left
+   three `TooManyRequests` records and one bare, message-less exception beside the genuine
+   not-found record. A published record carries the calling cmdlet's name as a comma-separated
+   segment of its `FullyQualifiedErrorId`.
 2. *Declare the expected codes at the request.* `Invoke-OERGraphRequest -ExpectedErrorCode` makes
    the wrapper answer with a marker instead of raising, so nothing is deposited anywhere. A throw
    caught afterwards cannot do that, since the engine fills `-ErrorVariable` as the record is
@@ -7713,6 +7719,61 @@ every mutant turned at least one test red, and the restored source was green. Li
 - The per-scope skip warning now carries the whole `InventoryPartial` text when the inner read fails that way
   (Get-OERInventory's own message, since the call passes `-ErrorAction Stop`). That is unchanged by this step
   and parked for a later one.
+
+### Sprint 11 step 10: the group and administrative unit reads (BL-58, BL-44)
+
+**The pipe (BL-58).** The group list read of `Get-OERInventoryGroup` and the administrative unit list read of
+`Get-OERInventory` were the one shape [#writeerror-deposit](#writeerror-deposit) measures to leak: a bare call
+inside `@( )`, with `-ErrorAction SilentlyContinue` and a local `-ErrorVariable`. Each now pipes the call onward
+inside the `@( )` (`| Where-Object { $null -ne $_ }`), the form of the access review read, and carries a comment
+that says the pipe is load-bearing and points at the section. What it fixes: a per-collection record that
+`Get-OERGroup` or `Get-OERAdministrativeUnit` wrote (`GroupMemberReadFailed`, `AdministrativeUnitMemberReadFailed`
+and their siblings) used to reach the operator's own `-ErrorVariable` beside the read's own report of it, an
+unread collection with its cause, so one failure reached the operator twice. The test of each read drives a faked reader that writes one such record, called with
+`-ErrorVariable`, and counts the records of that id in it (the reach proof first: the read named the collection
+unread). Measured offline on the bare form: one record leaked for each record written, for a collection read and
+for a published list failure alike; none once the call is piped. The filter is held by a test of its own, since
+the pipe alone is enough to stop the leak: a `$null` item in the list is left out.
+
+**Bookkeeping before the warning (BL-44, at the two reads).** The same rule as at the export (the section
+above): a `Write-Warning` under a Stop warning preference is a terminating error, so a statement after it never
+runs. Seven sites wrote the warning first and counted the section unread second, and stand the other way round
+now: the group read's record loop and its `catch` in `Get-OERInventoryGroup`, the `catch` around the reader in
+`Get-OERInventory` (the group section), and the record loop and `catch` of each of the administrative unit and
+access review sections. `Add-UnreadSection` writes a verbose line first, so the proof is behavioural (R-7): each
+test provokes the failure under `-WarningAction Stop -Verbose`, in a `try`, and asserts the section's verbose
+line was written. The line is asserted WHOLE, and that is what tells the two sites of a section apart: the record
+loop writes the reader's own message, while the `catch` -- which also catches the stop the record loop's warning
+raises, and so runs second in that case -- writes a line that begins with the preference's own text. A site put
+back in the old order therefore turns exactly its own test red, and the other site's line cannot stand in for
+it. The eighth site is the removal of a left-out group's causes in `Get-OERInventoryGroup` (`-SecurityEnabledOnly`),
+which now stands before the `-GroupFilter returned ...` warning. It holds a list, which a verbose line cannot show,
+so an AST test reads the source (R-7): the removal loop stands in the warning's own statement block and starts
+before it, with a known-answer test of the checker (a warning first, a missing statement, a warning that is not
+unique, no such warning). The checker is the one `Export-OERInventory.Tests.ps1` carries, copied, not shared: a
+test file imports nothing from another.
+
+No guard that stops a command is added, so no no-`try` runspace test: the only stop a Stop preference raises is
+the operator's own, and the commands end at the warning exactly where they did.
+
+**Mutation proofs.** Each mutation was made in a copy of the step's tree (never the working tree) and run against
+the tests whose names carry the id of the item (BL-58, BL-44) or, for P3, the words 'empty item'; every mutant
+turned the named tests red and the restored copy was green. Lines are the source's at this commit.
+
+| Id | Guard | Mutant | Outcome |
+|---|---|---|---|
+| P1 | the group list read pipes onward, `Get-OERInventoryGroup.ps1:288` | the bare call inside `@( )` | 2 red in the reader's tests, 1 red in `Get-OERInventory.Tests.ps1` |
+| P2 | the unit list read pipes onward, `Get-OERInventory.ps1:1040` | the bare call inside `@( )` | 1 red |
+| P3 | the filter after the pipe, `:288` and `:1040` | `ForEach-Object { $_ }` in its place | 1 red each |
+| Q1, Q2 | the group reader's two sites, `Get-OERInventoryGroup.ps1:327`, `:341` | the warning before the bookkeeping | 1 red each |
+| Q3 | the cause removal before the `-GroupFilter` warning, `:381` | the removal after the warning | 1 red, the AST test |
+| Q4 | the group section's `catch`, `Get-OERInventory.ps1:994` | the warning before the bookkeeping | 1 red |
+| Q5, Q6 | the unit section's two sites, `:1064`, `:1076` | the warning before the bookkeeping | 1 red each |
+| Q7, Q8 | the access review section's two sites, `:2036`, `:2050` | the warning before the bookkeeping | 1 red each |
+
+**Also touched.** The comment of the existence probe in `Sync-OERStructureAccessReview` said the group and unit
+reads were the bare form; it now says they pipe onward. `Get-OERInventory` is unchanged for a caller: the
+section warnings, the unread names, the causes and `InventoryPartial` are what they were.
 
 ## typed-group-member-read
 
