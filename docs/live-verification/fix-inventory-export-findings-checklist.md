@@ -589,7 +589,8 @@ Write-OerLiveStep "Objects: $($Inv.Count); RoleAssignments rows: $(@($Inv[0].Rol
 Disconnect-OerLive
 ```
 
-**Expect:** 0 writes; 1 subscription list read and 0 single subscription reads; the role assignment and policy
+**Expect:** 0 writes; 1 subscription list read (the name resolved once) and 1 single subscription read (the
+home-tenant check's own read of the resolved id, `Get-OERSubscriptionHomeTenant`); the role assignment and policy
 reads at `/subscriptions/{id}`; 0 requests holding the name; one object with its rows and no error.
 **Failure looks like:** more than one list read (the base build lists the subscriptions once for the check and
 once per section), a request holding the name, or an error.
