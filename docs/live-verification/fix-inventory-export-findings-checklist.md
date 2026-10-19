@@ -464,10 +464,12 @@ Result: not run yet.
 Connect-OerLive -Arm
 Start-S1110NoPrompt
 $R = Read-S1110Export -Name 'first'
-$Clause = { param($Message) if ($Message -match 'Causes: (.*)$') { $Matches[1] } else { '' } }
+# Each shared name is a cause of its own, worded by Get-OERSharedNameCause: "N live objects share the name
+# groups/NAME (...)". Before the fix, two names shared by the same count were folded into the first one's cause.
+$Needle = @{ 'twin-a' = "share the name groups/${Prefix}twin-a ("; 'twin-b' = "share the name groups/${Prefix}twin-b (" }
 foreach ($Name in 'twin-a', 'twin-b') {
-    $Hits = @($R.Partials | Where-Object { (& $Clause $_) -like "*'$Prefix$Name'*" })
-    Write-OerLiveStep "Export: partial messages whose causes name $Prefix$($Name): $($Hits.Count)"
+    $Hits = @($R.Partials | Where-Object { ([string]$_).Contains($Needle[$Name]) })
+    Write-OerLiveStep "Export: partial messages with a shared-name cause of $Prefix$($Name): $($Hits.Count)"
 }
 $Doc = Get-Content -LiteralPath (Join-Path $R.Dir 'inventory.json') -Raw | ConvertFrom-Json
 $Roster = @(Get-Content -LiteralPath (Join-Path $R.Dir 'groupsRoster.json') -Raw | ConvertFrom-Json)
@@ -480,15 +482,15 @@ $Errs = @($Out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord
 $Inv = @($Out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
 Write-OerLiveStep "Get-OERInventory: objects $($Inv.Count); errors: $((Get-S1110FirstId $Errs) -join ', ')"
 $Partial = @($Errs | Where-Object { ([string]$_.FullyQualifiedErrorId -split ',')[0] -eq 'InventoryPartial' })
-$Causes = if ($Partial.Count) { & $Clause $Partial[0].Exception.Message } else { '' }
-foreach ($Name in 'twin-a', 'twin-b') { Write-OerLiveStep "Get-OERInventory: the causes name $Prefix$($Name): $($Causes -like "*'$Prefix$Name'*")" }
+$Message = if ($Partial.Count) { [string]$Partial[0].Exception.Message } else { '' }
+foreach ($Name in 'twin-a', 'twin-b') { Write-OerLiveStep "Get-OERInventory: a shared-name cause of $Prefix$($Name): $($Message.Contains($Needle[$Name]))" }
 Write-OerLiveStep "Get-OERInventory: twins in Groups: $(@($Inv[0].Groups | Where-Object { $_.displayName -like "${Prefix}twin-*" }).Count)"
 Disconnect-OerLive
 ```
 
-**Expect:** the export's partial messages name each twin name (1 or more for each); 0 twins in `inventory.json`
-and 4 twin rows in the roster; `Get-OERInventory` one object, errors `InventoryPartial` only, its causes naming
-both names, 0 twins in `Groups`, no write.
+**Expect:** the export's partial messages hold a shared-name cause of each twin name (1 or more for each); 0
+twins in `inventory.json` and 4 twin rows in the roster; `Get-OERInventory` one object, errors `InventoryPartial`
+only, its message holding a shared-name cause of each name (`True` twice), 0 twins in `Groups`, no write.
 **Failure looks like:** one name missing from the causes (the base build folds the two names into one cause),
 or a twin written to the document.
 
