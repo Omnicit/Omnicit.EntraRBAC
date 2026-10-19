@@ -7509,7 +7509,7 @@ reader marks the whole Groups section unread, never empty. The cost: `Get-OERInv
 catch on a path no known input reaches (its known output is unchanged), and the causes and unread
 names the reader had gathered before it stopped are lost; only `groups` survives.
 
-### Sprint 11 step 10: what the group section writes (BL-43, BL-121; R-1, R-2, R-15, R-16, R-24)
+### Sprint 11 step 10: what the group section writes (BL-43, BL-121; R-1, R-2, R-15, R-16, R-24, R-28)
 
 **The problem (BL-43).** A dynamic group's membership is owned by its membership rule: Microsoft Learn
 states that a member of a dynamic membership group cannot be added or removed manually, and the apply engine
@@ -7539,7 +7539,24 @@ remains of it, in both cases (`Get-OERInventoryGroup` skips the record in the fu
 members read of a relevant-only read, for a group whose `GroupType` is `Dynamic`; a record without a target
 matches no group and keeps its cause), and the roster count of that group is not known, so its `memberCount`
 stays null and not 0 (R-15). Cost if wrong: one condition in each of the two places, and a dynamic group's
-failed members read is a cause again with nothing unread to belong to. A dynamic group's
+failed members read is a cause again with nothing unread to belong to. **R-28 (a dynamic administrative unit
+is the same).** A dynamic unit's members are not written either (`Get-OERInventory` omits them, and omits
+rather than nulls them, since the engine converts a unit's membership type back to the declared one), so a
+failed read of them is no gap in the document and no unread entry names it. The re-review of the group
+round measured that its cause still reached the `InventoryPartial` clause, beside another collection's
+(`Unread: groups/role_sec_sta/owners` with `Could not read members for unit 'au-dyn': Too many requests
+(429)` in the causes), which is the defect R-24 removed for groups. The record loop of the administrative
+unit section now skips the cause of an `AdministrativeUnitMemberReadFailed` record whose target is the id of a
+listed unit whose `MembershipType` is `Dynamic`, ids compared without regard to letter case, and the verbose
+line stays. A static unit's failed members read, every scoped-role record and a record with no target keep
+their cause and, where the projection names one, their unread entry. So a dynamic group's members and a
+dynamic unit's members are the two collections whose failed read is no gap, and the help of
+`Get-OERInventory` and of the reader says so (an earlier sentence called a dynamic group's members "the one
+collection", which was untrue of the unit). Both loops find the dynamic ids in a set built once, only when a
+record was written, instead of scanning every listed group or unit per failed record: the scan cost failures
+times listed groups, measured in plain PowerShell at 2.0 s for 500 groups, 4.8 s for 1000 and 15.5 s for 2000
+with every members read failing, none of it for a healthy tenant. Cost if wrong: one condition in the unit
+record loop, and a dynamic unit's failed members read is a cause again with nothing unread to belong to. A dynamic group's
 members are also not looked at for the PIM decision (`$NeedPimRead` counts a non-dynamic group's members, and
 owners as before), so a dynamic group with members and no owners sends no
 `Read-OERGroupPimAssignment`. That read answered `ResourceTypeNotSupported` for a dynamic group when it was
