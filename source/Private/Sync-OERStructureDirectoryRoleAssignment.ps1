@@ -101,21 +101,27 @@ function Sync-OERStructureDirectoryRoleAssignment {
       2. The signed-in identity is unknown: Get-OERSignedInObjectId returns the object id recorded
          from the Microsoft Graph token's oid claim (delegated and app-only alike, never /me); when
          it returns nothing, every candidate is reported Skipped with a Detail starting
-         "prune withheld: the signed-in identity's object id is unknown", with or without -Prune.
+         "prune withheld: the signed-in identity's object id is unknown", with or without -Prune
+         (ConvertTo-OERPruneWithheldResult -SignedInIdUnknown owns the wording).
       3. The candidate is the signed-in identity's own assignment: it is reported Skipped, with or
          without -Prune, and never removed.
       4. The candidate is a group the signed-in identity is a member of, directly or through
-         nesting, so the signed-in identity holds the role through it: it is reported Skipped, with
-         or without -Prune, and never removed. Only a candidate whose PrincipalType is neither User
-         nor ServicePrincipal (a Group, or an unknown type) is checked; a user or service principal
-         cannot be such a group. The memberships are read with Get-OERMemberGroupId (one transitive
-         getMemberGroups request for the signed-in object id, never /me) lazily -- only when the
-         first such candidate reaches this guard -- and at most once per pass, the answer standing
-         for every later candidate in every pair; ids are compared case-insensitively. A read that
-         fails is written once, and every Group or unknown-type candidate of the pass is then
-         reported Skipped, with or without -Prune, with a Detail starting "prune withheld: the
-         signed-in identity's group memberships could not be read", since a failed read is not an
-         empty membership. User and ServicePrincipal candidates go on to guard 5 either way.
+         nesting, so the signed-in identity holds the role through it (through an Eligible pair it
+         is eligible for the role, and the Detail says "is eligible for" in place of "holds"): it
+         is reported Skipped, with or without -Prune, and never removed. Only a candidate whose
+         PrincipalType is neither User nor ServicePrincipal (a Group, or an unknown type) is
+         checked; a user or service principal cannot be such a group. The memberships are read
+         with Get-OERMemberGroupId (one transitive getMemberGroups request for the signed-in
+         object id, never /me) lazily -- only when the first such candidate reaches this guard --
+         and at most once per pass, the answer standing for every later candidate in every pair;
+         ids are compared case-insensitively. A read that fails is written once, and every Group
+         or unknown-type candidate of the pass is then reported Skipped, with or without -Prune,
+         with a Detail starting "prune withheld: the signed-in identity's group memberships could
+         not be read", since a failed read is not an empty membership
+         (ConvertTo-OERPruneWithheldResult -MembershipUnread owns that wording, which says an
+         Active pair's group may be one the identity "holds the role through" and an Eligible
+         pair's one it "may be eligible for the role through"). User and ServicePrincipal
+         candidates go on to guard 5 either way.
       5. Otherwise, without -Prune the candidate is reported Extra. With -Prune the handler writes a
          warning naming it, gates $Caller.ShouldProcess, and removes it with
          Remove-OEREligibleDirectoryRoleAssignment or Remove-OERActiveDirectoryRoleAssignment
@@ -297,8 +303,8 @@ function Sync-OERStructureDirectoryRoleAssignment {
                     $Withheld = ConvertTo-OERPruneWithheldResult -Section $Section -Item $CandItem -Unresolved $Unresolved -Candidate $CandLabel
                     if ($Withheld) { $Withheld; continue }
                     if (-not $SignedInId) {
-                        ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Skipped' `
-                            -Detail "prune withheld: the signed-in identity's object id is unknown (it could not be determined from the session's Microsoft Graph token), so $CandLabel may be its own assignment and is left in place (our own guard, not a Graph rejection). Sign in again with Connect-OER; if the token carries no oid claim, reconcile this pair from a session that does."
+                        # Skipped with or without -Prune, before the -Prune branch; the helper owns the text.
+                        ConvertTo-OERPruneWithheldResult -Section $Section -Item $CandItem -SignedInIdUnknown -Candidate $CandLabel
                         continue
                     }
                     if ($Candidate.PrincipalId -eq $SignedInId) {
@@ -308,8 +314,9 @@ function Sync-OERStructureDirectoryRoleAssignment {
                     }
                     # A group (or a principal of unknown type, which may be one) that the signed-in identity
                     # is a member of, directly or through nesting: removing its assignment would end the
-                    # role the signed-in identity holds through it. A user or service principal cannot be
-                    # such a group and never needs the read.
+                    # role the signed-in identity holds through it (an Active assignment) or is eligible
+                    # for through it (an Eligible one, BL-24). A user or service principal cannot be such
+                    # a group and never needs the read.
                     if ([string]$Candidate.PrincipalType -notin @('User', 'ServicePrincipal')) {
                         if (-not $MemberGroupRead) {
                             $MemberGroupRead = $true
@@ -328,13 +335,17 @@ function Sync-OERStructureDirectoryRoleAssignment {
                             }
                         }
                         if ($null -ne $MemberGroupFailure) {
-                            ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Skipped' `
-                                -Detail "prune withheld: the signed-in identity's group memberships could not be read, so $CandLabel may be a group the signed-in identity holds the role through and is left in place (our own guard, not a Graph rejection): $($MemberGroupFailure.Exception.Message)"
+                            # Skipped with or without -Prune; the helper owns the text, worded by the pair's kind.
+                            ConvertTo-OERPruneWithheldResult -Section $Section -Item $CandItem -MembershipUnread -Candidate $CandLabel `
+                                -PairKind $PairKind -Reason $MemberGroupFailure.Exception.Message
                             continue
                         }
                         if ($MemberGroupSet.Contains([string]$Candidate.PrincipalId)) {
+                            # An Active assignment is held; an Eligible one makes the identity eligible for
+                            # the role (BL-24), so the text says which.
+                            $Holds = if ($PairKind -eq 'Eligible') { 'is eligible for' } else { 'holds' }
                             ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Skipped' `
-                                -Detail "$CandLabel is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity holds directory role '$RoleText' through it; the apply engine never removes a role the signed-in identity holds (our own guard, not a Graph rejection)"
+                                -Detail "$CandLabel is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity $Holds directory role '$RoleText' through it; the apply engine never removes a role the signed-in identity $Holds (our own guard, not a Graph rejection)"
                             continue
                         }
                     }

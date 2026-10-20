@@ -446,7 +446,7 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
                 $Command = Get-Command ConvertTo-OERPruneWithheldResult
                 $Command.DefaultParameterSet | Should -BeExactly 'Unresolved'
                 @($Command.ParameterSets.Name | Sort-Object) |
-                    Should -Be @('CreatedGroup', 'ObjectType', 'PimHeld', 'PimUnread', 'SyncedGroup', 'UnreadRoleName', 'Unresolved')
+                    Should -Be @('CreatedGroup', 'MembershipUnread', 'ObjectType', 'PimHeld', 'PimUnread', 'SignedInIdUnknown', 'SyncedGroup', 'UnreadRoleName', 'Unresolved')
                 # The default form still binds and words its record as before.
                 $R = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'g1' -Unresolved @('x') -Candidate "undeclared member 'u-1'"
                 $R.Detail | Should -BeExactly "prune withheld: declared entry 'x' could not be resolved, so undeclared member 'u-1' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this collection."
@@ -466,6 +466,162 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
                 { ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'x' -Candidate 'c' -PimUnread 'u' -Unresolved @('a') -ErrorAction Stop } |
                     Should -Throw -ErrorId 'AmbiguousParameterSet*'
                 { ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'x' -Candidate 'c' -PimUnread 'u' -Prune -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+            }
+        }
+    }
+
+    # The directory role assignment handler's prune pass withholds a candidate in two cases that
+    # used to be worded inline there (BL-86): the signed-in identity's object id is unknown, and its
+    # group memberships could not be read. Both are ALWAYS Skipped, with or without -Prune, since the
+    # handler writes the row before it looks at -Prune. The membership text names how the signed-in
+    # identity would hold the role through the group, and that depends on the pair's kind (BL-24):
+    # an Active assignment is held, an Eligible one makes the identity eligible for the role.
+    Context 'the SignedInIdUnknown and MembershipUnread forms (BL-86, BL-24)' {
+        BeforeAll {
+            $script:ActiveCandidate = "undeclared active assignment of directory role 'Reports Reader' for principal 'p-1'"
+            $script:EligibleCandidate = "undeclared eligible assignment of directory role 'Reports Reader' for principal 'p-2'"
+            $script:SignedInUnknownDetail = {
+                param($Candidate, $Cause)
+                "prune withheld: the signed-in identity's object id is unknown ($Cause), so $Candidate may be its own assignment " +
+                'and is left in place (our own guard, not a Graph rejection). Sign in again with Connect-OER; if the token ' +
+                'carries no oid claim, reconcile this pair from a session that does.'
+            }
+            $script:MembershipUnreadDetail = {
+                param($Candidate, $HoldsThrough, $Reason)
+                "prune withheld: the signed-in identity's group memberships could not be read, so $Candidate may be a group " +
+                "the signed-in identity $HoldsThrough and is left in place (our own guard, not a Graph rejection): $Reason"
+            }
+        }
+
+        It 'with -SignedInIdUnknown returns one Skipped record that starts prune withheld: and names the candidate' -TestCases @(
+            @{ Which = 'active'; Candidate = "undeclared active assignment of directory role 'Reports Reader' for principal 'p-1'" }
+            @{ Which = 'eligible'; Candidate = "undeclared eligible assignment of directory role 'Reports Reader' for principal 'p-2'" }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Candidate = $Candidate; Build = $script:SignedInUnknownDetail } {
+                param($Candidate, $Build)
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'directoryRoleAssignments' -Item 'Reports Reader -> p (Active)' `
+                        -SignedInIdUnknown -Candidate $Candidate)
+                $R.Count | Should -Be 1
+                $R[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureResult'
+                $R[0].Section | Should -BeExactly 'directoryRoleAssignments'
+                $R[0].Item | Should -BeExactly 'Reports Reader -> p (Active)'
+                $R[0].Error | Should -BeNullOrEmpty
+                $R[0].Action | Should -BeExactly 'Skipped'
+                $R[0].Detail | Should -BeExactly (& $Build $Candidate "it could not be determined from the session's Microsoft Graph token")
+            }
+        }
+
+        It 'with -SignedInIdUnknown names the given -Reason in place of the default cause, and keeps the default for a blank one' {
+            InModuleScope $script:moduleName -Parameters @{ Build = $script:SignedInUnknownDetail; Candidate = $script:ActiveCandidate } {
+                param($Build, $Candidate)
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'directoryRoleAssignments' -Item 'i' -SignedInIdUnknown `
+                        -Candidate $Candidate -Reason 'the token carries no oid claim')
+                $R.Count | Should -Be 1
+                $R[0].Action | Should -BeExactly 'Skipped'
+                $R[0].Detail | Should -BeExactly (& $Build $Candidate 'the token carries no oid claim')
+                foreach ($Blank in $null, '', '  ') {
+                    $R = @(ConvertTo-OERPruneWithheldResult -Section 'directoryRoleAssignments' -Item 'i' -SignedInIdUnknown `
+                            -Candidate $Candidate -Reason $Blank -ErrorAction Stop)
+                    $R.Count | Should -Be 1
+                    $R[0].Detail | Should -BeExactly (& $Build $Candidate "it could not be determined from the session's Microsoft Graph token")
+                }
+            }
+        }
+
+        It 'with -MembershipUnread and -PairKind Active returns one Skipped record that says the signed-in identity holds the role through the group' {
+            InModuleScope $script:moduleName -Parameters @{ Build = $script:MembershipUnreadDetail; Candidate = $script:ActiveCandidate } {
+                param($Build, $Candidate)
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'directoryRoleAssignments' -Item 'Reports Reader -> p-1 (Active)' `
+                        -MembershipUnread -Candidate $Candidate -PairKind 'Active' -Reason 'Graph 403 Authorization_RequestDenied')
+                $R.Count | Should -Be 1
+                $R[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureResult'
+                $R[0].Section | Should -BeExactly 'directoryRoleAssignments'
+                $R[0].Item | Should -BeExactly 'Reports Reader -> p-1 (Active)'
+                $R[0].Error | Should -BeNullOrEmpty
+                $R[0].Action | Should -BeExactly 'Skipped'
+                $R[0].Detail | Should -BeExactly (& $Build $Candidate 'holds the role through' 'Graph 403 Authorization_RequestDenied')
+            }
+        }
+
+        It 'with -MembershipUnread and -PairKind Eligible returns one Skipped record that says the signed-in identity may be eligible for the role through the group (BL-24)' {
+            InModuleScope $script:moduleName -Parameters @{ Build = $script:MembershipUnreadDetail; Candidate = $script:EligibleCandidate } {
+                param($Build, $Candidate)
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'directoryRoleAssignments' -Item 'Reports Reader -> p-2 (Eligible)' `
+                        -MembershipUnread -Candidate $Candidate -PairKind 'Eligible' -Reason 'Graph 403 Authorization_RequestDenied')
+                $R.Count | Should -Be 1
+                $R[0].Action | Should -BeExactly 'Skipped'
+                $R[0].Item | Should -BeExactly 'Reports Reader -> p-2 (Eligible)'
+                $R[0].Detail | Should -BeExactly (& $Build $Candidate 'may be eligible for the role through' 'Graph 403 Authorization_RequestDenied')
+                $R[0].Detail | Should -Not -Match 'holds the role through' -Because 'an Eligible assignment is not held until it is activated'
+            }
+        }
+
+        It 'with -MembershipUnread reads -PairKind without regard to letter case, as the handler compares its kinds' {
+            InModuleScope $script:moduleName -Parameters @{ Candidate = $script:EligibleCandidate } {
+                param($Candidate)
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 's' -Item 'i' -MembershipUnread -Candidate $Candidate -PairKind 'eligible' -Reason 'r')
+                $R[0].Detail | Should -Match 'the signed-in identity may be eligible for the role through and is left in place'
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 's' -Item 'i' -MembershipUnread -Candidate $Candidate -PairKind 'active' -Reason 'r')
+                $R[0].Detail | Should -Match 'the signed-in identity holds the role through and is left in place'
+            }
+        }
+
+        It 'with -MembershipUnread returns the Skipped record for an empty or null reason instead of a binding error (<PairKind>)' -TestCases @(
+            @{ PairKind = 'Active' }
+            @{ PairKind = 'Eligible' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ PairKind = $PairKind; Candidate = $script:ActiveCandidate } {
+                param($PairKind, $Candidate)
+                foreach ($Empty in '', $null) {
+                    $R = @(ConvertTo-OERPruneWithheldResult -Section 's' -Item 'i' -MembershipUnread -Candidate $Candidate `
+                            -PairKind $PairKind -Reason $Empty -ErrorAction Stop)
+                    $R.Count | Should -Be 1
+                    $R[0].Action | Should -BeExactly 'Skipped'
+                    $R[0].Detail | Should -BeLike "prune withheld: the signed-in identity's group memberships could not be read, so $Candidate may be a group *(our own guard, not a Graph rejection): "
+                }
+            }
+        }
+
+        It 'refuses a -PairKind that is neither Eligible nor Active' {
+            InModuleScope $script:moduleName -Parameters @{ Candidate = $script:ActiveCandidate } {
+                param($Candidate)
+                { ConvertTo-OERPruneWithheldResult -Section 's' -Item 'i' -MembershipUnread -Candidate $Candidate -PairKind 'Other' -Reason 'r' -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'ParameterArgumentValidationError*'
+            }
+        }
+
+        It 'declares both discriminators and -Candidate mandatory, -PairKind in the MembershipUnread form only, and -Prune in neither' {
+            InModuleScope $script:moduleName {
+                $Command = Get-Command ConvertTo-OERPruneWithheldResult
+                foreach ($Set in 'SignedInIdUnknown', 'MembershipUnread') {
+                    $Command.Parameters['Candidate'].ParameterSets[$Set].IsMandatory | Should -BeTrue -Because "-Candidate is mandatory in the $Set form"
+                    $Command.Parameters[$Set].ParameterSets.Keys | Should -Be @($Set)
+                    $Command.Parameters[$Set].ParameterSets[$Set].IsMandatory | Should -BeTrue
+                    $Command.Parameters[$Set].ParameterType | Should -Be ([switch])
+                    @($Command.Parameters['Prune'].ParameterSets.Keys) -contains $Set | Should -BeFalse -Because "the $Set record is the same with or without -Prune"
+                }
+                $Command.Parameters['PairKind'].ParameterSets.Keys | Should -Be @('MembershipUnread')
+                $Command.Parameters['PairKind'].ParameterSets['MembershipUnread'].IsMandatory | Should -BeTrue
+                $Command.Parameters['Reason'].ParameterSets['MembershipUnread'].IsMandatory | Should -BeTrue
+                $Command.Parameters['Reason'].ParameterSets['SignedInIdUnknown'].IsMandatory | Should -BeFalse
+                @($Command.Parameters['Reason'].ParameterSets.Keys | Sort-Object) | Should -Be @('MembershipUnread', 'SignedInIdUnknown')
+            }
+        }
+
+        It 'refuses a call that combines the two forms, or either with another form or with -Prune' {
+            InModuleScope $script:moduleName {
+                { ConvertTo-OERPruneWithheldResult -Section 's' -Item 'x' -Candidate 'c' -SignedInIdUnknown -MembershipUnread -PairKind 'Active' -Reason 'r' -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+                { ConvertTo-OERPruneWithheldResult -Section 's' -Item 'x' -Candidate 'c' -SignedInIdUnknown -Unresolved @('a') -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+                { ConvertTo-OERPruneWithheldResult -Section 's' -Item 'x' -Candidate 'c' -SignedInIdUnknown -PimUnread 'u' -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+                { ConvertTo-OERPruneWithheldResult -Section 's' -Item 'x' -Candidate 'c' -SignedInIdUnknown -Prune -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+                { ConvertTo-OERPruneWithheldResult -Section 's' -Item 'x' -Candidate 'c' -MembershipUnread -PairKind 'Active' -Reason 'r' -PimHeldReason 'p' -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'AmbiguousParameterSet*'
+                { ConvertTo-OERPruneWithheldResult -Section 's' -Item 'x' -Candidate 'c' -MembershipUnread -PairKind 'Active' -Reason 'r' -Prune -ErrorAction Stop } |
                     Should -Throw -ErrorId 'AmbiguousParameterSet*'
             }
         }

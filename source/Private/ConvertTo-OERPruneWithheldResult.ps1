@@ -1,7 +1,7 @@
 function ConvertTo-OERPruneWithheldResult {
     <#
     .SYNOPSIS
-    Builds the Skipped record that withholds a prune when a declared entry, or the scope of one, could not be resolved, when a live scoped role's name could not be read, when a live group member or owner is a service principal, when a live administrative unit member is a group this run created into the unit, or found already existing when it went to create it, when the live group is synchronized from on-premises, or when PIM for Groups holds a live group member or owner or makes it eligible, or whether it does could not be read.
+    Builds the Skipped record that withholds a prune when a declared entry, or the scope of one, could not be resolved, when a live scoped role's name could not be read, when a live group member or owner is a service principal, when a live administrative unit member is a group this run created into the unit, or found already existing when it went to create it, when the live group is synchronized from on-premises, or when PIM for Groups holds a live group member or owner or makes it eligible, or whether it does could not be read, or when the signed-in identity's object id is unknown, or when its group memberships could not be read.
 
     .DESCRIPTION
     The single owner of the apply engine's withhold-prune rule and of its reason text. Every
@@ -124,6 +124,27 @@ function ConvertTo-OERPruneWithheldResult {
     warning for the item itself, naming the cause, before the first such record; this helper writes
     none, and no ShouldProcess prompt is issued for it.
 
+    A ninth and a tenth kind belong to the directory role assignment handler's prune pass (BL-86).
+    Both are the rows it used to word inline, and both are ALWAYS one Skipped record, with or without
+    -Prune, since the handler writes them before it looks at -Prune; neither takes -Prune. The ninth
+    (-SignedInIdUnknown) is a live candidate withheld because the signed-in identity's object id is
+    unknown, so the candidate may be that identity's own assignment: the Detail starts 'prune
+    withheld: the signed-in identity's object id is unknown (', gives the cause (-Reason, by default
+    that it could not be determined from the session's Microsoft Graph token), names the candidate,
+    states that it is left in place (the module's own guard, not a Graph rejection), and asks for a
+    new sign-in with Connect-OER. The tenth (-MembershipUnread) is a live group (or principal of
+    unknown type) candidate withheld because the signed-in identity's group memberships could not be
+    read, so the candidate may be a group the identity gets the role through: the Detail starts
+    'prune withheld: the signed-in identity's group memberships could not be read', names the
+    candidate, says how the identity would get the role through the group, states that the candidate
+    is left in place (the module's own guard, not a Graph rejection), and ends with the read's
+    message (-Reason). How the identity gets the role depends on the pair's kind, which the caller
+    passes as -PairKind (BL-24): through an Active assignment it holds the role, so the Detail says
+    'holds the role through'; through an Eligible one it is only eligible for the role until it
+    activates it, so the Detail says 'may be eligible for the role through'. The caller writes the
+    group memberships' failure once for the pass; this helper writes nothing, and no ShouldProcess
+    prompt is issued for either record.
+
     .PARAMETER Section
     The document section the prune pass belongs to (for example groups or administrativeUnits).
 
@@ -139,7 +160,8 @@ function ConvertTo-OERPruneWithheldResult {
     .PARAMETER Candidate
     A readable description of the live entry the pass would otherwise report Extra or remove, for
     example "undeclared member '<id>'". Used by the -Unresolved, the -ObjectType, the -CreatedGroup,
-    the -SyncedGroup, the -PimHeldReason and the -PimUnread forms.
+    the -SyncedGroup, the -PimHeldReason, the -PimUnread, the -SignedInIdUnknown and the
+    -MembershipUnread forms.
 
     .PARAMETER UnresolvedScope
     The labels of the declared entries of the section whose scope could not be resolved, in document
@@ -187,6 +209,33 @@ function ConvertTo-OERPruneWithheldResult {
     group's members and owners or makes them eligible (Read-OERGroupPimHold's Cause). Mandatory in
     this form; an empty or null message is accepted. Not combinable with -Prune or with any other
     form's parameter: the record is the same with or without -Prune.
+
+    .PARAMETER SignedInIdUnknown
+    Selects the form for a live candidate withheld because the signed-in identity's object id is
+    unknown (Get-OERSignedInObjectId returned nothing). Mandatory in this form, which takes
+    -Candidate and, optionally, -Reason. Not combinable with -Prune or with any other form's
+    parameter: the record is the same with or without -Prune.
+
+    .PARAMETER MembershipUnread
+    Selects the form for a live group (or unknown-type) candidate withheld because the signed-in
+    identity's group memberships could not be read. Mandatory in this form, which takes -Candidate,
+    -PairKind and -Reason. Not combinable with -Prune or with any other form's parameter: the record
+    is the same with or without -Prune.
+
+    .PARAMETER PairKind
+    The kind of the (role, assignmentType) pair the candidate belongs to, Eligible or Active (letter
+    case ignored), which decides how the record words the signed-in identity's access through the
+    group: an Active assignment is held ('holds the role through'), an Eligible one makes the
+    identity eligible for the role until it activates it ('may be eligible for the role through').
+    Mandatory with -MembershipUnread.
+
+    .PARAMETER Reason
+    With -MembershipUnread: the message of the read that failed (Get-OERMemberGroupId), appended to
+    the Detail after a colon. Mandatory in that form; an empty or null message is accepted, so a
+    failure that carries none still gives the Skipped record instead of a binding error that would
+    end the calling handler's item outside its own try. With -SignedInIdUnknown: the cause named in
+    the parentheses after 'unknown'. Optional there; omitted, empty or white space, it is that the id
+    could not be determined from the session's Microsoft Graph token.
 
     .PARAMETER Prune
     With -ObjectType: whether the caller runs with -Prune. With it the service principal's record is
@@ -261,7 +310,28 @@ function ConvertTo-OERPruneWithheldResult {
     When whether PIM for Groups holds the group's members and owners could not be read: emits the
     Skipped "prune withheld:" record naming the cause, with or without -Prune, and moves on to the
     next live owner.
+
+    .EXAMPLE
+    ConvertTo-OERPruneWithheldResult -Section 'directoryRoleAssignments' -Item $CandItem -SignedInIdUnknown -Candidate $CandLabel
+    continue
+
+    When the signed-in identity's object id is unknown: emits the Skipped "prune withheld:" record
+    saying the candidate may be that identity's own assignment and is left in place, with or without
+    -Prune, and moves on to the next live candidate.
+
+    .EXAMPLE
+    ConvertTo-OERPruneWithheldResult -Section 'directoryRoleAssignments' -Item $CandItem -MembershipUnread -Candidate $CandLabel -PairKind 'Eligible' -Reason $Failure.Exception.Message
+    continue
+
+    When the signed-in identity's group memberships could not be read: emits the Skipped "prune
+    withheld:" record saying the candidate may be a group the identity may be eligible for the role
+    through (an Active pair says 'holds the role through'), and ending with the read's message, with
+    or without -Prune, and moves on to the next live candidate.
     #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'SignedInIdUnknown',
+        Justification = 'Switch is a parameter-set discriminator; ParameterSetName is used instead.')]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'MembershipUnread',
+        Justification = 'Switch is a parameter-set discriminator; ParameterSetName is used instead.')]
     [OutputType([PSCustomObject])]
     [CmdletBinding(DefaultParameterSetName = 'Unresolved')]
     param(
@@ -273,7 +343,9 @@ function ConvertTo-OERPruneWithheldResult {
         [Parameter(Mandatory, ParameterSetName = 'CreatedGroup')]
         [Parameter(Mandatory, ParameterSetName = 'SyncedGroup')]
         [Parameter(Mandatory, ParameterSetName = 'PimHeld')]
-        [Parameter(Mandatory, ParameterSetName = 'PimUnread')][string]$Candidate,
+        [Parameter(Mandatory, ParameterSetName = 'PimUnread')]
+        [Parameter(Mandatory, ParameterSetName = 'SignedInIdUnknown')]
+        [Parameter(Mandatory, ParameterSetName = 'MembershipUnread')][string]$Candidate,
         [Parameter(ParameterSetName = 'Unresolved')][AllowEmptyCollection()][string[]]$UnresolvedScope = @(),
         [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string]$Declared,
         [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string[]]$UnnamedRoleId,
@@ -284,11 +356,34 @@ function ConvertTo-OERPruneWithheldResult {
         # Empty or null is accepted rather than refused at binding: a binding error here would end the
         # calling handler's item outside its own try, and the record withholds the prune either way.
         [Parameter(Mandatory, ParameterSetName = 'PimUnread')][AllowNull()][AllowEmptyString()][string]$PimUnread,
+        [Parameter(Mandatory, ParameterSetName = 'SignedInIdUnknown')][switch]$SignedInIdUnknown,
+        [Parameter(Mandatory, ParameterSetName = 'MembershipUnread')][switch]$MembershipUnread,
+        # The handler's kinds are always the canonical Eligible or Active, so the set cannot refuse a
+        # real call; a value outside it is a caller error that should be seen, not worded as Active.
+        [Parameter(Mandatory, ParameterSetName = 'MembershipUnread')][ValidateSet('Eligible', 'Active')][string]$PairKind,
+        # Empty or null is accepted for the same reason as -PimUnread. In the SignedInIdUnknown form it
+        # is optional and a blank value is read as omitted (the default cause).
+        [Parameter(Mandatory, ParameterSetName = 'MembershipUnread')]
+        [Parameter(ParameterSetName = 'SignedInIdUnknown')][AllowNull()][AllowEmptyString()][string]$Reason,
         [Parameter(ParameterSetName = 'ObjectType')]
         [Parameter(ParameterSetName = 'CreatedGroup')]
         [Parameter(ParameterSetName = 'SyncedGroup')]
         [Parameter(ParameterSetName = 'PimHeld')][switch]$Prune
     )
+
+    if ($PSCmdlet.ParameterSetName -eq 'SignedInIdUnknown') {
+        $Cause = if ([string]::IsNullOrWhiteSpace($Reason)) { "it could not be determined from the session's Microsoft Graph token" } else { $Reason }
+        return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Skipped' `
+            -Detail "prune withheld: the signed-in identity's object id is unknown ($Cause), so $Candidate may be its own assignment and is left in place (our own guard, not a Graph rejection). Sign in again with Connect-OER; if the token carries no oid claim, reconcile this pair from a session that does."
+    }
+
+    if ($PSCmdlet.ParameterSetName -eq 'MembershipUnread') {
+        # An Active assignment is held; an Eligible one makes the identity eligible for the role until it
+        # activates it (BL-24), so a group it may get the role through is worded by the pair's kind.
+        $RoleThrough = if ($PairKind -eq 'Eligible') { 'may be eligible for the role through' } else { 'holds the role through' }
+        return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Skipped' `
+            -Detail "prune withheld: the signed-in identity's group memberships could not be read, so $Candidate may be a group the signed-in identity $RoleThrough and is left in place (our own guard, not a Graph rejection): $Reason"
+    }
 
     if ($PSCmdlet.ParameterSetName -eq 'PimHeld') {
         if ($Prune) {
