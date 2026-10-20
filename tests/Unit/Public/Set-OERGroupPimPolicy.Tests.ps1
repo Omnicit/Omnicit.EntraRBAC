@@ -470,7 +470,7 @@ Describe 'Set-OERGroupPimPolicy' {
         # Notification_Admin_Admin_Eligibility, Notification_Admin_Admin_Assignment and
         # Notification_Admin_EndUser_Assignment. The tenth, Approval_EndUser_Assignment, joined with
         # its own row when the approval parameters were added (Sprint 6 step 2); it is exercised with
-        # -RequireApproval $false, since this table's mock returns no live approval rule and $true
+        # -RequireApproval $false, since this table's live approval rule names no approver and $true
         # would then be refused as ApproverRequired before any PATCH. Do NOT add a uri-match case
         # here -- that would simply reproduce the blind spot this table exists to close.
         It 'reports <Property> on the summary when -<Parameter> is bound (gate literal <Literal>)' -TestCases @(
@@ -487,11 +487,15 @@ Describe 'Set-OERGroupPimPolicy' {
         ) {
             # The two rows that bind one half of the MFA / authentication context pair read the other
             # half first; it answers with a rule that carries neither MFA nor an enabled context, so
-            # there is nothing to reconcile. A read answering no rule would refuse the call with
-            # PimRuleValueUnknown (Sprint 11 step 11, A24).
+            # there is nothing to reconcile. The approval row reads the live approval rule, which
+            # answers with a rule whose stage names no approver. A read answering no rule would refuse
+            # the call with PimRuleValueUnknown (Sprint 11 step 11, A24).
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 if ($Method -ne 'PATCH' -and ($Uri -like '*rules/Enablement_EndUser_Assignment' -or $Uri -like '*rules/AuthenticationContext_EndUser_Assignment')) {
                     @{ id = ($Uri -split '/')[-1] }
+                }
+                if ($Method -ne 'PATCH' -and $Uri -like '*rules/Approval_EndUser_Assignment') {
+                    @{ id = 'Approval_EndUser_Assignment'; setting = @{ isApprovalRequired = $false; approvalMode = 'SingleStage'; approvalStages = @() } }
                 }
             }
             $Splat = @{ Group = 'gid-1'; Confirm = $false }
@@ -2232,6 +2236,81 @@ Describe 'Set-OERGroupPimPolicy: a failed or empty read that decides a written v
         $Result.Applied | Should -BeTrue
         # No MFA to clear: the context rule is sent alone.
         @($script:Calls) | Should -Be @('GET Enablement_EndUser_Assignment', 'PATCH AuthenticationContext_EndUser_Assignment')
+    }
+
+    It 'refuses with PimRuleValueUnknown when the approval rule read answers no rule (-RequireApproval <Require>), and sends and warns nothing (<Mode>)' -ForEach @(
+        foreach ($M in $Modes) {
+            foreach ($Require in $false, $true) { @{ Require = $Require } + $M }
+        }
+    ) {
+        # The approval rule is patched whole, and the stage settings no parameter supplies (the
+        # timeout, approver justification, escalation) come from the live rule: with no rule they
+        # would be sent as New-OERPimRuleSet's defaults. -RequireApproval $true would otherwise be
+        # refused as ApproverRequired (no live approver), so the order is pinned too.
+        $script:NoRuleReadRuleId = 'Approval_EndUser_Assignment'
+        $Err = $null
+        $Warn = $null
+        $Call = @{ Group = 'gid-1'; ActivationMaxHours = 8; RequireApproval = $Require; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err'; WarningAction = 'SilentlyContinue'; WarningVariable = 'Warn' } + $ModeSplat
+        $Result = Set-OERGroupPimPolicy @Call
+        $Result | Should -BeNullOrEmpty
+        $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERGroupPimPolicy' })
+        $Own.Count | Should -Be 1
+        $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PimRuleValueUnknown,Set-OERGroupPimPolicy'
+        $Own[0].CategoryInfo.Category | Should -Be 'InvalidData'
+        $Own[0].TargetObject | Should -BeExactly 'pol-1'
+        $Own[0].Exception.Message | Should -BeExactly (
+            "Reading the live rule 'Approval_EndUser_Assignment' of PIM policy 'pol-1' returned no rule, so the approval stage " +
+            'settings and the approvers this call does not supply are unknown; nothing was changed. No parameter of this cmdlet ' +
+            'supplies the stage settings (the approval timeout, approver justification, escalation), so no call that changes ' +
+            'approval can be made without that rule.')
+        @($Warn).Count | Should -Be 0
+        # Reached: the approval rule was read, once, and nothing was sent after it.
+        @($script:Calls) | Should -Be @('GET Approval_EndUser_Assignment')
+    }
+
+    It 'the control: the approval rule read answering a rule sends the approval rule, with no error' {
+        $Err = $null
+        $Result = Set-OERGroupPimPolicy -Group 'gid-1' -ActivationMaxHours 8 -RequireApproval:$false -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+        @($Err).Count | Should -Be 0
+        $Result.Applied | Should -BeTrue
+        $script:Calls[0] | Should -BeExactly 'GET Approval_EndUser_Assignment'
+        @($script:Calls) | Should -Contain 'PATCH Approval_EndUser_Assignment'
+    }
+
+    It 'a script with no try: an approval rule read that answers no rule is refused, sends nothing, and the script reaches its end' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Script = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g1' }
+    Set-Item -Path function:script:Get-OERPimGroupPolicyId -Value { 'p1' }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        Add-Content -LiteralPath '#LOG#' -Value "$Method $(($Uri -split '/')[-1])"
+        if ($Method -eq 'PATCH') { return @{} }
+        return $null
+    }
+}
+$Results = @(Set-OERGroupPimPolicy -Group 'g' -RequireApproval:$false -ActivationMaxHours 8 -Confirm:$false)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+& $Module {
+    Remove-Item function:Initialize-OERAuth
+    Remove-Item function:Remove-OERErrorRecord
+    Remove-Item function:Resolve-OERGroupId
+    Remove-Item function:Get-OERPimGroupPolicyId
+    Remove-Item function:Invoke-OERGraphRequest
+}
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Script
+        ($Run.Output -join '|') | Should -Be 'REACHED:0|END'
+        @(Get-Content -LiteralPath $Log) | Should -Be @('GET Approval_EndUser_Assignment')
+        @($Run.Errors).Count | Should -Be 1
+        $Run.Errors[0] | Should -BeLike "Reading the live rule 'Approval_EndUser_Assignment' of PIM policy 'p1' returned no rule, *"
+        @($Run.Warnings).Count | Should -Be 0
     }
 
     Context 'in a script with no try' {

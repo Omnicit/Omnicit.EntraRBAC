@@ -1601,7 +1601,8 @@ function Sync-OERStructureGroup {
                 # Approval_EndUser_Assignment rule has no live approver here, so a change that would
                 # leave approval required with no approver is refused here as ApproverRequired, where
                 # the cmdlet, which reads that rule by its id, would refuse it as
-                # ApprovalRuleReadFailed; nothing is written either way.
+                # ApprovalRuleReadFailed (a read that fails) or PimRuleValueUnknown (a read that
+                # answers no rule); nothing is written either way.
                 $SetSplat = $Change.SetParams
                 $ApproverUserBound = $SetSplat.ContainsKey('ApproverUser')
                 $ApproverGroupBound = $SetSplat.ContainsKey('ApproverGroup')

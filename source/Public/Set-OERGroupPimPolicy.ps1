@@ -68,9 +68,10 @@ function Set-OERGroupPimPolicy {
     approvers must justify, carry over from the live stage; a policy with no stage yet gets a 1-day
     timeout with approver justification required. Any of the
     three parameters makes the cmdlet read the live approval rule first; when that read fails, a
-    non-terminating ApprovalRuleReadFailed error is written and NO rule is patched, including the
-    other rules bound on the same call, since the carried-over stage and approvers would otherwise be
-    lost.
+    non-terminating ApprovalRuleReadFailed error is written, and when it returns no rule at all, a
+    non-terminating PimRuleValueUnknown error; either way NO rule is patched, including the other
+    rules bound on the same call, since the carried-over stage and approvers would otherwise be lost
+    (no parameter supplies the stage settings, so no call that changes approval can be made then).
 
     Entra PIM treats an enabled authentication context and MultiFactorAuthentication on activation as
     mutually exclusive, so this cmdlet reconciles the two instead of sending a combination the
@@ -629,7 +630,8 @@ function Set-OERGroupPimPolicy {
         # it. Like the reconcile and duration reads above, a failed read here is a REFUSAL of the whole
         # call, not a warning: there is no safe fallback for someone else's approvers. It is issued only
         # when an approval parameter is bound, and before any PATCH, so no other rule is half-applied
-        # either. It keeps its own ApprovalRuleReadFailed id, which it had before those reads refused.
+        # either. It keeps its own ApprovalRuleReadFailed id, which it had before those reads refused;
+        # a read that answers with no rule is PimRuleValueUnknown, as for the other reads.
         $ApproversBound = $ApproverUserBound -or $ApproverGroupBound
         $ApprovalBound = $ApproversBound -or $PSBoundParameters.ContainsKey('RequireApproval')
         $LiveApprovalRule = $null
@@ -647,6 +649,21 @@ function Set-OERGroupPimPolicy {
                         "Could not read the live approval rule for PIM policy '$PolicyId': $($PSItem.Exception.Message) Nothing was changed: the approval stage and the approvers not supplied on this call are carried over from the live rule, and without it they would be lost.")) `
                     -ErrorId 'ApprovalRuleReadFailed' -Category ReadError -TargetObject $PolicyId `
                     -InnerException $PSItem.Exception -Cmdlet $PSCmdlet
+                return
+            }
+            # A read that answers with no rule is refused too (Sprint 11 step 11, A24): without it the
+            # rule set would be built from no live stage, and the stage settings this cmdlet has no
+            # parameter for (the approval timeout, approver justification, escalation) would be sent as
+            # New-OERPimRuleSet's defaults in place of the live ones. Before ShouldProcess and every
+            # PATCH, so -WhatIf shows it and no other bound rule is sent either.
+            if ($null -eq $LiveApprovalRule) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "Reading the live rule 'Approval_EndUser_Assignment' of PIM policy '$PolicyId' returned no rule, so " +
+                        'the approval stage settings and the approvers this call does not supply are unknown; nothing was ' +
+                        'changed. No parameter of this cmdlet supplies the stage settings (the approval timeout, approver ' +
+                        'justification, escalation), so no call that changes approval can be made without that rule.')) `
+                    -ErrorId 'PimRuleValueUnknown' -Category InvalidData -TargetObject $PolicyId -Cmdlet $PSCmdlet
                 return
             }
 
