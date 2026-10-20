@@ -7,7 +7,9 @@ function Resolve-OERInventoryScopeTree {
     Composes the management groups (Get-OERManagementGroupList for the full tree,
     Get-OERManagementGroup -Name for one branch) and Get-OERSubscription into a flat list of ARM
     scope strings (every management group id and every subscription id) plus a nested hierarchy
-    object used for the scopeHierarchy.json context file. -ManagementGroup narrows to a single branch;
+    object used for the scopeHierarchy.json context file. A management group or subscription whose
+    ResourceId is empty or only white space is not added to the scope list, so it is neither walked nor
+    counted in ScopesEnumerated; the hierarchy still lists it. -ManagementGroup narrows to a single branch;
     -Scope returns exactly that one raw scope without enumerating, when it may be walked (see below).
     Authentication (with ARM) is ensured at entry.
 
@@ -161,7 +163,9 @@ function Resolve-OERInventoryScopeTree {
         }
     }
     foreach ($Mg in $ManagementGroups) {
-        if ($Mg.ResourceId) { $Scopes.Add([string]$Mg.ResourceId) }
+        # A ResourceId of white space is truthy but names no scope (BL-157): it would be walked and counted
+        # in Export-OERInventory's "N of M Azure scopes could not be read".
+        if (-not [string]::IsNullOrWhiteSpace([string]$Mg.ResourceId)) { $Scopes.Add([string]$Mg.ResourceId) }
         $MgNodes.Add([PSCustomObject]@{
             name        = [string]$Mg.Name
             displayName = [string]$Mg.DisplayName
@@ -203,7 +207,7 @@ function Resolve-OERInventoryScopeTree {
                 })
             continue
         }
-        if ($Sub.ResourceId) { $Scopes.Add([string]$Sub.ResourceId) }
+        if (-not [string]::IsNullOrWhiteSpace([string]$Sub.ResourceId)) { $Scopes.Add([string]$Sub.ResourceId) }
         $SubNodes.Add([PSCustomObject]@{
             subscriptionId = [string]$Sub.SubscriptionId
             displayName    = [string]$Sub.DisplayName

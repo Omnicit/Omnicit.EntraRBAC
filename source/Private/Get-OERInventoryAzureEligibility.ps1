@@ -15,7 +15,9 @@ function Get-OERInventoryAzureEligibility {
     each subscription below it. A scope whose read fails is warned about, left out and listed in
     SkippedScopes -- a failed read is never presented as a scope without eligibility. The projection
     is read-only context, not an apply-document section: scope, role, principal, principalType,
-    memberType, status, startDateTime and endDateTime (null for a permanent eligibility).
+    memberType, status, startDateTime and endDateTime (null for a permanent eligibility). The role is
+    the role name, and the principal the principal's display name; each falls back to its id (the role
+    definition id, the principal id) when the name is missing, empty or only white space.
 
     RoleScopes carries one object with the Scope and RoleDefinitionId of every row read, duplicates
     included and before the deduplication above, for Export-OERInventory's role policy selection
@@ -61,8 +63,9 @@ function Get-OERInventoryAzureEligibility {
             if (-not $Seen.Add($Key)) { continue }
             $Items.Add([PSCustomObject][ordered]@{
                 scope         = [string]$Row.Scope
-                role          = $(if ($Row.RoleName) { [string]$Row.RoleName } else { [string]$Row.RoleDefinitionId })
-                principal     = $(if ($Row.PrincipalDisplayName) { [string]$Row.PrincipalDisplayName } else { [string]$Row.PrincipalId })
+                # A name of white space is not a name (BL-157): each falls back to its id on its own.
+                role          = $(if (-not [string]::IsNullOrWhiteSpace([string]$Row.RoleName)) { [string]$Row.RoleName } else { [string]$Row.RoleDefinitionId })
+                principal     = $(if (-not [string]::IsNullOrWhiteSpace([string]$Row.PrincipalDisplayName)) { [string]$Row.PrincipalDisplayName } else { [string]$Row.PrincipalId })
                 principalType = [string]$Row.PrincipalType
                 memberType    = [string]$Row.MemberType
                 status        = [string]$Row.Status
