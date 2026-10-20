@@ -31,6 +31,15 @@ Audit PR8 (#33) found this idiom was inert module-wide, across 23 tracked files 
 site was actually scrubbing. See also SECURITY rule 6 in CLAUDE.md and
 [#static-source-gates](#static-source-gates), which machine-checks the rule.
 
+### CLAUDE.md text for bearer-scrub
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **Every Graph or ARM `catch` block** must call `Remove-OERErrorRecord -Record $PSItem` as its
+  **first** statement. The raw `HttpRequestMessage` in `$Error` carries the bearer token in plain
+  text. The older `$null = $Error.Remove($PSItem)` idiom looks equivalent but is **inert** -- it
+  never removed anything. `Why: docs/development/rationale.md#bearer-scrub`
+
 ## bearer-scrub-tests
 
 A bearer-scrub regression test needs a different proof depending on how the catch block re-throws.
@@ -385,6 +394,72 @@ resource": the group resource's current-name lookup by `originId` was unmocked.
 failure": its match case had no resolver mock, so it read Graph and exercised a read failure instead
 of a match. Each now has the missing mock, and the whole unit suite then passed 5,482 tests with no
 hit.
+
+### CLAUDE.md text for bearer-scrub-tests
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** Under `docs/` and
+`specs/` a GUID is prose, so it must be a `00000000-0000-0000-0000-0000000000NN` placeholder. Under
+`source/` and `tests/` a GUID is a fixture, so the rule is that it must not have **version-4 shape**:
+every Entra ID and ARM object id is v4 and no invented fixture needs to be, which leaves the roughly
+seventy existing `1111...`/`aaaa...` fixtures untouched and still readable. Exactly three v4 values
+are pinned by name -- the module's own manifest GUID, the Microsoft Graph Command Line Tools app id,
+and the Reader built-in role definition id. **Do not add a fourth: allocate a placeholder instead**,
+from the register in `docs/live-verification/README.md`, which also records the next free
+`...NNN` and `personN`. **The gate reads that register**, so it is red on a placeholder used in
+`source/`, `tests/`, `docs/examples/` or `docs/development/` without a row marked taken, and on a
+register that disagrees with itself -- overlapping rows, a repeated slot description, a table without
+exactly one FREE row, an "Allocate from" sentence that disagrees with the FREE rows, a slot taken
+at or above a FREE start that is not a named outlier, or a placeholder cell it cannot read. Add the
+row in the same commit that uses the slot. **It also holds tenant domains** (`.onmicrosoft.com`, `.onmicrosoft.us`, `.onmschina.cn`) to a
+fixed allowlist of four labels, `contoso`, `fabrikam`, `other` and
+`oer-sovereign-verify-doesnotexist`, reading `%40` as `@` and `\.` as `.`, so a URL-encoded UPN and a
+regex-form domain are caught too. Replace a real label with `contoso`; never widen the allowlist to
+make the gate green. A credential-shaped literal that a test needs (the bearer-scrub fixtures)
+must carry `NOT-A-REAL-TOKEN` inside the VALUE; `REDACTED` works the same way.
+`Why: docs/development/rationale.md#bearer-scrub-tests`
+
+- **Every unit test file that imports the module installs the transport tripwire.** In its root
+  `BeforeAll`, directly after `Import-Module`, it dot-sources `TestHelpers/OERTransportTripwire.ps1`
+  and calls `Install-OERTransportTripwire`; it ends with a root
+  `AfterAll { try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire } }`. An
+  unmocked call that still reaches one of the six names -- `Get-AzToken`, `Connect-MgGraph`,
+  `Disconnect-MgGraph`, `Invoke-MgGraphRequest`, `Invoke-WebRequest` or `Invoke-RestMethod` (the
+  tenant lookup) -- is recorded and refused, and fails the file even when module code swallowed the
+  refusal. A test that reaches the real `Initialize-OERAuth` with a tenant named by domain mocks
+  `Resolve-OERTenantDomain` (or `Invoke-RestMethod` in module scope).
+  `tests/QA/testhygiene.tests.ps1` holds it. Never delete a transport-named function with an
+  unqualified `Remove-Item 'function:...'` unless the local stub is certain to exist -- with none
+  left, it walks up and removes the global replacement. A scope-qualified path
+  (`function:script:...`, `function:global:...`) removes nothing at all.
+  `Why: docs/development/rationale.md#bearer-scrub-tests`
+
+- **A `Mock -ModuleName` covers only calls made from inside the module.** A command the test body
+  calls itself runs for real unless it has its own test-scope `Mock`. No test may reach the real
+  profile directory: a test of a `-BasePath` default intercepts `Test-Path` in module scope instead.
+  `Why: docs/development/rationale.md#bearer-scrub-tests`
+
+- **Pin `-ErrorAction` on any call whose non-terminating error the test observes or has to survive.**
+  Module code reads the GLOBAL `$ErrorActionPreference`, which GitHub Actions, Azure Pipelines and
+  many operator profiles set to Stop, and a test-local `$ErrorActionPreference` does not pin it.
+  `Why: docs/development/rationale.md#bearer-scrub-tests`
+
+- **Never write the word "because" inside a `-Because` string.** Pester deletes EVERY occurrence of
+  `because` plus the whitespace after it from the rendered message, not just a leading one, so the
+  failure reads as scrambled prose. Use "since", or restructure the sentence. This is the same
+  family of problem as a guard-shaped-but-inert test: the assertion works, the explanation it prints
+  does not. `Why: docs/development/rationale.md#bearer-scrub-tests`
+
+- **A bearer-scrub regression test needs a different proof depending on how the catch re-throws**,
+  and the wrong proof passes with the scrub deleted. Same for `-ErrorVariable` assertions and
+  `Should -Invoke -Times N` (at-least semantics -- add `-Exactly`). **That trap applies for
+  `N >= 1` only: `-Times 0` already means EXACTLY zero**, since Pester implies `-Exactly` at zero
+  (its own help says so, and `Pester.psm1` decides with `($Exactly -or ($Times -eq 0))`; verified by
+  execution against 5.7.1 and 6.2.0). Roughly 400 bare `-Times 0` assertions in this suite are
+  therefore sound negative proofs -- do not "fix" them, and never justify adding `-Exactly` at zero
+  by calling the bare form vacuous.
+  `Why: docs/development/rationale.md#bearer-scrub-tests`
 
 ## writeerror-deposit
 
@@ -950,6 +1025,84 @@ Every gate asserts its own non-vacuity (per-root file counts, named control file
 token counts, region-content checks) so a detection bug fails loudly instead of passing over an
 empty collection.
 
+### CLAUDE.md text for static-source-gates
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**The seven QA gates** (`tests/QA/`): `module.tests.ps1` (manifest, changelog, help, README,
+per-function PSScriptAnalyzer, and a unit test file for every exported function),
+`about.tests.ps1` (the about topic is byte-identical to source, ASCII/BOM-free, and names every
+exported cmdlet and no other), `requiredscope.tests.ps1` (`Get-OERRequiredScopeMap` vs the module's
+own call graph), `sourcehygiene.tests.ps1` (the ten static source gates --
+`Why: docs/development/rationale.md#static-source-gates`), `dochygiene.tests.ps1` (keeps unredacted
+tenant object ids, tenant domains outside a fixed allowlist of four labels, non-documentation email
+addresses and credentials out of every tracked file under `docs/`, `specs/`, `source/` and
+`tests/`, enumerating tracked files with `git ls-files` and reading their content from disk; reads
+the placeholder register in `docs/live-verification/README.md`, failing on a register at odds
+with itself or a placeholder used without a row; and also checks that tracked Markdown under
+`docs/`, `specs/`, `README.md` and `CHANGELOG.md` holds no angle bracket GitHub would render as a tag),
+`docsync.tests.ps1` (binds `README.md` to the about topic, and both to the manifest's cmdlet
+count), and `testhygiene.tests.ps1` (every unit
+test file that imports the module installs, checks and uninstalls the transport tripwire; read
+statically, importing nothing).
+
+- **Eight rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1`: ASCII/BOM
+  encoding; bearer-scrub-first in every transport-reaching catch; `ConvertTo-OERDuration` as the sole
+  int-to-ISO encoder; the `suffix.ps1`/dev-mode-psm1 mirroring; `Get-OERCloudEndpoint` as the sole
+  owner of the cloud-to-endpoint table; `Test-OERDeclaredProperty`/`Test-OERDeclaredNull` as the
+  single owners of the apply engine's declared-value rule (no direct read of a node's
+  `PSObject.Properties.Name` in a `Sync-OERStructure*` handler outside the named, reasoned
+  allowlist -- flagged on the read itself, not on the `-contains`-family operator that might later
+  consume it, so an intermediate variable cannot hide the same defect); the module never calling
+  an Az cmdlet that could establish or mutate an Az PowerShell context (see **Dependencies** above);
+  and the transport gates -- `Get-MgContext` called only in `Get-OERGraphSessionFingerprint`,
+  `Lock-OERSignIn`, `Unlock-OERSignIn` and `Register-OERSignInIdentity` only in
+  `Initialize-OERAuth`, `Get-OERSignInRefusal` only in the two transport wrappers and in
+  `Initialize-OERAuth` (whose one call, before `Lock-OERSignIn`, its unit tests place -- this gate
+  checks the file only), `Get-OERSignInSupersession` only in the two transport wrappers,
+  `Get-OERSignInIdentity` only in `Register-OERSignInIdentity`, `Get-OERSignInSupersession` and
+  `Checkpoint-OERSignIn`, `Invoke-MgGraphRequest` only in the Graph wrapper,
+  `Invoke-WebRequest` only in the ARM wrapper, `Invoke-RestMethod` only in
+  `Resolve-OERTenantDomain` and `Resolve-OERTenantDomain` only in `Initialize-OERAuth`,
+  `Set-OERSessionUncertain` only in `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`,
+  `Get-OERDocumentTenantMismatch` only in `Invoke-OERStructure`, and
+  `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree`, `Invoke-OERStructure` and
+  `Get-OERInventory`, every listed owner really calling it; the tenant lookup's one `Invoke-RestMethod` call carrying only
+  `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`, with no splat; `$script:_OERSessionUncertain`
+  read and written only in `Set-OERSessionUncertain`, and in `Initialize-OERAuth` exactly three
+  `Set-OERSessionUncertain` calls -- the statement directly after the `Lock-OERSignIn` assignment and
+  the statement directly after each `Register-OERSignInIdentity`; the name `ReclaimGraphSession`
+  (a parameter, a prefix of it on an `Initialize-OERAuth` call, a variable, a member, a hashtable key
+  or any string -- and a prefix of it as a key the calling function writes into a hashtable it
+  splats into `Initialize-OERAuth`) only in `Connect-OER` and `Initialize-OERAuth`, both really
+  naming it, and no file under `source/` calling `Connect-OER`, which passes it on its own; every
+  `Register-OERSignInIdentity` call the statement directly after an `Unlock-OERSignIn` call with the
+  same `-Invocation`, as many of the one as of the other; every send a wrapper makes in the body of
+  a try that holds exactly one call path (in the Graph transport one `Invoke-MgGraphRequest` and one
+  `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`), that try preceded, in the very block that
+  holds it and in this order, by its session gate (Graph only), its latch gate and its supersession
+  gate, each a throw followed by a return, with no `Initialize-OERAuth` or `Start-Sleep` between the
+  earliest gate and any request, the ARM bearer token (`.ArmToken` or `['ArmToken']`) materialized
+  only after the last gate, and the transport statements counted exactly (three Graph, one ARM) so a
+  new send path cannot escape the scan; and every `Initialize-OERAuth` call standing directly in
+  its file's own function (in the two wrappers, in `Invoke-GraphSingle` and
+  `Invoke-ArmCallWithRefresh`) and never in a nested function or a scriptblock inside it, since the
+  sign-in latch is keyed on the frame that calls it; and every `-TenantId` an internal call passes
+  on to a command that signs in (`Initialize-OERAuth` and every module function that reaches it) --
+  a parameter whose name is a prefix of it, or a `TenantId` key the calling function writes into a
+  hashtable it splats -- a non-empty literal or a variable written under an `if` on that same
+  variable, with `Connect-OER`'s call and the three transport refreshes as named exemptions that
+  must each match exactly one site, and no positional argument written on any `Initialize-OERAuth`
+  call, after a switch included (`-Verbose` and `-Debug` among them).
+  Two further gates in the
+  same file check rules stated only in
+  `docs/development/rationale.md` (every ARM api-version is documented under `#arm-transport`) or in
+  no rule at all (every `Verb-OER...` token in `source/` resolves to a real function) -- ten
+  `Describe` blocks in total. When a new catch trips the scrub gate, add the scrub -- do not add an
+  exemption. The transport tripwire rule under these conventions is machine-checked separately, by
+  `tests/QA/testhygiene.tests.ps1`.
+  `Why: docs/development/rationale.md#static-source-gates`
+
 ## pim-beta-pin
 
 PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint. All seventeen call sites, in twelve
@@ -980,6 +1133,19 @@ change when a group is onboarded.
 `tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` guards the indirection both ways, and
 `tests/QA/requiredscope.tests.ps1` anchors these URI literals on their resource roots rather than
 on an API version because of it.
+
+### CLAUDE.md text for pim-beta-pin
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All seventeen call sites, in twelve
+source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version constant.
+`tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` names every one of those files and fails
+when a new caller is not added to its list. Never hardcode `beta/` at a call site -- change the
+constant in the helper. The eligibility paths and the four policy paths migrate as ONE unit.
+`Why: docs/development/rationale.md#pim-beta-pin` Beta endpoint availability in US Government and
+China clouds is not established -- a standing risk, not a bug -- recorded at
+`Why: docs/development/rationale.md#sovereign-clouds`.
 
 ## graph-wrapper
 
@@ -1058,6 +1224,17 @@ wrapped in an `ErrorRecord`), never on the `ErrorRecord` itself. The obvious for
 `$PSItem`, since that is the object the catch block hands you -- is the one this measurement rules
 out. Worth carrying forward past this one change: it is the shape any future "attach diagnostics to
 the error" work in this module would get wrong without re-deriving the same measurement.
+
+### CLAUDE.md text for graph-wrapper
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**All Graph calls go through `Invoke-OERGraphRequest`.** The only place that calls raw
+`Invoke-MgGraphRequest` is the wrapper itself (with `-Verbose:$false -ErrorAction Stop`). Never call
+`Invoke-MgGraphRequest` from any other function.
+
+The wrapper owns bearer-token scrubbing, ACRS claims-challenge retry, token-rejected retry, and
+structured error conversion. `Why: docs/development/rationale.md#graph-wrapper`
 
 ## arm-transport
 
@@ -1206,6 +1383,15 @@ Microsoft.ManagedServices 2 -- 45 real request-path sites in total, plus 3 more 
 inside `Invoke-OERArmRequest`'s own comment-based help (`.PARAMETER Path`/`.EXAMPLE` strings, not
 live call sites). Regenerate this table with the same grep whenever a new ARM endpoint is pinned or
 an existing api-version is bumped -- do not hand-edit the counts without re-running it.
+
+### CLAUDE.md text for arm-transport
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+`roleDefinitionId` in a role assignment body is always the FULL ARM resource id, never a bare GUID.
+Pinned api-versions, paging behaviour and retry semantics:
+`Why: docs/development/rationale.md#arm-transport`. Sovereign-cloud ARM endpoints and the spike
+evidence behind the whole design: `Why: docs/development/rationale.md#sovereign-clouds`
 
 ## management-group-parents
 
@@ -1378,6 +1564,20 @@ empty string at binding, so `-Name ''` and a piped empty `ManagementGroupName` n
 the list branch and listed every group. An empty name was never a request for the list, so the
 refusal stays. Do not add `[AllowEmptyString()]` to bring the old behaviour back: the process block
 now branches on the parameter set, not on `$Name`, so an empty name would be sent as a name.
+
+### CLAUDE.md text for management-group-parents
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**`Get-OERManagementGroupParent` is the single owner of the Entities - List call**
+(`POST /providers/Microsoft.Management/getEntities`, api-version `2020-05-01`, `$view=GroupsOnly`,
+`-All`), which `Get-OERManagementGroup` sends at most once per list to fill the parent of every
+listed group, since the Management Groups - List answer carries none. The inventory walk
+(`Resolve-OERInventoryScopeTree`) lists management groups through `Get-OERManagementGroupList`,
+converts them itself and never calls `Get-OERManagementGroup` without `-Name`, so the parent read
+can never add a failure mode to an export. `Get-OERManagementGroupList` is NOT the single owner of
+the list call -- `Resolve-OERScope` still sends its own -- so never describe it as one.
+`Why: docs/development/rationale.md#management-group-parents`
 
 ## lighthouse-delegations
 
@@ -2333,6 +2533,41 @@ commit's.
 | V4, V5, V5b | the same for the export, `Export-OERInventory.ps1:660`, `:657`, `:661` | each removed | 5, 4 and 2 red |
 | O1, O2 | no parameter moved, `Get-OERInventory.ps1:491`, `Export-OERInventory.ps1:657` | `-Role` above `-ManagementGroup`; `-Scope` above `-ManagementGroup` | 7 and 1 red |
 
+### CLAUDE.md text for home-tenant-subscriptions
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Get-OERSubscriptionHomeTenant` is the single owner of whether a subscription's home tenant is
+  the session's tenant (A19, BL-150)** -- ARM's subscription `tenantId` (Subscriptions - Get or List,
+  api-version `2022-12-01`) against `Get-OERInventoryTenantId`, compared without regard to letter
+  case and only when both are canonical GUIDs. It is called only by `Resolve-OERInventoryScopeTree`,
+  `Invoke-OERStructure` and `Get-OERInventory` (gate 10), never by another public cmdlet: the role
+  assignment and policy cmdlets use the scope they are given. `Get-OERInventory` (A20, BL-152) checks
+  each of `-Scope` and `-Subscription` (as `sub:<value>`) that is given, ONCE per invocation, before
+  the first read of RoleAssignments or RoleManagementPolicies; `-ManagementGroup` is never checked.
+  That check reads through the ARM transport, so its `begin` asks for the ARM token in its one
+  `Initialize-OERAuth` call, exactly as `-IncludeARM` does, whenever RoleAssignments, or
+  RoleManagementPolicies with exactly one of `-Role`, `-CommonRoles` and `-AllRolesAtScope`
+  (the rule that section reads by, from the one `$RoleSources` list), is included with a `-Scope` or
+  `-Subscription` that is not blank (R-9); a `-ManagementGroup` alone keeps the readers'
+  acquisition on first use, and a call with neither section asks for none. A
+  foreign subscription is read for nothing -- each included section empty, the owner's
+  `SubscriptionTenantMismatch` record written once (the first foreign verdict's), after the inventory,
+  and not unread; an undecided
+  one is read for nothing too, each included section named unread by its own name through
+  `InventoryPartial`. Inside an export the answers are shared through the run context's
+  `SubscriptionTenant`, which the tree fills (`-Cache`, the listed facts included), so the check sends
+  no extra request. `Export-OERInventory`'s walk enters
+  only a subscription of the session's tenant, names one of another tenant with one warning and in
+  its README, and names one it cannot decide in `IncompleteReads` (partial). The engine checks once
+  per subscription and document, before the first read or write of a `roleAssignments` or
+  `roleManagementPolicies` scope there, and refuses the entry `Failed` with `SubscriptionTenantMismatch`
+  -- or with the read's or the resolver's own record when that failed -- reading no role assignment or
+  policy there, writing nothing and never pruning there. Never decide a subscription's tenant anywhere else.
+  `Why: docs/development/rationale.md#home-tenant-subscriptions`
+
+---
+
 ## sovereign-clouds
 
 Sovereign-cloud support (GCC High / DoD / China; issue #81) added `Get-OERCloudEndpoint`, an
@@ -2434,6 +2669,34 @@ Two standing risks, recorded rather than resolved:
   this whole feature carries an unpaid live-verification debt until an operator with access to a
   sovereign tenant runs it by hand.
 
+### CLAUDE.md text for sovereign-clouds
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+Common optional: `-IncludeARM` (acquire ARM token and connect to Azure); `-Environment` (the
+sovereign cloud -- `Global` (default), `USGov`, `USGovDoD` or `China`). The cloud joins tenant and
+auth identity in the `$script:_OERAuthState` cache key, so naming a different cloud always
+re-authenticates rather than reusing a token minted at the previous cloud's authority. **Microsoft
+365 GCC runs on the commercial (`Global`) endpoints and needs no `-Environment` at all** -- only GCC
+High (`USGov`), DoD (`USGovDoD`) and a 21Vianet tenant (`China`) are separate cloud boundaries.
+`Disconnect-OER` clears `$script:_OERAuthState` and calls `Disconnect-MgGraph` only when
+`Get-OERGraphSessionState` reports `Own` (A4, BL-67): a session the module did not connect, or has no
+record of connecting, is left, with a warning written before its `ShouldProcess`. It deliberately
+does NOT call `Disconnect-AzAccount`: the module establishes no Az context, so any Az session on the
+machine is the operator's own (Philip's decision, 2026-09-21).
+`Why: docs/development/rationale.md#sovereign-clouds`
+
+- **`Get-OERCloudEndpoint` is the single owner of the cloud-to-endpoint table.** Every Graph
+  resource/audience, Graph service root, ARM resource/host and authority (STS) host for a sovereign
+  cloud is read from it; never hardcode one of those hosts a second time. `source/Private/Invoke-OERArmRequest.ps1`
+  keeps one documented public-cloud fallback for the no-auth-state case, exempted by name rather than
+  deleted. `tests/QA/sourcehygiene.tests.ps1` machine-checks this the same way it checks the other
+  single-owner rules above. `Why: docs/development/rationale.md#sovereign-clouds`
+
+`Connect-MgGraph -Environment` is passed only when the session's cloud is not `Global`, so the
+public-cloud path stays byte-identical to what it has always been; the environment name comes from
+`Get-OERCloudEndpoint`, never a literal. `Why: docs/development/rationale.md#sovereign-clouds`
+
 ## odata-escaping
 
 `ConvertTo-OERODataFilterValue` is the single owner of OData filter-value escaping: double the
@@ -2458,6 +2721,18 @@ style**. `Export-OERInventory -GroupFilter` (Sprint 10 step 8) reaches `Get-OERG
 encoded there, once. The parentheses around the operator's text are no guard, since the text can
 close them; the guard is the post-read `securityEnabled` check
 ([#export-group-selection](#export-group-selection), R5).
+
+### CLAUDE.md text for odata-escaping
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`ConvertTo-OERODataFilterValue` is the single owner of OData filter-value escaping.** Any Graph
+  display-name lookup interpolating a caller-supplied value into a `$filter=... eq '...'` URL must
+  escape through it. Four deliberate exceptions exist; a new unescaped site is a bug, not the house
+  style. An operator's whole OData expression (`-Filter`, `-GroupFilter`) is never escaped through
+  it; `Export-OERInventory -GroupFilter`, ANDed as `securityEnabled eq true and (...)`, is guarded by
+  the post-read check that keeps only groups the read shows `securityEnabled` true, never by the
+  parentheses. `Why: docs/development/rationale.md#odata-escaping`
 
 ## reviewer-scope-query
 
@@ -2663,6 +2938,24 @@ module keeps sending the start date's day on a write that builds the pattern, an
 update that carries the live recurrence forward sends the 0 Graph returned, which the measurement
 shows Graph accepts.
 
+### CLAUDE.md text for access-review-cadence
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Get-OERAccessReviewCadence` is the single owner of the access review cadence table** (Sprint 11
+  step 11, BL-117 third point): each cadence's Graph pattern type and interval (`Weekly` weekly 1;
+  `Monthly`, `Quarterly`, `SemiAnnually`, `Annually` absoluteMonthly 1, 3, 6, 12; `OneTime` no
+  pattern), a live pattern read back as a cadence, and whether that pattern is one the module can write
+  back (`Representable`). `New-OERAccessReviewRecurrence`, `Resolve-OERAccessReviewChange` and
+  `Get-OERInventory` ask it; never spell the interval numbers or an interval `switch` anywhere else. The
+  scan in `tests/Unit/Private/Get-OERAccessReviewCadence.Tests.ps1` fails an array of exactly 1, 3, 6
+  and 12, a `switch` clause between those integers and the cadence names in either direction, and a
+  `switch` clause on the pattern type, in any file under `source/` but the owner's; it does NOT see a
+  hashtable mapping, an `if` chain, an `-eq` comparison or a table split across variables, and
+  `OER_COHORT_SOURCE_ROOT` points it at a mutated copy (never set in CI). The cadence NAMES stay with
+  `Resolve-OERStructureEnumCasing` and the vocabulary cohort.
+  `Why: docs/development/rationale.md#access-review-cadence`
+
 ## declared-property
 
 `Test-OERDeclaredProperty`/`Test-OERDeclaredNull` are the single owners of the apply engine's
@@ -2762,6 +3055,21 @@ registered as an `AliasProperty` of it in `suffix.ps1` rather than a second stor
 one-stored-value-plus-alias rule two paragraphs up, applied to this same shape. Never add an `Id`
 alias to any of these five converters.
 
+### CLAUDE.md text for property-naming
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **Property naming:** an identifier is `<Noun>Id`, a display name is `<Noun>DisplayName`. A bare
+  noun must never hold a display name. Keep a historical spelling as an `AliasProperty`
+  (`Update-TypeData -Force` in `suffix.ps1`) rather than storing the value twice. An ARM-scoped
+  object (`Resource`, `ResourceGroup`, `Subscription`, `ManagementGroup`, `RoleDefinition`) exposes
+  the ARM path as `ResourceId`, never a bare `Id` -- `Id` is already claimed elsewhere by
+  `-PolicyId`/`-RoleEligibilityScheduleId`, and a bare `Id` on one of these five would mis-bind
+  those parameters from the pipeline. `RoleDefinition` stores the path as `RoleDefinitionId` and
+  exposes `ResourceId` as an `AliasProperty` of it; the other four store `ResourceId` directly --
+  either way, no ARM-scoped shape stores the path twice.
+  `Why: docs/development/rationale.md#property-naming`
+
 ## alias-declaration-order
 
 The rule above governs the PROPERTY names a converter emits. This one governs the `[Alias()]` list
@@ -2784,6 +3092,19 @@ an exact-count assertion fails loudly if one is added with the wrong order or si
 Note the asymmetry with `#property-naming`: the converter is told to store the SPECIFIC name and
 alias the generic one, and the parameter is told to declare the SPECIFIC alias first. Both rules
 point the same way -- the generic `Id` is always the fallback, never the thing that wins.
+
+### CLAUDE.md text for alias-declaration-order
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **Alias declaration order:** in a parameter's `[Alias()]` list, the specific `<Noun>Id` form comes
+  before the generic `Id`. `ValueFromPipelineByPropertyName` resolves the parameter NAME first, then
+  the aliases in DECLARATION ORDER, first match wins -- so an `Id`-first list on a `-Group` or
+  `-AdministrativeUnit` parameter binds a piped MEMBER's own id where the parent object's id was
+  meant, and on a `Remove-*` cmdlet that deletes the wrong tenant object. Two AST cohort suites
+  machine-check this: `Unit/Public/GroupAliasOrder.Cohort.Tests.ps1` and
+  `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1`.
+  `Why: docs/development/rationale.md#alias-declaration-order`
 
 ## scope-pipeline-binding
 
@@ -2814,6 +3135,23 @@ of `Resource`/`ResourceGroup`/`Subscription`/`ManagementGroup` even carries a ra
 bind from, and if one did, that value would be the object's OWN ARM path -- not a scope a caller
 composed from friendly parts, which is the job the friendly properties already do correctly.
 
+### CLAUDE.md text for scope-pipeline-binding
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`-Scope` binds from the pipeline only where the piped OBJECT is assignment-shaped, never where
+  it is scope-DEFINING** -- this is a split by object shape, not a blanket rule per cmdlet.
+  Assignment-shaped objects (`RoleAssignment` and its PIM siblings) carry `Scope` and feed the four
+  cmdlets that actually bind it: `Enable-`/`Disable-OEREligibleRoleAssignment` and
+  `Remove-OERActiveRoleAssignment`/`Remove-OEREligibleRoleAssignment`. `Set-OERRoleAssignment` and
+  `Remove-OERRoleAssignment` have NO `-Scope` parameter at all -- they act on `-Id` alone, which
+  already embeds the scope; do not add one. Scope-DEFINING objects (`Resource`, `ResourceGroup`,
+  `Subscription`, `ManagementGroup`, `RoleDefinition`) carry only friendly properties and never
+  `Scope` or a bare `Id`, and feed the create/read cmdlets (`New-`/`Get-`) by those friendly
+  properties (`Subscription`, `ResourceGroup`, `ManagementGroup`, `ResourceType`, `ResourceName`)
+  instead.
+  `Why: docs/development/rationale.md#scope-pipeline-binding`
+
 ## guid-predicate
 
 `Test-OERGuid` is the single GUID predicate. Never re-implement the canonical
@@ -2840,6 +3178,18 @@ in `Sync-OERStructureAdministrativeUnit` and the unit placement check (Rule 12) 
 restricted-unit check (Rule 16) reads a group's `administrativeUnit` with the same cast, and decides
 through the one local helper Rule 12 calls (`Test-UnitNamedByReference`), so the two rules name the
 same unit ([#restricted-unit-pim](#restricted-unit-pim)).
+
+### CLAUDE.md text for guid-predicate
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Test-OERGuid` is the single GUID predicate.** Never re-implement the canonical GUID regex
+  inline. The wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup` is a deliberate
+  exception -- do not migrate those two -- and so are the places that read a group's
+  `administrativeUnit` the way `New-OERGroup` does: the created-membership match in
+  `Sync-OERStructureAdministrativeUnit`, and in `Test-OERStructureSchema` the unit placement check
+  (Rule 12) and the restricted-unit check (Rule 16), which share one local helper.
+  `Why: docs/development/rationale.md#guid-predicate`
 
 ## mfa-authcontext-exclusion
 
@@ -3083,6 +3433,32 @@ lacks, and `Set-OERResourceGroup` sends an empty location when Azure Resource Ma
 empty body. Cost if R-14 is wrong: a direct caller whose live read fails is refused instead of warned,
 which is the safe direction.
 
+#### CLAUDE.md text for a-set-cmdlets-own-read-decides-a-written-value
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **A public `Set-OER*` cmdlet's own read that decides a written value refuses the call when it fails
+  or answers without the value** (Sprint 11 step 11, A24): never fall back to a parameter default, a
+  declared-only write or a warning in its place. In `Set-OERGroupPimPolicy` the two duration reads and
+  the two reconcile reads of the MFA / authentication context pair publish a thrown read as itself,
+  the approval rule read refuses a thrown read as `ApprovalRuleReadFailed`, and all five refuse a read
+  that answers without the value with `PimRuleValueUnknown`, before `ShouldProcess` and every PATCH --
+  for the approval rule only a read that returns NO rule: a rule with no stage still takes
+  `New-OERPimRuleSet`'s defaults, the documented "no stage yet" case. Two reads only warn, by design,
+  since neither decides a written value: the put-back read of the pair's first half, whose failure only
+  loses the put-back (it warns before any PATCH and writes no default), and the authentication context
+  validation read, whose failure skips the validation. The apply engine reaches the pair reads when its
+  diff binds one half, and its row is then `Failed`. It never reaches the duration reads: its diff
+  binds both halves of an expiration pair, and when the half the document leaves out has no live value
+  (the read gave none, or its `maximumDuration` is not a positive whole number of days) and the
+  declared half does not already match, `Resolve-OERGroupPimPolicyChange` names the pair in
+  `UnknownLiveValues`, binds neither half, and `Sync-OERStructureGroup` refuses that access type with
+  `PimRuleValueUnknown` before `ShouldProcess` -- never a default in its place.
+  Known and NOT fixed, outside this cmdlet (unmeasured findings of the step's audit): a successful read
+  that lacks a key makes `Set-OERAccessPackageAssignmentPolicy` write the body builder's default, and
+  an empty Azure Resource Manager body makes `Set-OERResourceGroup` send an empty location.
+  `Why: docs/development/rationale.md#a-set-cmdlets-own-read-decides-a-written-value`
+
 ### A split confirmation answer warns in the direction that happened
 
 Sprint 11 step 11, BL-97 F2. `Set-OERGroupPimPolicy` confirms each rule on its own, so a `-Confirm`
@@ -3124,6 +3500,24 @@ raw, a second rule PATCHed to the id listed before answered 200 and is on the po
 and the old id reads the same; through the cmdlet, one call with two rules on such a group returned
 `Applied` true and both rules are on the listed policy, which `Get-OERGroupPimPolicy` reads. So the
 cmdlet's single policy id lookup is enough: no defect, and no code changed.
+
+### CLAUDE.md text for mfa-authcontext-exclusion
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Resolve-OERPimActivationConflict` is the single owner of the MFA / authentication-context
+  mutual-exclusion rule.** An enabled authentication context and `MultiFactorAuthentication` on
+  activation cannot both be in force. All call sites -- the Graph group write path, the apply
+  diff, and the shared rule-patch builder (`Resolve-OERPolicyRulePatch`) -- take the DECISION from
+  this helper and apply it in their own idiom. Never re-implement the check inline. The rule-patch
+  builder is shared by two callers that pass a different `-ResolveUnrequestedConflict`: the Azure
+  (ARM) policy path passes `$true` because ARM PATCHes the full rule set, so every apply run
+  re-validates a combination even when this call did not touch either side of it; the directory-role
+  (Graph) path passes `$false` because it patches one rule at a time and leaves an untouched
+  combination alone. `Get-OERPimRulePatchOrder` is the single owner of the authentication-context
+  PATCH order this conflict resolution requires, called by both `Set-OERGroupPimPolicy` and
+  `Set-OERDirectoryRoleManagementPolicy`.
+  `Why: docs/development/rationale.md#mfa-authcontext-exclusion`
 
 ## pim-rule-pair-put-back
 
@@ -3222,6 +3616,29 @@ in `tests/Unit/Private/Send-OERPimRulePatch.Tests.ps1` (the helper, both directi
 `-WarningAction Stop` inside a `try` and in a script with no `try`). The decision rests on the
 asymmetry recorded in the section above, which was measured live; the put-back itself was not.
 
+### CLAUDE.md text for pim-rule-pair-put-back
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
+  per rule.** That covers the pair put-back -- when Graph accepts the first rule of the MFA /
+  authentication-context pair and rejects the second, the first is PATCHed straight back to its live
+  version -- and the rule that no warning is written between the first PATCH and the last put-back:
+  the helper returns its messages and the caller writes them after it returns, since a
+  `-WarningAction Stop` caller is otherwise stopped before the put-back. It is called by
+  `Set-OERGroupPimPolicy` and `Set-OERDirectoryRoleManagementPolicy`, which confirm first and order
+  the rules with `Get-OERPimRulePatchOrder`. Never PATCH a rule from either cmdlet directly, and
+  never write a warning inside the helper. Held by the AST check in
+  `tests/Unit/Private/Send-OERPimRulePatch.Tests.ps1` and, for the caller-side half (the messages
+  written only after the last request), by the `-WarningAction Stop` tests in
+  `tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1` and
+  `tests/Unit/Public/Set-OERDirectoryRoleManagementPolicy.Tests.ps1`, in a `try` and in a script with
+  no `try`; `tests/QA/requiredscope.tests.ps1` counts a call to it as a Graph write by the caller, since
+  the helper carries no path literal of its own. `Set-OERGroupPimPolicy`'s warning for a split
+  `-Confirm` answer to the pair (BL-97 F2) is written after the helper returns and after its messages,
+  by the same rule.
+  `Why: docs/development/rationale.md#pim-rule-pair-put-back`
+
 ## completers
 
 Tab-completion is scriptblock-based, not `IArgumentCompleter` classes -- which is why there is no
@@ -3239,6 +3656,19 @@ list and the live `Get-OERDirectoryRoleNameMap` is not used for completion.
 Rule 6 (end-to-end `TabExpansion2` test) exists because a helper that works but is registered on the
 wrong command name is the failure mode that actually happens -- a unit test of the helper alone
 cannot see it. Audit PR3 (#27) learned that completers cannot be verified by mocked tests at all.
+
+### CLAUDE.md text for completers
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+1. **Never attach a `ValidateSet`.** Completion is purely additive -- free text, GUIDs and custom
+   role names must keep binding. A curated list is a hint, not a constraint.
+
+4. **Register in `suffix.ps1` AND mirror it in the dev-mode psm1.** Drift means completion works from
+   the built module but not from source, or vice versa.
+
+5. **Quote values containing whitespace** in `CompletionText` so the inserted argument is valid as
+   typed, while `ListItemText` and the tooltip keep the raw value.
 
 ## auth-state
 
@@ -3865,6 +4295,32 @@ rules and the call's parameters.
    device code on the ARM call is MEASURED live as well: on 2026-09-16 checklists 3.1, 3.3a and
    6.1a each ran `Connect-OER -DeviceCode -IncludeARM`, printed two device code instructions
    (`InformationRecords` 2) and ended `SUCCEEDED` -- consistent with what this spike measured.
+
+#### CLAUDE.md text for switching-tenants-in-one-process
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**A tenant named by domain is looked up before any token request, and checked like a GUID
+(BL-12).** `Initialize-OERAuth` resolves every requested tenant that is neither a GUID nor
+`organizations` through `Resolve-OERTenantDomain` -- after the cached return and the credential
+checks, before the AzAuth trackers move and before any token call -- and both `TenantMismatch`
+checks, Graph and ARM, compare the granted tenant with the tenant ID it returns (a granted tenant
+that is not a GUID is not compared, the limit below). A failed lookup
+refuses the sign-in with `TenantResolutionFailed` (raised after the lookup's `try`, never inside its
+`catch`), and no token is requested; `common` names no tenant and is refused the same way. The token
+request still names the tenant as given. `organizations` is never looked up or compared. Never call
+`Resolve-OERTenantDomain` outside `Initialize-OERAuth`, never move the lookup above the cached return
+or the credential checks, and never exempt another non-GUID value the way `organizations` is.
+`Why: docs/development/rationale.md#switching-tenants-in-one-process`
+
+- **`Resolve-OERTenantDomain` is the single owner of the module's one network call outside the
+  Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
+  discovery lookup of a tenant named by domain at the cloud's Microsoft Entra ID authority, the host
+  read from `Get-OERCloudEndpoint` -- and the only caller of `Invoke-RestMethod`.
+  The call carries `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction` and nothing else: never a
+  header, a credential or a splat, never a second sender. It caches a tenant ID per cloud and
+  lower-cased domain for the process and never caches a failure.
+  `Why: docs/development/rationale.md#switching-tenants-in-one-process`
 
 ### A client secret reaches AzAuth as a string
 
@@ -4541,6 +4997,28 @@ naming `Invoke-OERStructure`. The latch's own states are pinned in
 which holds the BL-74 Context `refused under a latched outer command (BL-74)`), and each wrapper's
 gate in its own test file (Describes `Invoke-OERGraphRequest sign-in latch gate (A19)` and
 `Invoke-OERArmRequest sign-in latch gate (A19)`).
+
+#### CLAUDE.md text for a-command-whose-sign-in-is-refused-sends-nothing
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**`Export-OERInventory` stops on a refused sign-in and writes nothing -- the one public cmdlet that
+does (Sprint 11 step 10, BL-101).** It writes files, and used to carry on past the refusal into a
+bundle folder of empty files that reads like the export of a tenant that holds nothing. Its `begin`
+calls `Initialize-OERAuth` directly in a `try` (neither a script block nor a nested function, so the
+latch stays keyed on its own frame, and gate 10 allows it) with `-ErrorVariable SignInErrors`. A
+terminating refusal is caught, scrubbed first and raised again with `$PSCmdlet.ThrowTerminatingError`:
+the sign-in's own record and ErrorId, so a caller's `try` still catches it and, outside one, only
+that statement ends -- never `WriteError`, which changed what a caller sees. The one refusal written
+without terminating, `ArmTokenAcquisitionFailed`, is found in `SignInErrors` by the first comma
+segment of its `FullyQualifiedErrorId`, compared whole and ordinally and never searched for; the export
+marks itself refused and raises nothing for it, since the record already reached the error stream (a
+caller's `try` catches it only under a Stop error preference). Under `-ErrorAction Ignore` or
+`$ErrorActionPreference = 'Ignore'`, which add a record to no `-ErrorVariable`, the call is pinned to
+`SilentlyContinue`, and under no other preference. A refused export asks for no tenant ID, reads
+nothing, writes no folder and returns no object, under every error preference. For every other
+command the sentence above still holds. `Get-OERInventory` keeps its behaviour.
+`Why: docs/development/rationale.md#a-command-whose-sign-in-is-refused-sends-nothing`
 
 ### A command sends nothing under a sign-in a later command replaced
 
@@ -5397,6 +5875,31 @@ with a `[guid]` cast each turns its tests red, the last only the braced and dash
 And gate 10: the row with its owner list emptied left the gate green until the row got its own
 `It`, which then turns red, as it does for a call added to another file.
 
+#### CLAUDE.md text for a-document-names-the-tenant-it-was-exported-from
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Get-OERDocumentTenantMismatch` is the single owner of the comparison of a structure document's
+  `tenantId`** with the tenant `Invoke-OERStructure` acts in, and of the `DocumentTenantMismatch` id
+  and message (BL-88, A14); `Get-OERInventoryTenantId` is the single owner of which tenant an export's
+  `inventory.json` names -- the Graph token's granted tenant (`TokenTenantId`) when it is a GUID, never
+  the tenant as named, and otherwise no key at all, with no warning. `Get-OERInventory` and `Export-OERInventory`
+  call it in `begin`, directly after their own sign-in (the export not at all when that sign-in was
+  refused). It is also the second term of the bundle folder's label (BL-101, R-9): the export names
+  the folder, and the summary's `TenantId`, after the tenant the session names unless that is blank
+  or `organizations` (letter case ignored), else after that granted tenant ID, else after
+  `-TenantId` as given, else `tenant`. `Invoke-OERStructure` calls the comparison
+  twice per document: before the sign-in whenever `-TenantId` is bound -- where the owner compares
+  only a canonical GUID and leaves any other name (a domain, `organizations`) to the second call;
+  keep that GUID test in the owner, never in the caller -- and after the sign-in against
+  `TokenTenantId` (and `ArmTokenTenantId` when ARM is used), directly after the snapshot is taken
+  again and before anything is read or written for the document. A present `tenantId` that is
+  not a canonical GUID, `null` included, fails validation; a document without the key is applied
+  exactly as before. Never sign in WITH the document's tenant (A6), never compare it inline, and
+  never read a missing or non-GUID token tenant as a match. Gate 10 holds the comparison to
+  `Invoke-OERStructure`, in a row with an `It` of its own; nothing machine-checks who calls
+  `Get-OERInventoryTenantId`. `Why: docs/development/rationale.md#a-document-names-the-tenant-it-was-exported-from`
+
 ### A refused sign-in leaves the session uncertain
 
 **The finding (BL-89).** A sign-in that fails or is refused usually leaves the module's session as it
@@ -5760,6 +6263,54 @@ attribute test for it red; the cohort's run-time row for it stays green, since t
 equivalent, run in `New-OERConfiguration` only: `Trim()` for `IsNullOrWhiteSpace`, which trims every
 Unicode white space as the .NET method does.
 
+#### CLAUDE.md text for a-refused-sign-in-leaves-the-session-uncertain
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**A refused sign-in leaves the session uncertain (A10, BL-89).** A sign-in that fails or is refused
+leaves the previous tenant's session in place, and outside any `try` the script carries on: the next
+command, naming no tenant, used to act on the previous tenant -- in a loop of
+`Connect-OER -TenantAlias X` and `Invoke-OERStructure -Prune`, X's document applied to the tenant
+before it. So `Initialize-OERAuth` sets the marker directly after `Lock-OERSignIn`, and refuses with
+`SignInRefused` (`New-OERSignInRefusedError -SessionUncertain`), after the `GraphSessionChanged`
+refusal and before the cached return and every token call, a call that names no tenant -- no
+`-TenantId`, or `-TenantId organizations` -- while the marker it found was set, unless the call is
+`Connect-OER`'s (`-ReclaimGraphSession`). The caller stays latched, so it sends nothing. At each
+success end, directly after `Register-OERSignInIdentity`, it clears the marker when the call named
+its tenant and is not a transport's own refresh (`-ForceRefresh` or `-ClaimsChallenge`), or is
+`Connect-OER`'s, and otherwise puts back the value it found. `Connect-OER` sets the marker first
+thing in `process`, so its own refusals before any sign-in count; `Disconnect-OER` clears it inside
+its `ShouldProcess`.
+`Set-OERSessionUncertain` is the single owner of `$script:_OERSessionUncertain`: never read or write
+the variable anywhere else, never call the helper outside `Initialize-OERAuth`, `Connect-OER` and
+`Disconnect-OER`, never let a transport's refresh clear the marker, and never count `organizations`
+as naming a tenant. A command that names its tenant is never refused by the marker; a parameter
+binding error of `Connect-OER` never reaches it (known limit). `Connect-OER` sends every BOUND
+`-TenantAlias` to its alias check, so an empty, whitespace or `$null` alias is refused with
+`InvalidTenantAlias` and leaves the marker set, and every BOUND `-TenantId` that is empty, whitespace
+or `$null` is refused the same way, in `process` after the marker is set, with `InvalidTenantId`
+(A12, BL-94); never test either for truthiness there, and never give either
+`[ValidateNotNullOrEmpty()]`, whose binding error marks nothing. Every OTHER public cmdlet that
+declares `-TenantId` carries `[ValidateNotNullOrEmpty()]` on it, so an empty value stops that
+command at parameter binding and it sends nothing, instead of acting on the current session's tenant
+as no tenant named. `tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds both halves, with
+`Connect-OER` the one named exception; a new public `-TenantId` takes the attribute.
+`New-OERConfiguration` and `Set-OERConfiguration`, whose `-TenantId` is stored rather than signed in
+to, also refuse a value of white space only at binding, with a `[ValidateScript()]` declared above
+that attribute (BL-96); a stored blank `TenantId` is still read as it is, and an update that names
+no `-TenantId` keeps it. The `(BL-96)` Contexts of
+`tests/Unit/Public/New-OERConfiguration.Tests.ps1` and `Set-OERConfiguration.Tests.ps1` hold it. An
+internal call passes `-TenantId` on only when it is set (`if ($TenantId) { ... }`), never an empty
+value -- except `Connect-OER`'s own call of `Initialize-OERAuth`, which passes `''` when neither
+`-TenantId` nor `-TenantAlias` is bound, and which `Initialize-OERAuth` reads as no tenant named.
+Gate 10 of `tests/QA/sourcehygiene.tests.ps1` holds it (BL-96) for a `-TenantId` parameter, or a
+`TenantId` key the calling function writes into a hashtable it splats, on a call of a command that
+signs in, with `Connect-OER`'s call and the two transports' refreshes as its named exemptions, and
+refuses any positional argument written on a call of `Initialize-OERAuth`, whose `-TenantId` binds
+by position 0 -- after a switch too, `-Verbose` and `-Debug` (`-vb`, `-db`) among them; what it
+cannot see is listed in `docs/development/rationale.md#static-source-gates`.
+`Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
+
 ### Every device code sign-in is forced
 
 **The decision (A17, BL-112).** Philip decided on 2026-10-09 (P-9) that every device code
@@ -5979,6 +6530,173 @@ none of its parts -- a renewal before each request, a private renewal switch on
 exists in the module. A delegated renewal that asks nothing of the operator needs a new design
 (BL-115), for example a change in AzAuth itself (PalmEmanuel/AzAuth issue 233). Nothing is promised.
 
+### CLAUDE.md text for auth-state
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+Every public cmdlet that calls Graph or Azure invokes `Initialize-OERAuth` at the start of its
+`begin`/`process` block, passing `-IncludeARM` when it needs ARM. `Connect-OER` is an optional
+pre-auth shortcut -- all cmdlets authenticate automatically on first use. Auth uses AzAuth's
+`Get-AzToken` for every credential type; state is cached in `$script:_OERAuthState`, keyed on tenant,
+auth identity, **and cloud**. The state also carries `SignedInObjectId`, the signed-in identity's
+object id read from the Graph token's `oid` claim -- never the token itself.
+`Why: docs/development/rationale.md#auth-state`
+
+**The state also carries `GraphSessionFingerprint`**, which records the Microsoft Graph PowerShell
+SDK session the module's own `Connect-MgGraph` left in the process -- never a token, never the
+context object, and never written to any stream. `Get-OERGraphSessionFingerprint` is the single
+owner of the fingerprint and `Get-OERGraphSessionState` of the comparison. Every
+`Initialize-OERAuth` entry that gets past its BL-74 check (below) checks it, the cached return
+included, and so does `Invoke-OERGraphRequest` before every Graph call; a session another
+`Connect-MgGraph` started is refused with `GraphSessionChanged`. Only `Connect-OER` passes
+`-ReclaimGraphSession`, which takes the session back. Never add a second reclaim caller, and never
+make the module switch the session back by itself: either one moves the other session's Graph calls
+to this module's tenant. Since A10 the switch also gets past the session-uncertain refusal and clears
+that marker without a tenant, so gate 10 of `tests/QA/sourcehygiene.tests.ps1` holds the NAME
+`ReclaimGraphSession` to `Connect-OER.ps1` and `Initialize-OERAuth.ps1`.
+`Why: docs/development/rationale.md#auth-state`
+
+**A command whose sign-in is refused sends nothing -- no Graph and no ARM request.** A terminating
+error from `Initialize-OERAuth` ends only `Initialize-OERAuth`: outside any `try` the cmdlet that
+called it carries on, and used to send its calls under the session an earlier sign-in left -- for
+`Invoke-OERStructure -TenantId B -Prune`, B's document applied to A. So `Initialize-OERAuth` latches
+its calling command (`Lock-OERSignIn`) directly after its BL-74 check below and releases it only on
+success (`Unlock-OERSignIn`: the cached return, or a new connection that went the whole way); both
+are called only there. Every refusal, terminating error and early return leaves the command
+latched, `ArmTokenAcquisitionFailed` included, so that command's Graph calls are refused too
+although its Graph half connected -- except the BL-74 refusal, which comes before `Lock-OERSignIn`
+and latches nothing of its own: the latched outer command it found covers the caller. Both
+transports ask `Get-OERSignInRefusal` before every request and refuse it while any frame on the
+call stack is latched, with `SignInRefused` (`New-OERSignInRefusedError` owns the id and the
+message) -- the Graph wrapper after its session gate, so a changed session still reads
+`GraphSessionChanged`, and after a `GraphSessionChanged` refusal at the cmdlet's entry its ARM calls
+read `SignInRefused`. The latch is keyed weakly on the calling command's INVOCATION, never a module
+boolean: a pipeline neighbour's successful sign-in releases only its own entry. A refused command's
+nested sign-ins are refused before they are made (BL-74): a refused command carries on and calls
+cmdlets that sign in again, and near the cached token's expiry one of them reached `Get-AzToken` --
+a browser or device code prompt -- for a command that sends nothing. So before `Lock-OERSignIn`,
+`Initialize-OERAuth` asks `Get-OERSignInRefusal -OutsideCaller` and, when a command OUTSIDE its
+caller is latched -- the caller is a cmdlet that command calls, or signs in inside that command's
+output -- raises a terminating `SignInRefused` naming that command, with no token call, no
+`Connect-MgGraph` and no latch of its own. The caller's own latched frame does not count, so a
+command whose sign-in was refused earlier in the same invocation -- `Invoke-OERStructure` for its
+next piped document -- may sign in again. Only `Initialize-OERAuth` passes `-OutsideCaller`; never
+make that check walk the whole stack. A finished command is on no call stack, so the next command,
+or `Connect-OER`, sends again. An ARM call of a command whose entry was not refused still goes out
+with the module's own token: ARM has no session gate. Never write that the cmdlet stops -- it
+carries on and sends nothing -- except for `Export-OERInventory`, the one named exception (below),
+and never call `Lock-OERSignIn` or `Unlock-OERSignIn` outside
+`Initialize-OERAuth`. Call `Initialize-OERAuth` directly in the command's own block, never from a
+nested function, `& { }` or any other scriptblock: the latch is keyed on the frame that calls it,
+and such a frame ends at once (the transports' own refreshes, in `Invoke-GraphSingle` and
+`Invoke-ArmCallWithRefresh`, are the one exception).
+`Why: docs/development/rationale.md#auth-state`
+
+**A command sends nothing under a sign-in a later command replaced.** In a pipeline every `begin`
+block runs first, so an upstream command's `process` block would act under the session a downstream
+command's sign-in switched to: `New-OERGroup -TenantId A ... | Add-OERGroupMember -TenantId B`
+created the group in B. Both sign-ins succeed, so neither the latch nor the session gate sees it. So
+where `Initialize-OERAuth` succeeds -- exactly where `Unlock-OERSignIn` releases the latch --
+`Register-OERSignInIdentity` remembers, keyed weakly on the calling command's invocation, the
+identity the state carries: tenant, method, client and cloud, never a token. `Get-OERSignInIdentity`
+is the single owner of that identity. Both
+transports ask `Get-OERSignInSupersession` before every request and refuse it with
+`SignInSuperseded` (`New-OERSignInSupersededError` owns the id and the message) while ANY frame on
+the call stack remembers another identity than the state now carries. So an outer command whose
+nested cmdlets inherited the switched state is refused too, and so is a downstream command's request
+made inside the upstream command's output call, where the upstream frame is still on the stack.
+`Invoke-OERStructure` and `Connect-OER` sign in in `process`, not `begin`, and a downstream
+command's `begin` runs first, even when it takes no pipeline input. When they name a tenant, their
+own sign-in switches the state back to it, so downstream of them it is the downstream command that
+is refused. WITHOUT `-TenantId` a sign-in in `process` inherits the state the downstream command's
+`begin` left and remembers it, so no gate would see the switch: `Invoke-OERStructure`'s document,
+`-Prune` included, applied to the downstream command's tenant (BL-76), and the three builders that
+sign in only to look up a name -- `New-OERAccessPackageApprovalStage`,
+`New-OERAccessPackageRequestorScope` (through `Resolve-OERTargetList`) and
+`New-OERAccessReviewStage` (through `Resolve-OERReviewerScope`) -- looked it up there (BL-81). So
+those four commands take a snapshot of the session in `begin` and, without `-TenantId`, compare it in
+`process` directly before that sign-in or lookup -- `Invoke-OERStructure` after the document is
+read and validated, the builders after their argument checks -- refusing with `SignInSuperseded`
+and sending nothing when the identity changed, or when the module held no session and now holds
+one. `Checkpoint-OERSignIn` is the single owner of the session a command began with: it builds the
+snapshot only through `Get-OERSignInIdentity`, so its terms are the memory's. `Invoke-OERStructure`
+takes it again after every sign-in, refused or not, so its next piped document is compared with
+the session that sign-in left; the builders take no pipeline input and never take it again. A new
+command that signs in only in `process`, directly or through a helper, without `-TenantId` takes
+the same snapshot. Never name the tenant the command began with as `-TenantId` in `process`
+instead: a `-TenantId` other than the state's inherits nothing, so an app-only session would get a
+browser prompt (A6). The snapshot is taken when the command's own `begin` runs, so it covers a
+command that stands in the pipeline itself and not one called inside a script block or a function
+in a pipeline -- `ForEach-Object { Invoke-OERStructure ... }`. Such a command begins only when the
+block runs, after every `begin` block of the outer pipeline, so it takes a downstream command's
+sign-in for the session it began with. The gap this leaves is closed for a document that names its
+tenant (BL-88; `tenantId`, which `Get-OERInventory` and `Export-OERInventory` write):
+`Get-OERDocumentTenantMismatch` refuses the document in any other tenant with
+`DocumentTenantMismatch`, whatever session the command began with. It stays open, older than BL-76,
+for a document without `tenantId` -- applied, `-Prune` included, in the downstream command's
+tenant -- and for the builders, which look their names up there. So never call a name-looking
+builder, or `Invoke-OERStructure` with a document that carries no `tenantId`, without `-TenantId`
+inside a script block or function in a pipeline that signs in to another tenant or identity. The
+identity's tenant term is the tenant the Graph token was issued for (`TokenTenantId`) when that is a
+GUID, and the tenant as NAMED otherwise, never the ARM token's (BL-77): since a named tenant is
+checked against that token (within `TenantMismatch`'s limits, below), one tenant named by GUID on one
+command and by domain on another -- or not named at all -- is ONE identity, to the snapshot as to the
+memory, whenever the token reports a GUID tenant. Never key the identity on the name again, and never
+on the ARM tenant, which is not always acquired. The session CACHE is still
+keyed on the tenant as named, so a command naming its tenant differently from the session inherits
+nothing and signs in again -- interactively when it names no credential, a browser prompt on an
+app-only session and an identity that differs in method -- which is why README's "Name the tenant
+explicitly and consistently", and the about topic's equivalent under SOVEREIGN CLOUDS, stand. The
+order is fixed: in the Graph wrapper the session gate, then
+the latch gate, then the supersession gate; in the ARM wrapper the latch gate, then the
+supersession gate. A command with no memory is not compared by that gate. A pipeline must not span
+tenants or identities: run the commands as separate statements, for example collecting into a
+variable first.
+Never call `Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere but directly after
+an `Unlock-OERSignIn` with the same invocation, and never read the supersession outside the two
+transports.
+`Why: docs/development/rationale.md#auth-state`
+
+**Same-session tenant switch is limited by sign-in type.** AzAuth keeps ONE credential for the
+whole process, and `Get-AzToken -Tenant` is not honoured by every credential type: the device code
+and managed identity requests do not carry the named tenant at all (measured), with a device-code
+credential reused after a successful sign-in passing it on for a silent re-acquisition instead
+(inferred; since A17 the module never reuses one, below), and a client secret credential refuses a
+different tenant until `-Force` rebuilds it
+(or, with `AZURE_IDENTITY_DISABLE_MULTITENANTAUTH` set, silently requests the token from the previous
+tenant; measured).
+`Initialize-OERAuth` refuses, with `TenantMismatch`, a token issued for another tenant than the one
+named -- by GUID or, through the lookup above, by domain -- so a switch that did not take effect does
+not become a session, within two limits: a token whose tenant AzAuth does not report as a GUID (one
+without a `tid` claim) is not compared, and `organizations` names no tenant, so its tokens are
+compared with no requested tenant -- an ARM token a sign-in acquires under it is compared with the
+session's Graph token (`TokenTenantId`) instead, when both are GUIDs, and refused with the same
+`TenantMismatch` when they differ. A state rebuild -- a renewal of the Graph token, or a transport's
+refresh -- carries the cached ARM token into the new state only when, besides the unchanged tenant
+label, identity and cloud (`$ArmIdentityUnchanged`), its `ArmTokenTenantId` equals the new Graph
+token's tenant, both GUIDs (`$ArmTokenKept`, A13, BL-95); otherwise it is dropped, the ARM step of
+that same call runs under `-IncludeARM`, and the new ARM token is compared as above. Never carry it
+on the label alone: `organizations` stays `organizations` when a renewal is answered from another
+tenant (`Why: docs/development/rationale.md#requested-tenant-vs-granted-tenant`). Before the
+call it only
+warns, for a client secret switch it can predict will not take effect (a
+`-WarningAction Stop`/`$WarningPreference = 'Stop'` caller is stopped at that `Write-Warning`, before
+any token request). The post-call warning that compared granted tenants is
+retired with its tracker; do not bring it back. `Connect-OER -Force` is the only public lever that
+makes a switch take effect. **Every device code token request, Graph and ARM, carries `Force`**
+(A17, BL-112, Philip's decision 2026-10-09): a device code request without it that reuses the
+credential AzAuth stored for the same client id never returns -- no code, no error (decompiled;
+measured live for a tenant switch) -- and `Force` makes AzAuth build a new credential, which prints
+a new code. `$DeviceCodeForced` in `Initialize-OERAuth` is the single owner of that decision, read
+only by the `Force` condition and by the removal of `Force` after a Graph acquisition, and it is
+NOT a cache term: `$GraphCached`, `$ArmCached` and `$ClearsUncertainty` never read it, so a device
+code session whose tokens are still valid answers from the cached return with no token request.
+Never add an automatic `-Force` to any other sign-in type without a new decision, and never make
+the device code `Force` bypass the cached return.
+`Why: docs/development/rationale.md#auth-state`,
+`docs/development/rationale.md#switching-tenants-in-one-process`,
+`docs/development/rationale.md#every-device-code-sign-in-is-forced`
+
 ## profile-path
 
 Tenant profiles live at `<home>/.config/Omnicit.EntraRBAC/Profiles/<alias>.psd1`.
@@ -6011,6 +6729,15 @@ Profile schema -- `TenantId` is required, everything else optional:
     }
 }
 ```
+
+### CLAUDE.md text for profile-path
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+Per-tenant configuration is stored as PSD1 files under
+`<home>/.config/Omnicit.EntraRBAC/Profiles/<alias>.psd1`. Never write `$env:USERPROFILE` to build
+that path -- it is Windows-only and this module is `CompatiblePSEditions = 'Core'`. Path derivation
+and the profile schema: `Why: docs/development/rationale.md#profile-path`
 
 ## type-data
 
@@ -6162,6 +6889,47 @@ now says.
 
 Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses raw
 `Invoke-MgGraphRequest` (via `Invoke-OERGraphRequest`) to avoid typed SDK coupling and version drift.
+
+### CLAUDE.md text for dependencies
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**Under `latest`, a local `output/RequiredModules` goes stale and LOCAL GREEN IS NOT CI GREEN.**
+`RequiredModules.psd1` asks for the newest release of every module
+(`Why: docs/development/rationale.md#dependencies`), but a local tree is resolved once and then left
+alone, while every CI run resolves afresh on a clean runner. Measured on 2026-09-21: a local tree
+held `Microsoft.Graph.Authentication 2.36.0` while CI resolved `2.40.0` on the same commit. So a
+full local pass proves the suite against whatever happens to be on disk, not against what the merge
+gate will run. Refresh before trusting a local run, especially before opening or updating a PR:
+
+```powershell
+./build.ps1 -ResolveDependency -Tasks noop -UseModuleFast
+```
+
+`-UseModuleFast` is the same flag the V2 note above prescribes, and it is the resolver that works
+here. Note that it is a DIFFERENT resolver from CI's, so the two trees can still differ in shape --
+a tree resolved without it also carries the unpacked `.nupkg` directories (`_manifest`, `_rels`,
+`dependencies`, `package`) beside a module's version folder. The CI workflow's dependency-report
+step prints the versions each run actually resolved, and is the authority on what the gate tested.
+
+**A refresh ADDS versions and removes nothing.** After the 2026-09-21 refresh the local tree held
+`Microsoft.Graph.Authentication` at both `2.36.0` and `2.40.0`, and still held an `Az.Resources`
+that `RequiredModules.psd1` no longer asks for at all. That is usually harmless, since PowerShell
+loads the HIGHEST version available when importing by name, so a refreshed tree does test the new
+one -- but it means the directory is a growing record of every version ever resolved, not a picture
+of what is currently requested. Confirm the version under test with
+`Get-Module <name> -ListAvailable` rather than by reading the folder listing, and delete the
+directory outright if a genuinely clean resolve is needed.
+
+That column is the **runtime FLOOR** declared in `source/Omnicit.EntraRBAC.psd1`: a manifest
+`ModuleVersion` is always a minimum, never an exact pin, and there is no manifest syntax for
+"newest". `RequiredModules.psd1` is the build-time resolver, and by decision (2026-09-21) every
+entry in it is `latest` -- **nothing there is pinned**. The two files therefore differ in KIND, not
+in value, so do not reconcile them in either direction: no version number goes into
+`RequiredModules.psd1`, and no `latest` goes into the manifest. The accepted cost is that CI tests
+the newest combination -- what a new consumer actually gets -- while **nothing tests the declared
+floors any more**.
+`Why: docs/development/rationale.md#dependencies`
 
 ## changelog-budget
 
@@ -6318,6 +7086,63 @@ prints as scrambled prose while the assertion itself works. Two of this branch's
 before it was caught. The mechanism, the executed proof and the repo-wide rule live with the other
 test shapes that look like guards but are not, in
 [#bearer-scrub-tests](#bearer-scrub-tests).
+
+### CLAUDE.md text for changelog-budget
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **Write `[Unreleased]` in release-note voice** -- product-level and user-visible: what this
+  version is, and what changed for someone consuming the module. Budget **4,000 characters**,
+  gated in `tests/QA/module.tests.ps1` on the section's `RawData`, which includes the
+  `## [Unreleased]` heading and therefore reads slightly SHORT of what is actually published -- do
+  not spend the difference.
+
+- **The floor is on the BODY and is 50 characters -- about one sentence.** The section after its
+  heading line, trimmed, must reach it, in the source and in the built manifest alike. It is there
+  to catch a MECHANICAL failure, an emptied or hand-converted section that publishes `ReleaseNotes`
+  of length 0 while the build reports success, and it does not judge the text: whether a note says
+  enough is decided in review. Never pad the section to get past it -- every merge publishes the
+  padding to the Gallery for good.
+
+- **Close-out after a stable release.** The close-out is the FIRST merge after a `v<X.Y.Z>` tag. It
+  adds `## [X.Y.Z] - <date>` directly above the previous dated heading, moves the released notes
+  under it, and leaves `[Unreleased]` holding exactly this sentence and nothing else, with `X.Y.Z`
+  the version just released:
+
+  ```text
+  No changes to the module since X.Y.Z. A preview published from this point differs from X.Y.Z only in documentation, tests or the build.
+  ```
+
+  It has to come first because every merge publishes `[Unreleased]` as a preview's `ReleaseNotes`:
+  a merge landing between the tag and the close-out publishes a preview whose notes describe the
+  previous release's changes as new. **The first change under `source/` after a close-out REPLACES
+  the sentence** with a note of its own; it never adds the note after it. Wrapping the sentence
+  across lines is fine. `tests/QA/module.tests.ps1` holds both halves: while the sentence stands it
+  must be exactly that sentence for the latest dated section in `CHANGELOG.md`, and it must not
+  survive a diff that touches `source/`.
+
+- **Per-PR engineering detail belongs in the PR body and the commit message**, not in
+  `CHANGELOG.md`. The published note is read by module consumers, not by reviewers.
+
+- **Never convert, rename or delete the `## [Unreleased]` heading itself.** The build does that at
+  release time against its own OUTPUT copy; the source file is never modified by a build. A
+  hand-converted section leaves the source `[Unreleased]` empty, and the next build then publishes
+  `ReleaseNotes` of length 0 while reporting success.
+
+- **A PR that changes nothing under `source/` is not required to touch `CHANGELOG.md`.** The
+  changed-file gate fires only on a path matching `^source/`.
+
+- **The two gates that read the BUILT artefact need a build.** `build.yaml`'s `test` workflow does
+  not include `build`, so both measure whatever is already in `output/module/`. The published-notes
+  gate also compares that artefact against the CURRENT `CHANGELOG.md`, so a build older than your
+  changelog edit turns it red -- the right direction of failure, not a bug, since that is exactly
+  the state in which the source-side gates are green and the published note is wrong. The version
+  cap reads only the artefact's own version, so it reddens on staleness only if nothing resolves or
+  the stale build was itself outside the `1.x` line. Either way: build before test, exactly as
+  `## Build and Test Commands` already requires. Both gates resolve the module under test with
+  `Get-Module -ListAvailable | Select-Object -First 1`, so they measure whichever copy ranks first on
+  `PSModulePath` -- under `./build.ps1 -Tasks test` that is the built module, but a globally
+  installed copy would be measured instead.
 
 ## version-cap
 
@@ -6636,6 +7461,79 @@ hand and `build.yaml` defined no `publish` workflow. That is now history on both
 is automated, and it lives in the workflow rather than in `build.yaml`. See
 [#publish-on-merge](#publish-on-merge).
 
+### CLAUDE.md text for version-cap
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**The computed module version is held in the `1.x` line.** Issue #55 capped it below `1.0.0`;
+issue #62 lifted the cap to `1.0.0` on 2026-09-13 for the first public release. The two levers are
+both in `GitVersion.yml`: `next-version` (`1.0.0`), which supplies the base version when no tag
+outranks it (a `release/x.y.z` branch name is a third candidate -- see below), and
+`major-version-bump-message`, which carries BOTH halves of its original pattern: the explicit
+`+semver: breaking|major` token AND the conventional-commit `^[a-z]+(\(.+\))?!:` subject form. The
+`!:` half was disabled only for the duration of the private pre-1.0.0 history, where two reachable
+commits (`5816e87`, `715fb6d`) carried a `!:` subject and, with no tag to bound the increment
+window, made the original pattern build `2.0.0` (measured). **This repository is seeded from a clean
+tree without those commits and carries `v1.0.0` from its first commit, so neither condition can
+apply and P5 restored the original pattern deliberately.** `GitVersion.yml` is the truth here;
+`minor-version-bump-message` and `patch-version-bump-message` are working, so intent stays recorded
+in history.
+
+**How the version is computed.** The base is the greatest of three candidates: the highest reachable
+version tag, `next-version`, and the `x.y.z` of a `release/x.y.z` branch name -- either the branch
+being built, or one named by a standard merge commit message. One exception: a tag sitting on HEAD
+is returned verbatim and outranks every other tag and `next-version` however high they are, though a
+higher `release/x.y.z` still beats it. From the base comes **at most ONE increment**, never one per
+commit, sized from the commits since the NEAREST reachable tag -- every reachable commit when there
+is no tag at all. A TAG base not on HEAD takes an increment on any branch whose config sets a
+default one, and every branch this repo's convention produces does: it is the greater of the branch
+default (Patch on `main` and on every branch prefix this repo's convention uses) and the highest
+`+semver:` level in that window. A `release/*` branch is the exception, since the inherited
+`release:` block sets `increment: None` -- measured, `v3.0.0` on HEAD~1 builds `3.0.1` on `main` and
+`3.0.0` on `release/2.0.0`. A `next-version` or `release/x.y.z` base takes no default
+increment, so with no `+semver:` commit in the window it is used exactly as written -- but one
+`+semver: fix` there still makes `1.0.0` build `1.0.1`, and one `+semver: minor` makes it `1.1.0`. A
+PRERELEASE-labelled tag (`v0.9.0-preview.1`) is the exception to all of that: it takes no
+`MajorMinorPatch` increment at all, and no `+semver:` message moves it.
+
+**Do not create a version tag, or a `release/x.y.z` branch, outside a deliberate release.** Any tag
+at or above `next-version` becomes the base, one sitting on HEAD ships verbatim whatever its value,
+and a branch named `release/2.0.0` builds `2.0.0` on its own with no tag involved anywhere.
+`release/` is not one of the prefixes in the branch-naming table above. Bump messages now move the
+version: with no reachable tag the base is `1.0.0` and at most one increment applies, so one
+`+semver: fix` builds `1.0.1`, one `+semver: minor` builds `1.1.0`, one `+semver: major` builds
+`2.0.0` -- and so does a `!:` subject, through the other half of the same pattern.
+`tests/QA/module.tests.ps1` holds the built version at or
+above `1.0.0` and below `2.0.0`, independently of `GitVersion.yml` -- lift both together when
+`2.0.0` is called, and never raise that assertion just to make a build pass.
+
+**Two different shapes move the version from a message, and both must be kept out of commit
+messages, PR titles and PR bodies.**
+
+1. **Never quote a bump token** -- name it in words ("the semver major token"). A message that
+   merely quotes the major token builds `2.0.0`, and one that quotes the minor or fix token moves
+   the version silently.
+2. **Never write a conventional-commit `!:` subject.** `fix!: ...`, `feat(x)!: ...` and every other
+   `<verb>!:` or `<verb>(<scope>)!:` form matches the second half of `major-version-bump-message`
+   and builds `2.0.0`. This half is LIVE -- see the paragraph above, and do not rely on any older
+   note saying it is disabled.
+
+GitVersion reads every reachable commit message, and a squash merge copies the PR title and body
+into `main`, so a squash title of `fix!: ...` is enough on its own to do it. File content is never
+read and may quote either shape freely.
+
+**Since every merge to `main` publishes, this is no longer a rule about a number in a build log.**
+What one of those shapes does now splits by level, and only one level is caught:
+
+- **Major** (`!:`, or the quoted major token). `tests/QA/module.tests.ps1` caps the built version
+  below `2.0.0` independently of `GitVersion.yml`, so the merge turns `main` RED, `package` and
+  `publish` never run, and nothing is published. The repair then happens on `main` under a broken
+  required check instead of in an open PR, which is bad enough on its own.
+- **Minor or fix.** Nothing caps these. `main` carries `tag: preview`, so the merge publishes, for
+  example, `1.1.0-preview0001` in place of `1.0.1-preview0001` -- a real version, on the public
+  Gallery, that cannot be deleted, and a version line that was never chosen. There is no gate
+  behind this one: the rule about what you type IS the control.
+
 ---
 
 ## publish-on-merge
@@ -6874,6 +7772,35 @@ tags.
   under "The tag after each publish is the mechanism, not bookkeeping"), not something the offline
   suite runs: the suite plays the rebuilt artefact.
 
+#### CLAUDE.md text for the-tag-step-tags-only-the-build-that-was-published
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **The tag step tags only the commit whose tested build IS the package on the Gallery (A16,
+  BL-114).** On every run but a `v` tag run it first runs `PublishArtefact.ps1 -Compare`, which
+  reads the package back with `Save-PSResource` and compares it with the run's tested artefact,
+  file by file and SHA-256 by SHA-256; a different build, or a read that fails, refuses the step
+  before anything is tagged or released. So does a tag that already names another commit:
+  `gh release create` ignores `--target` for an existing tag, so a preview tag pushed by hand onto
+  the wrong commit would otherwise receive the release. Before this guard, a publish that no tag
+  followed made the NEXT merge compute the same version, skip the publish and tag ITS OWN commit
+  over the previous commit's package. Now:
+  - **A publish whose tag step failed, or whose publish step failed although the upload arrived:**
+    re-run the FAILED job of that same run. It reuses the tested artefact, matches and tags, as
+    the re-run after the Gallery's 500 on 2026-10-08 did.
+  - **A run that was refused** (a later merge whose build differs, carrying the same version; one
+    whose build is byte-identical IS the package and is tagged): push the missing tag by hand onto
+    the commit that published the version, then re-run ALL jobs of the newest refused run, which
+    counts up from that tag and publishes it. A re-run of only its failed jobs reuses its own
+    build and is refused again. The refusal message names the steps. A preview tag pushed onto the
+    wrong commit is named in either refusal -- by the tag check when the run's own build is the
+    package, and in the comparison's repair text otherwise: delete it with
+    `git push origin :refs/tags/v<version>` before tagging the right commit.
+  - **Never loosen the comparison to turn a refused run green.** A rebuild of the published commit
+    on a later day is a different build too (the release notes carry the build date), so
+    re-running ALL jobs of the run that published is refused as well; re-run only its failed jobs
+    instead.
+
 ### The published version comes from the MANIFEST, not from GitVersion
 
 `Publish-PSResource` publishes the version the manifest carries, and that string is not always
@@ -7109,6 +8036,45 @@ under `source/` after the close-out then REPLACES the sentence, since its openin
 true the moment the module changes; a note added after the sentence would publish both. The gate
 side of all this -- the body floor, the two close-out checks, and why the built notes are now
 compared whole instead of by a 400-character tail -- is under [#changelog-budget](#changelog-budget).
+
+### CLAUDE.md text for publish-on-merge
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **Publishing lives in `.github/workflows/build-and-test.yml`, in its `publish` job.** That job
+  is the only thing in this repository that can publish. `./build.ps1 -Tasks publish` is
+  deliberately undefined and must stay that way, so there is no local publishing path at all. Do
+  NOT restore Sampler's `Publish_Release_To_GitHub` / `publish_module_to_gallery` tasks in
+  `build.yaml`; the measured reasons are in that file's comment and in
+  `Why: docs/development/rationale.md#publish-on-merge`.
+
+- **The publish job tags every publish, and the tag is load-bearing.** `GitVersion.yml` runs
+  `mode: ContinuousDelivery`, where the preview counter advances on a TAG and not per commit:
+  measured, two merges with no tag between them build the SAME version: the second run finds that
+  version already on the Gallery and skips its publish, since a version cannot be published twice,
+  and its tag step tags it only when its tested build is the package already there (below).
+  `Why: docs/development/rationale.md#publish-on-merge`
+
+- **No approval stands between a merge or a `v` tag and the Gallery** (Philip's decision,
+  2026-09-23). The `Entra RBAC` environment has no required reviewers: it scopes `GALLERYAPITOKEN`
+  to the `publish` job and admits only branch `main` and the stable `v<X.Y.Z>` tag patterns. The
+  gate for a preview is the pull request and its required checks; the gate for a full release is
+  the tag, which only the `Stable Version` tag ruleset's bypass list can create, move or delete.
+  Both closures are repository SETTINGS on purpose: a tag push runs the workflow file at the tagged
+  commit, so a check in the workflow is removed by the same commit that abuses it. Never widen an
+  environment tag pattern past what the ruleset covers -- every pattern starts with `v` and admits
+  no hyphen, which is why `v*` was removed. Accepted residual: whoever can merge a pull request can
+  publish a preview, until `Require approvals` is switched on with a second reviewer.
+  `Why: docs/development/rationale.md#publish-on-merge`
+
+- **The publish job refuses a version its ref does not call for**, straight after the artefact is
+  verified and before anything is published: on a `v` tag the built version must equal the tag
+  exactly and the tagged commit must be on `main`; on `main` the build must carry a prerelease
+  label; any other ref is refused. It guards against MISTAKES, not an adversary -- the gate stays in
+  the settings, since a changed workflow writes the step away. **A refused or misplaced stable tag
+  stays where it is**, and nothing removes it for you: someone on the bypass list deletes it with
+  `git push origin :refs/tags/v<X.Y.Z>` and, for a misplaced one, pushes it again on the `main`
+  commit it was meant for. `Why: docs/development/rationale.md#publish-on-merge`
 
 ## directory-role-assignments
 
@@ -7366,6 +8332,16 @@ refusal would fail the read and keep the original error; and step 4 measured tha
 inherited row in the per-role read (check 4.4), so the group case may not occur for these schedules
 at all.
 
+### CLAUDE.md text for directory-role-assignments
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Select-OERManagedDirectoryRoleAssignment` is the single owner of which live directory role
+  assignment the apply engine may match or prune** (tenant scope, `memberType` Direct, Active only
+  `assignmentType` Assigned), and `Get-OERTokenObjectId` the single owner of reading the signed-in
+  identity's object id (the token's `oid` claim, delegated and app-only alike; never `/me`). Never
+  re-implement either inline. `Why: docs/development/rationale.md#directory-role-assignments`
+
 ## inventory-azure-eligibility
 
 Task 3 of Sprint 6 step 5 added `azurePimEligibility.json` to the `Export-OERInventory` bundle: the
@@ -7574,6 +8550,20 @@ the item reads PIM eligibility only when it declares `eligibility` -- deliberate
 that read for a `pimPolicy`-only entry lets a 403 on the beta eligibility endpoint fail an item that
 has no use for the answer. A group renamed through `previousDisplayName` takes the existing-group
 path and is asked like any other existing group.
+
+### CLAUDE.md text for pim-in-use-criterion
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Test-OERGroupPimInUse` is the single owner of whether a group uses PIM for Groups** -- PIM
+  eligibility, or a PIM-for-Groups policy with a non-empty `lastModifiedDateTime`, `lastModifiedBy.id`
+  or `lastModifiedBy.displayName`. Graph lists those policies for EVERY group, so a listed policy is
+  not evidence of use. `Get-OERInventory` exports `pimPolicy` only for a group found in use (a
+  criterion it could not read, or a "not in use" reached while the group's eligibility was unread,
+  omits `pimPolicy` AND reports it unread), and `Sync-OERStructureGroup` warns, never blocks, before
+  a changed policy onboards an existing group. Never re-implement the check inline. The criterion is
+  documented, not yet measured live, and misses a group used only through PIM active assignments.
+  `Why: docs/development/rationale.md#pim-in-use-criterion`
 
 ## export-group-selection
 
@@ -7865,6 +8855,63 @@ found nothing. The bundle README also says, since BL-48, that an Entra ID entry 
 read" can name several collections, separated by a comma and a space: one entry is the report of one read (the
 `InventoryPartial` target of `Get-OERInventory` and the group read's unread names are each joined with a comma
 and a space). Cost if wrong: sentences in those texts.
+
+### CLAUDE.md text for export-group-selection
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Get-OERInventoryGroup` is the single reader of the inventory's Groups section.**
+  `Get-OERInventory` calls it in its full mode (one `Get-OERGroup` call carrying the three include
+  switches; its output stays what it was). `Export-OERInventory` calls it with `-RelevantOnly` unless
+  `-AllGroupsDetailed`, and always with `-ExcludeSharedName`, `-SecurityEnabledOnly` and
+  `-ProgressActivity`: relevance decided first, from the group's PIM eligibility and then
+  `Test-OERGroupPimInUse`, so a group found not relevant costs exactly two requests and is never read
+  further, and a group whose relevance could not be read is read in full. The export's keep filter on
+  the projections stays the final say. The reader never writes an error record -- it returns
+  `Groups`, `Unread`, raw `Causes`, `PimLeftOut`, `DynamicMembers` and `SharedNames` -- and both
+  callers catch a reader that stops and report the groups section unread, never empty. Never read
+  the Groups section, or decide relevance before a full read, anywhere else. **A dynamic group's
+  `members` is an EXPLICIT null, never an omitted key and never a list** (Sprint 11 step 10, BL-43,
+  R-1): its membership rule owns the membership, and `Set-OERGroup` cannot convert a group's
+  membership type, so an omitted key would meet the static path of a group made static after the
+  export, which reconciles and, under `-Prune`, removes every live member. The null is no gap, so it
+  is named unread nowhere, and a failed read of those members records no cause (R-24); the members
+  are still read, for a group read in full, and counted per group in `DynamicMembers` (beside
+  `PimLeftOut`) so the roster keeps a `memberCount`. `Sync-OERStructureGroup` writes no aggregate
+  member row for an explicit null (R-2); a declared list, `[]` and an omitted key keep their rows.
+  Never write a dynamic group's members, and never name their failed read unread.
+  `Why: docs/development/rationale.md#export-group-selection`
+
+- **`Get-OEROrderedInventoryEntry` is the single owner of the order the inventory writes its lists
+  in** (Sprint 11 step 10, BL-121): a group's `members`, `owners` and `eligibility` and an
+  administrative unit's `members`. Text is ordered by `[System.StringComparer]::OrdinalIgnoreCase`,
+  ties by `[System.StringComparer]::Ordinal`, so the order is total and culture independent;
+  eligibility by `principal`, `accessType`, `durationDays` (absent first, then ascending) and `id`.
+  `Get-OERInventoryGroup` orders the three group lists and `Get-OERInventory` the unit members; never
+  order such a list anywhere else. Its LINQ calls take their generic arguments by INFERENCE and never
+  write them out: an explicit type argument on a generic method call is PowerShell 7.3 syntax, a parse
+  error under the module's 7.2 floor that fails the whole merged module, and CI runs a current
+  PowerShell only, so nothing but the helper's own test (an AST check of its file) would show it.
+  `Why: docs/development/rationale.md#export-group-selection`
+
+- **`Read-OERGroupCollection` is the single owner of the three per-group collection reads
+  `Get-OERGroup` attaches and the inventory's group reader uses** (members, owners and PIM
+  eligibility) **and of wording their failure** exactly as `Get-OERGroup` publishes it. It returns the
+  read or its failure and never writes an error record; `Get-OERGroup` and `Get-OERInventoryGroup`
+  call it, and neither reads one of the three inline. `Get-OERGroupRelation` stays the single reader
+  of the members and owners requests: `Read-OERGroupCollection` calls it, and `Get-OERGroupMember`
+  calls it directly. `Why: docs/development/rationale.md#export-group-selection`
+
+- **`Format-OERUnreadCauseClause` is the single owner of the causes clause of an inventory's
+  `InventoryPartial` message** -- the deduplication with the failing object's id normalised away, the
+  cap and the wording -- and `Get-OERSharedNameCause` of the text for objects left out because two of
+  them share a name, which carries how many live objects share it (`-Count`). The clause is built by
+  `Get-OERInventory` and `Export-OERInventory`, the shared-name text by `Get-OERInventory` and
+  `Get-OERInventoryGroup`; never word either inline. A cause registered with a BLANK `Target` is keyed
+  on its full text instead of a normalised one: the shared-name causes are registered with none, so
+  two names that share one count are two causes and one name is still stated once (BL-156).
+  `Why: docs/development/rationale.md#export-group-selection`,
+  `docs/development/rationale.md#roster-identity-and-shared-names`
 
 ## export-role-policy-selection
 
@@ -8254,6 +9301,36 @@ of two help sentences. The lines are those of the source after the round.
 - The per-scope skip warning now carries the whole `InventoryPartial` text when the inner read fails that way
   (Get-OERInventory's own message, since the call passes `-ErrorAction Stop`). That is unchanged by this step
   and parked for a later one.
+
+### CLAUDE.md text for export-role-policy-selection
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Test-OERRolePolicyModified` is the single owner of whether an Azure role management policy has
+  been changed** -- the list row's `policyAssignmentProperties.policy` (carried as `PolicyMetadata`
+  by `Get-OERRoleManagementPolicyForScope`, with no request of its own) with a non-empty
+  `lastModifiedDateTime`, `lastModifiedBy.id` or `lastModifiedBy.displayName`, the three fields
+  `Test-OERGroupPimInUse` reads. An empty `lastModifiedBy` object is not a change (measured on one
+  subscription: every untouched policy carried one), `isOrganizationDefault` is no signal (`false`
+  on every policy there), and a row with no policy object returns `$null`, which a caller never
+  reads as "not changed". Never re-implement the check inline.
+  `Why: docs/development/rationale.md#export-role-policy-selection`
+
+- **`Select-OERInventoryRolePolicy` is the single owner of which Azure role management policies
+  `Export-OERInventory` keeps without `-AllRolePolicies`** -- pure, every side keyed on the canonical
+  scope and the role definition guid: a policy whose role has a role assignment or an eligibility
+  EXACTLY at its scope, or that has been changed, is kept; one that cannot be judged (no policy
+  object, no role definition id, or a scope whose role assignment or eligibility read failed) is
+  kept AND its scope named, as `roleManagementPolicies/role selection at <scope>` last in
+  `IncompleteReads`, with an `InventoryPartial` clause of its own; anything else is omitted. The
+  export reads the candidates through `Get-OERInventoryRolePolicy` (the same one paged list and the
+  same converters as `Get-OERInventory -AllRolesAtScope`) and the assignments with one extra
+  `Get-OERRoleAssignment -AtScope` list per scope, read before the policy list; `-AllRolePolicies`
+  makes the per-scope call earlier versions made and selects nothing. Never decide the selection
+  anywhere else -- except the export's fallback when the selection itself stops (Sprint 11 step 10,
+  R-5), which keeps every candidate and names each distinct scope among them as not judged -- never drop a
+  policy that cannot be judged, and never add a request per policy.
+  `Why: docs/development/rationale.md#export-role-policy-selection`
 
 ## typed-group-member-read
 
@@ -8905,6 +9982,37 @@ the management group), and a read that failed part way would have handed the pru
 list. The read now carries `-ErrorAction Stop`, so the entry is `Failed` with the read error published
 as itself, nothing is created or planned, and the prune pass for that scope does not run.
 
+### CLAUDE.md text for role-assignment-key
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared, and
+  `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax** -- never re-implement
+  either inline; the first is pure, since the offline validator uses it. A document scope that
+  ends with `/` (other than `/`) or contains `//` is REFUSED by the validator, not merged by the
+  helper's trim, and so is a path with a `.` or `..` segment, a `%`, a `\`, a `?` or a `#`, white
+  space at the start or end of the scope or of a segment, white space other than a space, or a control
+  character (A13, narrowed in Sprint 11 step 3 round 1; the `mg:`/`sub:`/`subscription:` forms
+  excepted, as `ConvertTo-OERScopeSplat` reads them). A space between other characters of a segment
+  is accepted, since an Azure resource name can hold one: never widen the white space rule back to
+  every space, which refused a whole export. Never drop the rule in favour of the trim, which would
+  make such a scope prune. **`Get-OERScopeSpellingProblem` is the single owner of those two spelling
+  rules** -- their checks, their order and their message texts, for the `roleAssignments` and
+  `roleManagementPolicies` scopes: the validator's `Add-ScopeSlashFinding` and
+  `Add-ScopeSegmentFinding` add one Error per problem it returns and decide no spelling, and
+  `Get-OERInventory` leaves a role assignment at a scope with any problem out of the document (one
+  warning and one `Omnicit.EntraRBAC.UndeclarableScope` record per call), which the engine never
+  prunes, and `Get-OERSubscriptionHomeTenant` rates a raw scope with any problem (and any other
+  non-`mg:` scope with a stray `/`) `Undecided` with `SubscriptionTenantMismatch`, resolving and
+  reading nothing for it, so an `Export-OERInventory -Scope` spelled so is unread (Ruling R-27: the
+  transport's `System.Uri` need not send the path the text names). Never decide a scope
+  spelling anywhere else. The owner's help is the reference list of the
+  rules and names every text that must follow a new one: README.md, the about topic, the two scope
+  descriptions in the schema JSON, this bullet, and `Get-OERInventory`'s words for each rule in the
+  Reason. Every other help, the bundle README and the prompt point at a list or give an example.
+  `Why: docs/development/rationale.md#role-assignment-key`,
+  `docs/development/rationale.md#undeclarable-scope`
+
 ## approver-lookup
 
 Sprint 8 step 3 (BL-14, decision A5) made the PIM approver lookups follow the rule every other lookup
@@ -9021,6 +10129,56 @@ handler, so a change that would need one is refused as `ApproverRequired`, where
 reads that rule by its id, refuses it as `ApprovalRuleReadFailed` when the read fails and as
 `PimRuleValueUnknown` when it answers no rule; nothing is written either way. Cost if wrong: a plan
 reports `Failed` for a change Graph would have accepted, and nothing is sent.
+
+### CLAUDE.md text for approver-lookup
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **A resolver on the cohort's list publishes its failure as itself and an ambiguous name as
+  `Ambiguous*`, never as `*NotFound` -- a COHORT check holds that, not a helper.** The principal
+  and Azure role definition lookups are the decided exception, still publishing a failed read as
+  `PrincipalNotFound` or `RoleDefinitionNotFound` -- never "fix" one of them into a changed
+  published ErrorId. The PIM approver lookups follow the rule: an ambiguous approver name is
+  `AmbiguousApproverName`, a failed lookup is published as itself, and `ApproverNotFound` means only
+  an approver that matches nothing, in the three policy cmdlets and the three apply handlers alike.
+  They tell the three apart by the internal ids `PrincipalUnresolved` and `ApproverUnresolved`,
+  which no cmdlet or handler publishes, through `Get-OERApproverErrorClass` (next bullet).
+  `Why: docs/development/rationale.md#approver-lookup`
+  `tests/Unit/Public/AmbiguousName.Guard.Tests.ps1` runs every call site on its hand-kept
+  `$script:GuardCases` list with an ambiguous name and with a 403 -- the approver lookups of
+  `Set-OERGroupPimPolicy`, `Set-OERDirectoryRoleManagementPolicy` and `Set-OERRoleManagementPolicy`
+  included -- so a new public call site of an ambiguity-refusing `Resolve-OER*Id` helper, an
+  approver lookup among them, joins that list. The 403 case narrows to the cmdlet's own record:
+  `Why: docs/development/rationale.md#bearer-scrub-tests`
+
+- **`Get-OERApproverErrorClass` is the single owner of classifying an approver lookup failure**
+  (Sprint 11 step 11, BL-52): `Ambiguous` when `Test-OERAmbiguousNameError` says so, `NotFound` when
+  the record's FullyQualifiedErrorId starts, ordinally, with `ApproverUnresolved` or
+  `PrincipalUnresolved`, and `Other` for anything else, a null record included. The six approver call
+  sites -- the three policy cmdlets and the three apply handlers -- switch on its answer and keep
+  their own message, target, category and inner exception, so every published record stays
+  byte-identical. Never test either internal id anywhere else: the cohort in
+  `tests/Unit/Private/Get-OERApproverErrorClass.Tests.ps1` fails a string constant naming one as an
+  operand of a comparison operator, an argument of a string comparison method or a `switch` clause
+  outside the classifier and the three producers (`Resolve-OERPrincipal`, `Resolve-OERApproverInput`,
+  `Resolve-OERDeclaredApprover`); it does NOT see an id held in a variable, a command parameter value
+  (`Where-Object ... -like`, `Select-String -Pattern`) or a regular-expression method, which keep by
+  review. `Why: docs/development/rationale.md#approver-lookup`
+
+- **`ConvertFrom-OERGraphApprover` is the single reader of a Graph approver, and
+  `Resolve-OERApproverInput` / `Resolve-OERGraphApproverSet` are the single owners of the Graph
+  approver-side semantics shared by `Set-OERGroupPimPolicy` and `Set-OERDirectoryRoleManagementPolicy`
+  -- never re-implement the carry/count/ApproverRequired decision inline.** `-RequireApproval $false`
+  beside a bound `-ApproverUser` or `-ApproverGroup` (an empty list included) is refused with
+  `MutuallyExclusiveParameter` by the three policy cmdlets -- those two and `Set-OERRoleManagementPolicy`
+  -- before any lookup or request, and `Resolve-OERGraphApproverSet` throws the same id as a backstop;
+  never let that combination reach a request. The two apply handlers that call those cmdlets,
+  `Sync-OERStructureGroup` (pimPolicy) and `Sync-OERStructureDirectoryRoleManagementPolicy`, ask
+  `Resolve-OERGraphApproverSet` too, with the live approval rule they read and the parameters their
+  diff binds, and refuse a change that would need approval by nobody with the cmdlet's own
+  `ApproverRequired` message before their `ShouldProcess`, so a `-WhatIf` plan reports the run's row
+  (BL-113); the cmdlets keep their refusal as the backstop.
+  `Why: docs/development/rationale.md#approver-lookup`
 
 ## failed-schedule-request
 
@@ -9282,6 +10440,34 @@ id written by a function reads `Write-T`, which the strip cannot tell from a suf
 record would be published as `<command>,<caller>`. That is unreachable today, since every
 `Write-CmdletError` call passes an id and Graph records always carry a code.
 
+### CLAUDE.md text for failed-schedule-request
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Test-OERScheduleRequestFailed` is the single owner of which PIM schedule request status is an
+  error: the Failed family, meaning `Failed`, `FailedAsResourceIsLocked` and any later status that
+  starts with `Failed`, compared case-insensitively, and nothing else** -- `Revoked` is a removal's
+  success, and `Denied`, `Canceled` and the `Pending*` values are not errors. It is called by the
+  twelve cmdlets that send a schedule request -- `Add-`/`Remove-OERGroupEligibility`, `New-`/
+  `Remove-OEREligibleDirectoryRoleAssignment`, `New-`/`Remove-OERActiveDirectoryRoleAssignment`,
+  `New-`/`Remove-OEREligibleRoleAssignment`, `New-`/`Remove-OERActiveRoleAssignment` and
+  `Enable-`/`Disable-OEREligibleRoleAssignment` -- and by the two new-group replication waits in
+  `Sync-OERStructureGroup`. A cmdlet emits the request object FIRST and then writes the non-terminating
+  `EligibilityRequestFailed` (group, directory role and Azure eligibility requests) or
+  `AssignmentRequestFailed` (active assignment, activation and deactivation requests), so a caller
+  under `-ErrorAction Stop` still receives the object. Never compare a status to a `Failed` literal
+  anywhere else. The cohort check in `tests/Unit/Private/Test-OERScheduleRequestFailed.Tests.ps1`
+  derives its cohort from the files -- every `source/Public` cmdlet with a string that matches
+  `ScheduleRequests`, the twelve above today, which are also kept as a control the derivation must
+  still find -- and holds that each of them calls the owner, and that no other file under `source/`
+  compares a status to a `Failed` literal in the shapes it scans. The derivation does NOT see a path
+  built at run time, a path held in a Private helper (`Send-OERNewGroupEligibilityRequest`) or a file
+  outside `source/Public`, and a cmdlet that only reads a schedule request resource would join the
+  cohort and fail it (narrow the derivation then, never hand-list an exemption); the check does NOT
+  hold the two engine waits, whose behaviour tests in
+  `tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` do.
+  `Why: docs/development/rationale.md#failed-schedule-request`
+
 ## warning-before-confirmation
 
 Sprint 9 step 6 (BL-18, BL-17) moved the warnings about a deletion or about widened access to where
@@ -9414,6 +10600,26 @@ requires MFA, the diff has no live MFA to see, so `ConflictReason` stays `$null`
 nothing, while the real `Set-OERGroupPimPolicy`, which reads the rule itself, reconciles and warns
 once. Under `-WhatIf` step 5 makes one policy read per changed permanent eligibility that a real
 run makes inside `Add-OERGroupEligibility` anyway, so the permissions it needs are unchanged.
+
+### CLAUDE.md text for warning-before-confirmation
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **A warning about a deletion or about widened access stands BEFORE the cmdlet's own
+  `$PSCmdlet.ShouldProcess`**, so `-WhatIf` shows it and a `-Confirm` prompt is answered with it on
+  screen; written inside the gate it prints only after the answer, and never under `-WhatIf`. A
+  warning that needs a value computed only inside the gate moves out with that computation, or is
+  named, with its reason, in the allowlist of `tests/Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1`
+  -- an outcome warning, one that depends on what the operator confirmed, or one not about the action
+  at all. That cohort fails every other `Write-Warning` after a public cmdlet's first
+  `$PSCmdlet.ShouldProcess`. In the apply engine a `Sync-OERStructure*` handler writes the same
+  warning before `$Caller.ShouldProcess` only when the cmdlet it calls will not write it, so the plan
+  shows it and a real run never warns twice: under `-WhatIf`, where the cmdlet is never called, and
+  in both modes for the group PIM MFA / authentication-context pair the diff reconciles, since
+  `Set-OERGroupPimPolicy`, given the reconciled parameters, writes none. The handler's tests run each
+  such case as a plan and as a real run with the real cmdlet, from one live state, and hold the same
+  text and exactly one warning in the run.
+  `Why: docs/development/rationale.md#warning-before-confirmation`
 
 ## synced-groups
 
@@ -9550,6 +10756,27 @@ reason's row; only the others get this one.
 **What does not change.** A write that only points at the group, such as a role assignment, an
 administrative unit membership or an access package resource role, belongs to another section and is
 applied as before; the group itself is not written.
+
+### CLAUDE.md text for synced-groups
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Test-OERGroupOnPremisesSynced` is the single owner of whether a live group is synchronized from
+  on-premises** -- `OnPremisesSyncEnabled` (Graph's `onPremisesSyncEnabled`, carried by
+  `ConvertTo-OERGroup`) is the boolean true; false (no longer synced) and empty (never synced, or its
+  source of authority converted to the cloud) are not. `Sync-OERStructureGroup` writes nothing to such
+  a group, deciding on its LIVE read and never on the document's `onPremisesSynced` key: every
+  property, member, owner, eligibility or `pimPolicy` change is `Skipped` with no `ShouldProcess`
+  call, one warning per item, and each prune candidate is withheld
+  (`ConvertTo-OERPruneWithheldResult -SyncedGroup`). `Get-OERInventory` writes the document key
+  `onPremisesSynced` only as true, and `Export-OERInventory` the roster flag (a boolean on every row)
+  from the same predicate; the key is information only and never sent.
+  Never read `OnPremisesSyncEnabled` anywhere else -- the cohort check in
+  `tests/Unit/Private/Test-OERGroupOnPremisesSynced.Tests.ps1` holds the member-access form
+  (`.OnPremisesSyncEnabled` spelled as a constant member name, outside `ConvertTo-OERGroup` and the
+  helper); it does NOT hold a read through `Select-Object`, `Where-Object` or
+  `PSObject.Properties[...]`, which keeps by review.
+  `Why: docs/development/rationale.md#synced-groups`
 
 ## pim-activation-is-not-membership
 
@@ -9750,6 +10977,20 @@ the live C-check (Philip, after the merge): that an activated member and owner r
 assignment reads as `TimeBound`. The unit tests prove the rule on mocked reads of the shapes Learn
 documents and the standing shape that was measured.
 
+### CLAUDE.md text for pim-activation-is-not-membership
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Get-OERGroupPimHeldAccess` is the single owner of which PIM-for-Groups instance holds a member's
+  or owner's access**: held unless `assignmentType` is `assigned` (any letter case) AND `endDateTime`
+  is empty; every eligibility instance is held as Eligible; `memberType` is never consulted; access is
+  matched per access type. `Read-OERGroupPimAssignment` is the single reader of
+  `assignmentScheduleInstances` (`ResourceTypeNotSupported` is an empty answer, a thrown failure is
+  unread) and `Read-OERGroupPimHold` the apply engine's one read of the hold state. The export leaves
+  out of `members`/`owners` a member or owner held by an assignment kind (eligibility alone decides
+  only when the assignment read failed); the engine adds and prunes none, Eligible included. Never
+  re-implement the rule inline. `Why: docs/development/rationale.md#pim-activation-is-not-membership`
+
 ## root-scope-is-not-in-the-document
 
 Sprint 11 step 2 (BL-126, decision A4) took the Azure root scope `/` out of everything the module
@@ -9883,6 +11124,34 @@ Manager accepts that path was not measured: it needs an identity with elevated a
 scope (class B). The guard makes the question moot for the apply engine. That a dot-segment spelling
 reaches the root (Rule 1) is System.Uri's normalisation, measured with `[uri]` in a console, not on
 the wire. Everything above was derived from the code and proven with mocked tests.
+
+### CLAUDE.md text for root-scope-is-not-in-the-document
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Test-OERAzureRootScope` is the single owner of whether an Azure role assignment scope addresses
+  the root scope `/` (any spelling the ARM transport sends there)**, and
+  `Format-OERRootScopeAssignment` of the order, the deduplication and the list text of the
+  root-scope assignments that `Get-OERInventory` and `Export-OERInventory` name in their warnings.
+  The rule is for the Azure `roleAssignments` section only: never apply it to
+  `roleManagementPolicies`, nor to the directory role sections, whose
+  `/` is the Microsoft Entra tenant scope (`directoryScopeId`), not the Azure root scope. The export
+  never writes a root-scope assignment, the validator warns on one, and `Sync-OERStructureRoleAssignment`
+  skips one before any lookup or request and never prunes the root scope.
+  **`Get-OERAccessReviewTargetMismatch` is the single owner of whether a live access review found by
+  display name reviews the access package and assignment policy an `accessReviews[]` entry
+  declares**, and `Resolve-OERAssignmentPolicyId` of the assignment policy name lookup it shares with
+  creation (`Resolve-OERAccessReviewScopeTarget`). A review that does not is refused with
+  `AccessReviewScopeMismatch` before any reviewer lookup or `ShouldProcess`, and nothing is written to
+  it. Never re-implement either check, or the policy lookup, inline. There is ONE named deviation:
+  `Get-OERInventory`'s check of whether an access review's access package or assignment policy name is
+  unique sends the same two lookups as `Resolve-OERAccessPackageId` and `Resolve-OERAssignmentPolicyId`
+  itself, so a shared name never raises `AmbiguousName` inside the export; the Context "the export's
+  review-reference lookups agree with the resolvers (named deviation)" in
+  `tests/Unit/Public/Get-OERInventory.Tests.ps1` holds the two in step. Never add a second.
+  `Why: docs/development/rationale.md#root-scope-is-not-in-the-document`,
+  `docs/development/rationale.md#access-review-target`,
+  `docs/development/rationale.md#roster-identity-and-shared-names`
 
 ## access-review-target
 
@@ -10232,6 +11501,17 @@ and the document is valid either way. The message says the alias does not follow
 declare. A `previousDisplayName` that is an object id, and a template-based group with no
 `mailNickname`, warn too although there is no old name to derive an alias from; the message hedges
 ("if that alias was derived from the old name"). If wrong: one Warning too many on such a document.
+
+### CLAUDE.md text for mail-nickname
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Get-OERDerivedMailNickname` is the single owner of the mail alias `New-OERGroup` derives from a
+  display name** (every character outside A-Z, a-z, 0-9, '.', '_' and '-' removed). `New-OERGroup`
+  refuses a derived alias that is empty or longer than 64 characters with `DerivedMailNicknameInvalid`,
+  and `Test-OERStructureSchema` compares a renamed group's `mailNickname` with the alias derived from
+  its previous name. Never re-implement the derivation inline.
+  `Why: docs/development/rationale.md#mail-nickname`
 
 ## rename-policies-and-reviews
 
@@ -10848,6 +12128,25 @@ or missing id already behaved this way, so the edge is defensive; walking such a
 `SubscriptionId`, or naming it unread, is a behaviour choice left to a later step. Cost if wrong: such
 a subscription is not walked and not named unread.
 
+### CLAUDE.md text for roster-identity-and-shared-names
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Get-OERGroupNameIndex` is the single owner of which groups in the tenant carry a display
+  name**: from the groups given (`-Group`, the export's roster) with no request, or from ONE paged
+  listing `v1.0/groups?$select=id,displayName&$top=999`, which `Get-OERInventory` reads at most once
+  per invocation, and `Export-OERInventory` at most once per export through its run context (below).
+  It never throws and never writes an error record: it returns `Read`, `IdsByName`
+  (a name, compared without regard to letter case, to the lower-cased ids that carry it; `$null` when
+  the listing failed, never an empty index) and `Message`. **`Get-OERGroupReference` is the single
+  owner of how the export names a group it references as the principal of a role assignment or a
+  directory role assignment**: its display name only when the index was read and exactly this group
+  carries the name; otherwise its object id, written with `principalType` `Group` in
+  `roleAssignments` and `directoryRoleAssignments`. A group named as an eligibility principal, a
+  reviewer, a catalog resource or a resource role is outside it and keeps its display name (R-6).
+  Never re-implement either inline.
+  `Why: docs/development/rationale.md#roster-identity-and-shared-names`
+
 ## measured-not-found-codes
 
 Sprint 11 step 10 (BL-21, R-13): the not-found codes of two reads are the ones measured. This anchor records
@@ -10995,6 +12294,37 @@ object id, which is exact and leaves nothing unread, and the verbose line of R-3
 [#roster-identity-and-shared-names](#roster-identity-and-shared-names) repeats once per scope.
 (c) The owner check's `$null -ne Owner` term is an equivalent guard: no frame carries a null
 `InvocationInfo`, so a context without an owner matches nothing either way. It stays as a defence.
+
+### CLAUDE.md text for export-run-context
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Export-OERInventory` is the only command that sets and clears the export run context
+  (`$script:_OERInventoryRunContext`)**, the one object its `Get-OERInventory` calls share (the
+  group name index, the principal names the group read looked up, `PrincipalNameCache`, the deleted
+  items answers, the role assignment principals that could not be read, and the subscription home
+  tenant answers, `SubscriptionTenant`);
+  `Get-OERInventory` fills its members, `Get-OERDeletedPrincipalStatus` through the `PrincipalStatus`
+  dictionary it is handed, except `SubscriptionTenant`, which the export hands to
+  `Resolve-OERInventoryScopeTree -Cache` and `Get-OERInventory` to the owner the same way, so
+  `Get-OERSubscriptionHomeTenant -Cache` is what fills it (a context without the member reads as
+  none). Export creates it in ONE place, directly before its Entra ID
+  `Get-OERInventory` call, with `Owner` set to its own `$MyInvocation`, and sets it back to `$null`
+  with a plain statement directly after the Azure walk -- never in a `finally`, which turns a
+  statement-terminating error into a skip of the rest of the walk. `Get-OERInventory` reads it once
+  per invocation and uses it only while its `Owner` is the `InvocationInfo` of a frame of the current
+  call stack (`Microsoft.PowerShell.Utility\Get-PSCallStack`, compared by reference), and behaves
+  standalone otherwise, so a context a stopped export left behind is ignored. Never read or write it
+  anywhere else, never replace it by a public parameter (A9), and add a member to it rather than a
+  second module variable. `PrincipalNameCache` (Sprint 11 step 10, BL-122) is a `[hashtable]`, id to
+  name, that the export creates before its group read and hands, the very same object, to
+  `Get-OERInventoryGroup -PrincipalNameCache` and to the context, so a principal the group read named
+  is not looked up again by the Entra ID call; `Get-OERInventory` takes it, read through
+  `PSObject.Properties` as `SubscriptionTenant` is, only when the context is its own and the member
+  is a `[hashtable]` (its consumers bind one and call `ContainsKey`), and keeps its own otherwise.
+  Known limit: a lookup that failed in the group read is not retried, since the map
+  `Resolve-OERPrincipalName` returns answers the id as the name.
+  `Why: docs/development/rationale.md#export-run-context`
 
 ## unresolved-principals
 
@@ -11238,6 +12568,27 @@ what the bundle reports for it. Two things still outlive the skip: the root noti
 is left out of the document whichever scope read it and the warning says just that, and the answers
 of the deleted items read that the call kept in the run context, which are facts read and not rows.
 
+### CLAUDE.md text for unresolved-principals
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Get-OERDeletedPrincipalStatus` is the single read of `directory/deletedItems`, and
+  `Resolve-OERPrincipalName -Detailed` the lookup that tells a principal the directory returned from
+  one it did not return and from one whose lookup failed** (BL-133, A18). Only the `roleAssignments`
+  section of `Get-OERInventory` uses both. `-Detailed` alone has two more callers since Sprint 11
+  step 8, neither of which reads the deleted items: the `administrativeUnits` section's scoped role
+  type lookup, and `Get-OERServicePrincipalAccess` for the users named in delegated permission
+  grants (see the next bullet). In the `roleAssignments` section a principal not returned is written
+  by its object id with `principalStatus` `Deleted` or `Unresolved`, and a failed lookup or a failed
+  deleted items read is
+  never a fact -- it is named unread (`.../principal`, `.../principalStatus`; the second still written
+  `Unresolved`, never as a principal that exists). The read never throws, never writes an error
+  record, and caches only an answer that was read. `Sync-OERStructureRoleAssignment` looks no principal
+  up for an entry that declares `principalStatus` and never creates its assignment (`Skipped`, no
+  `ShouldProcess`). The other sections keep `Resolve-OERPrincipalName`'s default map, which is
+  unchanged. Never read `directory/deletedItems` anywhere else.
+  `Why: docs/development/rationale.md#unresolved-principals`
+
 ## undeclarable-scope
 
 Sprint 11 step 6 (A13, A15; ruling R-6) gave the two scope spelling rules one owner and made the export
@@ -11353,6 +12704,18 @@ checked; it is named as a shared name and in `IncompleteReads`. (c) `Get-OERInve
 not check: it carries no group ids without `-IncludeId`. A finding, if a later step wants it. (d) The
 validator cannot see the export's case (above), which is why the export warns on its own.
 
+### CLAUDE.md text for restricted-unit-pim
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **A group that uses PIM for Groups in a restricted management administrative unit is a Warning,
+  never an Error or a refusal**: `Export-OERInventory` warns before its `ShouldProcess` (with `Groups`
+  and `AdministrativeUnits` included, from what it read, with no request) and lists the groups in the
+  bundle README, and validator Rule 16 warns on a document that places such a group in a restricted
+  unit it declares. State the limit as Microsoft Learn documents it, as fact, and what Microsoft Graph
+  answers to the engine's PIM writes for such a group as unmeasured until a live run measures it.
+  `Why: docs/development/rationale.md#restricted-unit-pim`
+
 ## review-package-in-the-same-run
 
 Sprint 11 step 6 (BL-147, ruling R-8) put every `accessPackages` entry's package into the run's rename
@@ -11431,6 +12794,22 @@ R-5), but it names a review's access package by its object id whenever another p
 carries that name ([#access-review-target](#access-review-target), since Sprint 11 step 5), and Rule
 15 never reads a reference that is an object id. The refusal names the entries and says to name the
 package by its object id.
+
+### CLAUDE.md text for review-package-in-the-same-run
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Resolve-OERStructureRename` is the single owner of the keys of the run's rename map, and every
+  `accessPackages` entry registers its package there, not only a rename** (BL-147): an entry that
+  renames nothing through `-Identified -Id` once it has found the package in its catalog or created it
+  there, and through `-Unidentified -Reason` (refused, no ErrorId) until then; such an entry carries
+  no previous name, which is how a reader tells it from a rename and words its rows. So
+  `Sync-OERStructureAccessReview` reads a declared package's name only through the map and never
+  looks it up in the whole tenant; with `-Include` leaving AccessPackages out every such review is
+  refused. Validator Rule 15 refuses a review that names by display name a package two or more
+  `accessPackages` entries declare, with or without a rename. Never register a map key outside the
+  owner, and never let a review resolve a declared package's name past a refusal.
+  `Why: docs/development/rationale.md#review-package-in-the-same-run`
 
 ## naming-standard
 
@@ -11577,6 +12956,26 @@ example `sg` under `UPPERCASE`) is accepted, and a name that carries it gets the
 Warning, so the output shows it. (e) Patterns are compiled without a match timeout, so a pattern with
 catastrophic backtracking (such as `(a+)+b`) can make the offline check slow on a long name (measured:
 about 1.5 s at 24 characters, growing exponentially). The check is offline and sends nothing.
+
+### CLAUDE.md text for naming-standard
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+The rules a name must follow are a separate matter, held in a naming standard file that
+`Test-OERStructure -NamingStandard` checks offline; `Test-OERNamingStandardName` owns them (see **Code
+Style**). `Why: docs/development/rationale.md#naming-standard`
+
+- **`Test-OERNamingStandardName` is the single owner of the naming rules, their order and their Detail
+  texts; `Read-OERNamingStandard` of reading and refusing the naming standard file; and
+  `Get-OERNamingStandardSchemaJson` of its schema.** `Test-OERStructureSchema` (Rule 17) adds one
+  Warning per object and broken rule, only when `Test-OERStructure -NamingStandard` hands it a standard,
+  and `Invoke-OERStructure` never passes one: a naming finding is never an Error, and applying a
+  document is unchanged. Every pattern matches the whole text, values compare ordinally, and a file
+  the reader refuses is `InvalidNamingStandard`, once, with no document read or validated. The reader
+  checks the file by hand and never calls `Test-Json`; `docs/examples/naming-standard.schema.json` is
+  the schema function's output, held identical by a test, and is never edited by hand. Never
+  re-implement a rule, a Detail text or the file's validation elsewhere.
+  `Why: docs/development/rationale.md#naming-standard`
 
 ## service-principal-access
 
@@ -11793,6 +13192,38 @@ each one names. Every mutant turned at least one test red.
 | L6, L7 | R-14: the list goes on and the grants are read (`:267`, `:384`) | `continue` made `break`; the old gate on `applicationPermissions` | the same 3 tests (the grants' resource name; the grants unread) |
 | L8, L9 | the list-read flag (`:298`, `:230`) | never set; set before the read | 40 red; the 7 tests of a failed service principal list |
 | L10, L11 | an owner the full read returns without an id leaves that part unread (`:322`, `:359`) | each check removed | the unread test of that part |
+
+### CLAUDE.md text for service-principal-access
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Get-OERServicePrincipalAccess` is the single reader of what `servicePrincipalAccess.json`
+  holds** (Sprint 11 step 8, A7): the service principal list with `$expand=appRoleAssignments` (the
+  application permissions, read from the client side), the service principal and app registration
+  lists with `$expand=owners(...)`, and one paged `oauth2PermissionGrants` list whose users it looks
+  up with ONE `Resolve-OERPrincipalName -Detailed` call. An object whose expanded collection holds
+  20 or more entries, or one of whose expanded entries lacks the id its row needs (an app role
+  assignment without `resourceId` or `appRoleId`, an owner without `id`), is read again in full with
+  a paged read of its own, since Microsoft Graph documents at most 20 for an expanded directory
+  relationship and was measured to return an expanded app role assignment with a null `resourceId`.
+  An app role assignment the full read still returns without them leaves only
+  `applicationPermissions` unread (R-14). A part is read whole or not at all: any failure inside it
+  leaves it `$null`, never `[]`, and names it `servicePrincipalAccess/<part>`; the grants are not
+  read when the service principal list was not. It never throws, never writes an error record or a
+  warning, and sends GET requests only, with no `-Method` (the requiredscope gate would judge every
+  literal of a function that writes as a write). `Export-OERInventory` calls it once, only with
+  `-IncludeServicePrincipalAccess` (A9), and nothing reads the file back: never add its content to
+  `inventory.json`, `schema.json` or the apply engine. **`ConvertTo-OERPrincipalType` is the single
+  owner of mapping a Microsoft Graph object type to the document's principal type** (`User`, `Group`
+  or `ServicePrincipal`, the `#microsoft.graph.` prefix optional, letter case ignored; anything else
+  `$null`, never guessed), used for the owner rows and for the `principalType` `Get-OERInventory`
+  writes on an `administrativeUnits[].scopedRoles` row whose principal the directory returned.
+  `ConvertTo-OERDirectoryRoleAssignment` keeps the mapping it had before this one (a named
+  exception, not a precedent); never map a Graph type inline anywhere else. The validator holds the
+  scoped role `principalType` to the enum and `Read-OERStructureDocument` canonicalises it, but
+  `Sync-OERStructureAdministrativeUnit` never uses it to match or write.
+  `Why: docs/development/rationale.md#service-principal-access`,
+  `docs/development/rationale.md#scoped-role-principal-type`
 
 ## scoped-role-principal-type
 
@@ -12033,6 +13464,22 @@ Cost (accepted): a Default Host run that would have changed nothing now needs `-
 `Invoke-OERStructure.Tests.ps1` holds it, in a real Default Host runspace with no `try` among others,
 beside the two helpers' own test files.
 
+### CLAUDE.md text for confirmation-unavailable
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Test-OERHostCanConfirm` is the single owner of whether the host can show a confirmation prompt
+  that is decidable beforehand, and `Test-OERConfirmPromptFailure` of whether a caught record is a
+  `ShouldProcess` that failed because the host could not ask** (Sprint 11 step 11, BL-53). The first is
+  `$Host.Name -ne 'Default Host'`, the only host the measurement found safely decidable;
+  `Invoke-OERStructure` refuses with `ConfirmationUnavailable`, before the sign-in, a document whose run
+  would prompt (not `-WhatIf`, `$ConfirmPreference` not `None`) when it answers false. The second is
+  true only for a `MethodInvocationException` whose inner exception is a `HostException`,
+  `PSInvalidOperationException` or `NullReferenceException` (or derives from one) and whose message
+  names `ShouldProcess` (ordinal); the engine's two handler-error catches word the Detail through it.
+  Never decide either anywhere else.
+  `Why: docs/development/rationale.md#confirmation-unavailable`
+
 ## structure-document-text
 
 Sprint 11 step 11 (BL-154, ruling R-11). `Test-OERJsonDateKindSupport` is the single owner of whether
@@ -12075,6 +13522,20 @@ date and time with seconds; nothing is ever changed on the way. Held by `Read-OE
 `Test-OERJsonDateKindSupport.Tests.ps1`, the date and displayName Contexts of
 `Test-OERStructureSchema.Tests.ps1`, and a runspace with no `try` in `Invoke-OERStructure.Tests.ps1`
 with `Test-OERJsonDateKindSupport` stubbed false.
+
+### CLAUDE.md text for structure-document-text
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **`Test-OERJsonDateKindSupport` is the single owner of whether the running `ConvertFrom-Json` has
+  `-DateKind`** (Sprint 11 step 11, BL-154): one `Get-Command` of the module-qualified
+  `Microsoft.PowerShell.Utility\ConvertFrom-Json`, true when it has the parameter (PowerShell 7.5 or
+  later). `Read-OERStructureDocument` adds `-DateKind String` to its parse when it answers true, so a
+  structure document reaches the validator and the engine as written; on PowerShell 7.2 to 7.4
+  `Test-OERStructureSchema` refuses every date value the parse made (Rule 2b), with no field exempted.
+  Never ask the question anywhere else, and never "repair" a parsed date into text. A test mocks it in
+  module scope to run the 7.2 to 7.4 path on a newer PowerShell.
+  `Why: docs/development/rationale.md#structure-document-text`
 
 ## naming-template-one-pass
 
@@ -12153,3 +13614,501 @@ more -- but its row reads `Updated` again instead of `Unchanged`, so two runs in
 prove convergence. A run after the reads settle reports `Unchanged`, and the live checklists wait for
 that before a convergence check. The help of `Invoke-OERStructure` says so. Cost: none in the tenant; a
 row that overstates the second run.
+
+## claude-md-preamble
+
+This section records the CLAUDE.md preamble as it stood before step 11b.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+Working rules for this repo. This file carries **rules**; the history behind them lives in
+[docs/development/rationale.md](docs/development/rationale.md), linked per rule as
+`Why: ...#anchor`. Read the anchor before "simplifying" a rule -- most of them exist because the
+obvious simplification was already tried here and silently failed.
+
+## branch-policy
+
+This section records the CLAUDE.md text on the branch policy and the merge requirements on `main` as it stood before step 11b.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**`main` is protected on GitHub and a direct push to it is REJECTED BY THE SERVER.** That is
+deliberate. It is not a lock to be worked around, and "continue on the current branch" is no longer
+an option a user can consent to on `main` -- consent does not move a server-side rule. Every change
+reaches `main` through a pull request.
+
+**Before making any code change, Claude must:**
+
+2. If the current branch is `main`, create a feature branch before touching any files:
+   `git checkout -b <branch-name>`, named from the table below. Propose the name and say what it is
+   for; do not stop and wait for permission to leave `main`, since staying there cannot produce a
+   push.
+
+3. If the current branch is some OTHER shared branch, stop and ask the user which branch to use --
+   there the old rule still holds, because the push would succeed.
+
+**Merge requirements, enforced by GitHub on `main` (as measured on 2026-10-08):**
+
+- **Four status checks are required: `ubuntu-latest`, `windows-latest`, `macos-latest` and
+  `package`.** The first three come from the build-and-test matrix's `name: ${{ matrix.os }}`, so
+  the job name IS the required check name -- renaming the job, or changing the matrix, orphans the
+  protection rule and blocks every open PR until the rule is renamed to match. `package` is the
+  `package` job's own `name: package` in the same workflow: the job that runs after all three legs
+  (`needs: build-and-test`) and proves on the pull request that the artefact is publishable,
+  without publishing it. Renaming its `name:` (or, with `name:` removed, its job id, which the check
+  name then falls back to) orphans the fourth rule the same way. Change both together.
+
+- **`package` never holds the gate alone.** It has no `if:` of its own, so when a leg fails or is
+  skipped GitHub skips `package` too, and a skipped check counts as passed ("Troubleshooting
+  required status checks": successful statuses are `success`, `skipped` and `neutral`). The three
+  leg checks are what stop a red pull request, so never drop them from the rule in favour of
+  `package`.
+
+- **The branch must be up to date with `main` before it can merge** (the rule is strict). A branch
+  that has fallen behind is rebased onto `main` and force-pushed; the checks then re-run against the
+  rebased tip.
+
+- **Linear history is required**, so a merge commit is refused. Squash merge is the convention here.
+
+- **Every conversation on the PR must be resolved** before merge.
+
+- **The rule binds administrators too** (`enforce_admins` is on), so no account merges past it.
+
+## project-overview
+
+This section records the CLAUDE.md text on what the module is and which clone is canonical as it stood before step 11b.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module built and maintained by Omnicit AB. MIT
+licensed and **published on the public PowerShell Gallery for anyone to use**: 1.0.0 went out by
+hand on 2026-09-18, and everything since publishes itself -- see **Publishing** below.
+
+It manages RBAC building blocks across many Entra ID and Azure tenants: Entra ID groups, PIM,
+Administrative Units, Entitlement Management, Access Reviews, Azure resources and RBAC, plus a JSON
+inventory and a declarative apply engine. Command prefix is `OER`.
+
+**The canonical working tree is the clone whose `origin` is
+`github.com/Omnicit/Omnicit.EntraRBAC`**, wherever it sits on disk. The local path differs from
+machine to machine, so identify it with `git remote get-url origin`, never by its directory. The
+older clone, whose `origin` is the private repository, is to be archived; do not commit to it, and
+do not treat a change made there as made. Two live clones of one module is how a fix lands in the
+wrong repository -- that has already happened here.
+
+The phase roadmap (phases 0-5) is **complete** -- the module is feature-complete. See `CHANGELOG.md`
+for what each release delivered.
+
+## module-layout
+
+This section records the CLAUDE.md text on the module layout tree, the Classes sentence and the roster as it stood before step 11b.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+```
+source/
+  Omnicit.EntraRBAC.psd1      # Manifest -- source of truth for exports and RequiredModules
+  Omnicit.EntraRBAC.psm1      # Dev-mode loader ONLY (Private -> Public). ModuleBuilder replaces
+                              #   it at build time; see Common Pitfalls.
+  suffix.ps1                  # Update-TypeData -Force blocks + Register-ArgumentCompleter calls,
+                              #   each mirrored verbatim in the dev-mode psm1
+  Private/                    # Internal helpers, one function per file
+  Public/                     # Exported cmdlets, one per file, filename == function name
+  Formats/                    # Omnicit.EntraRBAC.Format.ps1xml (type data is inline in suffix.ps1)
+  en-US/                      # about_Omnicit.EntraRBAC.help.txt
+tests/
+  QA/                         # Seven gate files (below), all run by ./build.ps1 -Tasks test
+  Unit/Private/, Unit/Public/ # One *.Tests.ps1 per source file, plus the named exceptions below
+  Unit/Formats/               # FormatViews.Tests.ps1 -- format-view rendering checks
+  Unit/TestHelpers/           # Two helpers and one suite. OERConfirmHost.ps1 hosts a runspace whose
+                              #   PSHost answers ShouldProcess prompts -- the only way to test a
+                              #   genuine DECLINE, to read the prompt/target text, or to see the
+                              #   order of warnings, 'What if:' lines and prompts.
+                              #   OERTransportTripwire.ps1 is the transport tripwire every unit test
+                              #   file installs; OERTransportTripwire.Tests.ps1 is its known-answer
+                              #   suite.
+  Workflow/                   # PublishJob.Tests.ps1 -- the publish job's tag guard, proven offline:
+                              #   PublishArtefact.ps1 called directly, and the job's own step text
+                              #   run in pwsh against a fake Gallery and a fake GitHub.
+build.yaml, build.ps1         # Sampler/ModuleBuilder config and bootstrap entry point
+RequiredModules.psd1          # Build-time dependency resolver (NOT the runtime pin -- see Dependencies)
+azure-pipelines.yml           # Build + Test only, no Deploy stage -- it never publishes
+.github/workflows/build-and-test.yml  # Build + Test on Linux, Windows, macOS, then package and
+                              #   publish. The ONLY path that publishes -- see Publishing.
+.github/scripts/PublishArtefact.ps1   # -Record / -Verify / -Compare: proves the published bytes
+                              #   are the tested bytes, and that the package on the Gallery is
+                              #   this commit's build before the tag step tags it. Single owner of
+                              #   all three; do not split it.
+```
+
+There is **no `source/Classes` directory**. The loader iterates one, but argument completion is
+scriptblock-based instead. `Why: docs/development/rationale.md#completers`
+
+**Do not maintain a function roster in this file.** Read it from the tree instead:
+
+`README.md` section "Available Cmdlets" is the maintained, cohort-grouped list of every exported
+cmdlet; `Get-OERRequiredScope` reports the Graph/Azure permissions each one needs.
+
+## required-checks-and-the-matrix
+
+This section records the CLAUDE.md text on why the build-and-test job condition is wired to the merge gate, and why the matrix matters, as it stood before step 11b.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**The build-and-test job's `if:` condition is now wired to the merge gate -- do not read it as a
+billing guard alone, and do not reason about it from GitHub's general rule for skipped jobs.** The
+job is declared
+`if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}`, because
+standard runners are free and unmetered only on a PUBLIC repository. `ubuntu-latest`,
+`windows-latest`, `macos-latest` and `package` are the four REQUIRED checks on `main`, and that
+condition decides whether the first three ever come into existence; `package` follows them through
+`needs: build-and-test`.
+
+**The mechanism is the MATRIX, not the skip.** GitHub documents the opposite of what happens here:
+a job skipped by a condition reports Success and does NOT block a pull request ("Troubleshooting
+required status checks"). That rule does not rescue this workflow, because `build-and-test` is a
+matrix job and a job-level `if:` is evaluated BEFORE the matrix expands. The three legs are
+therefore never created, so nothing ever reports the three check names -- and a required check that
+never reports stays pending forever instead of passing (community discussion #9141). The fourth
+check does not change that: `package` is skipped with the job it needs, and a skipped check counts
+as passed, but the three matrix names still never report. Make this repository private again and
+every pull request blocks permanently, including the pull request that would fix it. Turning the
+repository private is therefore a change to this condition, or to the protection rule, made in the
+SAME change and never afterwards.
+
+**Rewriting this workflow as three separate jobs without a matrix INVERTS the failure, into the
+worse one.** Without a matrix there is nothing to expand: the job-level `if:` would then skip three
+jobs that do exist, each would report Success under the documented rule, and the merge gate would
+go GREEN having run not one test -- `package` included, since it would be skipped with them. The
+matrix is what makes a skip fail loudly here, so keep it -- or, if the jobs are ever split, make the
+required checks something a skipped job cannot satisfy.
+
+## qa-gates
+
+This section records the CLAUDE.md text on the Markdown, docsync and cross-cutting test suite gates as it stood before step 11b.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**`dochygiene.tests.ps1` also reads Markdown the way GitHub renders it.** In every tracked `.md`
+under `docs/` and `specs/`, and in `README.md` and `CHANGELOG.md` at the root, no angle bracket
+that looks like a tag (`<word>`, `</word>`, `<!...>`, `<?...>`) may stand outside code: GitHub
+renders it as nothing, so a redacted `<id>` stand-in vanishes from the record. `CHANGELOG.md`'s
+`[Unreleased]` also becomes the GitHub release body (the publish job's `gh release create
+--notes-file`), which GitHub renders the same way and hides the bracket too -- but the PowerShell
+Gallery shows those same notes as HTML-encoded plain text, where a bracket is SHOWN, not hidden,
+and a backslash escape would show there too, permanently. So in `CHANGELOG.md` use backticks only,
+never a backslash. Elsewhere, write the token inside backticks, or as `\<id>` where a backtick
+would close a code span the line already has; quotes alone do not escape it. An autolink
+(`<https://...>`) or deliberate inline HTML (`<br>`) is refused the same way, since the check is
+exactly the reference algorithm -- write a bare URL instead, or put the markup in backticks. Fenced
+blocks and code spans are skipped with the algorithm documented in
+`ConvertTo-DocHygieneMarkdownProse`'s own `.DESCRIPTION`, in `tests/QA/dochygiene.tests.ps1`. That
+algorithm is the maintainer's `Test-MdAngleBrackets.py`, a script kept outside this repository that
+the gate follows where the two differ (the gate's own comment says so), and deliberately not
+CommonMark's: never "correct" it towards CommonMark, and carry a change made on either side to the
+other, so the two keep agreeing hit for hit.
+
+**`docsync.tests.ps1` holds `README.md` and the about topic against each other.** Each already had
+its own "names every exported cmdlet" check, but both matched the whole FILE, so a cmdlet mentioned
+only in a Quick Start snippet passed while missing from the roster. This gate scopes the roster to
+`## Available Cmdlets` and `COMMAND COHORTS`, checks each `### Cohort (N)` count against the cmdlets
+that cohort is the FIRST to name, and requires the two documents to agree word for word on the
+tenant-switch verdict per sign-in type and on the device-code known limitation. It also holds every
+sentence in either whole document that says "all N cmdlets" or "all N exported cmdlets" -- README's
+introduction and `## Available Cmdlets`, the about topic's LONG DESCRIPTION -- to the count of
+`FunctionsToExport`, with a floor on the matches so a reworded sentence cannot make it vacuous; a
+count written another way ("98 cmdlets" with no "all", a spelled-out number) is not seen. It
+deliberately does NOT bind the surrounding prose -- the sovereign-cloud, tenant-profile and
+permissions sections are rewritten per medium on purpose.
+
+**Test files named after no single function.** Ten cross-cutting suites exist. Do **NOT** delete
+any of them as an orphan when auditing the one-test-file-per-function invariant:
+
+- `Unit/Private/BasePathDefault.Cohort.Tests.ps1` -- asserts all seven `-BasePath`/`-ProfileBasePath`
+  default carriers resolve cross-platform (issue #40). It sits under `Private/` because five of the
+  seven carriers are public and two are private, so it belongs to neither cohort exclusively. Do not
+  "fix" its location by moving it.
+
+- `Unit/Public/AmbiguousName.Guard.Tests.ps1` -- asserts every public call site of an
+  ambiguity-refusing `Resolve-OER*Id` helper surfaces the candidate ids instead of a first match.
+
+- `Unit/Public/NothingToUpdate.Cohort.Tests.ps1` -- asserts every `Set-OER*` cmdlet (all twelve)
+  reports the no-updatable-property condition as `NothingToUpdate`, and that
+  `Set-OERRoleManagementPolicy`'s separate "no rule differs" case keeps its distinct `NoChange` id.
+
+- `Unit/Public/GroupAliasOrder.Cohort.Tests.ps1` -- AST-driven: asserts every `source/Public/*Group*.ps1`
+  file declaring a `-Group` parameter lists the `GroupId` alias before the generic `Id` alias, so a
+  piped principal can never mis-bind as the piped group.
+
+- `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1` -- the same AST-driven pattern for every
+  `-AdministrativeUnit` parameter, so a piped member's own `Id`/`DisplayName` can never mis-bind as
+  the piped parent unit.
+
+- `Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` -- AST-driven: asserts every public cmdlet that
+  declares `-TenantId` carries `[ValidateNotNullOrEmpty()]` on it, except `Connect-OER`, whose
+  `-TenantId` must carry no validation so its own `InvalidTenantId` refusal runs after the
+  session-uncertain marker is set (A12, BL-94); it also drives the binding refusal for the cmdlets
+  the live checklist uses. It imports the module, so it installs the transport tripwire.
+
+- `Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` -- exports the two directory sections
+  (`directoryRoleManagementPolicies`, `directoryRoleAssignments`) from a mocked live state with
+  `Get-OERInventory` and applies them back through `Invoke-OERStructure`, with and without `-Prune`,
+  asserting every row is `Unchanged`. It runs with a session -- a state the test sets for one
+  tenant, `Initialize-OERAuth` mocked -- so the export names that tenant (`tenantId`) and the apply
+  compares it; the export applied under another tenant is refused with `DocumentTenantMismatch`,
+  reading and writing nothing.
+
+- `Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` -- AST-driven: asserts no
+  `source/Public/*.ps1` file writes a `Write-Warning` after its first `$PSCmdlet.ShouldProcess`,
+  except the warnings its allowlist names with a reason (an entry matching no warning, or two, fails
+  too); pins by name and text the twenty cmdlets that warn before their gate; and proves each moved
+  warning at run time on `OERConfirmHost`, before the `What if:` line and before the `-Confirm`
+  prompt, with no write request. `OER_COHORT_SOURCE_ROOT` points its AST parts at a mutated copy of
+  `source/` and is never set in CI (the cadence scan in `Get-OERAccessReviewCadence.Tests.ps1`, the
+  `TenantIdNotEmpty` cohort and the scan in `Get-OERGroupRelation.Tests.ps1` read the same
+  variable). It imports the module, so it installs the transport tripwire.
+
+- `Unit/TestHelpers/OERTransportTripwire.Tests.ps1` -- the transport tripwire's known-answer suite:
+  the six names, resolution from the module scope, parameter parity, mock precedence, the record
+  and the refusal, a re-import, the `AfterAll` check, the answering runspace and the uninstall.
+
+## build-and-test-commands
+
+This section records the CLAUDE.md text on the build and test commands, with the measured coverage, as it stood before step 11b.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+```powershell
+# Bootstrap build dependencies (first time or after a clean clone)
+./build.ps1 -ResolveDependency -Tasks noop
+
+# If that fails with "Requested value 'V2' was not found" (PSResourceGet compat error), add:
+./build.ps1 -ResolveDependency -Tasks noop -UseModuleFast
+
+# Build the module (output lands in output/module/Omnicit.EntraRBAC/<ver>/)
+./build.ps1 -Tasks build
+
+# Full test suite -- the authoritative CI gate.
+# QA tests + Unit Pester + PSScriptAnalyzer + 80% code coverage enforcement
+# (measured 2026-10-08: 94.89% over 18,579 commands, locally on Windows and on all three CI
+#  runners of PR #34; macOS measured 94.88% on main's run of bfe1b1a, whose source is the same)
+./build.ps1 -Tasks test
+
+# Import from source for quick local development
+# (needs AzAuth, Microsoft.Graph.Authentication on PSModulePath;
+#  prepend output/RequiredModules if needed)
+Import-Module ./source/Omnicit.EntraRBAC.psd1 -Force
+
+# Import the built module
+Import-Module ./output/module/Omnicit.EntraRBAC/<ver>/Omnicit.EntraRBAC.psd1 -Force
+```
+
+The Sampler test task measures coverage against the **built** module output, not `source/`. Always
+run `-Tasks build` before `-Tasks test` after changing source files -- and never build while the
+gate is running.
+
+## publishing
+
+This section records the wording CLAUDE.md carried, before it was cut to the rules, for the Publishing rules that link no other anchor.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **A merge that changes only documentation publishes a new preview too.** The workflow has no
+  path filter and must not be given one. Accepted in Decision 4 -- a preview per merge is the
+  price of the merge-to-main trigger, not a defect to be filtered away.
+
+1. Push `v<X.Y.Z>` on the `main` tip, once that commit's four required checks are green. Only the
+   `Stable Version` ruleset's bypass list can create that tag -- as measured on 2026-10-08, the
+   Repository admin role and the user PhilipHaglund -- and the push IS the release decision: nothing
+   asks for an approval after it. A tag outside the `Entra RBAC` environment's patterns (a major of
+   10 or more, or a minor or patch of 100 or more) is refused by the environment, visibly, and
+   publishes nothing; the repair is a new pattern the ruleset also covers, never a return to `v*`.
+
+2. Make the close-out the FIRST merge after the tag, exactly as the **close-out after a stable
+   release** rule under **CHANGELOG and Version** describes. The invariant to check it against is
+   `git show v<X.Y.Z>:CHANGELOG.md` -- the dated section must say what that tag actually shipped.
+
+## tenant-profile-config
+
+This section records the wording CLAUDE.md carried, before it was cut to the rules, for the Tenant Profile Config rules that link no other anchor.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+A profile's optional `Environment` key names the sovereign cloud that tenant lives in (`Global`,
+`USGov`, `USGovDoD` or `China`). `Connect-OER -TenantAlias` reads it automatically when the command
+line names no `-Environment` of its own, so an operator managing both commercial and sovereign-cloud
+tenants does not have to remember, and pass, which is which on every call; an explicit `-Environment`
+on the command line always overrides it.
+
+## ascii-only-source-files
+
+This section records the wording CLAUDE.md carried, before it was cut to the rules, for the ASCII-Only Source Files rules that link no other anchor.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+Authored `.ps1` files are UTF-8 **without BOM**. They **must contain only ASCII characters** --
+no em-dashes, no box-drawing characters, no smart quotes, no curly apostrophes.
+
+Without a BOM, PowerShell and PSScriptAnalyzer treat the file as ASCII. A non-ASCII character in
+a BOM-less file fails the QA `PSUseBOMForUnicodeEncodedFile` PSScriptAnalyzer gate.
+
+The only acceptable exception is a helper file that was verbatim-copied from a source that
+already carries a UTF-8 BOM.
+
+Use `--` (two hyphens) for em-dash contexts in comments and help text. Use straight quotes `'`
+and `"` only.
+
+## error-handling
+
+This section records the wording CLAUDE.md carried, before it was cut to the rules, for the Error Handling rules that link no other anchor.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **Non-terminating errors** in public functions: `$PSCmdlet.WriteError()` followed by `return` (in
+  a `process` block) or `continue` (inside a `foreach` loop over multiple items). Never use bare
+  `throw` in a public function -- it terminates the pipeline and prevents
+  `-ErrorAction SilentlyContinue` from working.
+
+- **Private pure helpers** such as `Resolve-OERName` may `throw` on caller error: they have no
+  `$PSCmdlet`, and the caller is responsible for catching and routing the error.
+
+- **`Write-CmdletError -Message`** expects an `[Exception]`, not a string. Always wrap bare strings:
+  `[System.Exception]::new('message')`.
+
+- **`ErrorDetails` must be set via the constructor** -- plain string assignment is silently ignored
+  in some PowerShell versions:
+  ```powershell
+  $Err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new('Your message here.')
+  ```
+
+- **Error flow patterns:**
+  ```powershell
+  # In process blocks (single-item cmdlets): use return
+  try { ... } catch {
+      $PSCmdlet.WriteError($Err)
+      return
+  }
+
+  # In foreach loops (multi-item cmdlets): use continue
+  foreach ($Item in $Items) {
+      try { ... } catch {
+          $PSCmdlet.WriteError($Err)
+          continue
+      }
+  }
+  ```
+
+## arm-requests
+
+This section records the wording CLAUDE.md carried, before it was cut to the rules, for the ARM Requests rules that link no other anchor.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**All ARM calls go through `Invoke-OERArmRequest`.** The module deliberately does NOT use
+`Connect-AzAccount`/`Invoke-AzRestMethod`: Az.Accounts cannot reliably reuse an externally acquired
+AzAuth token. `Initialize-OERAuth -IncludeARM` caches the ARM bearer token as a SecureString and the
+wrapper sends it directly, materializing the plaintext only at the request boundary and clearing it
+in a `finally`. The ARM host is read from the session's cloud (`Get-OERCloudEndpoint`'s `ArmResource`
+field via `-Environment`), not hardcoded to public-cloud ARM; `Invoke-OERArmRequest` keeps
+`https://management.azure.com` as a documented fallback for a call made before any auth state exists,
+so it fails on the missing token rather than on a null host -- do not delete that fallback. Since
+Sprint 10 step 3 (BL-65, BL-96) a state without `ArmResourceUrl` takes its cloud's ARM host from
+`Get-OERCloudEndpoint`, and the wrapper never sends a request without an ARM token: it refuses it
+after its two gates, before the send, with the existing `ArmTokenAcquisitionFailed` -- the no-state
+fallback is therefore refused too.
+
+A 429, and a 503 carrying `Retry-After`, are retried with a bounded backoff whose constants mirror
+the Graph wrapper's name for name (`ThrottleWaitBudgetSeconds` 300 per request/page,
+`CallDeadlineSeconds` 900 per call, `ThrottleRetryHardCap` 10, single waits clamped to 1..120 s).
+**The two transports are deliberately MIRRORED, never shared** -- their error shapes differ, and a
+helper covering both would fit neither; the cost is that a wrong comment copied across is wrong
+twice, so correct both files together. The bounds are enforced at the decision to wait and never by
+stopping a paging loop part-way, which is also the LIMIT of what `CallDeadlineSeconds` bounds: it
+caps a THROTTLED call only, and a never-throttled `-All` walk never consults it.
+The ARM `Retry-After` header is read in exactly one place, `Get-ArmRetryAfterHeaderValue`, and the
+header collection never leaves the wrapper. That is a convention this file states, **not** one of
+the machine-checked single-owner rules above it: no gate in `tests/QA/sourcehygiene.tests.ps1`
+enforces it, and none should be added that checks something weaker than the rule -- a gate green on
+a second header read added elsewhere is itself a guard-shaped-but-inert test. Keep it by review.
+
+## psscriptanalyzer
+
+This section records the wording CLAUDE.md carried, before it was cut to the rules, for the PSScriptAnalyzer rules that link no other anchor.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+The QA gate requires **0 findings** per function file. Targeted suppressions are acceptable for
+known false positives (e.g. `PSReviewUnusedParameter` on parameter-set discriminator switches)
+**if and only if** a `Justification` string is provided. Never suppress a rule that hides a real
+bug.
+
+## testing-conventions
+
+This section records the wording CLAUDE.md carried, before it was cut to the rules, for the Testing Conventions rules that link no other anchor.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+- **Tests are written in Pester 5 syntax** under `tests/Unit/{Private,Public}/`. The build resolves
+  the newest Pester, and CI resolves it afresh on every run, so no version is a standing fact here;
+  6.2.0 was the newest when measured on 2026-10-05. One `*.Tests.ps1` per source file. The QA gate
+  (`tests/QA/module.tests.ps1`) requires a unit test file for every exported function.
+
+- **Import by module name, not by path**, in every `BeforeAll` -- importing by path breaks the
+  Sampler coverage measurement, which targets the built module. Every unit test file that imports
+  the module starts with this root shape (the tripwire lines are explained below, and
+  `tests/QA/testhygiene.tests.ps1` fails a file without them):
+
+- **Mock at the module boundary:**
+  ```powershell
+  Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }
+  Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+  ```
+
+- **Reset auth state** in `BeforeEach` when testing anything that touches auth:
+  ```powershell
+  BeforeEach { InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null } }
+  ```
+
+- **Always mock `Initialize-OERAuth`** -- every public cmdlet that touches Graph or Azure calls it at
+  entry, so without a mock the test attempts real authentication.
+
+- **Mock `Invoke-OERGraphRequest`, not `Invoke-MgGraphRequest`** -- mocking the wrapper keeps the
+  test at the module boundary and away from the wrapper's own retry, scrub and conversion logic. A
+  `Mock -ModuleName Omnicit.EntraRBAC Invoke-MgGraphRequest` does win from the module scope, so it
+  works; mock the raw SDK call only where the test is about the wrapper itself, as
+  `Invoke-OERGraphRequest.Tests.ps1` is, or drives the real wrapper on purpose to observe what it
+  does with a failure (the records it builds or leaves, its retries), as parts of
+  `Get-OERGroup.Tests.ps1` do.
+
+## security-hard-rules
+
+This section records the wording CLAUDE.md carried, before it was cut to the rules, for the SECURITY rules that link no other anchor.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+6. **Never log or write access tokens.** The `Remove-OERErrorRecord -Record $PSItem` call in every
+   Graph catch block is mandatory, not optional. It replaces the older `$null =
+   $Error.Remove($PSItem)` idiom, which never removed anything: a module's `$Error` is a private
+   list distinct from the caller's, and even against the caller's `$global:Error` the `ErrorRecord`
+   bound to `$PSItem` is not the same object instance PowerShell stored there, so reference-equality
+   removal silently no-ops. `Remove-OERErrorRecord` instead matches on the one part of the record
+   that IS reference-stable across that boundary: its `.Exception` object.
+
+## no-az-dependency
+
+This section records the wording CLAUDE.md carried, before it was cut to the rules, for the Dependencies rules that link no other anchor.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**No Az module is a dependency of this module, and no Az cmdlet is invoked at run time at all.**
+ARM is called directly with an AzAuth token (`Invoke-OERArmRequest`). `Az.Resources` was declared in
+the manifest until 2026-09-21 and was never used; it is gone. `Disconnect-OER` called
+`Disconnect-AzAccount` behind a `Get-Command` guard until the same date, when that call was removed
+too -- the module establishes no Az context, so it could only ever have reached the operator's own
+session. `tests/QA/sourcehygiene.tests.ps1` now proves this from the source with an AST walk,
+independently of what is installed.
+
+`RequiredModules.psd1` still resolves `Az.Accounts`, for the TEST environment only: Pester's `Mock`
+requires a command to exist, and two negative assertions depend on it -- `Connect-AzAccount`
+`-Times 0` in `Initialize-OERAuth.Tests.ps1` and `Disconnect-AzAccount` `-Times 0` in
+`Disconnect-OER.Tests.ps1`. That is not a runtime need, which is why it is absent from the table
+above.
