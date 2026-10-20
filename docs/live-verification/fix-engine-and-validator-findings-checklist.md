@@ -243,6 +243,12 @@ Write-OerLiveStep "Worktree: branch $(git -C $Cfg.Repo branch --show-current); H
 $Psm1 = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psm1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 $Marks = [ordered]@{
     'reads the Azure role policy with -ErrorAction Stop' = 'Get-OERRoleManagementPolicy -Role $Item.role @ScopeSplat -ErrorAction Stop'
+    'refuses a read unknownFutureValue scope'            = 'UnknownAllowedTargetScope'
+    'refuses an unknown live PIM rule value'             = 'PimRuleValueUnknown'
+    'refuses a host that cannot confirm'                 = 'ConfirmationUnavailable'
+    'keeps the last user owner'                          = 'last remaining user owner'
+    'classifies an approver lookup failure once'         = 'Get-OERApproverErrorClass'
+    'asks whether ConvertFrom-Json has -DateKind'        = 'Test-OERJsonDateKindSupport'
 }
 $Found = @(foreach ($Key in $Marks.Keys) { '{0}: {1}' -f $Key, [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch $Marks[$Key] -Quiet) })
 Write-OerLiveStep "The branch build ($((Split-Path -Leaf (Split-Path -Parent $Psm1.FullName)))): $($Found -join '; ')"
