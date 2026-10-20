@@ -5741,7 +5741,7 @@ Describe 'Invoke-OERStructure: a top-level section that is null is not declared 
         Should -Invoke -ModuleName $script:moduleName -CommandName $Handler -Times 0
         @($Rows | Where-Object { $_.Section -eq $Key }) | Should -BeNullOrEmpty
         @($NullErr) | Should -BeNullOrEmpty
-        # The other seven handlers are not called either.
+        # The other eight handlers -- the null section's own included -- are not called either; only the control's is.
         foreach ($Other in @($script:NsSection | Where-Object { $_.Handler -ne $ControlHandler })) {
             Should -Invoke -ModuleName $script:moduleName -CommandName $Other.Handler -Times 0
         }
@@ -5783,6 +5783,28 @@ Describe 'Invoke-OERStructure: a top-level section that is null is not declared 
         $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], "administrativeUnits": null }'
         $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable NullErr)
 
+        @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @('groups|stub|Unchanged')
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 0
+        @($NullErr) | Should -BeNullOrEmpty
+    }
+
+    It 'runs no administrative unit pre-pass for "administrativeUnits": null while a group names the empty unit name, and completes the run' {
+        # The validator accepts an empty administrativeUnit (only a string is required). Read by key presence, a
+        # null administrativeUnits section was ONE null unit whose name, '' as a string, matched that empty name:
+        # the pre-pass called the unit handler with a null item, and the catch's own row for an item with no name
+        # threw a binding error that ended the whole run. Declared means present and not null, so no unit is
+        # looked at, and the group is applied.
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "administrativeUnit": "" } ], "administrativeUnits": null }'
+        $Caught = $null
+        $Rows = @()
+        try {
+            $Rows = @(Invoke-OERStructure -Json $Json -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable NullErr)
+        } catch {
+            $Caught = $PSItem
+        }
+
+        $Caught | Should -BeNullOrEmpty
         @($Rows | ForEach-Object { "$($_.Section)|$($_.Item)|$($_.Action)" }) | Should -Be @('groups|stub|Unchanged')
         Should -Invoke -ModuleName $script:moduleName Sync-OERStructureGroup -Times 1 -Exactly
         Should -Invoke -ModuleName $script:moduleName Sync-OERStructureAdministrativeUnit -Times 0
