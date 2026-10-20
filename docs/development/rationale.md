@@ -975,6 +975,27 @@ Every gate asserts its own non-vacuity (per-root file counts, named control file
 token counts, region-content checks) so a detection bug fails loudly instead of passing over an
 empty collection.
 
+### CLAUDE.md text for static-source-gates
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+**The seven QA gates** (`tests/QA/`): `module.tests.ps1` (manifest, changelog, help, README,
+per-function PSScriptAnalyzer, and a unit test file for every exported function),
+`about.tests.ps1` (the about topic is byte-identical to source, ASCII/BOM-free, and names every
+exported cmdlet and no other), `requiredscope.tests.ps1` (`Get-OERRequiredScopeMap` vs the module's
+own call graph), `sourcehygiene.tests.ps1` (the ten static source gates --
+`Why: docs/development/rationale.md#static-source-gates`), `dochygiene.tests.ps1` (keeps unredacted
+tenant object ids, tenant domains outside a fixed allowlist of four labels, non-documentation email
+addresses and credentials out of every tracked file under `docs/`, `specs/`, `source/` and
+`tests/`, enumerating tracked files with `git ls-files` and reading their content from disk; reads
+the placeholder register in `docs/live-verification/README.md`, failing on a register at odds
+with itself or a placeholder used without a row; and also checks that tracked Markdown under
+`docs/`, `specs/`, `README.md` and `CHANGELOG.md` holds no angle bracket GitHub would render as a tag),
+`docsync.tests.ps1` (binds `README.md` to the about topic, and both to the manifest's cmdlet
+count), and `testhygiene.tests.ps1` (every unit
+test file that imports the module installs, checks and uninstalls the transport tripwire; read
+statically, importing nothing).
+
 ## pim-beta-pin
 
 PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint. All seventeen call sites, in twelve
@@ -6199,6 +6220,25 @@ alone, while every CI run resolves afresh on a clean runner. Measured on 2026-09
 held `Microsoft.Graph.Authentication 2.36.0` while CI resolved `2.40.0` on the same commit. So a
 full local pass proves the suite against whatever happens to be on disk, not against what the merge
 gate will run. Refresh before trusting a local run, especially before opening or updating a PR:
+
+```powershell
+./build.ps1 -ResolveDependency -Tasks noop -UseModuleFast
+```
+
+`-UseModuleFast` is the same flag the V2 note above prescribes, and it is the resolver that works
+here. Note that it is a DIFFERENT resolver from CI's, so the two trees can still differ in shape --
+a tree resolved without it also carries the unpacked `.nupkg` directories (`_manifest`, `_rels`,
+`dependencies`, `package`) beside a module's version folder. The CI workflow's dependency-report
+step prints the versions each run actually resolved, and is the authority on what the gate tested.
+
+**A refresh ADDS versions and removes nothing.** After the 2026-09-21 refresh the local tree held
+`Microsoft.Graph.Authentication` at both `2.36.0` and `2.40.0`, and still held an `Az.Resources`
+that `RequiredModules.psd1` no longer asks for at all. That is usually harmless, since PowerShell
+loads the HIGHEST version available when importing by name, so a refreshed tree does test the new
+one -- but it means the directory is a growing record of every version ever resolved, not a picture
+of what is currently requested. Confirm the version under test with
+`Get-Module <name> -ListAvailable` rather than by reading the folder listing, and delete the
+directory outright if a genuinely clean resolve is needed.
 
 ## changelog-budget
 
@@ -12191,6 +12231,17 @@ prove convergence. A run after the reads settle reports `Unchanged`, and the liv
 that before a convergence check. The help of `Invoke-OERStructure` says so. Cost: none in the tenant; a
 row that overstates the second run.
 
+## claude-md-preamble
+
+This section records the CLAUDE.md preamble as it stood before step 11b.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+Working rules for this repo. This file carries **rules**; the history behind them lives in
+[docs/development/rationale.md](docs/development/rationale.md), linked per rule as
+`Why: ...#anchor`. Read the anchor before "simplifying" a rule -- most of them exist because the
+obvious simplification was already tried here and silently failed.
+
 ## branch-policy
 
 This section records the CLAUDE.md text on the branch policy and the merge requirements on `main` as it stood before step 11b.
@@ -12201,6 +12252,8 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
 deliberate. It is not a lock to be worked around, and "continue on the current branch" is no longer
 an option a user can consent to on `main` -- consent does not move a server-side rule. Every change
 reaches `main` through a pull request.
+
+**Before making any code change, Claude must:**
 
 2. If the current branch is `main`, create a feature branch before touching any files:
    `git checkout -b <branch-name>`, named from the table below. Propose the name and say what it is
@@ -12227,6 +12280,16 @@ reaches `main` through a pull request.
   leg checks are what stop a red pull request, so never drop them from the rule in favour of
   `package`.
 
+- **The branch must be up to date with `main` before it can merge** (the rule is strict). A branch
+  that has fallen behind is rebased onto `main` and force-pushed; the checks then re-run against the
+  rebased tip.
+
+- **Linear history is required**, so a merge commit is refused. Squash merge is the convention here.
+
+- **Every conversation on the PR must be resolved** before merge.
+
+- **The rule binds administrators too** (`enforce_admins` is on), so no account merges past it.
+
 ## project-overview
 
 This section records the CLAUDE.md text on what the module is and which clone is canonical as it stood before step 11b.
@@ -12237,6 +12300,10 @@ What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule
 licensed and **published on the public PowerShell Gallery for anyone to use**: 1.0.0 went out by
 hand on 2026-09-18, and everything since publishes itself -- see **Publishing** below.
 
+It manages RBAC building blocks across many Entra ID and Azure tenants: Entra ID groups, PIM,
+Administrative Units, Entitlement Management, Access Reviews, Azure resources and RBAC, plus a JSON
+inventory and a declarative apply engine. Command prefix is `OER`.
+
 **The canonical working tree is the clone whose `origin` is
 `github.com/Omnicit/Omnicit.EntraRBAC`**, wherever it sits on disk. The local path differs from
 machine to machine, so identify it with `git remote get-url origin`, never by its directory. The
@@ -12244,9 +12311,62 @@ older clone, whose `origin` is the private repository, is to be archived; do not
 do not treat a change made there as made. Two live clones of one module is how a fix lands in the
 wrong repository -- that has already happened here.
 
+The phase roadmap (phases 0-5) is **complete** -- the module is feature-complete. See `CHANGELOG.md`
+for what each release delivered.
+
+## module-layout
+
+This section records the CLAUDE.md text on the module layout tree, the Classes sentence and the roster as it stood before step 11b.
+
+What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
+
+```
+source/
+  Omnicit.EntraRBAC.psd1      # Manifest -- source of truth for exports and RequiredModules
+  Omnicit.EntraRBAC.psm1      # Dev-mode loader ONLY (Private -> Public). ModuleBuilder replaces
+                              #   it at build time; see Common Pitfalls.
+  suffix.ps1                  # Update-TypeData -Force blocks + Register-ArgumentCompleter calls,
+                              #   each mirrored verbatim in the dev-mode psm1
+  Private/                    # Internal helpers, one function per file
+  Public/                     # Exported cmdlets, one per file, filename == function name
+  Formats/                    # Omnicit.EntraRBAC.Format.ps1xml (type data is inline in suffix.ps1)
+  en-US/                      # about_Omnicit.EntraRBAC.help.txt
+tests/
+  QA/                         # Seven gate files (below), all run by ./build.ps1 -Tasks test
+  Unit/Private/, Unit/Public/ # One *.Tests.ps1 per source file, plus the named exceptions below
+  Unit/Formats/               # FormatViews.Tests.ps1 -- format-view rendering checks
+  Unit/TestHelpers/           # Two helpers and one suite. OERConfirmHost.ps1 hosts a runspace whose
+                              #   PSHost answers ShouldProcess prompts -- the only way to test a
+                              #   genuine DECLINE, to read the prompt/target text, or to see the
+                              #   order of warnings, 'What if:' lines and prompts.
+                              #   OERTransportTripwire.ps1 is the transport tripwire every unit test
+                              #   file installs; OERTransportTripwire.Tests.ps1 is its known-answer
+                              #   suite.
+  Workflow/                   # PublishJob.Tests.ps1 -- the publish job's tag guard, proven offline:
+                              #   PublishArtefact.ps1 called directly, and the job's own step text
+                              #   run in pwsh against a fake Gallery and a fake GitHub.
+build.yaml, build.ps1         # Sampler/ModuleBuilder config and bootstrap entry point
+RequiredModules.psd1          # Build-time dependency resolver (NOT the runtime pin -- see Dependencies)
+azure-pipelines.yml           # Build + Test only, no Deploy stage -- it never publishes
+.github/workflows/build-and-test.yml  # Build + Test on Linux, Windows, macOS, then package and
+                              #   publish. The ONLY path that publishes -- see Publishing.
+.github/scripts/PublishArtefact.ps1   # -Record / -Verify / -Compare: proves the published bytes
+                              #   are the tested bytes, and that the package on the Gallery is
+                              #   this commit's build before the tag step tags it. Single owner of
+                              #   all three; do not split it.
+```
+
+There is **no `source/Classes` directory**. The loader iterates one, but argument completion is
+scriptblock-based instead. `Why: docs/development/rationale.md#completers`
+
+**Do not maintain a function roster in this file.** Read it from the tree instead:
+
+`README.md` section "Available Cmdlets" is the maintained, cohort-grouped list of every exported
+cmdlet; `Get-OERRequiredScope` reports the Graph/Azure permissions each one needs.
+
 ## required-checks-and-the-matrix
 
-This section records the CLAUDE.md text on why the build-and-test job's condition is wired to the merge gate, and why the matrix matters, as it stood before step 11b.
+This section records the CLAUDE.md text on why the build-and-test job condition is wired to the merge gate, and why the matrix matters, as it stood before step 11b.
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
@@ -12324,6 +12444,13 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
   seven carriers are public and two are private, so it belongs to neither cohort exclusively. Do not
   "fix" its location by moving it.
 
+- `Unit/Public/AmbiguousName.Guard.Tests.ps1` -- asserts every public call site of an
+  ambiguity-refusing `Resolve-OER*Id` helper surfaces the candidate ids instead of a first match.
+
+- `Unit/Public/NothingToUpdate.Cohort.Tests.ps1` -- asserts every `Set-OER*` cmdlet (all twelve)
+  reports the no-updatable-property condition as `NothingToUpdate`, and that
+  `Set-OERRoleManagementPolicy`'s separate "no rule differs" case keeps its distinct `NoChange` id.
+
 - `Unit/Public/GroupAliasOrder.Cohort.Tests.ps1` -- AST-driven: asserts every `source/Public/*Group*.ps1`
   file declaring a `-Group` parameter lists the `GroupId` alias before the generic `Id` alias, so a
   piped principal can never mis-bind as the piped group.
@@ -12346,9 +12473,23 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
   compares it; the export applied under another tenant is refused with `DocumentTenantMismatch`,
   reading and writing nothing.
 
+- `Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` -- AST-driven: asserts no
+  `source/Public/*.ps1` file writes a `Write-Warning` after its first `$PSCmdlet.ShouldProcess`,
+  except the warnings its allowlist names with a reason (an entry matching no warning, or two, fails
+  too); pins by name and text the twenty cmdlets that warn before their gate; and proves each moved
+  warning at run time on `OERConfirmHost`, before the `What if:` line and before the `-Confirm`
+  prompt, with no write request. `OER_COHORT_SOURCE_ROOT` points its AST parts at a mutated copy of
+  `source/` and is never set in CI (the cadence scan in `Get-OERAccessReviewCadence.Tests.ps1`, the
+  `TenantIdNotEmpty` cohort and the scan in `Get-OERGroupRelation.Tests.ps1` read the same
+  variable). It imports the module, so it installs the transport tripwire.
+
+- `Unit/TestHelpers/OERTransportTripwire.Tests.ps1` -- the transport tripwire's known-answer suite:
+  the six names, resolution from the module scope, parameter parity, mock precedence, the record
+  and the refusal, a re-import, the `AfterAll` check, the answering runspace and the uninstall.
+
 ## build-and-test-commands
 
-This section records the CLAUDE.md text on the build and test commands, with the measured coverage and the refresh notes, as it stood before step 11b.
+This section records the CLAUDE.md text on the build and test commands, with the measured coverage, as it stood before step 11b.
 
 What CLAUDE.md said about this rule before Sprint 11 step 11b cut it to the rule itself:
 
@@ -12377,11 +12518,7 @@ Import-Module ./source/Omnicit.EntraRBAC.psd1 -Force
 Import-Module ./output/module/Omnicit.EntraRBAC/<ver>/Omnicit.EntraRBAC.psd1 -Force
 ```
 
-**A refresh ADDS versions and removes nothing.** After the 2026-09-21 refresh the local tree held
-`Microsoft.Graph.Authentication` at both `2.36.0` and `2.40.0`, and still held an `Az.Resources`
-that `RequiredModules.psd1` no longer asks for at all. That is usually harmless, since PowerShell
-loads the HIGHEST version available when importing by name, so a refreshed tree does test the new
-one -- but it means the directory is a growing record of every version ever resolved, not a picture
-of what is currently requested. Confirm the version under test with
-`Get-Module <name> -ListAvailable` rather than by reading the folder listing, and delete the
-directory outright if a genuinely clean resolve is needed.
+The Sampler test task measures coverage against the **built** module output, not `source/`. Always
+run `-Tasks build` before `-Tasks test` after changing source files -- and never build while the
+gate is running.
+

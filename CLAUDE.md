@@ -1,9 +1,8 @@
 # Omnicit.EntraRBAC - CLAUDE.md
 
-Working rules for this repo. This file carries **rules**; the history behind them lives in
+Working rules for this repo. The history behind each rule lives in
 [docs/development/rationale.md](docs/development/rationale.md), linked per rule as
-`Why: ...#anchor`. Read the anchor before "simplifying" a rule -- most of them exist because the
-obvious simplification was already tried here and silently failed.
+`Why: ...#anchor`. Read the anchor before "simplifying" a rule.
 
 Do not restate project status, roster or release history here: `README.md` owns the cmdlet list,
 `CHANGELOG.md` owns release history, and the GitHub issue tracker owns open work.
@@ -12,38 +11,35 @@ Do not restate project status, roster or release history here: `README.md` owns 
 
 ## Branch Policy -- ALWAYS CHECK FIRST
 
-**`main` is protected on GitHub and a direct push to it is REJECTED BY THE SERVER.** It is not a
-lock to be worked around, and "continue on the current branch" is not an option a user can consent
-to on `main` -- consent does not move a server-side rule. Every change reaches `main` through a pull
-request. `Why: docs/development/rationale.md#branch-policy`
+**`main` is protected: a direct push is REJECTED BY THE SERVER and is not a lock to work around, and
+a user cannot consent to "continue on the current branch" on `main`.** Every change reaches `main`
+through a pull request. `Why: docs/development/rationale.md#branch-policy`
 
-**Before making any code change, Claude must:**
+**Before any code change, Claude must:**
 
 1. Determine the current branch (`git branch --show-current`).
-2. If the current branch is `main`, create a feature branch before touching any files:
-   `git checkout -b <branch-name>`, named from the table below. Propose the name and say what it is
-   for; do not stop and wait for permission to leave `main`.
-3. If the current branch is some OTHER shared branch, stop and ask the user which branch to use.
+2. On `main`: create a feature branch before touching any files (`git checkout -b <branch-name>`,
+   named from the table below); propose the name and say what it is for, and do not wait for
+   permission to leave `main`.
+3. On any OTHER shared branch: stop and ask the user which branch to use.
 4. Open a pull request against `main` when the work is ready. Never merge it without being asked to.
 
-**Merge requirements, enforced by GitHub on `main`:**
+**Merge requirements on `main`:**
 
 - **Four status checks are required: `ubuntu-latest`, `windows-latest`, `macos-latest` and
-  `package`.** The first three come from the build-and-test matrix's `name: ${{ matrix.os }}`, so
-  the job name IS the required check name -- renaming the job, or changing the matrix, orphans the
-  protection rule and blocks every open PR until the rule is renamed to match. `package` is the
-  `package` job's own `name: package` (`needs: build-and-test`); renaming its `name:` (or, with
-  `name:` removed, its job id, which the check name then falls back to) orphans the fourth rule the
-  same way. Change both together.
-- **`package` never holds the gate alone.** It has no `if:` of its own, so when a leg fails or is
-  skipped GitHub skips `package` too, and a skipped check counts as passed. The three leg checks are
-  what stop a red pull request, so never drop them from the rule in favour of `package`.
-- **The branch must be up to date with `main` before it can merge** (the rule is strict). A branch
-  that has fallen behind is rebased onto `main` and force-pushed; the checks then re-run against the
-  rebased tip.
-- **Linear history is required**, so a merge commit is refused. Squash merge is the convention here.
+  `package`.** The first three are the matrix's `name: ${{ matrix.os }}`, so the job name IS the
+  check name: renaming the job or changing the matrix orphans the protection rule and blocks every
+  open PR until the rule is renamed to match. `package` is the `package` job's `name: package`
+  (`needs: build-and-test`); renaming its `name:` (or, with `name:` removed, its job id) orphans its
+  rule the same way. Change both together.
+- **`package` never holds the gate alone:** it has no `if:` of its own, so when a leg fails or is
+  skipped GitHub skips `package` too, and a skipped check counts as passed. Never drop the three leg
+  checks from the rule in favour of `package`.
+- **The branch must be up to date with `main` before it can merge** (strict): a branch that has
+  fallen behind is rebased onto `main` and force-pushed, and the checks re-run on the rebased tip.
+- **Linear history is required:** a merge commit is refused; squash merge is the convention.
 - **Every conversation on the PR must be resolved** before merge.
-- **The rule binds administrators too** (`enforce_admins` is on), so no account merges past it.
+- **The rule binds administrators too** (`enforce_admins` is on).
 
 **Branch naming convention:**
 
@@ -61,21 +57,18 @@ request. `Why: docs/development/rationale.md#branch-policy`
 
 ## Project Overview
 
-`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module built and maintained by Omnicit AB. MIT
-licensed and **published on the public PowerShell Gallery for anyone to use**; it publishes itself
--- see **Publishing** below.
-
-It manages RBAC building blocks across many Entra ID and Azure tenants: Entra ID groups, PIM,
+`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module by Omnicit AB, MIT licensed and published
+on the **public PowerShell Gallery**; it publishes itself -- see **Publishing** below. It
+manages RBAC building blocks across many Entra ID and Azure tenants: Entra ID groups, PIM,
 Administrative Units, Entitlement Management, Access Reviews, Azure resources and RBAC, plus a JSON
 inventory and a declarative apply engine. Command prefix is `OER`.
 
 **The canonical working tree is the clone whose `origin` is
-`github.com/Omnicit/Omnicit.EntraRBAC`**, wherever it sits on disk; identify it with
-`git remote get-url origin`, never by its directory. The older clone, whose `origin` is the private
-repository, is to be archived: do not commit to it, and do not treat a change made there as made.
-`Why: docs/development/rationale.md#project-overview`
+`github.com/Omnicit/Omnicit.EntraRBAC`**; identify it with `git remote get-url origin`, never by its
+directory. Do not commit to the older clone (its `origin` is the private repository, to be archived)
+and do not treat a change made there as made. `Why: docs/development/rationale.md#project-overview`
 
-The phase roadmap (phases 0-5) is **complete** -- the module is feature-complete. See `CHANGELOG.md`
+The phase roadmap (phases 0-5) is **complete**; the module is feature-complete. See `CHANGELOG.md`
 for what each release delivered.
 
 ---
@@ -85,10 +78,8 @@ for what each release delivered.
 ```
 source/
   Omnicit.EntraRBAC.psd1      # Manifest -- source of truth for exports and RequiredModules
-  Omnicit.EntraRBAC.psm1      # Dev-mode loader ONLY (Private -> Public). ModuleBuilder replaces
-                              #   it at build time; see Common Pitfalls.
-  suffix.ps1                  # Update-TypeData -Force blocks + Register-ArgumentCompleter calls,
-                              #   each mirrored verbatim in the dev-mode psm1
+  Omnicit.EntraRBAC.psm1      # Dev-mode loader ONLY (Private -> Public); see Common Pitfalls
+  suffix.ps1                  # Update-TypeData -Force + Register-ArgumentCompleter, mirrored in the dev psm1
   Private/                    # Internal helpers, one function per file
   Public/                     # Exported cmdlets, one per file, filename == function name
   Formats/                    # Omnicit.EntraRBAC.Format.ps1xml (type data is inline in suffix.ps1)
@@ -97,51 +88,39 @@ tests/
   QA/                         # Seven gate files (below), all run by ./build.ps1 -Tasks test
   Unit/Private/, Unit/Public/ # One *.Tests.ps1 per source file, plus the named exceptions below
   Unit/Formats/               # FormatViews.Tests.ps1 -- format-view rendering checks
-  Unit/TestHelpers/           # Two helpers and one suite. OERConfirmHost.ps1 hosts a runspace whose
-                              #   PSHost answers ShouldProcess prompts -- the only way to test a
-                              #   genuine DECLINE, to read the prompt/target text, or to see the
-                              #   order of warnings, 'What if:' lines and prompts.
-                              #   OERTransportTripwire.ps1 is the transport tripwire every unit test
-                              #   file installs; OERTransportTripwire.Tests.ps1 is its known-answer
-                              #   suite.
+  Unit/TestHelpers/           # OERConfirmHost.ps1 (runspace whose PSHost answers ShouldProcess prompts:
+                              #   genuine DECLINE, prompt/target text, order of warnings, 'What if:' lines
+                              #   and prompts); OERTransportTripwire.ps1 (installed by every unit test
+                              #   file); OERTransportTripwire.Tests.ps1 (its known-answer suite)
   Workflow/                   # PublishJob.Tests.ps1 -- the publish job's tag guard, proven offline:
-                              #   PublishArtefact.ps1 called directly, and the job's own step text
-                              #   run in pwsh against a fake Gallery and a fake GitHub.
+                              #   PublishArtefact.ps1 called directly, step text run in pwsh against a
+                              #   fake Gallery and a fake GitHub
 build.yaml, build.ps1         # Sampler/ModuleBuilder config and bootstrap entry point
-RequiredModules.psd1          # Build-time dependency resolver (NOT the runtime pin -- see Dependencies)
+RequiredModules.psd1          # Build-time dependency resolver (NOT the runtime pin; see Dependencies)
 azure-pipelines.yml           # Build + Test only, no Deploy stage -- it never publishes
-.github/workflows/build-and-test.yml  # Build + Test on Linux, Windows, macOS, then package and
-                              #   publish. The ONLY path that publishes -- see Publishing.
-.github/scripts/PublishArtefact.ps1   # -Record / -Verify / -Compare: proves the published bytes
-                              #   are the tested bytes, and that the package on the Gallery is
-                              #   this commit's build before the tag step tags it. Single owner of
+.github/workflows/build-and-test.yml  # Build + Test, then package and publish; the ONLY path that publishes
+.github/scripts/PublishArtefact.ps1   # -Record / -Verify / -Compare: the published bytes are the tested
+                              #   bytes and the Gallery package is this commit's build. Single owner of
                               #   all three; do not split it.
 ```
 
-There is **no `source/Classes` directory**. The loader iterates one, but argument completion is
-scriptblock-based instead. `Why: docs/development/rationale.md#completers`
+There is **no `source/Classes` directory**; the loader iterates one, but argument completion is
+scriptblock-based. `Why: docs/development/rationale.md#completers`
 
-**The build-and-test job's `if:` condition is wired to the merge gate -- do not read it as a billing
-guard alone, and do not reason about it from GitHub's general rule for skipped jobs.** The job is
-declared `if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}`.
-`ubuntu-latest`, `windows-latest`, `macos-latest` and `package` are the four REQUIRED checks on
-`main`, and that condition decides whether the first three ever come into existence; `package`
-follows them through `needs: build-and-test`.
+**The build-and-test job's `if:` is wired to the merge gate** (not a billing guard alone; never
+reason from GitHub's rule for skipped jobs):
+`if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}` decides
+whether `ubuntu-latest`, `windows-latest` and `macos-latest` (with `package`, the four REQUIRED
+checks on `main`) exist; `package` follows via `needs: build-and-test`. **The mechanism is the
+MATRIX, not the skip:** a job-level `if:` is evaluated BEFORE the matrix expands, so the legs are
+never created and a required check that never reports stays pending forever (`package` skipped
+counts as passed; no help). Turning the repository private is therefore a change to this condition
+or the protection rule, in the SAME change, never afterwards. **Never rewrite the workflow as three
+jobs without a matrix:** their skipped `if:` reports Success and the gate goes GREEN with no test
+run; keep the matrix, or make the required checks something a skipped job cannot satisfy.
 `Why: docs/development/rationale.md#required-checks-and-the-matrix`
 
-**The mechanism is the MATRIX, not the skip.** A job-level `if:` is evaluated BEFORE the matrix
-expands, so the three legs are never created, nothing ever reports the three check names, and a
-required check that never reports stays pending forever instead of passing; `package` being skipped
-(a skipped check counts as passed) does not change that. Make this repository private again and
-every pull request blocks permanently, including the one that would fix it, so turning it private
-is a change to this condition, or to the protection rule, made in the SAME change and never
-afterwards.
-
-**Rewriting this workflow as three separate jobs without a matrix INVERTS the failure, into the
-worse one:** the job-level `if:` would skip three jobs that do exist, each would report Success, and
-the merge gate would go GREEN having run not one test. Keep the matrix -- or, if the jobs are ever
-split, make the required checks something a skipped job cannot satisfy.
-**Do not maintain a function roster in this file.** Read it from the tree instead:
+**Do not maintain a function roster in this file;** read it from the tree:
 
 ```powershell
 Get-ChildItem source/Public  -Filter '*.ps1' | Select-Object -ExpandProperty BaseName | Sort-Object
@@ -149,103 +128,96 @@ Get-ChildItem source/Private -Filter '*.ps1' | Select-Object -ExpandProperty Bas
 ```
 
 `README.md` section "Available Cmdlets" is the maintained, cohort-grouped list of every exported
-cmdlet; `Get-OERRequiredScope` reports the Graph/Azure permissions each one needs.
+cmdlet; `Get-OERRequiredScope` reports the Graph/Azure permissions each needs.
 
 **The seven QA gates** (`tests/QA/`): `module.tests.ps1` (manifest, changelog, help, README,
-per-function PSScriptAnalyzer, and a unit test file for every exported function),
-`about.tests.ps1` (the about topic is byte-identical to source, ASCII/BOM-free, and names every
-exported cmdlet and no other), `requiredscope.tests.ps1` (`Get-OERRequiredScopeMap` vs the module's
-own call graph), `sourcehygiene.tests.ps1` (the ten static source gates --
-`Why: docs/development/rationale.md#static-source-gates`), `dochygiene.tests.ps1` (keeps unredacted
-tenant object ids, tenant domains outside a fixed allowlist of four labels, non-documentation email
-addresses and credentials out of every tracked file under `docs/`, `specs/`, `source/` and
-`tests/`, enumerating tracked files with `git ls-files` and reading their content from disk; reads
-the placeholder register in `docs/live-verification/README.md`, failing on a register at odds
-with itself or a placeholder used without a row; and also checks that tracked Markdown under
-`docs/`, `specs/`, `README.md` and `CHANGELOG.md` holds no angle bracket GitHub would render as a tag),
-`docsync.tests.ps1` (binds `README.md` to the about topic, and both to the manifest's cmdlet
-count), and `testhygiene.tests.ps1` (every unit
-test file that imports the module installs, checks and uninstalls the transport tripwire; read
-statically, importing nothing).
+per-function PSScriptAnalyzer, a unit test file for every exported function); `about.tests.ps1`
+(about topic byte-identical to source, ASCII/BOM-free, names every exported cmdlet and no other);
+`requiredscope.tests.ps1` (`Get-OERRequiredScopeMap` vs the module's own call graph);
+`sourcehygiene.tests.ps1` (the ten static source gates,
+`Why: docs/development/rationale.md#static-source-gates`); `dochygiene.tests.ps1` (no unredacted
+tenant object ids, tenant domains outside a four-label allowlist, non-documentation email addresses
+or credentials in any tracked file under `docs/`, `specs/`, `source/`, `tests/`, listed with
+`git ls-files` and read from disk; the placeholder register in `docs/live-verification/README.md`
+must agree with itself and with every placeholder used; no angle bracket GitHub would render as a
+tag in tracked Markdown under `docs/`, `specs/`, `README.md`, `CHANGELOG.md`); `docsync.tests.ps1`
+(binds `README.md` to the about topic, and both to the manifest's cmdlet count); and
+`testhygiene.tests.ps1` (every unit test file that imports the module installs, checks and
+uninstalls the transport tripwire; read statically, importing nothing).
 
-**`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** Under `docs/` and
-`specs/` a GUID is prose, so it must be a `00000000-0000-0000-0000-0000000000NN` placeholder. Under
-`source/` and `tests/` a GUID is a fixture and must not have **version-4 shape**. Exactly three v4
-values are pinned by name -- the module's own manifest GUID, the Microsoft Graph Command Line Tools
-app id, and the Reader built-in role definition id. **Do not add a fourth: allocate a placeholder
-instead**, from the register in `docs/live-verification/README.md`, which also records the next free
-`...NNN` and `personN`. **The gate reads that register**: it is red on a placeholder used in
-`source/`, `tests/`, `docs/examples/` or `docs/development/` without a row marked taken, and on a
-register that disagrees with itself -- overlapping rows, a repeated slot description, a table
-without exactly one FREE row, an "Allocate from" sentence that disagrees with the FREE rows, a slot
-taken at or above a FREE start that is not a named outlier, or a placeholder cell it cannot read.
-Add the row in the same commit that uses the slot. **It also holds tenant domains**
-(`.onmicrosoft.com`, `.onmicrosoft.us`, `.onmschina.cn`) to a fixed allowlist of four labels,
-`contoso`, `fabrikam`, `other` and `oer-sovereign-verify-doesnotexist`, reading `%40` as `@` and
-`\.` as `.` (so a URL-encoded UPN and a regex-form domain are caught). Replace a real label with
-`contoso`; never widen the allowlist to make the gate green. A credential-shaped literal that a test
-needs (the bearer-scrub fixtures) must carry `NOT-A-REAL-TOKEN` inside the VALUE; `REDACTED` works
-the same way. `Why: docs/development/rationale.md#bearer-scrub-tests`
-**`dochygiene.tests.ps1` also reads Markdown the way GitHub renders it.** In every tracked `.md`
-under `docs/` and `specs/`, and in `README.md` and `CHANGELOG.md` at the root, no angle bracket
-that looks like a tag (`<word>`, `</word>`, `<!...>`, `<?...>`) may stand outside code. In
-`CHANGELOG.md` use backticks only, never a backslash; elsewhere, write the token inside backticks,
-or as `\<id>` where a backtick would close a code span the line already has (quotes alone do not
-escape it). An autolink (`<https://...>`) or deliberate inline HTML (`<br>`) is refused the same way
--- write a bare URL instead, or put the markup in backticks. Fenced blocks and code spans are
-skipped with the algorithm documented in `ConvertTo-DocHygieneMarkdownProse`'s own `.DESCRIPTION`,
-in `tests/QA/dochygiene.tests.ps1`: the maintainer's `Test-MdAngleBrackets.py` (kept outside this
-repository; the gate follows it where the two differ), deliberately not CommonMark's. Never
-"correct" it towards CommonMark, and carry a change made on either side to the other, so the two
-keep agreeing hit for hit. `Why: docs/development/rationale.md#qa-gates`
-**`docsync.tests.ps1` holds `README.md` and the about topic against each other.** It scopes the
-roster to `## Available Cmdlets` and `COMMAND COHORTS`, checks each `### Cohort (N)` count against
-the cmdlets that cohort is the FIRST to name, and requires the two documents to agree word for word
-on the tenant-switch verdict per sign-in type and on the device-code known limitation. It also holds
-every sentence in either whole document that says "all N cmdlets" or "all N exported cmdlets" --
-README's introduction and `## Available Cmdlets`, the about topic's LONG DESCRIPTION -- to the count
-of `FunctionsToExport`, with a floor on the matches so a reworded sentence cannot make it vacuous; a
-count written another way ("98 cmdlets" with no "all", a spelled-out number) is not seen. It
-deliberately does NOT bind the surrounding prose -- the sovereign-cloud, tenant-profile and
-permissions sections are rewritten per medium on purpose.
+**`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** `docs/` and
+`specs/`: a GUID is prose, so a `00000000-0000-0000-0000-0000000000NN` placeholder. `source/` and
+`tests/`: a GUID is a fixture and must not have **version-4 shape**; exactly three v4 values are
+pinned by name (the module's manifest GUID, the Microsoft Graph Command Line Tools app id, the Reader
+built-in role definition id). **Do not add a fourth: allocate a placeholder** from the register in
+`docs/live-verification/README.md` (it records the next free `...NNN` and `personN`), adding its row
+in the same commit that uses the slot. The gate is red on: a placeholder used in `source/`,
+`tests/`, `docs/examples/` or `docs/development/` without a row marked taken; a register with
+overlapping rows, a repeated slot description, no or several FREE rows, an "Allocate from" sentence
+disagreeing with the FREE rows, a slot taken at or above a FREE start that is not a named outlier,
+or a placeholder cell it cannot read. **Tenant domains** (`.onmicrosoft.com`, `.onmicrosoft.us`,
+`.onmschina.cn`) are held to `contoso`, `fabrikam`, `other`, `oer-sovereign-verify-doesnotexist`
+(`%40` read as `@`, `\.` as `.`): replace a real label with `contoso`, never widen the list. A
+credential-shaped test literal (the bearer-scrub fixtures) carries `NOT-A-REAL-TOKEN` inside the
+VALUE; `REDACTED` works too. `Why: docs/development/rationale.md#bearer-scrub-tests`
 
-**Test files named after no single function.** Ten cross-cutting suites exist. Do **NOT** delete
-any of them as an orphan when auditing the one-test-file-per-function invariant:
+**`dochygiene.tests.ps1` also reads Markdown as GitHub renders it:** in tracked `.md` under `docs/`
+and `specs/` and in `README.md` and `CHANGELOG.md`, no tag-like angle bracket (`<word>`, `</word>`,
+`<!...>`, `<?...>`, autolink `<https://...>`, inline `<br>`) outside code. Use backticks (or `\<id>`
+where a backtick would close a code span the line already has; quotes do not escape); a bare URL,
+not an autolink; in `CHANGELOG.md` backticks only, never a backslash. Code is skipped by the
+algorithm in `ConvertTo-DocHygieneMarkdownProse`'s `.DESCRIPTION` in `tests/QA/dochygiene.tests.ps1`:
+the maintainer's `Test-MdAngleBrackets.py`, which the gate follows where the two differ, deliberately
+not CommonMark's. Never "correct" it towards CommonMark; carry a change on either side to the other,
+so they agree hit for hit. `Why: docs/development/rationale.md#qa-gates`
+
+**`docsync.tests.ps1` holds `README.md` and the about topic against each other:** roster scoped to
+`## Available Cmdlets` and `COMMAND COHORTS`; each `### Cohort (N)` count against the cmdlets that
+cohort is the FIRST to name; word-for-word agreement on the tenant-switch verdict per sign-in type
+and the device-code known limitation; every sentence in either whole document saying "all N
+cmdlets" or "all N exported cmdlets" (README introduction and `## Available Cmdlets`, about topic
+LONG DESCRIPTION) held to the count of `FunctionsToExport`, with a floor on the matches so rewording
+cannot make it vacuous. Does NOT see a count written another way ("98 cmdlets" with no "all", a
+spelled-out number); deliberately does NOT bind the surrounding prose (the sovereign-cloud,
+tenant-profile and permissions sections are rewritten per medium).
+
+**Test files named after no single function.** Ten cross-cutting suites exist; do **NOT** delete any
+of them as an orphan when auditing the one-test-file-per-function invariant:
 `Why: docs/development/rationale.md#qa-gates`
 
-- `Unit/Private/BasePathDefault.Cohort.Tests.ps1` -- asserts all seven `-BasePath`/`-ProfileBasePath`
-  default carriers resolve cross-platform (issue #40). Do not "fix" its location by moving it.
+- `Unit/Private/BasePathDefault.Cohort.Tests.ps1` -- all seven `-BasePath`/`-ProfileBasePath` default
+  carriers resolve cross-platform; do not move it.
 - `Unit/Public/AccessReview.Pipeline.Tests.ps1` -- cross-cmdlet pipeline suite.
-- `Unit/Public/AmbiguousName.Guard.Tests.ps1` -- asserts every public call site of an
-  ambiguity-refusing `Resolve-OER*Id` helper surfaces the candidate ids instead of a first match.
-- `Unit/Public/NothingToUpdate.Cohort.Tests.ps1` -- asserts every `Set-OER*` cmdlet (all twelve)
-  reports the no-updatable-property condition as `NothingToUpdate`, and that
-  `Set-OERRoleManagementPolicy`'s separate "no rule differs" case keeps its distinct `NoChange` id.
-- `Unit/Public/GroupAliasOrder.Cohort.Tests.ps1` -- AST-driven: asserts every `source/Public/*Group*.ps1`
-  file declaring a `-Group` parameter lists the `GroupId` alias before the generic `Id` alias.
-- `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1` -- the same AST-driven pattern for every
-  `-AdministrativeUnit` parameter.- `Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` -- AST-driven: asserts every public cmdlet that
-  declares `-TenantId` carries `[ValidateNotNullOrEmpty()]` on it, except `Connect-OER`, whose
-  `-TenantId` must carry no validation so its own `InvalidTenantId` refusal runs after the
-  session-uncertain marker is set; it also drives the binding refusal for the cmdlets
-  the live checklist uses. It imports the module, so it installs the transport tripwire.
-- `Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` -- exports the two directory sections
-  (`directoryRoleManagementPolicies`, `directoryRoleAssignments`) from a mocked live state with
-  `Get-OERInventory` and applies them back through `Invoke-OERStructure`, with and without `-Prune`,
-  asserting every row is `Unchanged`. It runs with a session (a state the test sets for one tenant,
-  `Initialize-OERAuth` mocked), so the export names that tenant (`tenantId`); applied under another
-  tenant it is refused with `DocumentTenantMismatch`, reading and writing nothing.- `Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` -- AST-driven: asserts no
-  `source/Public/*.ps1` file writes a `Write-Warning` after its first `$PSCmdlet.ShouldProcess`,
-  except the warnings its allowlist names with a reason (an entry matching no warning, or two, fails
-  too); pins by name and text the twenty cmdlets that warn before their gate; and proves each moved
-  warning at run time on `OERConfirmHost`, before the `What if:` line and before the `-Confirm`
-  prompt, with no write request. `OER_COHORT_SOURCE_ROOT` points its AST parts at a mutated copy of
-  `source/` and is never set in CI (the cadence scan in `Get-OERAccessReviewCadence.Tests.ps1`, the
-  `TenantIdNotEmpty` cohort and the scan in `Get-OERGroupRelation.Tests.ps1` read the same
-  variable). It imports the module, so it installs the transport tripwire.
-- `Unit/TestHelpers/OERTransportTripwire.Tests.ps1` -- the transport tripwire's known-answer suite:
-  the six names, resolution from the module scope, parameter parity, mock precedence, the record
-  and the refusal, a re-import, the `AfterAll` check, the answering runspace and the uninstall.
+- `Unit/Public/AmbiguousName.Guard.Tests.ps1` -- every public call site of an ambiguity-refusing
+  `Resolve-OER*Id` helper surfaces the candidate ids, not a first match.
+- `Unit/Public/NothingToUpdate.Cohort.Tests.ps1` -- every `Set-OER*` cmdlet (all twelve) reports the
+  no-updatable-property condition as `NothingToUpdate`; `Set-OERRoleManagementPolicy`'s "no rule
+  differs" case keeps its distinct `NoChange` id.
+- `Unit/Public/GroupAliasOrder.Cohort.Tests.ps1` -- AST-driven: every `source/Public/*Group*.ps1`
+  file declaring `-Group` lists the `GroupId` alias before the generic `Id`.
+- `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1` -- the same for every
+  `-AdministrativeUnit` parameter (`Id`, `DisplayName`).
+- `Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` -- AST-driven: every public cmdlet declaring
+  `-TenantId` carries `[ValidateNotNullOrEmpty()]`, except `Connect-OER` (no validation, so its own
+  `InvalidTenantId` refusal runs after the session-uncertain marker is set); drives the binding
+  refusal for the cmdlets the live checklist uses; installs the tripwire.
+- `Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` -- exports
+  `directoryRoleManagementPolicies` and `directoryRoleAssignments` from a mocked live state with
+  `Get-OERInventory`, applies them back through `Invoke-OERStructure` with and without `-Prune`:
+  every row `Unchanged`. Runs with a session (state set for one tenant, `Initialize-OERAuth`
+  mocked), so the export names that tenant (`tenantId`); applied under another tenant it is refused
+  with `DocumentTenantMismatch`, reading and writing nothing.
+- `Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` -- AST-driven: no `source/Public/*.ps1`
+  file writes `Write-Warning` after its first `$PSCmdlet.ShouldProcess`, except allowlisted warnings
+  (each with a reason; an entry matching none or two fails); pins by name and text the twenty cmdlets
+  that warn before their gate; proves at run time on `OERConfirmHost` that each moved warning
+  precedes the `What if:` line and the `-Confirm` prompt, with no write request.
+  `OER_COHORT_SOURCE_ROOT` points its AST parts at a mutated copy of `source/`, never set in CI (also
+  read by the cadence scan in `Get-OERAccessReviewCadence.Tests.ps1`, the `TenantIdNotEmpty` cohort
+  and the scan in `Get-OERGroupRelation.Tests.ps1`); installs the tripwire.
+- `Unit/TestHelpers/OERTransportTripwire.Tests.ps1` -- the tripwire's known-answer suite: the six
+  names, module-scope resolution, parameter parity, mock precedence, the record and the refusal, a
+  re-import, the `AfterAll` check, the answering runspace, the uninstall.
 
 ---
 
@@ -261,12 +233,10 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 # Build the module (output lands in output/module/Omnicit.EntraRBAC/<ver>/)
 ./build.ps1 -Tasks build
 
-# Full test suite -- the authoritative CI gate.
-# QA tests + Unit Pester + PSScriptAnalyzer + 80% code coverage enforcement
+# Full test suite, the authoritative CI gate: QA tests + Unit Pester + PSScriptAnalyzer + 80% code coverage
 ./build.ps1 -Tasks test
 
-# Import from source for quick local development
-# (needs AzAuth, Microsoft.Graph.Authentication on PSModulePath;
+# Import from source (needs AzAuth, Microsoft.Graph.Authentication on PSModulePath;
 #  prepend output/RequiredModules if needed)
 Import-Module ./source/Omnicit.EntraRBAC.psd1 -Force
 
@@ -274,33 +244,19 @@ Import-Module ./source/Omnicit.EntraRBAC.psd1 -Force
 Import-Module ./output/module/Omnicit.EntraRBAC/<ver>/Omnicit.EntraRBAC.psd1 -Force
 ```
 
-The Sampler test task measures coverage against the **built** module output, not `source/`. Always
-run `-Tasks build` before `-Tasks test` after changing source files -- and never build while the
-gate is running.
-
-**Under `latest`, a local `output/RequiredModules` goes stale and LOCAL GREEN IS NOT CI GREEN.**
-`RequiredModules.psd1` asks for the newest release of every module
-(`Why: docs/development/rationale.md#dependencies`), but a local tree is resolved once and then left
-alone, while every CI run resolves afresh on a clean runner. So a full local pass proves the suite
-against whatever happens to be on disk, not against what the merge gate will run. Refresh before
-trusting a local run, especially before opening or updating a PR:
-
-```powershell
-./build.ps1 -ResolveDependency -Tasks noop -UseModuleFast
-```
-
-`-UseModuleFast` is the same flag the V2 note above prescribes, and it is the resolver that works
-here. Note that it is a DIFFERENT resolver from CI's, so the two trees can still differ in shape --
-a tree resolved without it also carries the unpacked `.nupkg` directories (`_manifest`, `_rels`,
-`dependencies`, `package`) beside a module's version folder. The CI workflow's dependency-report
-step prints the versions each run actually resolved, and is the authority on what the gate tested.
-
-**A refresh ADDS versions and removes nothing.** The directory is a growing record of every version
-ever resolved, not a picture of what is currently requested; PowerShell loads the HIGHEST version
-available when importing by name, so a refreshed tree does test the new one. Confirm the version
-under test with `Get-Module <name> -ListAvailable` rather than by reading the folder listing, and
-delete the directory outright if a genuinely clean resolve is needed.
+Coverage is measured against the **built** module, not `source/`: run `-Tasks build` before
+`-Tasks test` after changing source files, and never build while the gate is running.
 `Why: docs/development/rationale.md#build-and-test-commands`
+
+**Under `latest`, LOCAL GREEN IS NOT CI GREEN:** `RequiredModules.psd1` asks for the newest release
+of every module (`Why: docs/development/rationale.md#dependencies`); a local `output/RequiredModules`
+is resolved once and goes stale, while CI resolves afresh on every run. Refresh before trusting a
+local run, especially before opening or updating a PR:
+`./build.ps1 -ResolveDependency -Tasks noop -UseModuleFast` (a different resolver from CI's, whose
+tree may also hold unpacked `.nupkg` directories `_manifest`, `_rels`, `dependencies`, `package`; the
+CI dependency-report step is the authority on what the gate tested). A refresh adds versions and
+removes none: confirm the version under test with `Get-Module <name> -ListAvailable`, not the folder
+listing; delete the directory for a clean resolve.
 
 ---
 
