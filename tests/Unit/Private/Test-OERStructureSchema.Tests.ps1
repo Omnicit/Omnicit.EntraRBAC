@@ -7246,9 +7246,9 @@ Describe 'Test-OERStructureSchema administrativeUnits scopedRoles principalType 
 
 Describe 'Test-OERStructureSchema group template that cannot be resolved (BL-139, R-12)' {
     # A group that declares template and no displayName is named by Resolve-OERName at apply time. A
-    # template it cannot resolve (a token with no value, a name over the length limit) used to raise no
-    # finding at all: the validator computed the name only for its other rules and treated a failure as
-    # "no name". It is now an Error at groups[i].template carrying Resolve-OERName's own reason.
+    # template it cannot resolve (a placeholder no token supplies, a name over the length limit) used to
+    # raise no finding at all: the validator computed the name only for its other rules and treated a
+    # failure as "no name". It is now an Error at groups[i].template carrying Resolve-OERName's own reason.
     BeforeAll {
         function Invoke-TplValidation {
             param([string]$Json)
@@ -7766,9 +7766,10 @@ Describe 'Test-OERStructureSchema access package displayName that is a GUID (BL-
 }
 
 Describe 'Test-OERStructureSchema date values (BL-154, R-11)' {
-    # ConvertFrom-Json before PowerShell 7.5 turns a string in ISO 8601 date-and-time form into a [datetime],
-    # and Read-OERStructureDocument asks for -DateKind String wherever the PowerShell has it. Where it does
-    # not, the validator cannot tell what the author wrote, so it refuses every date value the document
+    # ConvertFrom-Json before PowerShell 7.5 turns a string that holds an ISO 8601 date and time with
+    # seconds into a [datetime], and Read-OERStructureDocument asks for -DateKind String wherever the
+    # PowerShell has it. Where it does not, the validator cannot tell what the author wrote, so it
+    # refuses every date value the document
     # holds, at any depth, with an Error at the value's own path. A document built here with a plain
     # ConvertFrom-Json is such a document on every PowerShell: the default parse gives dates.
     BeforeAll {
@@ -7786,7 +7787,7 @@ Describe 'Test-OERStructureSchema date values (BL-154, R-11)' {
         }
         function Get-DateMessage {
             param([string]$Path)
-            "The value at $Path was read as a date and time, not as the text written, since ConvertFrom-Json on PowerShell before 7.5 converts a string in ISO 8601 date-and-time form. Run on PowerShell 7.5 or later to apply it as written."
+            "The value at $Path was read as a date and time, not as the text written, since ConvertFrom-Json on PowerShell before 7.5 converts a string that holds an ISO 8601 date and time with seconds. Run on PowerShell 7.5 or later to apply it as written."
         }
     }
 

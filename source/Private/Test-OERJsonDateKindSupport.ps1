@@ -4,8 +4,8 @@ function Test-OERJsonDateKindSupport {
     Reports whether the running PowerShell's ConvertFrom-Json has a -DateKind parameter.
 
     .DESCRIPTION
-    ConvertFrom-Json on PowerShell before 7.5 turns a string in ISO 8601 date-and-time form into a
-    [datetime] while it parses, so the text the document author wrote is lost. PowerShell 7.5 added
+    ConvertFrom-Json on PowerShell before 7.5 turns a string that holds an ISO 8601 date and time with
+    seconds into a [datetime] while it parses, so the text the document author wrote is lost. PowerShell 7.5 added
     -DateKind, and -DateKind String leaves every string as it was written. This function answers with
     one Get-Command check whether the parameter exists, and is the single place that asks:
     Read-OERStructureDocument adds -DateKind String to its parse when this returns $true, and without

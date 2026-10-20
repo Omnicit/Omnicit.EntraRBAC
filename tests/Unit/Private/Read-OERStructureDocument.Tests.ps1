@@ -525,9 +525,10 @@ Describe 'Read-OERStructureDocument reads the file with -ErrorAction Stop and sa
 }
 
 Describe 'Read-OERStructureDocument keeps a date-and-time string as written (BL-154, R-11)' {
-    # ConvertFrom-Json on PowerShell before 7.5 turns a string in ISO 8601 date-and-time form into a
-    # [datetime]; 7.5 added -DateKind, and -DateKind String leaves every string as written. The reader
-    # asks Test-OERJsonDateKindSupport, so a test mocks either answer whatever PowerShell runs it.
+    # ConvertFrom-Json on PowerShell before 7.5 turns a string that holds an ISO 8601 date and time with
+    # seconds into a [datetime]; 7.5 added -DateKind, and -DateKind String leaves every string as
+    # written. The reader asks Test-OERJsonDateKindSupport, so a test mocks either answer whatever
+    # PowerShell runs it.
     BeforeAll {
         $script:DateJson = '{ "version": "1.0", "groups": [ { "displayName": "2026-01-01T10:00:00", "description": "2026-01-01T10:00:00Z", "members": [ "2026-01-01T10:00:00+02:00" ] } ], ' +
             '"accessReviews": [ { "displayName": "ar1", "accessPackage": "ap1", "assignmentPolicy": "p1", "startDate": "2026-03-01T00:00:00Z", "endDate": "2026-09-01" } ] }'
@@ -606,6 +607,28 @@ Describe 'Read-OERStructureDocument keeps a date-and-time string as written (BL-
             $Doc = Read-OERStructureDocument -InputObject $Object
             $Doc.groups[0].description | Should -BeOfType [string]
             $Doc.groups[0].description | Should -BeExactly $Written
+        }
+    }
+
+    It 'parses with the module-qualified cmdlet, so a function of the same name in the session is never the one called' {
+        InModuleScope $script:moduleName {
+            # Test-OERJsonDateKindSupport asks about Microsoft.PowerShell.Utility\ConvertFrom-Json; the
+            # parse must call that same command, or a shadowing function decides what the document holds
+            # (and whether -DateKind is accepted at all). A plain ConvertFrom-Json finds the function first
+            # (functions outrank cmdlets), so the control shows the shadow is in force.
+            function script:ConvertFrom-Json {
+                param([Parameter(ValueFromPipeline)]$InputObject, $Depth, $DateKind)
+                throw 'the shadowing ConvertFrom-Json was called'
+            }
+            try {
+                (Get-Command -Name ConvertFrom-Json).CommandType | Should -Be 'Function' -Because 'the shadow must be what an unqualified call finds'
+                $Doc = Read-OERStructureDocument -Json '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+                $Doc.version | Should -BeExactly '1.0'
+                $Doc.groups[0].displayName | Should -BeExactly 'g1'
+            } finally {
+                Remove-Item -LiteralPath 'function:ConvertFrom-Json'
+            }
+            Get-Command -Name ConvertFrom-Json | ForEach-Object { $_.CommandType } | Should -Be 'Cmdlet'
         }
     }
 }

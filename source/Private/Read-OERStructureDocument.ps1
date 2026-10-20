@@ -20,13 +20,17 @@ function Read-OERStructureDocument {
     or -InputObject must be supplied.
 
     Text stays as written (BL-154). On PowerShell 7.5 or later the parse runs with -DateKind String, so a
-    string in ISO 8601 date-and-time form (a startDate, a displayName that looks like a time stamp) reaches
-    the validator and the apply engine as the string the author wrote. On PowerShell 7.2 to 7.4
-    ConvertFrom-Json has no such parameter and turns that string into a [datetime]; Test-OERStructureSchema
-    then refuses every date value in the document with an Error at its path, and the document is not
-    applied. Test-OERJsonDateKindSupport decides which. An -InputObject whose values the caller already
-    turned into dates is read as ConvertTo-Json writes them (a documented limit): the date becomes the
-    ISO 8601 string ConvertTo-Json produced, not the text the caller first wrote.
+    string that holds an ISO 8601 date and time with seconds (a startDate, a displayName that looks like
+    a time stamp) reaches the validator and the apply engine as the string the author wrote. On
+    PowerShell 7.2 to 7.4 ConvertFrom-Json has no such parameter and turns that string into a
+    [datetime]; Test-OERStructureSchema then refuses every date value in the document with an Error at
+    its path, and the document is not applied. Test-OERJsonDateKindSupport decides which, and the parse
+    calls the same module-qualified Microsoft.PowerShell.Utility\ConvertFrom-Json it asks about, so a
+    function of that name in the session is never the one called. On PowerShell 7.5 or later an
+    -InputObject whose values the caller already turned into dates is read as ConvertTo-Json writes them
+    (a documented limit): the date becomes the ISO 8601 string ConvertTo-Json produced, not the text the
+    caller first wrote. On 7.2 to 7.4 the re-parse turns that string into a date again, which the
+    validator refuses like any other.
 
     Before returning, every recognized enum value in the document is rewritten to the canonical
     spelling Get-OERStructureSchemaJson declares (as resolved by Resolve-OERStructureEnumCasing), so a
@@ -148,15 +152,17 @@ function Read-OERStructureDocument {
     if ([string]::IsNullOrWhiteSpace($Json)) {
         throw 'The structure document is empty.'
     }
-    # BL-154 (R-11): ConvertFrom-Json before PowerShell 7.5 turns a string in ISO 8601 date-and-time form
-    # into a [datetime] while it parses, so the text the author wrote never reaches the validator or an
-    # apply handler. PowerShell 7.5 added -DateKind, and String leaves every string as written. Without
-    # the parameter (7.2 to 7.4) the dates stay and Test-OERStructureSchema refuses each one with an Error
-    # at its path. Test-OERJsonDateKindSupport is the one place that asks.
+    # BL-154 (R-11): ConvertFrom-Json before PowerShell 7.5 turns a string that holds an ISO 8601 date and
+    # time with seconds into a [datetime] while it parses, so the text the author wrote never reaches the
+    # validator or an apply handler. PowerShell 7.5 added -DateKind, and String leaves every string as
+    # written. Without the parameter (7.2 to 7.4) the dates stay and Test-OERStructureSchema refuses each
+    # one with an Error at its path. Test-OERJsonDateKindSupport is the one place that asks, about the
+    # module-qualified cmdlet, so the parse calls that same cmdlet by the same name: a function named
+    # ConvertFrom-Json in the session would otherwise be called in its place.
     $ParseParameters = @{ Depth = 32; ErrorAction = 'Stop' }
     if (Test-OERJsonDateKindSupport) { $ParseParameters['DateKind'] = 'String' }
     try {
-        $Doc = $Json | ConvertFrom-Json @ParseParameters
+        $Doc = $Json | Microsoft.PowerShell.Utility\ConvertFrom-Json @ParseParameters
     } catch {
         Remove-OERErrorRecord -Record $PSItem
         throw "The structure document is not valid JSON: $($PSItem.Exception.Message)"
