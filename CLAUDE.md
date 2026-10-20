@@ -1090,8 +1090,8 @@ environment name comes from `Get-OERCloudEndpoint`, never a literal.
 through the private `Get-OERPimGroupsGraphPath`, which owns the version constant: never hardcode
 `beta/` at a call site, change the constant in the helper.
 `tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` holds the list of those files. The
-eligibility paths and the four policy paths migrate as ONE unit. Beta availability in US Government and China clouds is not established -- a standing
-risk, not a bug. `Why: docs/development/rationale.md#pim-beta-pin`,
+eligibility paths and the four policy paths migrate as ONE unit. Beta availability in US
+Government and China clouds is not established -- a standing risk, not a bug. `Why: docs/development/rationale.md#pim-beta-pin`,
 `docs/development/rationale.md#sovereign-clouds`
 
 **Microsoft Entra directory-role PIM policies are the opposite: pinned to Graph `v1.0`.** Every
@@ -1224,9 +1224,15 @@ only if a `Justification` string is provided. Never suppress a rule that hides a
   wrappers and `Initialize-OERAuth`; `Get-OERSignInIdentity` only in `Register-OERSignInIdentity`,
   `Get-OERSignInSupersession` and `Checkpoint-OERSignIn`; `Invoke-WebRequest` only in the ARM
   wrapper; no file under `source/` calls `Connect-OER`; no positional argument on any
-  `Initialize-OERAuth` call (`-TenantId` binds by position 0). What the gate holds in detail, what
-  it does not see, how it counts, and the two further gates in the same file:
+  `Initialize-OERAuth` call (`-TenantId` binds by position 0). `Initialize-OERAuth` holds exactly
+  three `Set-OERSessionUncertain` calls, standing directly after the `Lock-OERSignIn` assignment and
+  directly after each `Register-OERSignInIdentity`. A transport wrapper sends only from a try that
+  holds exactly one call path, preceded in the same block by its gates in the fixed order; never put
+  an `Initialize-OERAuth` or `Start-Sleep` call between the earliest gate and any request, and never
+  add a second send path. What the gate holds in detail, what it does not see, how it counts, and
+  the two further gates in the same file:
   `Why: docs/development/rationale.md#static-source-gates`
+
 ---
 
 ## SECURITY (Hard Rules - High Privilege)
