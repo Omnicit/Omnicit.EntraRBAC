@@ -54,7 +54,8 @@ function Resolve-OERAccessReviewChange {
     as 1 or more. When the document declares neither endDate nor occurrences, the
     recurrence/startDate/endDate/occurrences unit is suppressed and reported in NotApplied, exactly
     like the unrepresentable case, with the remedy: declaring endDate or occurrences replaces the
-    range outright and is written as usual. A missing count counts as 0. The cadence a live pattern
+    range outright and is written as usual. A missing or unreadable count is held back the same way,
+    and the reason says the range has no readable occurrence count. The cadence a live pattern
     reads as, and whether the module can write it back, come from Get-OERAccessReviewCadence.
 
     Reviewer sets are compared on RESOLVED OBJECT IDS supplied by the caller in -DeclaredReviewer, so
@@ -456,9 +457,17 @@ function Resolve-OERAccessReviewChange {
                 # the range to noEnd and destroy the numbered one. Suppress the whole unit (Recurrence,
                 # StartDate, EndDate, Occurrences), exactly as for a pattern the module cannot rebuild,
                 # and name the remedy: a declared endDate or occurrences replaces the range outright.
+                # A count that is missing or unreadable is named as such, never as 0 occurrences. The
+                # blank test comes first: PowerShell converts $null and '' to 0 under -as [int].
+                $LiveCountText = if ([string]::IsNullOrWhiteSpace([string]$CurrentOccurrences) -or
+                    $null -eq ($CurrentOccurrences -as [int])) {
+                    'no readable occurrence count'
+                }
+                else {
+                    '{0} occurrence(s)' -f $CurrentOccurrenceCount
+                }
                 $NotApplied.Add(
-                    ("the live recurrence range is numbered with {0} occurrence(s), which cannot be sent back; " -f
-                        $CurrentOccurrenceCount) +
+                    "the live recurrence range is numbered with $LiveCountText, which cannot be sent back; " +
                     'the recurrence, start date and range were left untouched. ' +
                     "Declare 'endDate' or 'occurrences' to change the recurrence")
             }

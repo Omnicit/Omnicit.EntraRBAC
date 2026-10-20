@@ -120,7 +120,7 @@ function Sync-OERStructureDirectoryRoleAssignment {
          not be read", since a failed read is not an empty membership
          (ConvertTo-OERPruneWithheldResult -MembershipUnread owns that wording, which says an
          Active pair's group may be one the identity "holds the role through" and an Eligible
-         pair's one it "may be eligible for the role through"). User and ServicePrincipal
+         pair's one it "is eligible for the role through"). User and ServicePrincipal
          candidates go on to guard 5 either way.
       5. Otherwise, without -Prune the candidate is reported Extra. With -Prune the handler writes a
          warning naming it, gates $Caller.ShouldProcess, and removes it with

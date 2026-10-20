@@ -141,7 +141,8 @@ function ConvertTo-OERPruneWithheldResult {
     message (-Reason). How the identity gets the role depends on the pair's kind, which the caller
     passes as -PairKind (BL-24): through an Active assignment it holds the role, so the Detail says
     'holds the role through'; through an Eligible one it is only eligible for the role until it
-    activates it, so the Detail says 'may be eligible for the role through'. The caller writes the
+    activates it, so the Detail says 'is eligible for the role through' (the record's 'may be a
+    group' already carries the uncertainty). The caller writes the
     group memberships' failure once for the pass; this helper writes nothing, and no ShouldProcess
     prompt is issued for either record.
 
@@ -226,7 +227,7 @@ function ConvertTo-OERPruneWithheldResult {
     The kind of the (role, assignmentType) pair the candidate belongs to, Eligible or Active (letter
     case ignored), which decides how the record words the signed-in identity's access through the
     group: an Active assignment is held ('holds the role through'), an Eligible one makes the
-    identity eligible for the role until it activates it ('may be eligible for the role through').
+    identity eligible for the role until it activates it ('is eligible for the role through').
     Mandatory with -MembershipUnread.
 
     .PARAMETER Reason
@@ -324,7 +325,7 @@ function ConvertTo-OERPruneWithheldResult {
     continue
 
     When the signed-in identity's group memberships could not be read: emits the Skipped "prune
-    withheld:" record saying the candidate may be a group the identity may be eligible for the role
+    withheld:" record saying the candidate may be a group the identity is eligible for the role
     through (an Active pair says 'holds the role through'), and ending with the read's message, with
     or without -Prune, and moves on to the next live candidate.
     #>
@@ -380,7 +381,7 @@ function ConvertTo-OERPruneWithheldResult {
     if ($PSCmdlet.ParameterSetName -eq 'MembershipUnread') {
         # An Active assignment is held; an Eligible one makes the identity eligible for the role until it
         # activates it (BL-24), so a group it may get the role through is worded by the pair's kind.
-        $RoleThrough = if ($PairKind -eq 'Eligible') { 'may be eligible for the role through' } else { 'holds the role through' }
+        $RoleThrough = if ($PairKind -eq 'Eligible') { 'is eligible for the role through' } else { 'holds the role through' }
         return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Skipped' `
             -Detail "prune withheld: the signed-in identity's group memberships could not be read, so $Candidate may be a group the signed-in identity $RoleThrough and is left in place (our own guard, not a Graph rejection): $Reason"
     }

@@ -110,8 +110,9 @@ function Test-OERStructureSchema {
     already requires approval with at least one stage, and with requireApproval true declared (the flag
     is sent as declared) only the live stages matter, so it is accepted only when the live policy has
     at least one; an approvalStages declared as an empty array is sent as the empty stage list, so the
-    policy is refused on create and on update whatever the live policy holds. It is a Warning because
-    the validator cannot see the live policy. An accessPackages displayName that is a canonical GUID (Test-OERGuid)
+    write carries no approval stage on create or on update whatever the live policy holds, and Microsoft
+    Graph is expected to refuse it (that answer is not measured for this combination). It is a Warning
+    because the validator cannot see the live policy. An accessPackages displayName that is a canonical GUID (Test-OERGuid)
     is a Warning at its displayName path (BL-24): the engine creates the package with that name, and
     a GUID is read as an object id wherever an access review or another reference names the package.
     A group that declares template and no displayName, and whose template Resolve-OERName cannot
@@ -1718,8 +1719,9 @@ function Test-OERStructureSchema {
                             # depends on what the entry leaves out (ConvertTo-OERPolicyBody): with requireApproval
                             # true the flag is sent as declared and the stages are carried from the live policy, so
                             # only the live STAGES matter; with requireApproval left out both are carried; with
-                            # approvalStages declared empty the empty list IS sent, and the write is refused
-                            # whatever the live policy holds. One clause for each of the three.
+                            # approvalStages declared empty the empty list IS sent, so no stage reaches the write
+                            # whatever the live policy holds, and a refusal is expected (not measured for this
+                            # combination). One clause for each of the three.
                             if ((Test-HasProp -Node $Pol -Name 'requestorScope') -and
                                 (Test-HasProp -Node $Pol.requestorScope -Name 'scope') -and
                                 ([string]$Pol.requestorScope.scope -ieq 'AllExternalUsers')) {
@@ -1747,7 +1749,8 @@ function Test-OERStructureSchema {
                                 } elseif (-not $ExtHasStage) {
                                     $ExtEngineClause = if ($ExtStagesEmpty) {
                                         'Invoke-OERStructure sends only the approval settings the entry declares: the empty approvalStages is sent as the policy''s stage list, ' +
-                                        'so creating the policy and updating an existing one are both refused, whatever approval the live policy has. '
+                                        'so the write carries no approval stage on create or on update, whatever the live policy has, and Microsoft Graph is expected to refuse it ' +
+                                        '(not measured for this combination). '
                                     } elseif ($ExtApprovalOn) {
                                         'Invoke-OERStructure sends only the approval settings the entry declares: creating the policy from this entry is refused, ' +
                                         'and an existing policy keeps the approval stages it has live, since the entry leaves them out and requireApproval true is sent as declared, ' +

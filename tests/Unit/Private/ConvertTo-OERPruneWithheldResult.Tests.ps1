@@ -544,7 +544,7 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
             }
         }
 
-        It 'with -MembershipUnread and -PairKind Eligible returns one Skipped record that says the signed-in identity may be eligible for the role through the group (BL-24)' {
+        It 'with -MembershipUnread and -PairKind Eligible returns one Skipped record that says the signed-in identity is eligible for the role through the group (BL-24)' {
             InModuleScope $script:moduleName -Parameters @{ Build = $script:MembershipUnreadDetail; Candidate = $script:EligibleCandidate } {
                 param($Build, $Candidate)
                 $R = @(ConvertTo-OERPruneWithheldResult -Section 'directoryRoleAssignments' -Item 'Reports Reader -> p-2 (Eligible)' `
@@ -552,8 +552,9 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
                 $R.Count | Should -Be 1
                 $R[0].Action | Should -BeExactly 'Skipped'
                 $R[0].Item | Should -BeExactly 'Reports Reader -> p-2 (Eligible)'
-                $R[0].Detail | Should -BeExactly (& $Build $Candidate 'may be eligible for the role through' 'Graph 403 Authorization_RequestDenied')
+                $R[0].Detail | Should -BeExactly (& $Build $Candidate 'is eligible for the role through' 'Graph 403 Authorization_RequestDenied')
                 $R[0].Detail | Should -Not -Match 'holds the role through' -Because 'an Eligible assignment is not held until it is activated'
+                $R[0].Detail | Should -Not -Match 'may be eligible' -Because 'the record already says the candidate may be such a group, once'
             }
         }
 
@@ -561,7 +562,7 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
             InModuleScope $script:moduleName -Parameters @{ Candidate = $script:EligibleCandidate } {
                 param($Candidate)
                 $R = @(ConvertTo-OERPruneWithheldResult -Section 's' -Item 'i' -MembershipUnread -Candidate $Candidate -PairKind 'eligible' -Reason 'r')
-                $R[0].Detail | Should -Match 'the signed-in identity may be eligible for the role through and is left in place'
+                $R[0].Detail | Should -Match 'the signed-in identity is eligible for the role through and is left in place'
                 $R = @(ConvertTo-OERPruneWithheldResult -Section 's' -Item 'i' -MembershipUnread -Candidate $Candidate -PairKind 'active' -Reason 'r')
                 $R[0].Detail | Should -Match 'the signed-in identity holds the role through and is left in place'
             }

@@ -142,7 +142,11 @@ function Sync-OERStructureGroup {
        further on). The warning states the diff's decision, not the outcome: Set-OERGroupPimPolicy can still refuse the call
        after it (an authentication context the tenant does not define or has not published, a failed
        policy lookup, an unreadable approval rule), and the Failed row then shows that nothing was
-       changed.
+       changed. When the diff finds no conflict and binds only one half of the pair, the cmdlet reads
+       the other half itself and refuses the whole call when that read fails or returns no rule (the
+       read's own error, or PimRuleValueUnknown): the row is Failed in a real run and nothing is
+       written for that access type, while a -WhatIf plan, which never calls the cmdlet, says "would
+       set".
        For a group THIS RUN created, the handler first asks Get-OERPimGroupPolicyId whether Graph lists
        that access type's policy yet, then reads the listed policy through Get-OERListedGroupPimPolicy,
        and waits while either comes back empty -- one shared budget of at most about 30 seconds
@@ -1593,7 +1597,11 @@ function Sync-OERStructureGroup {
                 # ErrorId and message (the cmdlet's target is the group id it is given; this record's is
                 # the group's name): one
                 # Failed row for THIS access type, nothing written for it, and the loop moves on. The
-                # cmdlet keeps its own refusal as the backstop.
+                # cmdlet keeps its own refusal as the backstop. A live policy whose rules hold no
+                # Approval_EndUser_Assignment rule has no live approver here, so a change that would
+                # leave approval required with no approver is refused here as ApproverRequired, where
+                # the cmdlet, which reads that rule by its id, would refuse it as
+                # ApprovalRuleReadFailed; nothing is written either way.
                 $SetSplat = $Change.SetParams
                 $ApproverUserBound = $SetSplat.ContainsKey('ApproverUser')
                 $ApproverGroupBound = $SetSplat.ContainsKey('ApproverGroup')
@@ -1673,7 +1681,12 @@ function Sync-OERStructureGroup {
                 # The warning states the diff's decision: Set-OERGroupPimPolicy can still refuse the
                 # call after it (an authentication context the tenant does not define or has not
                 # published, a failed policy lookup, an unreadable approval rule), and the Failed row
-                # then shows that nothing was changed.
+                # then shows that nothing was changed. When the diff finds no conflict and binds only ONE
+                # half of the pair (authenticationContextId alone, or MultiFactorAuthentication alone),
+                # the cmdlet reads the other half itself, and a read that fails, or that returns no rule,
+                # refuses the whole call (Sprint 11 step 11, A24: the read's own error, or
+                # PimRuleValueUnknown): a Failed row in a real run with nothing written for this access
+                # type. Under -WhatIf the cmdlet is not called, so the plan still says "would set".
                 if ($Change.ConflictReason) {
                     $ConflictTarget = if ($CurrentPolicy -and $CurrentPolicy.PolicyId) { "Policy '$($CurrentPolicy.PolicyId)'" } else { "pimPolicy ($AccessType) of group '$Name'" }
                     Write-Warning "${ConflictTarget}: $($Change.ConflictReason)"

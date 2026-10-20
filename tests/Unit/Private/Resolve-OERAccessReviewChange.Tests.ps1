@@ -564,9 +564,12 @@ Describe 'Resolve-OERAccessReviewChange' {
             }
         }
 
-        It 'names the count the live range reports: <Reported>' -ForEach @(
-            @{ Reported = -3; Shown = '-3' }
-            @{ Reported = $null; Shown = '0' }
+        It 'names the count the live range reports, and a missing or unreadable count as such: <Label>' -ForEach @(
+            @{ Label = '-3'; Reported = -3; Shown = '-3 occurrence(s)' }
+            @{ Label = '$null'; Reported = $null; Shown = 'no readable occurrence count' }
+            @{ Label = 'an empty text'; Reported = ''; Shown = 'no readable occurrence count' }
+            @{ Label = 'a text that is not a number'; Reported = 'many'; Shown = 'no readable occurrence count' }
+            @{ Label = '0 as text'; Reported = '0'; Shown = '0 occurrence(s)' }
         ) {
             InModuleScope $script:moduleName -Parameters @{ Current = $script:NumberedReview; Reported = $Reported; Shown = $Shown } {
                 param($Current, $Reported, $Shown)
@@ -576,7 +579,8 @@ Describe 'Resolve-OERAccessReviewChange' {
                 $Change.SetParams.ContainsKey('Occurrences') | Should -BeFalse
                 $Change.SetParams.ContainsKey('Recurrence')  | Should -BeFalse
                 @($Change.NotApplied).Count | Should -Be 1
-                @($Change.NotApplied)[0] | Should -BeLike "the live recurrence range is numbered with $Shown occurrence(s), which cannot be sent back;*"
+                @($Change.NotApplied)[0] | Should -BeExactly ("the live recurrence range is numbered with $Shown, which cannot be sent back; " +
+                    'the recurrence, start date and range were left untouched. Declare ''endDate'' or ''occurrences'' to change the recurrence')
             }
         }
 

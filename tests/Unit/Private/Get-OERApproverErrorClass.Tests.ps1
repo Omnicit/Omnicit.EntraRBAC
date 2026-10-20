@@ -84,7 +84,10 @@ Describe 'Get-OERApproverErrorClass cohort: the single owner of the approver loo
     # Compare, CompareOrdinal, IndexOf), or as a switch clause. The producers construct the ids and are
     # allowed (R-6): Resolve-OERPrincipal creates PrincipalUnresolved, and Resolve-OERApproverInput and
     # Resolve-OERDeclaredApprover test it to wrap it as ApproverUnresolved. Not seen: an id held in a
-    # variable first, or built at run time.
+    # variable first, or built at run time; an id given to a COMMAND as a parameter value rather than to
+    # an operator, such as Where-Object FullyQualifiedErrorId -like 'ApproverUnresolved*' or
+    # Select-String -Pattern 'PrincipalUnresolved'; and a method outside the list above, such as
+    # [regex]::IsMatch or [regex]::Match. Those are kept out by review.
     BeforeAll {
         $script:SourceRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../../source')).Path
         $script:OwnerFile = 'Private/Get-OERApproverErrorClass.ps1'
@@ -179,6 +182,8 @@ Describe 'Get-OERApproverErrorClass cohort: the single owner of the approver loo
     }
 
     It 'no file under source/ other than the classifier and the three producers tests ApproverUnresolved or PrincipalUnresolved' {
+        # Only the shapes the scan sees (the Describe's comment lists those it does not: a variable, a
+        # command parameter value, a regular-expression method).
         $Files = @(Get-ChildItem -LiteralPath $script:SourceRoot -Recurse -File -Filter '*.ps1')
         # The scan reaches the tree: the six sites are among the files read.
         $Files.Count | Should -BeGreaterThan 100

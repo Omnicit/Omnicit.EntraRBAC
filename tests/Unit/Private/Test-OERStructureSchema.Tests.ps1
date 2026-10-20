@@ -7570,7 +7570,8 @@ Describe 'Test-OERStructureSchema AllExternalUsers policy without approval (BL-5
             "so the update is accepted only when the live policy already has at least one approval stage. Declare 'requireApproval' true and at least one 'approvalStages' entry."
         $script:ExtEmptyStagesMessage = "assignmentPolicy at accessPackages[0].assignmentPolicies[0] has requestorScope.scope 'AllExternalUsers' but declares no 'approvalStages' entry. " +
             $script:ExtReason + ' Invoke-OERStructure sends only the approval settings the entry declares: the empty approvalStages is sent as the policy''s stage list, ' +
-            "so creating the policy and updating an existing one are both refused, whatever approval the live policy has. Declare 'requireApproval' true and at least one 'approvalStages' entry."
+            'so the write carries no approval stage on create or on update, whatever the live policy has, and Microsoft Graph is expected to refuse it ' +
+            "(not measured for this combination). Declare 'requireApproval' true and at least one 'approvalStages' entry."
         $script:ExtOffMessage = "assignmentPolicy at accessPackages[0].assignmentPolicies[0] has requestorScope.scope 'AllExternalUsers' but declares 'requireApproval' false. " +
             $script:ExtReason + ' Approval is switched off by that declaration, so creating or updating the policy this way is refused and the policy is reported Failed. ' +
             "Declare 'requireApproval' true and at least one 'approvalStages' entry."

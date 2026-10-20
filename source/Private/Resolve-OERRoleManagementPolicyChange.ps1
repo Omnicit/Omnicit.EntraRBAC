@@ -44,7 +44,10 @@ function Resolve-OERRoleManagementPolicyChange {
     Sync-OERStructureRoleManagementPolicy reports the entry Failed before its ShouldProcess gate. A
     null Current is treated as everything-declared-is-changed; neither engine caller passes one, since
     both report a policy read that failed (or, for the Azure Resource Manager caller, returned no
-    policy) as Failed before this diff runs, so that branch serves a direct caller only. No Graph, ARM,
+    policy) as Failed before this diff runs, so that branch serves a direct caller only. For the
+    directory-role caller that holds because Get-OERDirectoryRoleManagementPolicy -Role never returns
+    nothing without writing an error, so its read under -ErrorAction Stop either answers or throws;
+    the Azure Resource Manager caller refuses an empty answer itself (PolicyNotFound). No Graph, ARM,
     or authentication occurs.
 
     .PARAMETER Declared
@@ -58,8 +61,10 @@ function Resolve-OERRoleManagementPolicyChange {
     means "not declared"), requireMfaOnActiveAssignment and requireJustificationOnActiveAssignment.
 
     .PARAMETER Current
-    The live policy as returned by Get-OERRoleManagementPolicy for the same role and scope, or null
-    when the policy could not be read, in which case every declared field is considered changed.
+    The live policy as returned by Get-OERRoleManagementPolicy for the same role and scope. A null
+    Current makes every declared field a change, so a caller refuses a read that failed or returned no
+    policy before it calls this diff, as both engine handlers do; only a direct caller that wants
+    every declared field sent passes null.
 
     .PARAMETER SendDeclaredApproverSideOnly
     Send only the approver side(s) the document declares, never a side seeded from the live policy,
@@ -69,8 +74,14 @@ function Resolve-OERRoleManagementPolicyChange {
     one seeded from the live policy.
 
     .EXAMPLE
-    Resolve-OERRoleManagementPolicyChange -Declared $DocItem -Current (Get-OERRoleManagementPolicy -Role 'Owner' -Subscription 'Prod')
+    $Live = Get-OERRoleManagementPolicy -Role 'Owner' -Subscription 'Prod' -ErrorAction Stop
+    if ($null -eq $Live) { throw 'The live Owner policy was not returned; nothing is compared or sent.' }
+    Resolve-OERRoleManagementPolicyChange -Declared $DocItem -Current $Live
+
     Returns the SetParams needed to reconcile the Owner policy, or Changed = $false when it matches.
+    The read runs with -ErrorAction Stop and an empty answer is refused before the diff, as
+    Sync-OERStructureRoleManagementPolicy does (BL-40): a null Current would make every declared field
+    a change.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]

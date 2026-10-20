@@ -1189,7 +1189,7 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
                 $Records[$Index].Detail | Should -BeExactly (
                     "prune withheld: the signed-in identity's group memberships could not be read, so undeclared eligible " +
                     "assignment of directory role 'Reports Reader' for principal '$Id' may be a group the signed-in identity " +
-                    "may be eligible for the role through and is left in place (our own guard, not a Graph rejection): Graph 403 Authorization_RequestDenied")
+                    "is eligible for the role through and is left in place (our own guard, not a Graph rejection): Graph 403 Authorization_RequestDenied")
             }
             Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0 -ParameterFilter {
                 $PrincipalId -in @('cccccccc-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000002')
@@ -1214,7 +1214,7 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
     ) {
         # An Active assignment is held, so the text says the signed-in identity "holds the role through"
         # the group, word for word as before the wording was split by the pair's kind (BL-24); the
-        # Eligible pair above says "may be eligible for the role through". The row is Skipped with or
+        # Eligible pair above says "is eligible for the role through". The row is Skipped with or
         # without -Prune, never Extra, and ConvertTo-OERPruneWithheldResult (not the handler) words it.
         InModuleScope $script:moduleName -Parameters @{ Prune = $Prune } {
             param($Prune)
