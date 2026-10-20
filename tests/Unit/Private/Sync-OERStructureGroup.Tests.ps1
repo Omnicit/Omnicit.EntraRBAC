@@ -1471,6 +1471,202 @@ Describe 'Sync-OERStructureGroup' {
         }
     }
 
+    Context 'the last user owner is never removed, also while a service principal is an owner (BL-84, R-15)' {
+        # Measured 2026-10-20 (Sprint 11 step 11, check 1.2): Microsoft Graph refuses to remove a
+        # group's only USER owner while a service principal is also an owner (400 Request_BadRequest,
+        # "The group must have at least one owner, hence this owner cannot be removed."). So the
+        # prune pass keeps a user-owner floor beside the any-type floor: an undeclared owner typed
+        # 'user' that is the last user owner standing is Skipped before the warning, before
+        # ShouldProcess and before any request. The live group is a mocked Get-OERGroup whose owners
+        # carry the ObjectType Get-OERGroupRelation gives them; the service principal owner is
+        # withheld for its type (A9) before the guard and counts as an owner still standing.
+        BeforeAll {
+            function New-LuoOwner {
+                param([string]$Id, [AllowNull()][string]$Type)
+                [PSCustomObject]@{ id = $Id; ObjectType = $Type }
+            }
+            # The exact text, written out here on purpose: it is a published Detail.
+            function Get-LuoUserOwnerText {
+                param([string]$Id)
+                "did not remove owner '$Id': it is the last remaining user owner of group 'role_sec_x', and Microsoft Graph refuses to remove a group's last user owner, also while a service principal is an owner (measured: 400 ""The group must have at least one owner, hence this owner cannot be removed.""), so no request was sent (our own guard)."
+            }
+            function Get-LuoSpOwnerText {
+                "prune withheld: undeclared owner 'sp-1' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go."
+            }
+            # Runs one item through the handler in module scope and hands back its rows and warnings,
+            # so the assertions below run OUTSIDE InModuleScope against the -ModuleName mocks.
+            function Invoke-LuoSync {
+                param([PSCustomObject]$Item, [switch]$Prune, [switch]$WhatIf, [switch]$NoConfirm)
+                InModuleScope $script:moduleName -Parameters @{ Item = $Item; PruneRun = [bool]$Prune; WhatIfRun = [bool]$WhatIf; NoConfirmRun = [bool]$NoConfirm } {
+                    param($Item, $PruneRun, $WhatIfRun, $NoConfirmRun)
+                    function Invoke-SyncGroupViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item, [switch]$Prune)
+                        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                    }
+                    # -Confirm:$false only where asked: a real removal must never wait on a prompt.
+                    $Confirmation = @{}
+                    if ($NoConfirmRun) { $Confirmation.Confirm = $false }
+                    $Rows = @(Invoke-SyncGroupViaCaller -Item $Item -Prune:$PruneRun -WhatIf:$WhatIfRun @Confirmation `
+                            -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -WarningVariable LuoWarnings)
+                    [PSCustomObject]@{ Rows = $Rows; Warnings = @($LuoWarnings) }
+                }
+            }
+        }
+        BeforeEach {
+            $script:LuoOwners = @()
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'g-1' }
+            # An object id resolves to itself, as the real resolver returns an id verbatim.
+            Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { param($Reference) $Reference }
+            Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy { $null }
+            Mock -ModuleName $script:moduleName Add-OERGroupMember { }
+            Mock -ModuleName $script:moduleName Remove-OERGroupMember { }
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
+                    Members = @(); Owners = $script:LuoOwners; PimEligibility = @()
+                }
+            }
+        }
+
+        It 'removes one of two user owners and refuses the last user owner with the measured reason' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'u-2' 'user'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            # Positive identity first: the first owner went, the last one was refused.
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-1'" }).Count | Should -Be 1
+            $Refused = @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' })
+            $Refused.Count | Should -Be 1
+            $Refused[0].Detail | Should -BeExactly (Get-LuoUserOwnerText 'u-2')
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'u-1' -and $AccessType -eq 'owner' }
+            @($Out.Warnings | Where-Object { "$_" -eq "Sync-OERStructureGroup: removing undeclared owner 'u-1' from group 'role_sec_x'." }).Count | Should -Be 1
+            @($Out.Warnings | Where-Object { "$_" -match 'u-2' }).Count | Should -Be 0
+        }
+
+        It 'never removes a user owner while it is the last user owner and a service principal also owns the group, whichever is listed first' {
+            foreach ($Order in 'user first', 'service principal first') {
+                $User = New-LuoOwner 'u-1' 'user'
+                $Sp = New-LuoOwner 'sp-1' 'servicePrincipal'
+                $script:LuoOwners = if ($Order -eq 'user first') { @($User, $Sp) } else { @($Sp, $User) }
+                $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+                @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0 -Because "the $Order run reads the group"
+                # Positive identity first: both owners reached their guard, each Skipped once.
+                $UserRows = @($Out.Rows | Where-Object { $_.Detail -match "owner 'u-1'" })
+                $UserRows.Count | Should -Be 1
+                $UserRows[0].Action | Should -BeExactly 'Skipped'
+                $UserRows[0].Detail | Should -BeExactly (Get-LuoUserOwnerText 'u-1')
+                $SpRows = @($Out.Rows | Where-Object { $_.Detail -match "owner 'sp-1'" })
+                $SpRows.Count | Should -Be 1
+                $SpRows[0].Action | Should -BeExactly 'Skipped'
+                $SpRows[0].Detail | Should -BeExactly (Get-LuoSpOwnerText)
+                @($Out.Rows | Where-Object { $_.Action -in 'Removed', 'Failed' }).Count | Should -Be 0
+                # The guard stands before the warning and before ShouldProcess.
+                @($Out.Warnings).Count | Should -Be 0
+            }
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'plans the same under -WhatIf: Skipped with the reason, never would remove, and no request' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -WhatIf
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            $UserRows = @($Out.Rows | Where-Object { $_.Detail -match "owner 'u-1'" })
+            $UserRows.Count | Should -Be 1
+            $UserRows[0].Action | Should -BeExactly 'Skipped'
+            $UserRows[0].Detail | Should -BeExactly (Get-LuoUserOwnerText 'u-1')
+            @($Out.Rows | Where-Object { $_.Detail -like 'would remove*' }).Count | Should -Be 0
+            @($Out.Warnings | Where-Object { "$_" -match 'u-1' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'reports both owners Extra without -Prune, as before' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() })
+            $Extra = @($Out.Rows | Where-Object { $_.Action -eq 'Extra' })
+            $Extra.Count | Should -Be 2
+            @($Extra | Where-Object { $_.Detail -eq "undeclared owner 'u-1' (use -Prune to remove)" }).Count | Should -Be 1
+            @($Extra | Where-Object { $_.Detail -eq "undeclared owner 'sp-1' (a service principal, which -Prune leaves in place)" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'removes an undeclared user owner while a declared user owner stands, beside a service principal owner' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'u-2' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @('u-1') }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Out.Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "owner 'u-1' already present" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-2'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoSpOwnerText) }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Detail -like 'did not remove owner*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'u-2' -and $AccessType -eq 'owner' }
+        }
+
+        It 'decrements the user owners still standing after each removal: of three user owners the last is refused' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'u-2' 'user'), (New-LuoOwner 'u-3' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 2
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-3') }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly -ParameterFilter { $PrincipalId -eq 'u-3' }
+        }
+
+        It 'counts only a removal that went through: a refused removal leaves its user owner standing for the next one' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'u-2' 'user'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            # The shape the real cmdlet fails in: a [CmdletBinding()] body that writes its record through
+            # $PSCmdlet.WriteError, which the handler's -ErrorAction Stop promotes. An exact filter of
+            # its own, with the default mock kept for every other owner.
+            Mock -ModuleName $script:moduleName Remove-OERGroupMember {
+                [CmdletBinding()] param($Group, $PrincipalId, $AccessType, [switch]$Confirm)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Graph 403 Forbidden: removal denied'), 'OwnerRemovalDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $PrincipalId))
+            } -ParameterFilter { $PrincipalId -eq 'u-1' }
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+            # Positive identity first: the removal of u-1 was attempted and is the one Failed row.
+            $Failed = @($Out.Rows | Where-Object { $_.Action -eq 'Failed' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Detail | Should -BeLike "failed to remove owner 'u-1': *removal denied*"
+            # u-1 still stands, so u-2 is not the last user owner and is removed.
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-2'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Detail -like 'did not remove owner*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 2 -Exactly
+        }
+
+        It 'reads the owner type without regard to letter case' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'User'), (New-LuoOwner 'sp-1' 'servicePrincipal'))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-1') }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'keeps the any-type floor for a last owner whose type is not known to be a user, with a text that no longer waits on a verification' {
+            $script:LuoOwners = @((New-LuoOwner 'o-1' $null))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+            $Refused = @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' })
+            $Refused.Count | Should -Be 1
+            $Refused[0].Detail | Should -BeExactly "did not remove owner 'o-1': it is the last remaining owner of group 'role_sec_x', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph refuses to remove a group's last user owner (measured 2026-10-20), and this pass holds the last owner of any other type the same way, since what Graph does with one has not been measured."
+            $Refused[0].Detail | Should -Not -Match 'pending live verification'
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'counts only owners typed user as user owners: an untyped owner beside the last user owner does not stand in for it' {
+            $script:LuoOwners = @((New-LuoOwner 'u-1' 'user'), (New-LuoOwner 'x-1' $null))
+            $Out = Invoke-LuoSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }) -Prune -NoConfirm
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            # The user owner is refused, and the untyped one is not a user owner, so only the any-type
+            # floor applies to it and u-1 still stands.
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq (Get-LuoUserOwnerText 'u-1') }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'x-1'" }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'x-1' -and $AccessType -eq 'owner' }
+        }
+    }
+
     Context 'eligibility duration and access type reconciliation' {
         It 'passes -AccessType owner and -Action adminAssign through to Add-OERGroupEligibility' {
             InModuleScope $script:moduleName {
@@ -6816,7 +7012,7 @@ Invoke-OERStructure -Json $Json -Confirm:$false #STOP# | ForEach-Object { "ROW:$
                 $Skipped = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "'o-live'" })
                 $Skipped.Count | Should -Be 1
                 $Skipped[0].Detail | Should -Match '^prune withheld: declared entry ''person15@example\.com'' could not be resolved'
-                $Skipped[0].Detail | Should -Not -Match 'last remaining owner'
+                $Skipped[0].Detail | Should -Not -Match 'last remaining (user )?owner'
             }
         }
 
@@ -9149,7 +9345,7 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
                 @($Out.Errors).Count | Should -Be 0
                 @($Out.Warnings).Count | Should -Be 0
                 Get-PimRowCount -Rows $Out.Rows -Action 'Skipped' -Detail (Get-PimPruneHeld -Candidate "undeclared owner 'o-act'" -Reason $script:PimActOwner) | Should -Be 1
-                @($Out.Rows | Where-Object { $_.Detail -like '*last remaining owner*' }).Count | Should -Be 0
+                @($Out.Rows | Where-Object { $_.Detail -like '*last remaining owner*' -or $_.Detail -like '*last remaining user owner*' }).Count | Should -Be 0
                 @($Out.Rows).Count | Should -Be 2
                 $Out = Invoke-PimHoldRun -Items @($Item) -Plan:$AsPlan
                 Get-PimRowCount -Rows $Out.Rows -Action 'Extra' -Detail (Get-PimExtraHeld -Candidate "undeclared owner 'o-act'" -Reason $script:PimActOwner) | Should -Be 1
@@ -9294,9 +9490,10 @@ Invoke-OERStructure -Json $Json -Prune -Confirm:$false | ForEach-Object { "ROW:$
             $Out = Invoke-PimHoldRun -Items @($Item) -Prune
             @($Out.Errors).Count | Should -Be 0
             # Reached: three adds and three prunes (the last live owner, 'o-3', refused by its own guard).
+            # 'o-3' is a user (New-PimLive), so since BL-84 the refusal is the user-owner floor's text.
             Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 3 -Exactly -Scope It
             Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 3 -Exactly -Scope It
-            @($Out.Rows | Where-Object { $_.Detail -like "did not remove owner 'o-3': it is the last remaining owner*" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Detail -like "did not remove owner 'o-3': it is the last remaining user owner of group 'grp-pim'*" }).Count | Should -Be 1
             Should -Invoke -ModuleName $script:moduleName Read-OERGroupPimHold -Times 1 -Exactly -Scope It
             # Each item reads its own hold: two items, two reads more.
             $null = Invoke-PimHoldRun -Items @($Item, $Item) -Prune

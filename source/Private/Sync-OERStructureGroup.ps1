@@ -70,10 +70,12 @@ function Sync-OERStructureGroup {
         holds or makes eligible is neither added nor pruned -- see "PIM for Groups" below), gated on
         the document's owners key being DECLARED (present and non-null) -- an omitted owners key never
         reconciles or prunes, unlike members. Owners are not rule-derived, so this step runs even on a
-        dynamic group. Microsoft Learn states a group's last (user) owner cannot be removed; a -Prune
-        run that would remove the last remaining owner reports a Skipped record instead of firing a
-        call Microsoft Graph rejects. A service principal owner, and an owner PIM for Groups holds or
-        makes eligible, is withheld before that guard and counts as an owner still standing.
+        dynamic group. Microsoft Learn states a group's last (user) owner cannot be removed, and
+        Microsoft Graph was measured (2026-10-20) to refuse that removal also while a service
+        principal is an owner; a -Prune run that would remove the last remaining user owner, or the
+        last remaining owner of any type, reports a Skipped record instead of firing a call Microsoft
+        Graph rejects. A service principal owner, and an owner PIM for Groups holds or makes eligible,
+        is withheld before that guard and counts as an owner still standing.
     3. Reconcile time-bound eligibility entries (those with durationDays) -- the first eligibility
        request onboards the group to PIM for Groups if it was not onboarded yet. Each entry is matched
        on the (principal, accessType) pair and its declared window is diffed against the live schedule
@@ -1085,20 +1087,30 @@ function Sync-OERStructureGroup {
 
             # Extra/prune undeclared current owners. Microsoft Learn: "Once owners are assigned to a
             # group, the last owner (a user object) of the group cannot be removed" -- note the exact
-            # wording, "a user object": Learn scopes the restriction to a USER owner specifically, so a
-            # group whose sole remaining owner is a service principal may in fact be removable. This
-            # guard is nonetheless DELIBERATELY conservative and counts owners of every type, not just
-            # user owners: whether the restriction also applies to a lone service-principal owner is an
-            # OPEN question on this PR's live-verification checklist, and narrowing the guard now would
-            # encode an unverified assumption into a destructive path. Do NOT make this guard type-aware
-            # without first confirming the behaviour against a real tenant -- see the checklist. The
-            # number of owners still standing is tracked as removals are applied, and the removal that
-            # would leave none is refused with a Skipped record instead of firing a call that may fail.
+            # wording, "a user object": Learn scopes the restriction to a USER owner. Measured on
+            # 2026-10-20 (Sprint 11 step 11, check 1.2, BL-84): Microsoft Graph refuses to remove a
+            # group's only USER owner EVEN WHILE a service principal is also an owner (400
+            # Request_BadRequest, "The group must have at least one owner, hence this owner cannot be
+            # removed."). So two floors stand here, both our own guards that send no request:
+            #   1. The user-owner floor: an undeclared owner typed 'user' (ObjectType compared as the
+            #      A9 check compares 'servicePrincipal', without regard to letter case) that is the
+            #      last user owner still standing is Skipped. An owner of any other type, or of no
+            #      type, is NOT counted as a user owner: the count errs towards refusing a removal.
+            #   2. The any-type floor: whatever is left that is the last owner of ANY type is Skipped
+            #      too. It is kept for an owner not typed 'user', since what Graph does with the last
+            #      owner of another type has not been measured (a service principal never reaches it,
+            #      see below).
+            # The owners still standing, of any type and of type user, are tracked as removals go
+            # through (a removal that failed, or was not confirmed, leaves its owner standing), and
+            # the removal that would leave no owner, or no user owner, is refused with a Skipped
+            # record instead of firing a call Graph rejects.
             # Since A9 an owner the read types servicePrincipal is withheld before this guard and never
             # removed, and since BL-125 so is an owner PIM for Groups holds or makes eligible (and every
             # owner while that cannot be read), so the guard decides only for the other owners, and a
-            # withheld owner counts as one still standing.
+            # withheld owner counts as one still standing -- a withheld user owner counts as a user
+            # owner still standing too.
             $RemainingOwnerCount = $CurrentOwners.Count
+            $RemainingUserOwnerCount = @($CurrentOwners | Where-Object { $_.ObjectType -eq 'user' }).Count
             foreach ($CurOwner in $CurrentOwners) {
                 $CurId = $CurOwner.id
                 if ($DeclaredOwnerIds -notcontains $CurId) {
@@ -1129,9 +1141,18 @@ function Sync-OERStructureGroup {
                         continue
                     }
                     if ($Prune) {
+                        $CurIsUserOwner = ($CurOwner.ObjectType -eq 'user')
+                        # BL-84 (R-15): the last user owner is never removed, also while another owner of
+                        # another type (a service principal) stands. Asked first, since it is the more
+                        # specific floor: a user owner that is the only owner left is also refused here.
+                        if ($CurIsUserOwner -and $RemainingUserOwnerCount -le 1) {
+                            ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
+                                -Detail "did not remove owner '$CurId': it is the last remaining user owner of group '$Name', and Microsoft Graph refuses to remove a group's last user owner, also while a service principal is an owner (measured: 400 `"The group must have at least one owner, hence this owner cannot be removed.`"), so no request was sent (our own guard)."
+                            continue
+                        }
                         if ($RemainingOwnerCount -le 1) {
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
-                                -Detail "did not remove owner '$CurId': it is the last remaining owner of group '$Name', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph's documented restriction names a USER owner specifically, so if this is a service principal it may in fact be removable; this guard is deliberately conservative pending live verification."
+                                -Detail "did not remove owner '$CurId': it is the last remaining owner of group '$Name', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph refuses to remove a group's last user owner (measured 2026-10-20), and this pass holds the last owner of any other type the same way, since what Graph does with one has not been measured."
                             continue
                         }
                         $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
@@ -1146,6 +1167,7 @@ function Sync-OERStructureGroup {
                                 continue
                             }
                             $RemainingOwnerCount--
+                            if ($CurIsUserOwner) { $RemainingUserOwnerCount-- }
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Removed' -Detail "removed undeclared owner '$CurId'"
                         } else {
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail "would remove undeclared owner '$CurId'"
