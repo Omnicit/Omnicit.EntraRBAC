@@ -142,11 +142,13 @@ checks and uninstalls the transport tripwire; read statically, importing nothing
 **`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** `docs/` and
 `specs/`: a GUID is prose and must be a `00000000-0000-0000-0000-0000000000NN` placeholder.
 `source/` and `tests/`: a GUID is a fixture and must not have **version-4 shape**; exactly three v4
-values are pinned by name. **Do not add a fourth: allocate a placeholder** from the register in
-`docs/live-verification/README.md` (it records the next free `...NNN` and `personN`), adding its row
-in the same commit that uses the slot. **Tenant domains** are held to a fixed allowlist: replace a
-real label with `contoso`, never widen the list. A credential-shaped test literal (the bearer-scrub
-fixtures) carries `NOT-A-REAL-TOKEN` inside the VALUE; `REDACTED` works too.
+values are pinned by name (the module's manifest GUID, the Microsoft Graph Command Line Tools app
+id, the Reader built-in role definition id). **Do not add a fourth: allocate a placeholder** from the
+register in `docs/live-verification/README.md` (it records the next free `...NNN` and `personN`),
+adding its row in the same commit that uses the slot. **Tenant domains** are held to a fixed
+allowlist: replace a real label with `contoso`, never widen the list. A credential-shaped test
+literal (the bearer-scrub fixtures) carries `NOT-A-REAL-TOKEN` inside the VALUE; `REDACTED` works
+too.
 `Why: docs/development/rationale.md#bearer-scrub-tests`
 
 **`dochygiene.tests.ps1` also reads Markdown as GitHub renders it:** in tracked `.md` under `docs/`
@@ -465,7 +467,11 @@ any scriptblock; the transports' own refreshes, in `Invoke-GraphSingle` and
 
 **`Export-OERInventory` stops on a refused sign-in and writes nothing -- the one public cmdlet that
 does.** A terminating refusal is raised again with `$PSCmdlet.ThrowTerminatingError`, never
-`WriteError`. A refused export asks for no tenant ID, reads nothing, writes no folder, returns no
+`WriteError`. The one refusal written without terminating, `ArmTokenAcquisitionFailed`, is found in
+`SignInErrors` by the first comma segment of its `FullyQualifiedErrorId`, compared whole and
+ordinally, never searched for. Under `-ErrorAction Ignore` or `$ErrorActionPreference = 'Ignore'`,
+which add a record to no `-ErrorVariable`, the call is pinned to `SilentlyContinue`, under no other
+preference. A refused export asks for no tenant ID, reads nothing, writes no folder, returns no
 object, under every error preference. Every other command keeps the rule above; `Get-OERInventory`
 keeps its behaviour.
 `Why: docs/development/rationale.md#a-command-whose-sign-in-is-refused-sends-nothing`
@@ -482,7 +488,7 @@ call stack remembers another identity than the state now carries.
 snapshot of the session in `begin` and, without `-TenantId`, compare it in `process` directly before
 that sign-in or lookup (`Invoke-OERStructure` after the document is read and validated, the builders
 after their argument checks), refusing with `SignInSuperseded` and sending nothing when the identity
-changed.
+changed, or when the module held no session and now holds one.
 
 `Checkpoint-OERSignIn` is the single owner of the session a command began with; it builds the
 snapshot only through `Get-OERSignInIdentity`. A new command that signs in only in `process`,
@@ -516,12 +522,15 @@ separate statements, for example collecting into a variable first. Never call
 **A tenant named by domain is looked up before any token request, and checked like a GUID.**
 `Initialize-OERAuth` resolves every requested tenant that is neither a GUID nor `organizations`
 through `Resolve-OERTenantDomain`. A failed lookup refuses the sign-in with `TenantResolutionFailed`
-(raised after the lookup's `try`, never inside its `catch`), no token requested. `organizations` is
-never looked up or compared. Never call `Resolve-OERTenantDomain` outside `Initialize-OERAuth`, never
-move the lookup above the cached return or the credential checks, never exempt another non-GUID
-value as `organizations` is. `Why: docs/development/rationale.md#switching-tenants-in-one-process`
+(raised after the lookup's `try`, never inside its `catch`), no token requested; `common` names no
+tenant and is refused the same way. The token request still names the tenant as given.
+`organizations` is never looked up or compared. Never call `Resolve-OERTenantDomain` outside
+`Initialize-OERAuth`, never move the lookup above the cached return or the credential checks, never
+exempt another non-GUID value as `organizations` is. `Why: docs/development/rationale.md#switching-tenants-in-one-process`
 
-**A refused sign-in leaves the session uncertain.** `Initialize-OERAuth` refuses with `SignInRefused`
+**A refused sign-in leaves the session uncertain.** `Initialize-OERAuth` sets the session-uncertain
+marker directly after `Lock-OERSignIn` and, after the `GraphSessionChanged` refusal and before the
+cached return and every token call, refuses with `SignInRefused`
 (`New-OERSignInRefusedError -SessionUncertain`) a call that names no tenant (no `-TenantId`, or
 `-TenantId organizations`) while the marker it found was set, unless the call is `Connect-OER`'s
 (`-ReclaimGraphSession`). `Set-OERSessionUncertain` is the single owner of
@@ -546,8 +555,9 @@ and `Set-OERConfiguration.Tests.ps1` hold it.
 
 An internal call passes `-TenantId` on only when it is set (`if ($TenantId) { ... }`), never an
 empty value -- except `Connect-OER`'s own call of `Initialize-OERAuth`, which passes `''` when
-neither `-TenantId` nor `-TenantAlias` is bound (read as no tenant named). Gate 10 of
-`tests/QA/sourcehygiene.tests.ps1` holds it; what it cannot see is listed in
+neither `-TenantId` nor `-TenantAlias` is bound (read as no tenant named), and the transports' own
+refreshes, the named exemptions of gate 10. Gate 10 of `tests/QA/sourcehygiene.tests.ps1` holds it;
+what it cannot see is listed in
 `docs/development/rationale.md#static-source-gates`.
 `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 
@@ -740,8 +750,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   display-name lookup interpolating a caller-supplied value into a `$filter=... eq '...'` URL must
   escape through it (four deliberate exceptions exist; a new unescaped site is a bug). An operator's
   whole OData expression (`-Filter`, `-GroupFilter`) is never escaped through it;
-  `Export-OERInventory -GroupFilter` is guarded by the post-read check that keeps only groups the
-  read shows `securityEnabled` true, never by parentheses.
+  `Export-OERInventory -GroupFilter`, ANDed as `securityEnabled eq true and (...)`, is guarded by the
+  post-read check that keeps only groups the read shows `securityEnabled` true, never by the
+  parentheses.
   `Why: docs/development/rationale.md#odata-escaping`
 - **A resolver on the cohort's list publishes its failure as itself and an ambiguous name as
   `Ambiguous*`, never `*NotFound`; a COHORT check holds that, not a helper.** Decided exception: the
@@ -776,15 +787,18 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Test-OERGuid` is the single GUID predicate:** never re-implement the canonical GUID regex
   inline. Deliberate exceptions: the wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup`
   (do not migrate those two), and the places that read a group's `administrativeUnit` the way
-  `New-OERGroup` does (the created-membership match in `Sync-OERStructureAdministrativeUnit` and two
-  checks in `Test-OERStructureSchema`).
+  `New-OERGroup` does -- the created-membership match in `Sync-OERStructureAdministrativeUnit`, and
+  in `Test-OERStructureSchema` the unit placement check (Rule 12) and the restricted-unit check
+  (Rule 16), which share one local helper.
   `Why: docs/development/rationale.md#guid-predicate`
 - **`Test-OERAzureRootScope` is the single owner of whether an Azure role assignment scope addresses
   the root scope `/` (any spelling the ARM transport sends there)**; `Format-OERRootScopeAssignment`
   owns the order, deduplication and list text of the root-scope assignments `Get-OERInventory` and
   `Export-OERInventory` name in their warnings. Azure `roleAssignments` only: never apply it to
   `roleManagementPolicies` or the directory role sections (their `/` is the Entra tenant scope,
-  `directoryScopeId`).
+  `directoryScopeId`). The export never writes a root-scope assignment, the validator warns on one,
+  and `Sync-OERStructureRoleAssignment` skips one before any lookup or request and never prunes the
+  root scope.
   `Why: docs/development/rationale.md#root-scope-is-not-in-the-document`
 - **`Get-OERAccessReviewTargetMismatch` is the single owner of whether a live access review found by
   display name reviews the access package and assignment policy an `accessReviews[]` entry
@@ -808,10 +822,12 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Why: docs/development/rationale.md#review-package-in-the-same-run`
 - **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared,
   `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax;** never re-implement
-  either inline. The validator REFUSES, not merges by the helper's trim, a scope that breaks one of
-  two spelling rules: the slash rule (a trailing or doubled `/`) and the segment rule (a dot
-  segment, an escape or backslash, a query or fragment character, white space at an edge or other
-  than a space, a control character); `Get-OERScopeSpellingProblem`'s help is the exact list. A
+  either inline (the first is pure: the offline validator uses it). The validator REFUSES, not
+  merges by the helper's trim, a scope that breaks one of two spelling rules: the slash rule (a
+  trailing `/` other than the root `/`, or a doubled `/`) and the segment rule (a dot segment, an
+  escape or backslash, a query or fragment character, white space at an edge or other than a space,
+  a control character; the `mg:`/`sub:`/`subscription:` forms are exempt from it, as
+  `ConvertTo-OERScopeSplat` reads them); `Get-OERScopeSpellingProblem`'s help is the exact list. A
   space between other characters of a segment is accepted: never widen the white space rule to every
   space. Never drop the rule in favour of the trim, which would make such a scope prune.
   `Why: docs/development/rationale.md#role-assignment-key`
@@ -830,9 +846,12 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   mutual-exclusion rule:** an enabled authentication context and `MultiFactorAuthentication` on
   activation cannot both be in force. Every call site -- the Graph group write path, the apply diff,
   the shared rule-patch builder (`Resolve-OERPolicyRulePatch`) -- takes the DECISION from it and
-  applies it in its own idiom; never re-implement it inline. `Get-OERPimRulePatchOrder` is the
-  single owner of the authentication-context PATCH order this requires, called by
-  `Set-OERGroupPimPolicy` and `Set-OERDirectoryRoleManagementPolicy`.
+  applies it in its own idiom; never re-implement it inline. The builder's two callers pass a
+  different `-ResolveUnrequestedConflict`: the Azure (ARM) policy path `$true`, since ARM PATCHes the
+  full rule set; the directory-role (Graph) path `$false`, since it patches one rule at a time and
+  leaves an untouched combination alone. `Get-OERPimRulePatchOrder` is the single owner of the
+  authentication-context PATCH order this requires, called by `Set-OERGroupPimPolicy` and
+  `Set-OERDirectoryRoleManagementPolicy`.
   `Why: docs/development/rationale.md#mfa-authcontext-exclusion`
 - **`ConvertFrom-OERGraphApprover` is the single reader of a Graph approver;
   `Resolve-OERApproverInput` / `Resolve-OERGraphApproverSet` are the single owners of the Graph
@@ -881,16 +900,17 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Why: docs/development/rationale.md#pim-rule-pair-put-back`
 - **`Test-OERScheduleRequestFailed` is the single owner of which PIM schedule request status is an
   error: the Failed family -- `Failed`, `FailedAsResourceIsLocked` and any later status starting
-  with `Failed` -- and nothing else.** The twelve cmdlets that send a schedule request call it, as
-  do the two new-group replication waits in `Sync-OERStructureGroup`. A cmdlet emits the request
-  object FIRST, then writes the non-terminating `EligibilityRequestFailed` (group, directory role
-  and Azure eligibility requests) or `AssignmentRequestFailed` (active assignment, activation and
-  deactivation requests), so a caller under `-ErrorAction Stop` still gets the object. Never compare
-  a status to a `Failed` literal elsewhere. The cohort check in
+  with `Failed`, compared case-insensitively -- and nothing else.** The twelve cmdlets that send a
+  schedule request call it, as do the two new-group replication waits in `Sync-OERStructureGroup`. A
+  cmdlet emits the request object FIRST, then writes the non-terminating `EligibilityRequestFailed`
+  (group, directory role and Azure eligibility requests) or `AssignmentRequestFailed` (active
+  assignment, activation and deactivation requests), so a caller under `-ErrorAction Stop` still
+  gets the object. Never compare a status to a `Failed` literal elsewhere. The cohort check in
   `tests/Unit/Private/Test-OERScheduleRequestFailed.Tests.ps1` derives its cohort from the files
   (every `source/Public` cmdlet with a string matching `ScheduleRequests`) and holds that each calls
-  the owner and that no other file under `source/` compares a status to a `Failed` literal. Narrow
-  that derivation, never hand-list an exemption.
+  the owner and that no other file under `source/` compares a status to a `Failed` literal in the
+  shapes it scans. A cmdlet that only reads a schedule request resource would join the cohort and
+  fail it: narrow that derivation, never hand-list an exemption.
   `tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` holds the two engine waits.
   `Why: docs/development/rationale.md#failed-schedule-request`
 - **`Get-OERCloudEndpoint` is the single owner of the cloud-to-endpoint table:** every Graph
@@ -905,14 +925,16 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Test-OERNamingStandardName` is the single owner of the naming rules, their order and Detail
   texts; `Read-OERNamingStandard` of reading and refusing the naming standard file;
   `Get-OERNamingStandardSchemaJson` of its schema.** `Invoke-OERStructure` never passes a naming
-  standard to the validator. A file the reader refuses is `InvalidNamingStandard`, once, with no
-  document read or validated. The reader checks the file by hand, never via `Test-Json`.
+  standard to the validator (a naming finding is never an Error; applying a document is unchanged).
+  A file the reader refuses is `InvalidNamingStandard`, once, with no document read or validated.
+  The reader checks the file by hand, never via `Test-Json`.
   `docs/examples/naming-standard.schema.json` is the schema function's output, held identical by a
   test, never edited by hand. Never re-implement a rule, a Detail text or the file's validation
   elsewhere. `Why: docs/development/rationale.md#naming-standard`
 - **`Test-OERJsonDateKindSupport` is the single owner of whether the running `ConvertFrom-Json` has
-  `-DateKind`.** Never ask the question elsewhere or "repair" a parsed date into text. A test mocks
-  it in module scope to run the 7.2-7.4 path on a newer PowerShell.
+  `-DateKind`.** On 7.2-7.4 `Test-OERStructureSchema` refuses every date value the parse made (Rule
+  2b), no field exempted. Never ask the question elsewhere or "repair" a parsed date into text. A
+  test mocks it in module scope to run the 7.2-7.4 path on a newer PowerShell.
   `Why: docs/development/rationale.md#structure-document-text`
 - **`Test-OERHostCanConfirm` is the single owner of whether the host can show a confirmation prompt
   that is decidable beforehand; `Test-OERConfirmPromptFailure` of whether a caught record is a
@@ -930,10 +952,12 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   a group used only through PIM active assignments.
   `Why: docs/development/rationale.md#pim-in-use-criterion`
 - **`Test-OERGroupOnPremisesSynced` is the single owner of whether a live group is synchronized from
-  on-premises.** `Sync-OERStructureGroup` writes nothing to such a group, deciding on its LIVE read,
-  never the document's `onPremisesSynced` key; that key is information only, never sent. Never read
-  `OnPremisesSyncEnabled` elsewhere: the cohort check in
-  `tests/Unit/Private/Test-OERGroupOnPremisesSynced.Tests.ps1` holds its member-access form.
+  on-premises:** `OnPremisesSyncEnabled` (carried by `ConvertTo-OERGroup`) is the boolean true; false
+  and empty are not. `Sync-OERStructureGroup` writes nothing to such a group, deciding on its LIVE
+  read, never the document's `onPremisesSynced` key; that key is information only, never sent. Never
+  read `OnPremisesSyncEnabled` elsewhere than in `ConvertTo-OERGroup` and the helper: the cohort
+  check in `tests/Unit/Private/Test-OERGroupOnPremisesSynced.Tests.ps1` holds its member-access
+  form.
   `Why: docs/development/rationale.md#synced-groups`
 - **`Get-OERInventoryGroup` is the single reader of the inventory's Groups section.** The reader never
   writes an error record. Both callers (`Get-OERInventory`, `Export-OERInventory`) catch a reader that
@@ -972,33 +996,37 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Export-OERInventory` is the only command that sets and clears the export run context
   (`$script:_OERInventoryRunContext`).** Created in ONE place, directly before the export's Entra ID
   `Get-OERInventory` call, with `Owner` set to its own `$MyInvocation`; set back to `$null` with a
-  plain statement directly after the Azure walk, never in a `finally`. Never read or write it
-  elsewhere, never replace it by a public parameter; add a member to it, not a second module
-  variable. Known limit (`PrincipalNameCache`): a lookup that failed in the group read is not retried
-  (the map `Resolve-OERPrincipalName` returns answers the id as the name).
+  plain statement directly after the Azure walk, never in a `finally`. `Get-OERInventory` reads it
+  once per invocation and uses it only while its `Owner` is the `InvocationInfo` of a frame of the
+  current call stack, else behaves standalone. Never read or write it elsewhere, never replace it by
+  a public parameter; add a member to it, not a second module variable. Known limit
+  (`PrincipalNameCache`): a lookup that failed in the group read is not retried (the map
+  `Resolve-OERPrincipalName` returns answers the id as the name).
   `Why: docs/development/rationale.md#export-run-context`
 - **`Get-OERDeletedPrincipalStatus` is the single read of `directory/deletedItems`;
   `Resolve-OERPrincipalName -Detailed` is the lookup that tells a principal the directory returned
   from one it did not return and from one whose lookup failed.** In the `roleAssignments` section a
   failed lookup or deleted items read is never a fact: it is named unread. The deleted items read
-  never throws and never writes an error record. `Sync-OERStructureRoleAssignment` looks no
-  principal up for an entry that declares `principalStatus` and never creates its assignment
-  (`Skipped`, no `ShouldProcess`). Never
-  read `directory/deletedItems` elsewhere. `Why: docs/development/rationale.md#unresolved-principals`
+  never throws, never writes an error record, caches only an answer that was read.
+  `Sync-OERStructureRoleAssignment` looks no principal up for an entry that declares
+  `principalStatus` and never creates its assignment (`Skipped`, no `ShouldProcess`). Never read
+  `directory/deletedItems` elsewhere. `Why: docs/development/rationale.md#unresolved-principals`
 - **`Get-OERServicePrincipalAccess` is the single reader of what `servicePrincipalAccess.json`
   holds.** A part is read whole or not at all: any failure inside it leaves it `$null`, never `[]`.
   It never throws, never writes an error record or a warning, and sends GET requests only, with no
   `-Method`. Nothing reads the file back: never add its content to `inventory.json`, `schema.json` or
   the apply engine. **`ConvertTo-OERPrincipalType` is the single owner of mapping a Microsoft Graph
-  object type to the document's principal type.** `ConvertTo-OERDirectoryRoleAssignment` keeps its
+  object type to the document's principal type** (`User`, `Group` or `ServicePrincipal`; anything
+  else `$null`, never guessed). `ConvertTo-OERDirectoryRoleAssignment` keeps its
   own earlier mapping (a named exception, not a precedent); never map a Graph type inline elsewhere.
   `Sync-OERStructureAdministrativeUnit` never uses the scoped role `principalType` to match or write.
   `Why: docs/development/rationale.md#service-principal-access`,
   `docs/development/rationale.md#scoped-role-principal-type`
 - **A group that uses PIM for Groups in a restricted management administrative unit is a Warning,
-  never an Error or a refusal:** `Export-OERInventory` warns before its `ShouldProcess`. State the
-  limit as Microsoft Learn documents it, as fact, and state what Microsoft Graph answers to the
-  engine's PIM writes for such a group as unmeasured until a live run measures it.
+  never an Error or a refusal:** `Export-OERInventory` warns before its `ShouldProcess`, and
+  validator Rule 16 warns on a document that places such a group in a restricted unit it declares.
+  State the limit as Microsoft Learn documents it, as fact, and state what Microsoft Graph answers
+  to the engine's PIM writes for such a group as unmeasured until a live run measures it.
   `Why: docs/development/rationale.md#restricted-unit-pim`
 - **`Test-OERRolePolicyModified` is the single owner of whether an Azure role management policy has
   been changed.** A row with no policy object returns `$null`, which a caller never reads as "not
@@ -1028,17 +1056,21 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   sign-in (the export not at all when that sign-in was refused). `Invoke-OERStructure` calls the
   comparison twice per document: before the sign-in whenever `-TenantId` is bound (keep that call's
   canonical-GUID test in the owner, never in the caller), and after the sign-in against
-  `TokenTenantId`, directly after the snapshot is taken again and before anything is read or written
-  for the document. Never sign in WITH the document's tenant, never compare it inline, never read a
-  missing or non-GUID token tenant as a match. Gate 10 holds the comparison to
-  `Invoke-OERStructure`.
+  `TokenTenantId` (and `ArmTokenTenantId` when ARM is used), directly after the snapshot is taken
+  again and before anything is read or written for the document. Never sign in WITH the document's
+  tenant, never compare it inline, never read a missing or non-GUID token tenant as a match. Gate 10
+  holds the comparison to `Invoke-OERStructure`.
   `Why: docs/development/rationale.md#a-document-names-the-tenant-it-was-exported-from`
 - **`Get-OERSubscriptionHomeTenant` is the single owner of whether a subscription's home tenant is
   the session's tenant.** Called only by `Resolve-OERInventoryScopeTree`, `Invoke-OERStructure` and
-  `Get-OERInventory` (gate 10), never by another public cmdlet. `Get-OERInventory` never checks
-  `-ManagementGroup`. `Invoke-OERStructure` refuses the entry `Failed` with
-  `SubscriptionTenantMismatch` (or the read's or the resolver's own record when that failed), never
-  pruning there. Never decide a subscription's tenant elsewhere.
+  `Get-OERInventory` (gate 10), never by another public cmdlet. `Get-OERInventory` checks each given
+  `-Scope` and `-Subscription` once per invocation; `-ManagementGroup` is never checked.
+  `Export-OERInventory`'s walk enters only a subscription of the session's tenant.
+  `Invoke-OERStructure` checks once per subscription and document, before the first read or write of
+  a `roleAssignments` or `roleManagementPolicies` scope there, and refuses such an entry `Failed`
+  with `SubscriptionTenantMismatch` (or the read's or the resolver's own record when that failed),
+  reading no role assignment or policy there, writing nothing, never pruning there. Never decide a
+  subscription's tenant elsewhere.
   `Why: docs/development/rationale.md#home-tenant-subscriptions`
 
 ---
@@ -1089,9 +1121,10 @@ environment name comes from `Get-OERCloudEndpoint`, never a literal.
 **PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** Every call site routes
 through the private `Get-OERPimGroupsGraphPath`, which owns the version constant: never hardcode
 `beta/` at a call site, change the constant in the helper.
-`tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` holds the list of those files. The
-eligibility paths and the four policy paths migrate as ONE unit. Beta availability in US
-Government and China clouds is not established -- a standing risk, not a bug. `Why: docs/development/rationale.md#pim-beta-pin`,
+`tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` names every one of those files and fails
+when a new caller is not added to its list. The eligibility paths and the four policy paths migrate
+as ONE unit. Beta availability in US Government and China clouds is not established -- a standing
+risk, not a bug. `Why: docs/development/rationale.md#pim-beta-pin`,
 `docs/development/rationale.md#sovereign-clouds`
 
 **Microsoft Entra directory-role PIM policies are the opposite: pinned to Graph `v1.0`.** Every
@@ -1230,7 +1263,8 @@ only if a `Justification` string is provided. Never suppress a rule that hides a
   holds exactly one call path, preceded in the same block by its gates in the fixed order; never put
   an `Initialize-OERAuth` or `Start-Sleep` call between the earliest gate and any request, and never
   add a second send path. What the gate holds in detail, what it does not see, how it counts, and
-  the two further gates in the same file:
+  the two further gates in the same file (every ARM api-version is documented under
+  `#arm-transport`; every `Verb-OER...` token in `source/` resolves to a real function):
   `Why: docs/development/rationale.md#static-source-gates`
 
 ---
