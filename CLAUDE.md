@@ -1301,79 +1301,55 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 
 ## CRITICAL: ASCII-Only Source Files
 
-Authored `.ps1` files are UTF-8 **without BOM**. They **must contain only ASCII characters** --
-no em-dashes, no box-drawing characters, no smart quotes, no curly apostrophes.
-
-Without a BOM, PowerShell and PSScriptAnalyzer treat the file as ASCII. A non-ASCII character in
-a BOM-less file fails the QA `PSUseBOMForUnicodeEncodedFile` PSScriptAnalyzer gate.
-
-The only acceptable exception is a helper file that was verbatim-copied from a source that
-already carries a UTF-8 BOM.
-
-Use `--` (two hyphens) for em-dash contexts in comments and help text. Use straight quotes `'`
-and `"` only.
+Authored `.ps1` files are UTF-8 **without BOM** and **must contain only ASCII characters** -- no
+em-dashes, box-drawing characters, smart quotes or curly apostrophes. A non-ASCII character in a
+BOM-less file fails the QA `PSUseBOMForUnicodeEncodedFile` PSScriptAnalyzer gate. The only exception
+is a helper file verbatim-copied from a source that already carries a UTF-8 BOM. Use `--` (two
+hyphens) for em-dash contexts in comments and help text, and straight quotes `'` and `"` only.
+`Why: docs/development/rationale.md#ascii-only-source-files`
 
 ---
 
 ## Error Handling
 
-- **Non-terminating errors** in public functions: `$PSCmdlet.WriteError()` followed by `return` (in
-  a `process` block) or `continue` (inside a `foreach` loop over multiple items). Never use bare
-  `throw` in a public function -- it terminates the pipeline and prevents
-  `-ErrorAction SilentlyContinue` from working.
-- **Private pure helpers** such as `Resolve-OERName` may `throw` on caller error: they have no
-  `$PSCmdlet`, and the caller is responsible for catching and routing the error.
+- **Non-terminating errors** in public functions: `$PSCmdlet.WriteError()` followed by `return` (in a
+  `process` block, single-item cmdlets) or `continue` (inside a `foreach` loop over multiple items):
+  `try { ... } catch { $PSCmdlet.WriteError($Err); return }`, with `continue` in place of `return` in
+  a loop. Never use bare `throw` in a public function -- it terminates the pipeline and defeats
+  `-ErrorAction SilentlyContinue`.
+- **Private pure helpers** such as `Resolve-OERName` may `throw` on caller error (they have no
+  `$PSCmdlet`); the caller catches and routes it.
 - **Every Graph or ARM `catch` block** must call `Remove-OERErrorRecord -Record $PSItem` as its
-  **first** statement. The raw `HttpRequestMessage` in `$Error` carries the bearer token in plain
-  text. The older `$null = $Error.Remove($PSItem)` idiom looks equivalent but is **inert** -- it
-  never removed anything. `Why: docs/development/rationale.md#bearer-scrub`
-- **`Write-CmdletError -Message`** expects an `[Exception]`, not a string. Always wrap bare strings:
+  **first** statement. The older `$null = $Error.Remove($PSItem)` idiom looks equivalent but is
+  **inert** -- it never removed anything. `Why: docs/development/rationale.md#bearer-scrub`
+- **`Write-CmdletError -Message`** expects an `[Exception]`, not a string: wrap bare strings in
   `[System.Exception]::new('message')`.
-- **`ErrorDetails` must be set via the constructor** -- plain string assignment is silently ignored
-  in some PowerShell versions:
-  ```powershell
-  $Err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new('Your message here.')
-  ```
-- **Error flow patterns:**
-  ```powershell
-  # In process blocks (single-item cmdlets): use return
-  try { ... } catch {
-      $PSCmdlet.WriteError($Err)
-      return
-  }
-
-  # In foreach loops (multi-item cmdlets): use continue
-  foreach ($Item in $Items) {
-      try { ... } catch {
-          $PSCmdlet.WriteError($Err)
-          continue
-      }
-  }
-  ```
+- **`ErrorDetails` must be set via the constructor** (plain string assignment is silently ignored in
+  some PowerShell versions):
+  `$Err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new('Your message here.')`.
+  `Why: docs/development/rationale.md#error-handling`
 
 ---
 
 ## Graph Requests
 
-**All Graph calls go through `Invoke-OERGraphRequest`.** The only place that calls raw
-`Invoke-MgGraphRequest` is the wrapper itself (with `-Verbose:$false -ErrorAction Stop`). Never call
-`Invoke-MgGraphRequest` from any other function.
+**All Graph calls go through `Invoke-OERGraphRequest`.** Only the wrapper calls raw
+`Invoke-MgGraphRequest` (with `-Verbose:$false -ErrorAction Stop`); never call it from any other
+function. The wrapper owns bearer-token scrubbing, ACRS claims-challenge retry, token-rejected retry
+and structured error conversion. `Why: docs/development/rationale.md#graph-wrapper`
 
-The wrapper owns bearer-token scrubbing, ACRS claims-challenge retry, token-rejected retry, and
-structured error conversion. `Why: docs/development/rationale.md#graph-wrapper`
+`Connect-MgGraph -Environment` is passed only when the session's cloud is not `Global` (the
+public-cloud path stays byte-identical); the environment name comes from `Get-OERCloudEndpoint`,
+never a literal. `Why: docs/development/rationale.md#sovereign-clouds`
 
-`Connect-MgGraph -Environment` is passed only when the session's cloud is not `Global`, so the
-public-cloud path stays byte-identical to what it has always been; the environment name comes from
-`Get-OERCloudEndpoint`, never a literal. `Why: docs/development/rationale.md#sovereign-clouds`
-
-**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All seventeen call sites, in twelve
-source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version constant.
+**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All seventeen call sites, in
+twelve source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version
+constant: never hardcode `beta/` at a call site, change the constant in the helper.
 `tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` names every one of those files and fails
-when a new caller is not added to its list. Never hardcode `beta/` at a call site -- change the
-constant in the helper. The eligibility paths and the four policy paths migrate as ONE unit.
-`Why: docs/development/rationale.md#pim-beta-pin` Beta endpoint availability in US Government and
-China clouds is not established -- a standing risk, not a bug -- recorded at
-`Why: docs/development/rationale.md#sovereign-clouds`.
+when a new caller is not added to its list. The eligibility paths and the four policy paths migrate
+as ONE unit. Beta availability in US Government and China clouds is not established -- a standing
+risk, not a bug. `Why: docs/development/rationale.md#pim-beta-pin`,
+`docs/development/rationale.md#sovereign-clouds`
 
 **Microsoft Entra directory-role PIM policies are the opposite: pinned to Graph `v1.0`.** Every
 directory-role policy path is a string literal starting with `v1.0/`, routed through
@@ -1385,73 +1361,71 @@ PIM-for-Groups `beta` constant only, and a directory-role call site must not bor
 ## ARM Requests
 
 **All ARM calls go through `Invoke-OERArmRequest`.** The module deliberately does NOT use
-`Connect-AzAccount`/`Invoke-AzRestMethod`: Az.Accounts cannot reliably reuse an externally acquired
-AzAuth token. `Initialize-OERAuth -IncludeARM` caches the ARM bearer token as a SecureString and the
-wrapper sends it directly, materializing the plaintext only at the request boundary and clearing it
-in a `finally`. The ARM host is read from the session's cloud (`Get-OERCloudEndpoint`'s `ArmResource`
-field via `-Environment`), not hardcoded to public-cloud ARM; `Invoke-OERArmRequest` keeps
-`https://management.azure.com` as a documented fallback for a call made before any auth state exists,
-so it fails on the missing token rather than on a null host -- do not delete that fallback. Since
-Sprint 10 step 3 (BL-65, BL-96) a state without `ArmResourceUrl` takes its cloud's ARM host from
-`Get-OERCloudEndpoint`, and the wrapper never sends a request without an ARM token: it refuses it
-after its two gates, before the send, with the existing `ArmTokenAcquisitionFailed` -- the no-state
-fallback is therefore refused too.
+`Connect-AzAccount`/`Invoke-AzRestMethod`. `Initialize-OERAuth -IncludeARM` caches the ARM bearer
+token as a SecureString; the wrapper sends it directly, materializing the plaintext only at the
+request boundary and clearing it in a `finally`. The ARM host is read from the session's cloud
+(`Get-OERCloudEndpoint`'s `ArmResource` field via `-Environment`), never hardcoded to public-cloud
+ARM; a state without `ArmResourceUrl` takes its cloud's ARM host from `Get-OERCloudEndpoint`.
+`Invoke-OERArmRequest` keeps `https://management.azure.com` as a documented fallback for a call made
+before any auth state exists -- do not delete it. The wrapper never sends a request without an ARM
+token: it refuses it after its two gates, before the send, with the existing
+`ArmTokenAcquisitionFailed`, so the no-state fallback is refused too.
+`Why: docs/development/rationale.md#arm-requests`
 
 A 429, and a 503 carrying `Retry-After`, are retried with a bounded backoff whose constants mirror
 the Graph wrapper's name for name (`ThrottleWaitBudgetSeconds` 300 per request/page,
-`CallDeadlineSeconds` 900 per call, `ThrottleRetryHardCap` 10, single waits clamped to 1..120 s).
-**The two transports are deliberately MIRRORED, never shared** -- their error shapes differ, and a
-helper covering both would fit neither; the cost is that a wrong comment copied across is wrong
-twice, so correct both files together. The bounds are enforced at the decision to wait and never by
-stopping a paging loop part-way, which is also the LIMIT of what `CallDeadlineSeconds` bounds: it
-caps a THROTTLED call only, and a never-throttled `-All` walk never consults it.
-The ARM `Retry-After` header is read in exactly one place, `Get-ArmRetryAfterHeaderValue`, and the
-header collection never leaves the wrapper. That is a convention this file states, **not** one of
-the machine-checked single-owner rules above it: no gate in `tests/QA/sourcehygiene.tests.ps1`
-enforces it, and none should be added that checks something weaker than the rule -- a gate green on
-a second header read added elsewhere is itself a guard-shaped-but-inert test. Keep it by review.
+`CallDeadlineSeconds` 900 per call, `ThrottleRetryHardCap` 10, single waits clamped to 1..120 s). The
+bounds are enforced at the decision to wait, never by stopping a paging loop part-way -- which is
+also the LIMIT of what `CallDeadlineSeconds` bounds: it caps a THROTTLED call only, and a
+never-throttled `-All` walk never consults it. The two transports are deliberately MIRRORED, never
+shared -- their error shapes differ, and a helper covering both would fit neither; correct a wrong
+comment in both files together. The ARM `Retry-After` header is read in exactly one place,
+`Get-ArmRetryAfterHeaderValue`, and the header collection never leaves the wrapper. That is a
+convention kept by review, not a machine-checked rule: no gate in `tests/QA/sourcehygiene.tests.ps1`
+enforces it, and none should be added that checks something weaker than the rule (a gate green on a
+second header read elsewhere is guard-shaped but inert).
+`Why: docs/development/rationale.md#arm-requests`
 
 `roleDefinitionId` in a role assignment body is always the FULL ARM resource id, never a bare GUID.
-Pinned api-versions, paging behaviour and retry semantics:
-`Why: docs/development/rationale.md#arm-transport`. Sovereign-cloud ARM endpoints and the spike
-evidence behind the whole design: `Why: docs/development/rationale.md#sovereign-clouds`
+Pinned api-versions, paging and retry semantics: `Why: docs/development/rationale.md#arm-transport`;
+sovereign-cloud ARM endpoints: `Why: docs/development/rationale.md#sovereign-clouds`
 
 **`Get-OERManagementGroupParent` is the single owner of the Entities - List call**
 (`POST /providers/Microsoft.Management/getEntities`, api-version `2020-05-01`, `$view=GroupsOnly`,
 `-All`), which `Get-OERManagementGroup` sends at most once per list to fill the parent of every
-listed group, since the Management Groups - List answer carries none. The inventory walk
+listed group (the Management Groups - List answer carries none). The inventory walk
 (`Resolve-OERInventoryScopeTree`) lists management groups through `Get-OERManagementGroupList`,
 converts them itself and never calls `Get-OERManagementGroup` without `-Name`, so the parent read
-can never add a failure mode to an export. `Get-OERManagementGroupList` is NOT the single owner of
-the list call -- `Resolve-OERScope` still sends its own -- so never describe it as one.
+cannot add a failure mode to an export. `Get-OERManagementGroupList` is NOT the single owner of the
+list call (`Resolve-OERScope` still sends its own): never describe it as one.
 `Why: docs/development/rationale.md#management-group-parents`
 
 ---
 
 ## PSScriptAnalyzer
 
-The QA gate requires **0 findings** per function file. Targeted suppressions are acceptable for
-known false positives (e.g. `PSReviewUnusedParameter` on parameter-set discriminator switches)
-**if and only if** a `Justification` string is provided. Never suppress a rule that hides a real
-bug.
+The QA gate requires **0 findings** per function file. A targeted suppression is acceptable for a
+known false positive (e.g. `PSReviewUnusedParameter` on a parameter-set discriminator switch) if and
+only if a `Justification` string is provided. Never suppress a rule that hides a real bug.
 
 ```powershell
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'MySwitch',
     Justification = 'Switch is a parameter-set discriminator; ParameterSetName is used instead.')]
 ```
 
+`Why: docs/development/rationale.md#psscriptanalyzer`
+
 ---
 
 ## Testing Conventions
 
-- **Tests are written in Pester 5 syntax** under `tests/Unit/{Private,Public}/`. The build resolves
-  the newest Pester, and CI resolves it afresh on every run, so no version is a standing fact here;
-  6.2.0 was the newest when measured on 2026-10-05. One `*.Tests.ps1` per source file. The QA gate
-  (`tests/QA/module.tests.ps1`) requires a unit test file for every exported function.
-- **Import by module name, not by path**, in every `BeforeAll` -- importing by path breaks the
-  Sampler coverage measurement, which targets the built module. Every unit test file that imports
-  the module starts with this root shape (the tripwire lines are explained below, and
-  `tests/QA/testhygiene.tests.ps1` fails a file without them):
+- **Tests are written in Pester 5 syntax** under `tests/Unit/{Private,Public}/`, one `*.Tests.ps1`
+  per source file. The QA gate (`tests/QA/module.tests.ps1`) requires a unit test file for every
+  exported function. `Why: docs/development/rationale.md#testing-conventions`
+- **Import by module name, not by path**, in every `BeforeAll` (importing by path breaks the Sampler
+  coverage measurement, which targets the built module). Every unit test file that imports the module
+  starts with this root shape (the tripwire lines are explained below), and
+  `tests/QA/testhygiene.tests.ps1` fails a file without them:
   ```powershell
   BeforeAll {
       Import-Module Omnicit.EntraRBAC -Force
@@ -1463,116 +1437,106 @@ bug.
       try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
   }
   ```
-- **Mock at the module boundary:**
-  ```powershell
-  Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }
-  Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
-  ```
+- **Mock at the module boundary:** `Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }` and
+  `Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }`.
 - **Private functions** must be tested inside `InModuleScope Omnicit.EntraRBAC { ... }`.
 - **Reset auth state** in `BeforeEach` when testing anything that touches auth:
-  ```powershell
-  BeforeEach { InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null } }
-  ```
-- **Always mock `Initialize-OERAuth`** -- every public cmdlet that touches Graph or Azure calls it at
+  `BeforeEach { InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null } }`.
+- **Always mock `Initialize-OERAuth`**: every public cmdlet that touches Graph or Azure calls it at
   entry, so without a mock the test attempts real authentication.
-- **Mock `Invoke-OERGraphRequest`, not `Invoke-MgGraphRequest`** -- mocking the wrapper keeps the
-  test at the module boundary and away from the wrapper's own retry, scrub and conversion logic. A
-  `Mock -ModuleName Omnicit.EntraRBAC Invoke-MgGraphRequest` does win from the module scope, so it
-  works; mock the raw SDK call only where the test is about the wrapper itself, as
-  `Invoke-OERGraphRequest.Tests.ps1` is, or drives the real wrapper on purpose to observe what it
-  does with a failure (the records it builds or leaves, its retries), as parts of
-  `Get-OERGroup.Tests.ps1` do.
-- **Every unit test file that imports the module installs the transport tripwire.** In its root
+- **Mock `Invoke-OERGraphRequest`, not `Invoke-MgGraphRequest`**: it keeps the test at the module
+  boundary and away from the wrapper's own retry, scrub and conversion logic. A
+  `Mock -ModuleName Omnicit.EntraRBAC Invoke-MgGraphRequest` does win from the module scope; mock the
+  raw SDK call only where the test is about the wrapper itself (`Invoke-OERGraphRequest.Tests.ps1`)
+  or drives the real wrapper on purpose to observe what it does with a failure (the records it builds
+  or leaves, its retries), as parts of `Get-OERGroup.Tests.ps1` do.
+- **Every unit test file that imports the module installs the transport tripwire:** in its root
   `BeforeAll`, directly after `Import-Module`, it dot-sources `TestHelpers/OERTransportTripwire.ps1`
   and calls `Install-OERTransportTripwire`; it ends with a root
   `AfterAll { try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire } }`. An
-  unmocked call that still reaches one of the six names -- `Get-AzToken`, `Connect-MgGraph`,
-  `Disconnect-MgGraph`, `Invoke-MgGraphRequest`, `Invoke-WebRequest` or `Invoke-RestMethod` (the
-  tenant lookup) -- is recorded and refused, and fails the file even when module code swallowed the
-  refusal. A test that reaches the real `Initialize-OERAuth` with a tenant named by domain mocks
-  `Resolve-OERTenantDomain` (or `Invoke-RestMethod` in module scope).
+  unmocked call that still reaches one of the six names of **SECURITY** rule 2 (`Invoke-RestMethod`
+  being the tenant lookup) is recorded and refused, and fails the file even when module code
+  swallowed the refusal. A test that reaches the real `Initialize-OERAuth` with a tenant named by
+  domain mocks `Resolve-OERTenantDomain` (or `Invoke-RestMethod` in module scope).
   `tests/QA/testhygiene.tests.ps1` holds it. Never delete a transport-named function with an
-  unqualified `Remove-Item 'function:...'` unless the local stub is certain to exist -- with none
-  left, it walks up and removes the global replacement. A scope-qualified path
-  (`function:script:...`, `function:global:...`) removes nothing at all.
+  unqualified `Remove-Item 'function:...'` unless the local stub is certain to exist (with none left
+  it removes the global replacement); a scope-qualified path (`function:script:...`,
+  `function:global:...`) removes nothing at all.
   `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **A `Mock -ModuleName` covers only calls made from inside the module.** A command the test body
   calls itself runs for real unless it has its own test-scope `Mock`. No test may reach the real
   profile directory: a test of a `-BasePath` default intercepts `Test-Path` in module scope instead.
   `Why: docs/development/rationale.md#bearer-scrub-tests`
-- **Pin `-ErrorAction` on any call whose non-terminating error the test observes or has to survive.**
-  Module code reads the GLOBAL `$ErrorActionPreference`, which GitHub Actions, Azure Pipelines and
-  many operator profiles set to Stop, and a test-local `$ErrorActionPreference` does not pin it.
+- **Pin `-ErrorAction` on any call whose non-terminating error the test observes or has to survive**
+  (module code reads the GLOBAL `$ErrorActionPreference`; a test-local one does not pin it).
   `Why: docs/development/rationale.md#bearer-scrub-tests`
-- **Never write the word "because" inside a `-Because` string.** Pester deletes EVERY occurrence of
-  `because` plus the whitespace after it from the rendered message, not just a leading one, so the
-  failure reads as scrambled prose. Use "since", or restructure the sentence. This is the same
-  family of problem as a guard-shaped-but-inert test: the assertion works, the explanation it prints
-  does not. `Why: docs/development/rationale.md#bearer-scrub-tests`
+- **Never write the word "because" inside a `-Because` string:** Pester deletes EVERY occurrence of
+  `because` plus the whitespace after it from the rendered message. Use "since", or restructure the
+  sentence. `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **A bearer-scrub regression test needs a different proof depending on how the catch re-throws**,
-  and the wrong proof passes with the scrub deleted. Same for `-ErrorVariable` assertions and
-  `Should -Invoke -Times N` (at-least semantics -- add `-Exactly`). **That trap applies for
-  `N >= 1` only: `-Times 0` already means EXACTLY zero**, since Pester implies `-Exactly` at zero
-  (its own help says so, and `Pester.psm1` decides with `($Exactly -or ($Times -eq 0))`; verified by
-  execution against 5.7.1 and 6.2.0). Roughly 400 bare `-Times 0` assertions in this suite are
-  therefore sound negative proofs -- do not "fix" them, and never justify adding `-Exactly` at zero
-  by calling the bare form vacuous.
-  `Why: docs/development/rationale.md#bearer-scrub-tests`
-- **Eight rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1`: ASCII/BOM
-  encoding; bearer-scrub-first in every transport-reaching catch; `ConvertTo-OERDuration` as the sole
-  int-to-ISO encoder; the `suffix.ps1`/dev-mode-psm1 mirroring; `Get-OERCloudEndpoint` as the sole
-  owner of the cloud-to-endpoint table; `Test-OERDeclaredProperty`/`Test-OERDeclaredNull` as the
-  single owners of the apply engine's declared-value rule (no direct read of a node's
-  `PSObject.Properties.Name` in a `Sync-OERStructure*` handler outside the named, reasoned
-  allowlist -- flagged on the read itself, not on the `-contains`-family operator that might later
-  consume it, so an intermediate variable cannot hide the same defect); the module never calling
-  an Az cmdlet that could establish or mutate an Az PowerShell context (see **Dependencies** above);
-  and the transport gates -- `Get-MgContext` called only in `Get-OERGraphSessionFingerprint`,
-  `Lock-OERSignIn`, `Unlock-OERSignIn` and `Register-OERSignInIdentity` only in
-  `Initialize-OERAuth`, `Get-OERSignInRefusal` only in the two transport wrappers and in
-  `Initialize-OERAuth` (whose one call, before `Lock-OERSignIn`, its unit tests place -- this gate
-  checks the file only), `Get-OERSignInSupersession` only in the two transport wrappers,
-  `Get-OERSignInIdentity` only in `Register-OERSignInIdentity`, `Get-OERSignInSupersession` and
-  `Checkpoint-OERSignIn`, `Invoke-MgGraphRequest` only in the Graph wrapper,
-  `Invoke-WebRequest` only in the ARM wrapper, `Invoke-RestMethod` only in
-  `Resolve-OERTenantDomain` and `Resolve-OERTenantDomain` only in `Initialize-OERAuth`,
-  `Set-OERSessionUncertain` only in `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`,
-  `Get-OERDocumentTenantMismatch` only in `Invoke-OERStructure`, and
-  `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree`, `Invoke-OERStructure` and
-  `Get-OERInventory`, every listed owner really calling it; the tenant lookup's one `Invoke-RestMethod` call carrying only
-  `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`, with no splat; `$script:_OERSessionUncertain`
-  read and written only in `Set-OERSessionUncertain`, and in `Initialize-OERAuth` exactly three
-  `Set-OERSessionUncertain` calls -- the statement directly after the `Lock-OERSignIn` assignment and
-  the statement directly after each `Register-OERSignInIdentity`; the name `ReclaimGraphSession`
-  (a parameter, a prefix of it on an `Initialize-OERAuth` call, a variable, a member, a hashtable key
-  or any string -- and a prefix of it as a key the calling function writes into a hashtable it
-  splats into `Initialize-OERAuth`) only in `Connect-OER` and `Initialize-OERAuth`, both really
-  naming it, and no file under `source/` calling `Connect-OER`, which passes it on its own; every
-  `Register-OERSignInIdentity` call the statement directly after an `Unlock-OERSignIn` call with the
-  same `-Invocation`, as many of the one as of the other; every send a wrapper makes in the body of
-  a try that holds exactly one call path (in the Graph transport one `Invoke-MgGraphRequest` and one
-  `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`), that try preceded, in the very block that
-  holds it and in this order, by its session gate (Graph only), its latch gate and its supersession
-  gate, each a throw followed by a return, with no `Initialize-OERAuth` or `Start-Sleep` between the
-  earliest gate and any request, the ARM bearer token (`.ArmToken` or `['ArmToken']`) materialized
-  only after the last gate, and the transport statements counted exactly (three Graph, one ARM) so a
-  new send path cannot escape the scan; and every `Initialize-OERAuth` call standing directly in
-  its file's own function (in the two wrappers, in `Invoke-GraphSingle` and
-  `Invoke-ArmCallWithRefresh`) and never in a nested function or a scriptblock inside it, since the
-  sign-in latch is keyed on the frame that calls it; and every `-TenantId` an internal call passes
-  on to a command that signs in (`Initialize-OERAuth` and every module function that reaches it) --
-  a parameter whose name is a prefix of it, or a `TenantId` key the calling function writes into a
-  hashtable it splats -- a non-empty literal or a variable written under an `if` on that same
-  variable, with `Connect-OER`'s call and the three transport refreshes as named exemptions that
-  must each match exactly one site, and no positional argument written on any `Initialize-OERAuth`
-  call, after a switch included (`-Verbose` and `-Debug` among them).
-  Two further gates in the
-  same file check rules stated only in
-  `docs/development/rationale.md` (every ARM api-version is documented under `#arm-transport`) or in
-  no rule at all (every `Verb-OER...` token in `source/` resolves to a real function) -- ten
-  `Describe` blocks in total. When a new catch trips the scrub gate, add the scrub -- do not add an
-  exemption. The transport tripwire rule under these conventions is machine-checked separately, by
-  `tests/QA/testhygiene.tests.ps1`.
+  since the wrong proof passes with the scrub deleted. Same for `-ErrorVariable` assertions and
+  `Should -Invoke -Times N` (at-least semantics -- add `-Exactly`). **That trap applies for `N >= 1`
+  only: `-Times 0` already means EXACTLY zero**, since Pester implies `-Exactly` at zero. Do not
+  "fix" a bare `-Times 0`, and never justify adding `-Exactly` at zero by calling the bare form
+  vacuous. `Why: docs/development/rationale.md#bearer-scrub-tests`
+- **Eight rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1` (ten
+  `Describe` blocks in total); the tripwire rule is checked separately, by
+  `tests/QA/testhygiene.tests.ps1`. When a new catch trips the scrub gate, add the scrub -- do not
+  add an exemption. The gate holds:
+  - ASCII/BOM encoding; bearer-scrub-first in every transport-reaching catch;
+    `ConvertTo-OERDuration` as the sole int-to-ISO encoder; the `suffix.ps1`/dev-mode-psm1 mirroring;
+    `Get-OERCloudEndpoint` as the sole owner of the cloud-to-endpoint table; no Az cmdlet that could
+    establish or mutate an Az PowerShell context (see **Dependencies**);
+  - `Test-OERDeclaredProperty`/`Test-OERDeclaredNull` as the single owners of the apply engine's
+    declared-value rule: no direct read of a node's `PSObject.Properties.Name` in a
+    `Sync-OERStructure*` handler outside the named, reasoned allowlist, flagged on the read itself
+    and not on the `-contains`-family operator that might consume it;
+  - the transport gates (the rules and their owners: **Authentication Architecture** and **Code
+    Style**). Call sites: `Get-MgContext` only in `Get-OERGraphSessionFingerprint`;
+    `Lock-OERSignIn`, `Unlock-OERSignIn` and `Register-OERSignInIdentity` only in
+    `Initialize-OERAuth`; `Get-OERSignInRefusal` only in the two transport wrappers and
+    `Initialize-OERAuth` (its one call there, before `Lock-OERSignIn`, is placed by its unit tests;
+    this gate checks the file only); `Get-OERSignInSupersession` only in the two transport wrappers;
+    `Get-OERSignInIdentity` only in `Register-OERSignInIdentity`, `Get-OERSignInSupersession` and
+    `Checkpoint-OERSignIn`; `Invoke-MgGraphRequest` only in the Graph wrapper; `Invoke-WebRequest`
+    only in the ARM wrapper; `Invoke-RestMethod` only in `Resolve-OERTenantDomain`, and
+    `Resolve-OERTenantDomain` only in `Initialize-OERAuth`; `Set-OERSessionUncertain` only in
+    `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`; `Get-OERDocumentTenantMismatch` only in
+    `Invoke-OERStructure`; `Get-OERSubscriptionHomeTenant` only in `Resolve-OERInventoryScopeTree`,
+    `Invoke-OERStructure` and `Get-OERInventory`; every listed owner really calling it;
+  - the tenant lookup's one `Invoke-RestMethod` call carrying only `-Uri`, `-Method`, `-TimeoutSec`
+    and `-ErrorAction`, with no splat;
+  - `$script:_OERSessionUncertain` read and written only in `Set-OERSessionUncertain`, and in
+    `Initialize-OERAuth` exactly three `Set-OERSessionUncertain` calls: the statement directly after
+    the `Lock-OERSignIn` assignment and the statement directly after each
+    `Register-OERSignInIdentity`;
+  - the name `ReclaimGraphSession` (a parameter, a prefix of it on an `Initialize-OERAuth` call, a
+    variable, a member, a hashtable key, any string, or a prefix of it as a key splatted into
+    `Initialize-OERAuth`) only in `Connect-OER` and `Initialize-OERAuth`, both really naming it, and
+    no file under `source/` calling `Connect-OER`, which passes it on its own;
+  - every `Register-OERSignInIdentity` call the statement directly after an `Unlock-OERSignIn` call
+    with the same `-Invocation`, as many of the one as of the other;
+  - every send a wrapper makes in the body of a try that holds exactly one call path (Graph: one
+    `Invoke-MgGraphRequest` and one `Invoke-GraphAttempt`; ARM: one `Invoke-WebRequest`), that try
+    preceded, in the very block that holds it and in this order, by its session gate (Graph only),
+    its latch gate and its supersession gate, each a throw followed by a return, with no
+    `Initialize-OERAuth` or `Start-Sleep` between the earliest gate and any request, the ARM bearer
+    token (`.ArmToken` or `['ArmToken']`) materialized only after the last gate, and the transport
+    statements counted exactly (three Graph, one ARM) so a new send path cannot escape the scan;
+  - every `Initialize-OERAuth` call standing directly in its file's own function (in the two
+    wrappers, in `Invoke-GraphSingle` and `Invoke-ArmCallWithRefresh`), never in a nested function or
+    a scriptblock inside it;
+  - every `-TenantId` an internal call passes on to a command that signs in (`Initialize-OERAuth` and
+    every module function that reaches it) -- a parameter whose name is a prefix of it, or a
+    `TenantId` key the calling function writes into a splatted hashtable -- a non-empty literal or a
+    variable written under an `if` on that same variable, with `Connect-OER`'s call and the three
+    transport refreshes as named exemptions that must each match exactly one site; and no positional
+    argument written on any `Initialize-OERAuth` call, after a switch included (`-Verbose` and
+    `-Debug` among them).
+
+  Two further gates in the same file check rules stated only in `docs/development/rationale.md`
+  (every ARM api-version is documented under `#arm-transport`) or in no rule at all (every
+  `Verb-OER...` token in `source/` resolves to a real function).
   `Why: docs/development/rationale.md#static-source-gates`
 
 ---
@@ -1598,12 +1562,10 @@ non-negotiable:
 5. **Client secrets are always `[securestring]`.** Never accept, store, or log a plain-text
    secret anywhere in the code.
 6. **Never log or write access tokens.** The `Remove-OERErrorRecord -Record $PSItem` call in every
-   Graph catch block is mandatory, not optional. It replaces the older `$null =
-   $Error.Remove($PSItem)` idiom, which never removed anything: a module's `$Error` is a private
-   list distinct from the caller's, and even against the caller's `$global:Error` the `ErrorRecord`
-   bound to `$PSItem` is not the same object instance PowerShell stored there, so reference-equality
-   removal silently no-ops. `Remove-OERErrorRecord` instead matches on the one part of the record
-   that IS reference-stable across that boundary: its `.Exception` object.
+   Graph catch block is mandatory, not optional (see **Error Handling**). It replaces the inert
+   `$null = $Error.Remove($PSItem)` idiom and matches on the one part of the record that IS
+   reference-stable: its `.Exception` object.
+   `Why: docs/development/rationale.md#security-hard-rules`
 
 ---
 
@@ -1622,28 +1584,21 @@ with the team may be in Swedish.
 | `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken`, `Invoke-MgGraphRequest` (inside wrapper) and `Get-MgContext` (the Graph SDK session check) |
 
 That column is the **runtime FLOOR** declared in `source/Omnicit.EntraRBAC.psd1`: a manifest
-`ModuleVersion` is always a minimum, never an exact pin, and there is no manifest syntax for
-"newest". `RequiredModules.psd1` is the build-time resolver, and by decision (2026-09-21) every
-entry in it is `latest` -- **nothing there is pinned**. The two files therefore differ in KIND, not
-in value, so do not reconcile them in either direction: no version number goes into
-`RequiredModules.psd1`, and no `latest` goes into the manifest. The accepted cost is that CI tests
-the newest combination -- what a new consumer actually gets -- while **nothing tests the declared
-floors any more**.
+`ModuleVersion` is always a minimum, never an exact pin. `RequiredModules.psd1` is the build-time
+resolver, and by decision (2026-09-21) every entry in it is `latest` -- **nothing there is pinned**.
+Do not reconcile the two in either direction: no version number goes into `RequiredModules.psd1`,
+and no `latest` goes into the manifest. The accepted cost: CI tests the newest combination (what a
+new consumer gets) while **nothing tests the declared floors any more**.
 `Why: docs/development/rationale.md#dependencies`
 
 **No Az module is a dependency of this module, and no Az cmdlet is invoked at run time at all.**
-ARM is called directly with an AzAuth token (`Invoke-OERArmRequest`). `Az.Resources` was declared in
-the manifest until 2026-09-21 and was never used; it is gone. `Disconnect-OER` called
-`Disconnect-AzAccount` behind a `Get-Command` guard until the same date, when that call was removed
-too -- the module establishes no Az context, so it could only ever have reached the operator's own
-session. `tests/QA/sourcehygiene.tests.ps1` now proves this from the source with an AST walk,
-independently of what is installed.
-
-`RequiredModules.psd1` still resolves `Az.Accounts`, for the TEST environment only: Pester's `Mock`
-requires a command to exist, and two negative assertions depend on it -- `Connect-AzAccount`
-`-Times 0` in `Initialize-OERAuth.Tests.ps1` and `Disconnect-AzAccount` `-Times 0` in
-`Disconnect-OER.Tests.ps1`. That is not a runtime need, which is why it is absent from the table
-above.
+ARM is called directly with an AzAuth token (`Invoke-OERArmRequest`).
+`tests/QA/sourcehygiene.tests.ps1` proves this from the source with an AST walk, independently of
+what is installed. `RequiredModules.psd1` still resolves `Az.Accounts`, for the TEST environment
+only (Pester's `Mock` requires a command to exist; two negative assertions depend on it:
+`Connect-AzAccount` `-Times 0` in `Initialize-OERAuth.Tests.ps1` and `Disconnect-AzAccount`
+`-Times 0` in `Disconnect-OER.Tests.ps1`); that is not a runtime need, so it is absent from the
+table. `Why: docs/development/rationale.md#no-az-dependency`
 
 Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses raw
 `Invoke-MgGraphRequest` (via `Invoke-OERGraphRequest`) to avoid typed SDK coupling and version drift.
