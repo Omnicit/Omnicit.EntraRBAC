@@ -6,6 +6,8 @@ impossible to run, write "cannot be verified, and therefore we do not know" on i
 not leave it blank and do not tick it. A check that could not run for a stated reason is marked `[~]`, never
 `[x]`. **Section B lists what is proved offline only (class B).** No manual check (class C) is foreseen.
 
+**Status, 2026-10-20.** The step stopped after measurement 1.1 for a decision: a PUT with `allowedTargetScope` `unknownFutureValue` changed a policy's scope (see 1.1). Sections 0 and 1 ran, and T.1 removed every object; sections S and 2 to 6 have not run yet.
+
 **What this file writes to the tenant.** The prerequisite script writes only objects whose names start with
 `oer-s1111-`: a disabled user, four security groups (one owned by that user and by the service principal of
 `oer-live-cc-noperm`, which is not changed), a catalog, a hidden access package with one assignment policy, a
@@ -246,7 +248,7 @@ Result:
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build. #type/subtask
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -259,11 +261,15 @@ Disconnect-OerLive
 **Expect:** every identity line `True`, `identity check passed`, `The module is the worktree's build: True`.
 **Failure looks like:** "application is disabled" (STOP: the identity is disabled), or `False`.
 
-Result:
+Result: 2026-10-20 00:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 between 00:05 and 00:30 UTC as oer-live-cc against the test tenant, the module built from the branch at 02:08 local time (commits up to the validator task; no section 0 or 1 block uses a changed command). PASS. Every identity line True, identity check passed; the module is the worktree's build, version 1.3.1.
+```
 
 ### 0.2. The prerequisite objects
 
-- [ ] **0.2** `Initialize-OerS1111Prereq.ps1` shows its plan under `-WhatIf`, then with `-Unattended` checks the permissions, writes the baselines, creates the step's objects and changes the Reader policy at the resource group. #type/subtask
+- [x] **0.2** `Initialize-OerS1111Prereq.ps1` shows its plan under `-WhatIf`, then with `-Unattended` checks the permissions, writes the baselines, creates the step's objects and changes the Reader policy at the resource group. #type/subtask
 
 ```powershell
 & pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS1111Prereq.ps1') -WhatIf
@@ -277,11 +283,15 @@ baselines written (or found), the objects created or found, the Reader policy re
 code 0.
 **Failure looks like:** a refusal (a missing permission, an unknown prefixed object), or exit code 1 or 3.
 
-Result:
+Result: 2026-10-20 00:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 between 00:05 and 00:30 UTC as oer-live-cc against the test tenant, the module built from the branch at 02:08 local time (commits up to the validator task; no section 0 or 1 block uses a changed command). PASS on the third run. Plan: the six permissions True, every write a What if line, exit code 0. Run 1 created every object, wrote the three baselines (users 22, groups 99, catalogs 5, access packages 6, access review definitions 6) and set the Reader policy at the resource group, then stopped in the script's own wait, which indexed the list of approval stages by a key name and so read no approver (fixed in the script). Run 2 stopped on adding the service principal owner again: the untyped owners read does not list a service principal (the gap BL-83 measured for members), so the script now reads owners typed. Run 3: every object found, the Reader policy already requiring approval by both, nothing written, exit code 0. A later run created oer-s1111-pimraw2 for 1.3 (exit code 0).
+```
 
 ### 0.3. Read back what the prerequisite script created
 
-- [ ] **0.3** Each recorded object is there; the owned group has two owners; the review is monthly; the Reader policy at the resource group requires approval by one user and one group. #type/subtask
+- [x] **0.3** Each recorded object is there; the owned group has two owners; the review is monthly; the Reader policy at the resource group requires approval by one user and one group. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -307,13 +317,17 @@ Disconnect-OerLive
 interval 1; approval required `True`, approvers users 1, groups 1.
 **Failure looks like:** a missing id, a read that is not 200, or approvers on one side only.
 
-Result:
+Result: 2026-10-20 00:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 between 00:05 and 00:30 UTC as oer-live-cc against the test tenant, the module built from the branch at 02:08 local time (commits up to the validator task; no section 0 or 1 block uses a changed command). PASS. 7 recorded ids (apgroup, owned, pimcmd, pimraw, pimraw2, review, u1; pimraw2 added for 1.3, the expectation says so); owned: user owners 1, service principal owners 1; review read 200, absoluteMonthly interval 1; Reader at the resource group: approval required True, approvers users 1, groups 1. Rerun after the Reader role id became a lookup (Get-S1111ReaderGuid): the same.
+```
 
 ## 1. Measurements, made before the fixes that depend on them
 
 ### 1.1. BL-49: what an assignment policy reads back as without the Prefer header, and what a PUT of `unknownFutureValue` does
 
-- [ ] **1.1** A policy for an evolvable target scope reads back as `unknownFutureValue` without the Prefer header or not, and a PUT whose `allowedTargetScope` is `unknownFutureValue` is refused, accepted without change, or changes the scope. #type/subtask
+- [x] **1.1** A policy for an evolvable target scope reads back as `unknownFutureValue` without the Prefer header or not, and a PUT whose `allowedTargetScope` is `unknownFutureValue` is refused, accepted without change, or changes the scope. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -367,11 +381,15 @@ Disconnect-OerLive
 (P0): the cmdlet would send it whenever Microsoft Graph returns it.
 **Failure looks like:** a 401 or 403 (STOP), or no policy to read.
 
-Result:
+Result: 2026-10-20 00:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 between 00:05 and 00:30 UTC as oer-live-cc against the test tenant, the module built from the branch at 02:08 local time (commits up to the validator task; no section 0 or 1 block uses a changed command). MEASURED. oer-s1111-policy reads 'allMemberUsers' without and with the Prefer header. oer-s1111-agentpol, created with allowedTargetScope 'allDirectoryAgentIdentities' (Prefer sent): 201, and reads 'allDirectoryAgentIdentities' without and with the Prefer header. No policy read back as 'unknownFutureValue'. The PUT of oer-s1111-policy with the read body and allowedTargetScope 'unknownFutureValue' answered 200, and the stored scope CHANGED from 'allMemberUsers' to 'unknownFutureValue' (read again with and without the Prefer header: 'unknownFutureValue'). This is the stop condition the step names (a PUT with the value changes the scope): the step STOPPED here for a decision (P0).
+```
 
 ### 1.2. BL-84: does Microsoft Graph refuse to remove the last user owner while a service principal is an owner
 
-- [ ] **1.2** The removal of the user owner of `oer-s1111-owned`, whose other owner is a service principal, is refused or accepted, and the group's owners are read back. #type/subtask
+- [x] **1.2** The removal of the user owner of `oer-s1111-owned`, whose other owner is a service principal, is refused or accepted, and the group's owners are read back. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -389,11 +407,15 @@ Disconnect-OerLive
 **Expect:** a measurement: the DELETE's answer and the owners after it.
 **Failure looks like:** a 401 or 403 (STOP).
 
-Result:
+Result: 2026-10-20 00:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 between 00:05 and 00:30 UTC as oer-live-cc against the test tenant, the module built from the branch at 02:08 local time (commits up to the validator task; no section 0 or 1 block uses a changed command). MEASURED. owned before: user owners 1, service principal owners 1. DELETE of the owner oer-s1111-u1 (owners/$ref): 400 Request_BadRequest 'The group must have at least one owner, hence this owner cannot be removed.'; after: user owners 1, service principal owners 1. Microsoft Graph refuses to remove the last USER owner while a service principal is an owner: the engine's last-owner guard counts owners of every type, so it lets through a removal Graph refuses (BL-84).
+```
 
 ### 1.3. BL-97 F3: a first call with several rules on a group never used with PIM for Groups (raw)
 
-- [ ] **1.3** On `oer-s1111-pimraw2`, two rule PATCHes sent to the policy id listed BEFORE the first: the listed policy id after each, and whether the second rule reaches the policy Microsoft Graph lists afterwards. #type/subtask
+- [x] **1.3** On `oer-s1111-pimraw2`, two rule PATCHes sent to the policy id listed BEFORE the first: the listed policy id after each, and whether the second rule reaches the policy Microsoft Graph lists afterwards. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -435,11 +457,15 @@ Disconnect-OerLive
 policy listed afterwards (`enabledRules [Justification,Ticketing]` there; the default is `[Justification]`).
 **Failure looks like:** a 401 or 403 (STOP).
 
-Result:
+Result: 2026-10-20 00:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 between 00:05 and 00:30 UTC as oer-live-cc against the test tenant, the module built from the branch at 02:08 local time (commits up to the validator task; no section 0 or 1 block uses a changed command). MEASURED on the third run, on oer-s1111-pimraw2 (created for it). Before: maximumDuration PT8H, enabledRules [Justification]. PATCH 1 (Expiration_EndUser_Assignment, PT5H) to the id listed before: 200; the listed policy id then changed. PATCH 2 (Enablement_EndUser_Assignment, Justification and Ticketing) to the id listed BEFORE: 200; the policy listed afterwards holds maximumDuration PT5H and enabledRules [Justification,Ticketing], and the id listed before reads the same. A second rule sent to the old id reaches the listed policy: BL-97 F3 is no defect. Run 1 (on oer-s1111-pimraw) was inconclusive for the second rule (the value sent equalled the default, so the block now sends Ticketing too); run 2 read the listing of a group created seconds earlier, which did not list its policy yet (the block now waits for it).
+```
 
 ### 1.4. BL-97 F3: the same first call through `Set-OERGroupPimPolicy`
 
-- [ ] **1.4** On `oer-s1111-pimcmd`, one `Set-OERGroupPimPolicy` call with two rules (maximum activation 5 hours, and justification and a ticket on activation): both rules are on the policy Microsoft Graph lists afterwards. #type/subtask
+- [x] **1.4** On `oer-s1111-pimcmd`, one `Set-OERGroupPimPolicy` call with two rules (maximum activation 5 hours, and justification and a ticket on activation): both rules are on the policy Microsoft Graph lists afterwards. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -464,11 +490,15 @@ Disconnect-OerLive
 lookup is enough; anything else is BL-97 F3's defect.
 **Failure looks like:** a 401 or 403 (STOP).
 
-Result:
+Result: 2026-10-20 00:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 between 00:05 and 00:30 UTC as oer-live-cc against the test tenant, the module built from the branch at 02:08 local time (commits up to the validator task; no section 0 or 1 block uses a changed command). MEASURED. Set-OERGroupPimPolicy -ActivationMaxHours 5 -ActivationEnabledRules Justification, Ticketing on oer-s1111-pimcmd, never used with PIM for Groups: Applied True, no error, 0 warnings; the listed policy holds maximumDuration PT5H and enabledRules [Justification,Ticketing]; Get-OERGroupPimPolicy reads the listed policy: True. The cmdlet's single policy id lookup is enough on a first call with several rules.
+```
 
 ### 1.5. BL-117 sixth point: what Microsoft Graph reads back for `dayOfMonth`, and whether a PUT of the read recurrence is accepted
 
-- [ ] **1.5** `oer-s1111-review`, created with `dayOfMonth` set to its start day, reads back with a `dayOfMonth`; a PUT that changes only the admin description and sends the recurrence as read is accepted or refused, and the recurrence is read back. #type/subtask
+- [x] **1.5** `oer-s1111-review`, created with `dayOfMonth` set to its start day, reads back with a `dayOfMonth`; a PUT that changes only the admin description and sends the recurrence as read is accepted or refused, and the recurrence is read back. #type/subtask
 
 ```powershell
 Connect-OerLive -Arm
@@ -490,7 +520,11 @@ Disconnect-OerLive
 **Expect:** a measurement: the `dayOfMonth` Graph returns, and the PUT's answer.
 **Failure looks like:** a 401 or 403 (STOP).
 
-Result:
+Result: 2026-10-20 00:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 between 00:05 and 00:30 UTC as oer-live-cc against the test tenant, the module built from the branch at 02:08 local time (commits up to the validator task; no section 0 or 1 block uses a changed command). MEASURED. oer-s1111-review was created with dayOfMonth 3 (its start day). Read: absoluteMonthly interval 1, dayOfMonth 0, range noEnd, startDate 2026-11-03. A PUT that changed only the admin description and sent the recurrence as read (dayOfMonth 0): 204. Read again: dayOfMonth 0, startDate 2026-11-03. Microsoft Graph returns dayOfMonth 0 whatever was sent, so a comparison with the document cannot be made right (BL-117 sixth point: documented).
+```
 
 ## 2. BL-40: a document that declares one side of an Azure role policy's approvers
 
@@ -814,7 +848,7 @@ Result:
 
 ### T.1. Remove every object and restore both policies
 
-- [ ] **T.1** `Initialize-OerS1111Prereq.ps1 -Teardown -Unattended` deletes the review, restores the Reader policy at the resource group and the Reports Reader policy from their baselines, removes every prefixed object and the resource group, and the sweep finds nothing. #type/subtask
+- [x] **T.1** `Initialize-OerS1111Prereq.ps1 -Teardown -Unattended` deletes the review, restores the Reader policy at the resource group and the Reports Reader policy from their baselines, removes every prefixed object and the resource group, and the sweep finds nothing. #type/subtask
 
 ```powershell
 & pwsh -NoProfile -NonInteractive -File (Join-Path $VaultDir 'Initialize-OerS1111Prereq.ps1') -Teardown -Unattended
@@ -827,4 +861,8 @@ Write-OerLiveStep "The read-back ended with exit code $LASTEXITCODE."
 no prefixed object left; the counts equal to the baseline; exit codes 0.
 **Failure looks like:** a policy not restored (STOP, G11.5), residue, or a count that differs.
 
-Result:
+Result: 2026-10-20 00:30 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Run 2026-10-20 00:28-00:30 UTC as oer-live-cc against the test tenant, after the step stopped on 1.1. PASS with one residue row, which names an object that no longer exists. Teardown A deleted oer-s1111-review. Teardown B restored the Reader policy at oer-s1111-rg from its baseline (1 rule differed, Approval_EndUser_Assignment; restored True) and found Reports Reader at its baseline (0 rules differed). Then Remove-OerLiveTestObjects ran. Step 2 removed one of the two owner assignments PIM for Groups lists for oer-s1111-owned's owners (201); the other was refused with 400 CannotDeleteLastAdminAssignment, which became the residue row -- the known OerLive teardown gap of BL-122. Step 3 deleted oer-s1111-agentpol, oer-s1111-policy (both 204), oer-s1111-ap and oer-s1111-catalog. Step 5 deleted the five groups, oer-s1111-owned included (204), and step 6 deleted oer-s1111-u1 (204). Removed 11, residue 1. Teardown D deleted oer-s1111-rg. The sweep found no prefixed object, 0 prefixed access reviews, and no resource group; users 22, groups 99, catalogs 5, access packages 6 and access review definitions 6 are all equal to the baseline. The teardown ended with exit code 3 (residue) and the read-back with 0.
+```
