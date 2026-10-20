@@ -803,14 +803,17 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `accessPackages` entry registers its package there, not only a rename.**
   `Sync-OERStructureAccessReview` reads a declared package's name only through the map, never in the
   whole tenant. Never register a map key outside the owner; never let a review resolve a declared
-  package's name past a refusal.
+  package's name past a refusal the map reports (an unidentified package, or AccessPackages left
+  out by `-Include`).
   `Why: docs/development/rationale.md#review-package-in-the-same-run`
 - **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared,
   `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax;** never re-implement
-  either inline. The validator REFUSES, not merges by the helper's trim, a scope spelled as
-  `Get-OERScopeSpellingProblem` lists (its help is the list; white space included). A space between
-  other characters of a segment is accepted: never widen the white space rule to every space. Never
-  drop the rule in favour of the trim, which would make such a scope prune.
+  either inline. The validator REFUSES, not merges by the helper's trim, a scope that breaks one of
+  two spelling rules: the slash rule (a trailing or doubled `/`) and the segment rule (a dot
+  segment, an escape or backslash, a query or fragment character, white space at an edge or other
+  than a space, a control character); `Get-OERScopeSpellingProblem`'s help is the exact list. A
+  space between other characters of a segment is accepted: never widen the white space rule to every
+  space. Never drop the rule in favour of the trim, which would make such a scope prune.
   `Why: docs/development/rationale.md#role-assignment-key`
 - **`Get-OERScopeSpellingProblem` is the single owner of the two scope spelling rules in the
   previous bullet** (checks, order, message texts) for the `roleAssignments` and
