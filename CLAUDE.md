@@ -79,7 +79,7 @@ for what each release delivered.
 source/
   Omnicit.EntraRBAC.psd1      # Manifest -- source of truth for exports and RequiredModules
   Omnicit.EntraRBAC.psm1      # Dev-mode loader ONLY (Private -> Public); see Common Pitfalls
-  suffix.ps1                  # Update-TypeData -Force + Register-ArgumentCompleter, mirrored in the dev psm1
+  suffix.ps1                  # Update-TypeData -Force + Register-ArgumentCompleter, each mirrored verbatim in the dev-mode psm1
   Private/                    # Internal helpers, one function per file
   Public/                     # Exported cmdlets, one per file, filename == function name
   Formats/                    # Omnicit.EntraRBAC.Format.ps1xml (type data is inline in suffix.ps1)
@@ -105,7 +105,7 @@ azure-pipelines.yml           # Build + Test only, no Deploy stage -- it never p
 ```
 
 There is **no `source/Classes` directory**; the loader iterates one, but argument completion is
-scriptblock-based. `Why: docs/development/rationale.md#completers`
+scriptblock-based. `Why: docs/development/rationale.md#completers`, `Why: docs/development/rationale.md#module-layout`
 
 **The build-and-test job's `if:` is wired to the merge gate** (not a billing guard alone; never
 reason from GitHub's rule for skipped jobs):
@@ -114,10 +114,10 @@ whether `ubuntu-latest`, `windows-latest` and `macos-latest` (with `package`, th
 checks on `main`) exist; `package` follows via `needs: build-and-test`. **The mechanism is the
 MATRIX, not the skip:** a job-level `if:` is evaluated BEFORE the matrix expands, so the legs are
 never created and a required check that never reports stays pending forever (`package` skipped
-counts as passed; no help). Turning the repository private is therefore a change to this condition
+counts as passed, but the three matrix names still never report). Turning the repository private is therefore a change to this condition
 or the protection rule, in the SAME change, never afterwards. **Never rewrite the workflow as three
 jobs without a matrix:** their skipped `if:` reports Success and the gate goes GREEN with no test
-run; keep the matrix, or make the required checks something a skipped job cannot satisfy.
+run, `package` included; keep the matrix, or make the required checks something a skipped job cannot satisfy.
 `Why: docs/development/rationale.md#required-checks-and-the-matrix`
 
 **Do not maintain a function roster in this file;** read it from the tree:
@@ -146,7 +146,7 @@ tag in tracked Markdown under `docs/`, `specs/`, `README.md`, `CHANGELOG.md`); `
 uninstalls the transport tripwire; read statically, importing nothing).
 
 **`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** `docs/` and
-`specs/`: a GUID is prose, so a `00000000-0000-0000-0000-0000000000NN` placeholder. `source/` and
+`specs/`: a GUID is prose and must be a `00000000-0000-0000-0000-0000000000NN` placeholder. `source/` and
 `tests/`: a GUID is a fixture and must not have **version-4 shape**; exactly three v4 values are
 pinned by name (the module's manifest GUID, the Microsoft Graph Command Line Tools app id, the Reader
 built-in role definition id). **Do not add a fourth: allocate a placeholder** from the register in
@@ -167,7 +167,7 @@ and `specs/` and in `README.md` and `CHANGELOG.md`, no tag-like angle bracket (`
 where a backtick would close a code span the line already has; quotes do not escape); a bare URL,
 not an autolink; in `CHANGELOG.md` backticks only, never a backslash. Code is skipped by the
 algorithm in `ConvertTo-DocHygieneMarkdownProse`'s `.DESCRIPTION` in `tests/QA/dochygiene.tests.ps1`:
-the maintainer's `Test-MdAngleBrackets.py`, which the gate follows where the two differ, deliberately
+the maintainer's `Test-MdAngleBrackets.py` (kept outside this repository), which the gate follows where the two differ, deliberately
 not CommonMark's. Never "correct" it towards CommonMark; carry a change on either side to the other,
 so they agree hit for hit. `Why: docs/development/rationale.md#qa-gates`
 
@@ -182,8 +182,8 @@ spelled-out number); deliberately does NOT bind the surrounding prose (the sover
 tenant-profile and permissions sections are rewritten per medium).
 
 **Test files named after no single function.** Ten cross-cutting suites exist; do **NOT** delete any
-of them as an orphan when auditing the one-test-file-per-function invariant:
-`Why: docs/development/rationale.md#qa-gates`
+of them as an orphan when auditing the one-test-file-per-function invariant
+(`Why: docs/development/rationale.md#qa-gates`):
 
 - `Unit/Private/BasePathDefault.Cohort.Tests.ps1` -- all seven `-BasePath`/`-ProfileBasePath` default
   carriers resolve cross-platform; do not move it.
@@ -195,8 +195,9 @@ of them as an orphan when auditing the one-test-file-per-function invariant:
   differs" case keeps its distinct `NoChange` id.
 - `Unit/Public/GroupAliasOrder.Cohort.Tests.ps1` -- AST-driven: every `source/Public/*Group*.ps1`
   file declaring `-Group` lists the `GroupId` alias before the generic `Id`.
-- `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1` -- the same for every
-  `-AdministrativeUnit` parameter (`Id`, `DisplayName`).
+- `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1` -- the same AST-driven check for every
+  `-AdministrativeUnit` parameter, so a piped member's own `Id`/`DisplayName` can never mis-bind as the
+  parent unit.
 - `Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` -- AST-driven: every public cmdlet declaring
   `-TenantId` carries `[ValidateNotNullOrEmpty()]`, except `Connect-OER` (no validation, so its own
   `InvalidTenantId` refusal runs after the session-uncertain marker is set); drives the binding
@@ -250,13 +251,16 @@ Coverage is measured against the **built** module, not `source/`: run `-Tasks bu
 
 **Under `latest`, LOCAL GREEN IS NOT CI GREEN:** `RequiredModules.psd1` asks for the newest release
 of every module (`Why: docs/development/rationale.md#dependencies`); a local `output/RequiredModules`
-is resolved once and goes stale, while CI resolves afresh on every run. Refresh before trusting a
-local run, especially before opening or updating a PR:
+is resolved once and goes stale, while CI resolves afresh on every run, so a full local pass proves
+the suite against what is on disk, not what the merge gate runs. Refresh before trusting a local
+run, especially before opening or updating a PR:
 `./build.ps1 -ResolveDependency -Tasks noop -UseModuleFast` (a different resolver from CI's, whose
 tree may also hold unpacked `.nupkg` directories `_manifest`, `_rels`, `dependencies`, `package`; the
 CI dependency-report step is the authority on what the gate tested). A refresh adds versions and
-removes none: confirm the version under test with `Get-Module <name> -ListAvailable`, not the folder
-listing; delete the directory for a clean resolve.
+removes none: PowerShell loads the HIGHEST version, so a refreshed tree tests the new one; the
+directory is a growing record, not a picture of what is requested. Confirm the version under test
+with `Get-Module <name> -ListAvailable`, not the folder listing; delete the directory for a clean
+resolve.
 
 ---
 
