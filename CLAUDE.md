@@ -88,10 +88,9 @@ tests/
   QA/                         # Seven gate files (below), all run by ./build.ps1 -Tasks test
   Unit/Private/, Unit/Public/ # One *.Tests.ps1 per source file, plus the named exceptions below
   Unit/Formats/               # FormatViews.Tests.ps1 -- format-view rendering checks
-  Unit/TestHelpers/           # OERConfirmHost.ps1 (runspace whose PSHost answers ShouldProcess prompts:
-                              #   genuine DECLINE, prompt/target text, order of warnings, 'What if:' lines
-                              #   and prompts); OERTransportTripwire.ps1 (installed by every unit test
-                              #   file); OERTransportTripwire.Tests.ps1 (its known-answer suite)
+  Unit/TestHelpers/           # OERConfirmHost.ps1 (runspace whose PSHost answers ShouldProcess prompts);
+                              #   OERTransportTripwire.ps1 (installed by every unit test file);
+                              #   OERTransportTripwire.Tests.ps1 (its known-answer suite)
   Workflow/                   # PublishJob.Tests.ps1 -- the publish job's tag guard, proven offline:
                               #   PublishArtefact.ps1 called directly, step text run in pwsh against a
                               #   fake Gallery and a fake GitHub
@@ -112,13 +111,10 @@ reason from GitHub's rule for skipped jobs):
 `if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}` decides
 whether `ubuntu-latest`, `windows-latest` and `macos-latest` (with `package`, the four REQUIRED
 checks on `main`) exist; `package` follows via `needs: build-and-test`. **The mechanism is the
-MATRIX, not the skip:** a job-level `if:` is evaluated BEFORE the matrix expands, so the legs are
-never created and a required check that never reports stays pending forever (`package` skipped
-counts as passed, but the three matrix names still never report). Turning the repository private
-is therefore a change to this condition, or to the protection rule, made in the SAME change and
-never afterwards. **Never rewrite the workflow as three jobs without a matrix** unless the required
-checks become something a skipped job cannot satisfy: their skipped `if:` reports Success and the
-gate goes GREEN with no test run, `package` included.
+MATRIX, not the skip.** Turning the repository private is a change to this condition, or to the
+protection rule, made in the SAME change and never afterwards. **Never rewrite the workflow as three
+jobs without a matrix** unless the required checks become something a skipped job cannot satisfy:
+their skipped `if:` reports Success and the gate goes GREEN with no test run, `package` included.
 `Why: docs/development/rationale.md#required-checks-and-the-matrix`
 
 **Do not maintain a function roster in this file;** read it from the tree:
@@ -137,30 +133,21 @@ per-function PSScriptAnalyzer, a unit test file for every exported function); `a
 `requiredscope.tests.ps1` (`Get-OERRequiredScopeMap` vs the module's own call graph);
 `sourcehygiene.tests.ps1` (the ten static source gates,
 `Why: docs/development/rationale.md#static-source-gates`); `dochygiene.tests.ps1` (no unredacted
-tenant object ids, tenant domains outside a four-label allowlist, non-documentation email addresses
-or credentials in any tracked file under `docs/`, `specs/`, `source/`, `tests/`, listed with
-`git ls-files` and read from disk; the placeholder register in `docs/live-verification/README.md`
-must agree with itself and with every placeholder used; no angle bracket GitHub would render as a
-tag in tracked Markdown under `docs/`, `specs/`, `README.md`, `CHANGELOG.md`); `docsync.tests.ps1`
-(binds `README.md` to the about topic, and both to the manifest's cmdlet count); and
-`testhygiene.tests.ps1` (every unit test file that imports the module installs, checks and
-uninstalls the transport tripwire; read statically, importing nothing).
+tenant object ids, tenant domains outside an allowlist, non-documentation email addresses or
+credentials in tracked files, and no angle bracket GitHub would render as a tag in tracked
+Markdown); `docsync.tests.ps1` (binds `README.md` to the about topic, and both to the manifest's
+cmdlet count); and `testhygiene.tests.ps1` (every unit test file that imports the module installs,
+checks and uninstalls the transport tripwire; read statically, importing nothing).
 
 **`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** `docs/` and
-`specs/`: a GUID is prose and must be a `00000000-0000-0000-0000-0000000000NN` placeholder. `source/` and
-`tests/`: a GUID is a fixture and must not have **version-4 shape**; exactly three v4 values are
-pinned by name (the module's manifest GUID, the Microsoft Graph Command Line Tools app id, the Reader
-built-in role definition id). **Do not add a fourth: allocate a placeholder** from the register in
+`specs/`: a GUID is prose and must be a `00000000-0000-0000-0000-0000000000NN` placeholder.
+`source/` and `tests/`: a GUID is a fixture and must not have **version-4 shape**; exactly three v4
+values are pinned by name. **Do not add a fourth: allocate a placeholder** from the register in
 `docs/live-verification/README.md` (it records the next free `...NNN` and `personN`), adding its row
-in the same commit that uses the slot. The gate is red on: a placeholder used in `source/`,
-`tests/`, `docs/examples/` or `docs/development/` without a row marked taken; a register with
-overlapping rows, a repeated slot description, no or several FREE rows, an "Allocate from" sentence
-disagreeing with the FREE rows, a slot taken at or above a FREE start that is not a named outlier,
-or a placeholder cell it cannot read. **Tenant domains** (`.onmicrosoft.com`, `.onmicrosoft.us`,
-`.onmschina.cn`) are held to `contoso`, `fabrikam`, `other`, `oer-sovereign-verify-doesnotexist`
-(`%40` read as `@`, `\.` as `.`): replace a real label with `contoso`, never widen the list. A
-credential-shaped test literal (the bearer-scrub fixtures) carries `NOT-A-REAL-TOKEN` inside the
-VALUE; `REDACTED` works too. `Why: docs/development/rationale.md#bearer-scrub-tests`
+in the same commit that uses the slot. **Tenant domains** are held to a fixed allowlist: replace a
+real label with `contoso`, never widen the list. A credential-shaped test literal (the bearer-scrub
+fixtures) carries `NOT-A-REAL-TOKEN` inside the VALUE; `REDACTED` works too.
+`Why: docs/development/rationale.md#bearer-scrub-tests`
 
 **`dochygiene.tests.ps1` also reads Markdown as GitHub renders it:** in tracked `.md` under `docs/`
 and `specs/` and in `README.md` and `CHANGELOG.md`, no tag-like angle bracket (`<word>`, `</word>`,
@@ -168,19 +155,14 @@ and `specs/` and in `README.md` and `CHANGELOG.md`, no tag-like angle bracket (`
 where a backtick would close a code span the line already has; quotes do not escape); a bare URL,
 not an autolink; in `CHANGELOG.md` backticks only, never a backslash. Code is skipped by the
 algorithm in `ConvertTo-DocHygieneMarkdownProse`'s `.DESCRIPTION` in `tests/QA/dochygiene.tests.ps1`:
-the maintainer's `Test-MdAngleBrackets.py` (kept outside this repository), which the gate follows where the two differ, deliberately
-not CommonMark's. Never "correct" it towards CommonMark; carry a change on either side to the other,
-so they agree hit for hit. `Why: docs/development/rationale.md#qa-gates`
+the maintainer's `Test-MdAngleBrackets.py` (kept outside this repository), which the gate follows
+where the two differ, deliberately not CommonMark's. Never "correct" it towards CommonMark; carry a
+change on either side to the other, so they agree hit for hit.
+`Why: docs/development/rationale.md#qa-gates`
 
-**`docsync.tests.ps1` holds `README.md` and the about topic against each other:** roster scoped to
-`## Available Cmdlets` and `COMMAND COHORTS`; each `### Cohort (N)` count against the cmdlets that
-cohort is the FIRST to name; word-for-word agreement on the tenant-switch verdict per sign-in type
-and the device-code known limitation; every sentence in either whole document saying "all N
-cmdlets" or "all N exported cmdlets" (README introduction and `## Available Cmdlets`, about topic
-LONG DESCRIPTION) held to the count of `FunctionsToExport`, with a floor on the matches so rewording
-cannot make it vacuous. Does NOT see a count written another way ("98 cmdlets" with no "all", a
-spelled-out number); deliberately does NOT bind the surrounding prose (the sovereign-cloud,
-tenant-profile and permissions sections are rewritten per medium).
+**`docsync.tests.ps1` holds `README.md` and the about topic against each other** and both against
+the manifest's cmdlet count; a new export moves the numbers it holds (item 3 of **Checklist: Adding
+a New Function**).
 
 **Test files named after no single function.** Ten cross-cutting suites exist; do **NOT** delete any
 of them as an orphan when auditing the one-test-file-per-function invariant
@@ -200,26 +182,18 @@ of them as an orphan when auditing the one-test-file-per-function invariant
   `-AdministrativeUnit` parameter, so a piped member's own `Id`/`DisplayName` can never mis-bind as the
   parent unit.
 - `Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` -- AST-driven: every public cmdlet declaring
-  `-TenantId` carries `[ValidateNotNullOrEmpty()]`, except `Connect-OER` (no validation, so its own
-  `InvalidTenantId` refusal runs after the session-uncertain marker is set); drives the binding
-  refusal for the cmdlets the live checklist uses; installs the tripwire.
+  `-TenantId` carries `[ValidateNotNullOrEmpty()]`, except `Connect-OER`, which publishes its own
+  `InvalidTenantId` refusal.
 - `Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` -- exports
   `directoryRoleManagementPolicies` and `directoryRoleAssignments` from a mocked live state with
   `Get-OERInventory`, applies them back through `Invoke-OERStructure` with and without `-Prune`:
-  every row `Unchanged`. Runs with a session (state set for one tenant, `Initialize-OERAuth`
-  mocked), so the export names that tenant (`tenantId`); applied under another tenant it is refused
-  with `DocumentTenantMismatch`, reading and writing nothing.
+  every row `Unchanged`; applied under another tenant the export is refused with
+  `DocumentTenantMismatch`, reading and writing nothing.
 - `Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` -- AST-driven: no `source/Public/*.ps1`
-  file writes `Write-Warning` after its first `$PSCmdlet.ShouldProcess`, except allowlisted warnings
-  (each with a reason; an entry matching none or two fails); pins by name and text the twenty cmdlets
-  that warn before their gate; proves at run time on `OERConfirmHost` that each moved warning
-  precedes the `What if:` line and the `-Confirm` prompt, with no write request.
-  `OER_COHORT_SOURCE_ROOT` points its AST parts at a mutated copy of `source/`, never set in CI (also
-  read by the cadence scan in `Get-OERAccessReviewCadence.Tests.ps1`, the `TenantIdNotEmpty` cohort
-  and the scan in `Get-OERGroupRelation.Tests.ps1`); installs the tripwire.
-- `Unit/TestHelpers/OERTransportTripwire.Tests.ps1` -- the tripwire's known-answer suite: the six
-  names, module-scope resolution, parameter parity, mock precedence, the record and the refusal, a
-  re-import, the `AfterAll` check, the answering runspace, the uninstall.
+  file writes `Write-Warning` after its first `$PSCmdlet.ShouldProcess`, except allowlisted warnings.
+  `OER_COHORT_SOURCE_ROOT` (a source-root override for the AST cohorts, also read by
+  `Get-OERGroupRelation.Tests.ps1` and two other tests) is never set in CI.
+- `Unit/TestHelpers/OERTransportTripwire.Tests.ps1` -- the tripwire's known-answer suite.
 
 ---
 
